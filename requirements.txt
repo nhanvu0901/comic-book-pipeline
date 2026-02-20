@@ -1,0 +1,19 @@
+# === LLM & API ===
+anthropic>=0.40.0
+requests>=2.31.0
+ddgs>=6.0.0
+python-dotenv>=1.0.0
+
+# === Image Picker UI ===
+streamlit>=1.38.0
+Pillow>=10.0.0
+
+# === Video Assembly ===
+moviepy>=1.0.3
+imageio>=2.34.0
+imageio-ffmpeg>=0.4.9
+numpy>=1.24.0
+pydub>=0.25.1
+
+# === SRT ===
+pysrt>=1.1.2

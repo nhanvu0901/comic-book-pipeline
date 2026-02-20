@@ -1,0 +1,24 @@
+# Environment
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Outputs (stored in Google Drive)
+*.mp4
+*.wav
+*.mp3
+*.srt
+
+# Temp
+*.tmp
+*.bak
