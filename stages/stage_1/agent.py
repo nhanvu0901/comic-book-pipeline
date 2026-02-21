@@ -81,23 +81,22 @@ class ScriptAgent:
             display_analysis(data)
 
             questions = data.get("questions_for_user", [])
-            needs_search = data.get("needs_web_search", False)
 
-            if needs_search and data.get("parsed_input", {}).get("confidence") != "high":
-                print(f"\n  {Colors.DIM}🌐 Searching for more details...{Colors.END}")
-                search_prompt = (
-                    "Please use web_search to verify the details and fill in any gaps "
-                    "(issue numbers, writer/artist, specific plot points). Then proceed "
-                    "based on what you find."
-                )
-                raw = self.send_to_llm(search_prompt)
-                data = extract_json(raw)
-                if data:
-                    phase = data.get("phase", "")
-                    if phase == "analysis":
-                        self.analysis = data
-                        display_analysis(data)
-                        questions = data.get("questions_for_user", [])
+            # Always verify details via web search before proceeding
+            print(f"\n  {Colors.DIM}🌐 Searching for more details...{Colors.END}")
+            search_prompt = (
+                "You MUST use web_search now to verify and enrich the details — "
+                "issue numbers, writer/artist credits, exact plot points, and year. "
+                "Search even if you're confident. Then respond with your updated analysis."
+            )
+            raw = self.send_to_llm(search_prompt)
+            data = extract_json(raw)
+            if data:
+                phase = data.get("phase", "")
+                if phase == "analysis":
+                    self.analysis = data
+                    display_analysis(data)
+                    questions = data.get("questions_for_user", [])
 
             if questions:
                 self._clarification_loop(questions)

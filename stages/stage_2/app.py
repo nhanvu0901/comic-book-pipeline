@@ -4,15 +4,15 @@ Streamlit UI for browsing and selecting comic panels for each scene.
 Searches DuckDuckGo Images, displays candidates, lets you pick the best one.
 
 Usage:
-    streamlit run stages/stage2_image_picker.py
+    streamlit run stages/stage_2/app.py
 """
 import json
 import sys
 import os
 from pathlib import Path
 
-# Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 from PIL import Image
@@ -75,7 +75,7 @@ if not projects:
     st.error(
         f"No projects found in `{GDRIVE_BASE}`.\n\n"
         "Run Stage 1 first:\n"
-        '```\npython -m stages.stage1_script_generator "Your comic event"\n```'
+        '```\npython -m stages.stage_1 "Your comic event"\n```'
     )
     st.stop()
 
@@ -109,13 +109,18 @@ for scene in script["scenes"]:
     with col_current:
         if scene_file.exists():
             st.image(str(scene_file), caption="✅ Current selection", width=200)
+            if st.button("🗑️ Clear", key=f"clear_{sid}"):
+                scene_file.unlink()
+                st.rerun()
         else:
             st.warning("No image yet")
 
     # Search button
     search_key = f"search_{sid}"
+    results_key = f"results_{sid}"
     if st.button(f"🔍 Search Images for Scene {sid}", key=f"btn_{sid}"):
         st.session_state[search_key] = True
+        st.session_state.pop(results_key, None)  # clear cached results to force new search
 
     # Custom query override
     custom_query = st.text_input(
@@ -126,13 +131,17 @@ for scene in script["scenes"]:
 
     # Show search results
     if st.session_state.get(search_key, False):
-        with st.spinner(f"Searching images for Scene {sid}..."):
-            if custom_query:
-                scene_copy = dict(scene)
-                scene_copy["image_search_queries"] = [custom_query]
-                results = search_scene_images(scene_copy, max_results=IMAGE_SEARCH_MAX_RESULTS)
-            else:
-                results = search_scene_images(scene, max_results=IMAGE_SEARCH_MAX_RESULTS)
+        # Only search if we don't already have cached results
+        if results_key not in st.session_state:
+            with st.spinner(f"Searching images for Scene {sid}..."):
+                if custom_query:
+                    scene_copy = dict(scene)
+                    scene_copy["image_search_queries"] = [custom_query]
+                    st.session_state[results_key] = search_scene_images(scene_copy, max_results=IMAGE_SEARCH_MAX_RESULTS)
+                else:
+                    st.session_state[results_key] = search_scene_images(scene, max_results=IMAGE_SEARCH_MAX_RESULTS)
+
+        results = st.session_state.get(results_key, [])
 
         if not results:
             st.warning("No images found. Try a custom search query.")
@@ -145,10 +154,10 @@ for scene in script["scenes"]:
                 with cols[i % 4]:
                     thumb = load_thumbnail(result.get("thumbnail") or result["url"])
                     if thumb:
-                        st.image(thumb, caption=result.get("title", "")[:50], use_container_width=True)
+                        st.image(thumb, caption=result.get("title", "")[:50], width="stretch")
                     else:
                         st.write(f"⚠️ {result.get('title', 'Image')[:40]}")
-                    
+
                     st.caption(f"Source: {result.get('source', 'unknown')[:30]}")
 
                     if st.button(f"✅ Select", key=f"sel_{sid}_{i}"):
@@ -162,6 +171,7 @@ for scene in script["scenes"]:
                             if success:
                                 st.success(f"Scene {sid} image saved!")
                                 st.session_state[search_key] = False
+                                st.session_state.pop(results_key, None)
                                 st.rerun()
                             else:
                                 st.error("Download failed. Try another image.")

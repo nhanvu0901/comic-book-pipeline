@@ -13,6 +13,9 @@ GLM_API_KEY = os.getenv("GLM_API_KEY", "")
 GLM_BASE_URL = "https://api.z.ai/api/anthropic"
 GLM_MODEL = "glm-4.7"
 
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+
 # ─── Google Drive Bridge (falls back to local ./projects) ───────────────────
 _gdrive_env = os.getenv("GDRIVE_BASE", "")
 

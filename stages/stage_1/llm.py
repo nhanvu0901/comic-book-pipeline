@@ -84,8 +84,19 @@ def call_llm(client: Anthropic, messages: list, system: str, model: str) -> tupl
     return text, final_messages
 
 
+def _fix_json(text: str) -> str:
+    """Fix common LLM JSON errors before parsing."""
+    # Fix unquoted year ranges like 2009-2010 → "2009-2010"
+    text = re.sub(r':\s*(\d{4})\s*-\s*(\d{4})\s*([,}\]])', r': "\1-\2"\3', text)
+    # Fix trailing commas before } or ]
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    # Fix null without quotes (already valid JSON, but some models output None)
+    text = re.sub(r':\s*None\s*([,}\]])', r': null\1', text)
+    return text
+
+
 def extract_json(raw: str) -> dict | None:
-    """Extract JSON from LLM response, handling markdown code blocks."""
+    """Extract JSON from LLM response, handling markdown code blocks and common errors."""
     patterns = [
         r"```json\s*\n(.*?)```",
         r"```\s*\n(.*?)```",
@@ -93,22 +104,29 @@ def extract_json(raw: str) -> dict | None:
     for pattern in patterns:
         match = re.search(pattern, raw, re.DOTALL)
         if match:
-            try:
-                return json.loads(match.group(1).strip())
-            except json.JSONDecodeError:
-                continue
+            text = match.group(1).strip()
+            for attempt_text in [text, _fix_json(text)]:
+                try:
+                    return json.loads(attempt_text)
+                except json.JSONDecodeError:
+                    continue
 
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
+    # Try parsing the whole thing
+    for attempt_text in [raw, _fix_json(raw)]:
+        try:
+            return json.loads(attempt_text)
+        except json.JSONDecodeError:
+            continue
 
+    # Try finding JSON-like structure in the text
     brace_start = raw.find("{")
     brace_end = raw.rfind("}")
     if brace_start != -1 and brace_end != -1:
-        try:
-            return json.loads(raw[brace_start : brace_end + 1])
-        except json.JSONDecodeError:
-            pass
+        text = raw[brace_start : brace_end + 1]
+        for attempt_text in [text, _fix_json(text)]:
+            try:
+                return json.loads(attempt_text)
+            except json.JSONDecodeError:
+                continue
 
     return None
