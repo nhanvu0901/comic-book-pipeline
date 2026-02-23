@@ -1,0 +1,184 @@
+{
+  "status": "ready",
+  "title": "The Thing Bonds with the Venom Symbiote — What If...? Dark",
+  "comic_source": {
+    "publisher": "Marvel Comics",
+    "series": "What If...? Dark: Venom",
+    "issues": "#1",
+    "year": 2023,
+    "writer": "Stephanie Phillips",
+    "artist": "Jethro Morales",
+    "batcave_url": "https://batcave.biz/6587-what-if-dark-venom-2023.html"
+  },
+  "summary": "When Ben Grimm returns to Earth after Secret Wars, he discovers the Venom symbiote imprisoned in Reed Richards' lab — and learns his oldest friend has been lying about curing his condition. Consumed by bitterness and the symbiote's seductive whispers, Ben bonds with the alien entity. The result is catastrophic: Venom-Thing unleashes devastation on the Fantastic Four, and in a horrific climax, Ben arrives too late to save Reed from a brutal death at the hands of the Lizard. Some betrayals can never be undone.",
+  "scenes": [
+    {
+      "scene_id": 1,
+      "narration": "Before the nightmare began... there was a man who thought his biggest curse was being a monster. He was wrong.",
+      "source_issue": "#1",
+      "source_page": 1,
+      "image_search_queries": [
+        "What If Dark Venom #1 page 1 Ben Grimm returns space Jethro Morales comic panel",
+        "Thing Ben Grimm space post Secret Wars comic panel 2023 Jethro Morales",
+        "What If...? Dark: Venom #1 opening scene Ben Grimm comic panel"
+      ],
+      "visual_description": "Ben Grimm as the Thing, drifting through space or just returned to Earth, looking weary and haunted. His rocky orange face shows uncharacteristic vulnerability.",
+      "mood": "melancholic",
+      "effect": "slow_zoom_in"
+    },
+    {
+      "scene_id": 2,
+      "narration": "Deep beneath the Baxter Building, something waits. A prisoner. Rejected by Spider-Man, forgotten by Reed Richards. Alone.",
+      "source_issue": "#1",
+      "source_page": [
+        3,
+        4
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 symbiote containment chamber Reed Richards lab comic panel",
+        "Venom symbiote imprisoned glass container comic panel Jethro Morales 2023",
+        "What If...? Dark: Venom #1 symbiote trapped Fantastic Four laboratory"
+      ],
+      "visual_description": "The Venom symbiote in a containment unit in Reed's lab — black ooze pressed against glass, tendrils reaching out, glowing faintly. High-tech lab equipment surrounds it.",
+      "mood": "ominous",
+      "effect": "slow_zoom_in"
+    },
+    {
+      "scene_id": 3,
+      "narration": "Ben discovers the truth. Reed's promise of a cure... was a lie. His oldest friend deceived him. The resentment begins to fester.",
+      "source_issue": "#1",
+      "source_page": [
+        5,
+        6
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 Ben confronts Reed about cure lie comic panel",
+        "Thing Reed Richards argument confrontation comic panel Jethro Morales",
+        "What If...? Dark: Venom #1 Ben angry at Reed betrayal scene"
+      ],
+      "visual_description": "Ben confronts Reed in the lab. Reed looks guilty, deflecting. Ben's rocky face shows dawning realization and rising anger. The symbiote's container visible nearby, perhaps pulsing.",
+      "mood": "tense",
+      "effect": "static"
+    },
+    {
+      "scene_id": 4,
+      "narration": "The symbiote senses him. His pain. His rage. It whispers promises... power. Acceptance. Revenge. Everything Reed denied him.",
+      "source_issue": "#1",
+      "source_page": [
+        7,
+        8
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 symbiote whispers to Ben comic panel",
+        "Thing hears Venom symbiote voice telepathy comic panel Jethro Morales",
+        "What If...? Dark: Venom #1 Ben tempted by symbiote scene"
+      ],
+      "visual_description": "Close-up on Ben's face, expression conflicted. Behind him, the symbiote presses against containment, tendrils reaching. Maybe a visual representation of the symbiote's voice — dark tendrils curling near Ben's head.",
+      "mood": "seductive",
+      "effect": "slow_zoom_in"
+    },
+    {
+      "scene_id": 5,
+      "narration": "Ben gives in. The containment shatters. Darkness meets stone. The Ever-Lovin' Thing... becomes Venom.",
+      "source_issue": "#1",
+      "source_page": [
+        9,
+        10
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 Ben bonds with symbiote transformation comic panel",
+        "Thing becomes Venom transformation scene comic panel Jethro Morales",
+        "What If...? Dark: Venom #1 Venom-Thing transformation moment"
+      ],
+      "visual_description": "THE ICONIC TRANSFORMATION. Symbiote ooze spreads across Ben's rocky form. Tendrils wrap around his craggy surface. The white spider-symbol begins to form across his chest. Ben's human eyes visible through emerging symbiote patches.",
+      "mood": "horrific",
+      "effect": "slow_zoom_in"
+    },
+    {
+      "scene_id": 6,
+      "narration": "But power... has a price. The symbiote doesn't just amplify strength. It amplifies rage. Ben loses control.",
+      "source_issue": "#1",
+      "source_page": [
+        12,
+        13
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 Venom-Thing attacks Fantastic Four comic panel",
+        "Venom Thing rampage fight scene comic panel Jethro Morales 2023",
+        "What If...? Dark: Venom #1 Ben loses control smashes lab"
+      ],
+      "visual_description": "Venom-Thing in full rampage. Rocky form covered in black symbiote, white eye patches, tendrils lashing. He's smashing through FF headquarters, debris flying. Other FF members (Reed, Sue, Johnny) trying to stop him, looking horrified.",
+      "mood": "chaotic",
+      "effect": "pan_left"
+    },
+    {
+      "scene_id": 7,
+      "narration": "The chaos attracts another monster. The Lizard emerges. Now there are two beasts loose in the Baxter Building.",
+      "source_issue": "#1",
+      "source_page": [
+        15,
+        16
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 Lizard appears comic panel",
+        "Curt Connors Lizard Venom Thing comic panel Jethro Morales",
+        "What If...? Dark: Venom #1 Lizard fight scene"
+      ],
+      "visual_description": "The Lizard (Curt Connors) emerges — reptilian, savage. He's either fighting Venom-Thing or drawn by the chaos. The scene is chaotic, multiple threats.",
+      "mood": "chaotic",
+      "effect": "pan_right"
+    },
+    {
+      "scene_id": 8,
+      "narration": "Reed tries to contain the disaster. But the Lizard strikes first. The horror begins.",
+      "source_issue": "#1",
+      "source_page": [
+        18,
+        19
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 Lizard bites Reed arm comic panel",
+        "Reed Richards injured Lizard attack comic panel Jethro Morales",
+        "What If...? Dark: Venom #1 Reed hurt scene"
+      ],
+      "visual_description": "Lizard attacks Reed. Reed's elastic form stretches, but Lizard's jaws clamp down. Reed's face shows shock and pain. Keep focus on Reed's reaction, not graphic detail. Ben/Venom-Thing visible in background, fighting the symbiote's influence.",
+      "mood": "horrific",
+      "effect": "slow_zoom_in"
+    },
+    {
+      "scene_id": 9,
+      "narration": "Ben fights the darkness. He breaks free. But monsters move fast... and heroes arrive too late.",
+      "source_issue": "#1",
+      "source_page": [
+        20,
+        21
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 Ben rejects symbiote Reed death comic panel",
+        "Thing arrives too late Reed dies comic panel Jethro Morales",
+        "What If...? Dark: Venom #1 tragic climax scene"
+      ],
+      "visual_description": "The horror moment — Ben (possibly partially or fully clear of symbiote) arrives, horror on his face. Reed lies defeated, the Lizard over him. The implication is clear: Reed is gone. Ben's expression is devastating.",
+      "mood": "tragic",
+      "effect": "static"
+    },
+    {
+      "scene_id": 10,
+      "narration": "The Thing remains. The monster didn't change... it only revealed what was already there. Some betrayals can never be undone.",
+      "source_issue": "#1",
+      "source_page": [
+        22,
+        23
+      ],
+      "image_search_queries": [
+        "What If Dark Venom #1 final page Ben alone aftermath comic panel",
+        "Thing grieving alone final panel Jethro Morales 2023",
+        "What If...? Dark: Venom #1 ending scene"
+      ],
+      "visual_description": "Final image — Ben alone, perhaps partially symbiote-covered or fully clear again, but broken. Devastated. Reed's body or aftermath in background. The weight of his choice visible in every craggy line of his face.",
+      "mood": "devastating",
+      "effect": "slow_zoom_out"
+    }
+  ],
+  "total_estimated_duration_seconds": 91
+}

@@ -16,6 +16,13 @@ GLM_MODEL = "glm-4.7"
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 
+# ─── Comic Scraper ──────────────────────────────────────────────────────────
+ENABLE_COMIC_SCRAPER = os.getenv("ENABLE_COMIC_SCRAPER", "true").lower() in ("true", "1", "yes")
+ENABLE_VISION_CONFIRM = os.getenv("ENABLE_VISION_CONFIRM", "false").lower() in ("true", "1", "yes")
+# headless=False opens a visible Chrome window — much more reliable against Cloudflare
+COMIC_SCRAPER_HEADLESS = os.getenv("COMIC_SCRAPER_HEADLESS", "false").lower() in ("true", "1", "yes")
+GLM_VISION_MODEL = os.getenv("GLM_VISION_MODEL", "glm-4v-flash")
+
 # ─── Google Drive Bridge (falls back to local ./projects) ───────────────────
 _gdrive_env = os.getenv("GDRIVE_BASE", "")
 

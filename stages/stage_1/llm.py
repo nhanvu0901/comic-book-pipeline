@@ -43,7 +43,7 @@ def call_llm(client: Anthropic, messages: list, system: str, model: str) -> tupl
 
     # Tool-use loop — runs until the LLM stops requesting tools or hits the limit
     iteration = 0
-    while response.stop_reason == "tool_use" and iteration < 10:
+    while response.stop_reason == "tool_use" and iteration < 15:
         iteration += 1
 
         # Collect ALL tool_use blocks from this response (LLM may batch them)
@@ -71,6 +71,31 @@ def call_llm(client: Anthropic, messages: list, system: str, model: str) -> tupl
             system=system,
             tools=TOOLS,
             messages=messages,
+        )
+
+    # If we hit the iteration limit and the LLM still wants to call tools,
+    # force a final text-only response
+    if response.stop_reason == "tool_use" and iteration >= 15:
+        # Append the last tool calls with a "budget exhausted" result
+        tool_uses = [b for b in response.content if b.type == "tool_use"]
+        tool_results = []
+        for tool_use in tool_uses:
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use.id,
+                "content": json.dumps({"note": "Tool call budget exhausted. Please respond with your final answer now."}),
+            })
+
+        messages = messages + [
+            {"role": "assistant", "content": response.content},
+            {"role": "user", "content": tool_results},
+        ]
+
+        response = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=system,
+            messages=messages,  # No tools param → LLM can only respond with text
         )
 
     # Extract final text from the last response

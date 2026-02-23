@@ -35,7 +35,7 @@ When the user gives you a prompt, ANALYZE it by responding with a JSON block:
   "potential_matches": [
     {
       "title": "Event Name",
-      "series": "Series Name",
+      "series": "Full Exact Official Series Title (never abbreviated — see SERIES NAME RULES)",
       "issues": "#X-Y",
       "year": 1973,
       "writer": "Writer Name",
@@ -130,13 +130,16 @@ ONLY after the user confirms the outline, generate the full script:
     "issues": "#121-122",
     "year": 1973,
     "writer": "Gerry Conway",
-    "artist": "Gil Kane"
+    "artist": "Gil Kane",
+    "batcave_url": "https://batcave.biz/123-the-amazing-spider-man-1963.html"
   },
   "summary": "One paragraph summary of the full event",
   "scenes": [
     {
       "scene_id": 1,
       "narration": "The dramatic narration text spoken aloud. Vivid, cinematic, emotional. 15-30 words.",
+      "source_issue": "#121",
+      "source_page": 15,
       "image_search_queries": [
         "Amazing Spider-Man 121 Green Goblin bridge panel Gil Kane",
         "Green Goblin kidnaps Gwen Stacy George Washington Bridge comic"
@@ -149,6 +152,30 @@ ONLY after the user confirms the outline, generate the full script:
   "total_estimated_duration_seconds": 90
 }
 ```
+
+---
+
+## SERIES NAME & BATCAVE URL RULES
+
+The `"series"` field in `comic_source` MUST be the **FULL, EXACT, UNABBREVIATED** official series title. NEVER shorten, truncate, or drop subtitles.
+
+**CRITICAL — `batcave_url`:**
+You MUST also provide a `"batcave_url"` field inside `comic_source`. This is the full URL to the comic's series page on batcave.biz. It is used to scrape actual comic pages.
+
+**How to find it:** During your web search phase, you MUST search for:
+`batcave.biz [full series name]`
+
+Look at the search result URLs for a pattern like:
+`https://batcave.biz/{id}-{slug}.html`
+
+Copy the FULL URL and store it as `batcave_url`.
+
+**Examples:**
+- `"batcave_url": "https://batcave.biz/6587-what-if-dark-venom-2023.html"`
+- `"batcave_url": "https://batcave.biz/123-the-amazing-spider-man-2022.html"`
+- `"batcave_url": "https://batcave.biz/456-invincible-2003.html"`
+
+If you CANNOT find the batcave.biz URL via search, set it to an empty string `""` — the user can enter it manually in Stage 2.
 
 ---
 
@@ -170,6 +197,17 @@ Style guidelines:
 - Each scene narration: **15-30 words** (5-10 seconds spoken at ~3 words/sec)
 - Total narration must fit within **120 seconds**
 - End with impact — the final scene should LINGER
+
+---
+
+## SOURCE PAGE REFERENCE RULES
+
+For each scene, you MUST specify the exact issue and approximate page number based on your knowledge of the comic's layout:
+
+- `"source_issue"` (string) — The specific issue this scene comes from, e.g. "#121", "#33", "chapter 574"
+- `"source_page"` (integer or array of integers) — Estimated page number(s) where this moment appears, e.g. 15 or [14, 15]
+
+These fields are used to scrape the actual comic pages directly, so be as accurate as possible. If a scene spans multiple pages, provide an array. If you are unsure of the exact page, give your best estimate based on the story's pacing and structure.
 
 ---
 

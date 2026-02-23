@@ -85,8 +85,13 @@ class ScriptAgent:
             # Always verify details via web search before proceeding
             print(f"\n  {Colors.DIM}🌐 Searching for more details...{Colors.END}")
             search_prompt = (
-                "You MUST use web_search now to verify and enrich the details — "
-                "issue numbers, writer/artist credits, exact plot points, and year. "
+                "You MUST use web_search now to do ALL of the following:\n"
+                "1. Verify and enrich details — issue numbers, writer/artist credits, "
+                "exact plot points, year, and specific page numbers where key moments occur.\n"
+                "2. CRITICAL: Search for the batcave.biz URL for this comic. "
+                "Search 'batcave.biz [series name]' and look at the URLs in the results "
+                "for a pattern like batcave.biz/{id}-{slug}.html. "
+                "Copy the full URL and include it as 'batcave_url' in your analysis.\n"
                 "Search even if you're confident. Then respond with your updated analysis."
             )
             raw = self.send_to_llm(search_prompt)
@@ -280,7 +285,15 @@ class ScriptAgent:
         raw = self.send_to_llm(
             "The outline is confirmed. Please generate the PHASE 3 SCRIPT with full "
             "narration text, image search queries, visual descriptions, moods, and "
-            "effects for every scene. Return ONLY the JSON."
+            "effects for every scene. IMPORTANT:\n"
+            "1. For each scene, you MUST include 'source_issue' (e.g. '#121') and "
+            "'source_page' (integer or array of integers for the exact page number(s) "
+            "where this moment occurs in that issue).\n"
+            "2. In comic_source, you MUST include 'batcave_url' — the full URL to "
+            "the series page on batcave.biz (e.g. 'https://batcave.biz/6587-what-if-dark-venom-2023.html'). "
+            "If you found it during web search, use that. Otherwise set it to empty string.\n"
+            "Use web_search if needed to find precise page numbers. "
+            "Return ONLY the JSON."
         )
 
         data = extract_json(raw)
@@ -295,6 +308,7 @@ class ScriptAgent:
             print_warning("Couldn't parse the script JSON. Trying once more...")
             raw = self.send_to_llm(
                 "Please output ONLY the JSON script with no other text. "
+                "Every scene must have 'source_issue' and 'source_page' fields. "
                 "Start with { and end with }."
             )
             data = extract_json(raw)
@@ -326,7 +340,8 @@ class ScriptAgent:
 
             raw = self.send_to_llm(
                 f"Please revise the script based on this feedback: {feedback}\n\n"
-                "Return the complete updated PHASE 3 SCRIPT JSON."
+                "Return the complete updated PHASE 3 SCRIPT JSON. Remember to include "
+                "'source_issue' and 'source_page' for every scene."
             )
             data = extract_json(raw)
             if data and "scenes" in data:
