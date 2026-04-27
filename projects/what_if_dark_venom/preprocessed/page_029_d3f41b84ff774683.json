@@ -1,0 +1,186 @@
+{
+  "page_number": 29,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_29.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": true,
+  "page_type": "story",
+  "panels": [
+    {
+      "index": 0,
+      "bbox": {
+        "x": 0,
+        "y": 0,
+        "w": 619,
+        "h": 67
+      },
+      "description": "A close-up of The Thing's face, looking devastated and crying.",
+      "characters": [
+        "The Thing"
+      ],
+      "dominant_emotion": "sorrow"
+    },
+    {
+      "index": 1,
+      "bbox": {
+        "x": 152,
+        "y": 0,
+        "w": 657,
+        "h": 62
+      },
+      "description": "The Thing is hunched over, weeping, expressing regret.",
+      "characters": [
+        "The Thing"
+      ],
+      "dominant_emotion": "guilt"
+    },
+    {
+      "index": 2,
+      "bbox": {
+        "x": 305,
+        "y": 0,
+        "w": 579,
+        "h": 67
+      },
+      "description": "Venom looms over a defeated, purple-skinned figure, taunting them.",
+      "characters": [
+        "Venom"
+      ],
+      "dominant_emotion": "malice"
+    },
+    {
+      "index": 3,
+      "bbox": {
+        "x": 379,
+        "y": 0,
+        "w": 659,
+        "h": 63
+      },
+      "description": "An extreme close-up of The Thing's mouth and rocky chin, showing deep distress.",
+      "characters": [
+        "The Thing"
+      ],
+      "dominant_emotion": "despair"
+    },
+    {
+      "index": 4,
+      "bbox": {
+        "x": 541,
+        "y": 0,
+        "w": 623,
+        "h": 66
+      },
+      "description": "A large splash panel featuring The Thing lunging forward with a roar, looking determined and angry.",
+      "characters": [
+        "The Thing"
+      ],
+      "dominant_emotion": "rage"
+    },
+    {
+      "index": 5,
+      "bbox": {
+        "x": 669,
+        "y": 0,
+        "w": 531,
+        "h": 62
+      },
+      "description": "",
+      "characters": [],
+      "dominant_emotion": ""
+    },
+    {
+      "index": 6,
+      "bbox": {
+        "x": 301,
+        "y": 63,
+        "w": 374,
+        "h": 816
+      },
+      "description": "",
+      "characters": [],
+      "dominant_emotion": ""
+    },
+    {
+      "index": 7,
+      "bbox": {
+        "x": 596,
+        "y": 61,
+        "w": 276,
+        "h": 804
+      },
+      "description": "",
+      "characters": [],
+      "dominant_emotion": ""
+    },
+    {
+      "index": 8,
+      "bbox": {
+        "x": 0,
+        "y": 934,
+        "w": 885,
+        "h": 908
+      },
+      "description": "",
+      "characters": [],
+      "dominant_emotion": ""
+    }
+  ],
+  "text_blocks": [
+    {
+      "panel_index": 0,
+      "text": "...I NEED YA.",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 1,
+      "text": "I'M SO SORRY. THIS IS MY FAULT... I DIDN'T LISTEN... I SHOULDA LISTENED...",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 1,
+      "text": "YOU DID WHAT WAS BESSSST...",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 2,
+      "text": "THERE AIN'T NO WE. THERE AIN'T NO FANTASTIC FOUR.",
+      "type": "speech",
+      "speaker": "Venom"
+    },
+    {
+      "panel_index": 2,
+      "text": "...REED WAS SSSSELFISH. HE WANTED THE SUIT FOR HIMSELF, AND HE WANTED TO KEEP YOU FROM USSSSING IT. WE ARE BETTER WITHOUT HIM, BEN.",
+      "type": "speech",
+      "speaker": "Venom"
+    },
+    {
+      "panel_index": 2,
+      "text": "WE?",
+      "type": "speech",
+      "speaker": "Venom"
+    },
+    {
+      "panel_index": 3,
+      "text": "THERE AIN'T NO WE.",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 4,
+      "text": "IT'S JUST ME!",
+      "type": "speech",
+      "speaker": "The Thing"
+    }
+  ],
+  "page_summary": "The page depicts a heavy emotional moment where The Thing mourns the loss of his teammates, while Venom taunts him, claiming the Fantastic Four are gone. The page ends with The Thing snapping into a state of pure rage, declaring he is alone.",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "d3f41b84ff774683",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": ""
+}

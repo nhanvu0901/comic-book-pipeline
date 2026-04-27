@@ -1,5 +1,5 @@
 """
-CLI entry point for Stage 1: Script Generator.
+CLI entry point for Stage 1: Comic Identification + Context Gathering.
 
 Usage:
     python -m stages.stage_1
@@ -12,16 +12,16 @@ import argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from config import GLM_API_KEY, GLM_BASE_URL, GLM_MODEL, get_project_dirs, GDRIVE_BASE
+from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL, get_project_dirs, GDRIVE_BASE
 
 from .agent import ScriptAgent
-from .storage import save_script, save_conversation_log, slugify
-from .ui import print_error, print_success, print_info, get_user_input, Colors
+from .storage import save_comic_context, save_conversation_log, slugify
+from .ui import print_error, print_success, print_info, get_user_input
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Stage 1: PanelNarrator — Interactive Comic Book Script Agent",
+        description="Stage 1: PanelNarrator — Comic Identification & Context Gathering",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""
         Examples:
@@ -38,19 +38,19 @@ def main():
     initial_prompt = " ".join(args.prompt) if args.prompt else None
 
     if args.project:
-        script_path = GDRIVE_BASE / args.project / "script.json"
-        if script_path.exists():
-            print(f"  📂 Project '{args.project}' already has a script.")
-            choice = get_user_input("Regenerate script? [y/N]")
+        ctx_path = GDRIVE_BASE / args.project / "comic_context.json"
+        if ctx_path.exists():
+            print(f"  📂 Project '{args.project}' already has comic_context.json.")
+            choice = get_user_input("Regenerate? [y/N]")
             if choice.lower() not in ("y", "yes"):
-                print("  Keeping existing script.")
+                print("  Keeping existing context.")
                 return
 
-    agent = ScriptAgent(api_key=GLM_API_KEY, base_url=GLM_BASE_URL, model=GLM_MODEL)
-    script = agent.run(initial_prompt)
+    agent = ScriptAgent(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL, model=OPENROUTER_MODEL)
+    ctx = agent.run(initial_prompt)
 
-    if not script or script.get("status") == "error":
-        print_error("Script generation failed.")
+    if not ctx or ctx.get("status") != "ready":
+        print_error("Comic context generation failed.")
         sys.exit(1)
 
     if args.project:
@@ -58,22 +58,18 @@ def main():
     elif initial_prompt:
         project_name = slugify(initial_prompt)
     else:
-        title = script.get("title", "untitled_project")
-        project_name = slugify(title)
+        project_name = slugify(ctx.get("title", "untitled_project"))
 
     print()
-    script_path = save_script(script, project_name, get_project_dirs)
+    ctx_path = save_comic_context(ctx, project_name, get_project_dirs)
     save_conversation_log(agent, project_name, get_project_dirs)
 
     print(f"\n{'═' * 70}")
     print_success("Stage 1 complete!")
     print_info("Project", project_name)
-    print_info("Script", script_path)
-    print_info("Scenes", len(script.get("scenes", [])))
-
-    total_words = sum(len(s.get("narration", "").split()) for s in script.get("scenes", []))
-    print_info("Est. duration", f"~{round(total_words / 3)}s")
-
-    print(f"\n  {Colors.BOLD}👉 Next step:{Colors.END}")
-    print(f"     streamlit run stages/stage_2/...")
+    print_info("Context", ctx_path)
+    print_info("Title", ctx.get("title", "?"))
+    print_info("Series", f"{ctx.get('series', '?')} {ctx.get('issues', '')}")
+    print_info("batcave_url", ctx.get("batcave_url") or "(not found — set manually before Stage 2)")
+    print_info("Plot text", f"{len(ctx.get('plot_summary', ''))} chars")
     print()

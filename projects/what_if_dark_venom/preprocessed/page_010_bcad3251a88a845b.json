@@ -1,0 +1,97 @@
+{
+  "page_number": 10,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_10.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": true,
+  "page_type": "story",
+  "panels": [
+    {
+      "index": 0,
+      "bbox": {
+        "x": 389,
+        "y": 1,
+        "w": 811,
+        "h": 311
+      },
+      "description": "A sequence of panels showing a man in a lab coat aiming a weapon at a symbiote-covered figure, followed by an overhead view of a green energy blast hitting the figure in a lab.",
+      "characters": [
+        "Ben Grimm"
+      ],
+      "dominant_emotion": "tense"
+    },
+    {
+      "index": 1,
+      "bbox": {
+        "x": 0,
+        "y": 54,
+        "w": 386,
+        "h": 880
+      },
+      "description": "A large panel showing a massive, black symbiote version of Ben Grimm confronting the man in the lab coat amidst a city background, followed by a close-up of the man's face as he recoils.",
+      "characters": [
+        "Ben Grimm",
+        "Symbiote Ben"
+      ],
+      "dominant_emotion": "confrontational"
+    }
+  ],
+  "text_blocks": [
+    {
+      "panel_index": 0,
+      "text": "THAT THING IS DANGEROUS.",
+      "type": "speech",
+      "speaker": "Ben Grimm"
+    },
+    {
+      "panel_index": 0,
+      "text": "I'M SORRY.",
+      "type": "speech",
+      "speaker": "Ben Grimm"
+    },
+    {
+      "panel_index": 0,
+      "text": "NO...",
+      "type": "speech",
+      "speaker": "Ben Grimm"
+    },
+    {
+      "panel_index": 0,
+      "text": "BEN...",
+      "type": "speech",
+      "speaker": "Ben Grimm"
+    },
+    {
+      "panel_index": 0,
+      "text": "KSSSHH",
+      "type": "sfx",
+      "speaker": null
+    },
+    {
+      "panel_index": 1,
+      "text": "...WE WILL FIND ANOTHER WAY. I PROMISE.",
+      "type": "speech",
+      "speaker": "Ben Grimm"
+    },
+    {
+      "panel_index": 1,
+      "text": "I DID FIND A WAY... AND NOW YOU WANNA STOP ME BECAUSE YOUR OWN EGO CAN'T STAND THAT YOU'RE NOT THE ONE WHO FIGURED IT OUT.",
+      "type": "speech",
+      "speaker": "Symbiote Ben"
+    },
+    {
+      "panel_index": 1,
+      "text": "BEN... THAT'S NOT IT AT ALL. LISTEN TO WHAT YOU'RE SAYING...",
+      "type": "speech",
+      "speaker": "Ben Grimm"
+    }
+  ],
+  "page_summary": "Ben Grimm attempts to use a specialized weapon against a symbiote-transformed version of himself. The symbiote confronts Ben, accusing him of ego-driven interference, as the transformation causes chaos in the laboratory and urban environment.",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "bcad3251a88a845b",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": ""
+}

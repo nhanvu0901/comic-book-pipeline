@@ -21,50 +21,54 @@ from ..ui import Colors
 # ─── Schema ─────────────────────────────────────────────────────────────────
 
 SEQUENTIAL_THINKING_TOOL = {
-    "name": "sequential_thinking",
-    "description": (
-        "Think deeply and systematically through a topic before forming your response. "
-        "Call this tool once per thinking step — each step should explore a DIFFERENT "
-        "aspect or angle of the topic. Do NOT repeat the same angle twice. "
-        "Aspects to cycle through: narrative context, character motivations, "
-        "emotional core, visual storytelling potential, historical significance, "
-        "cultural impact, pacing and scene structure. "
-        "Use 3–6 steps for most topics. Set is_final=true on your last step. "
-        "After the final step, synthesize all insights into your structured JSON response."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "thought": {
-                "type": "string",
-                "description": (
-                    "Your detailed reasoning for this step. Be specific — "
-                    "what does this aspect reveal about the story or characters?"
-                ),
+    "type": "function",
+    "function": {
+        "name": "sequential_thinking",
+        "description": (
+            "Think deeply and systematically through a topic before forming your response. "
+            "Call this tool once per thinking step — each step should explore a DIFFERENT "
+            "aspect or angle of the topic. Do NOT repeat the same angle twice. "
+            "Aspects to cycle through: narrative context, character motivations, "
+            "emotional core, visual storytelling potential, historical significance, "
+            "cultural impact, pacing and scene structure. "
+            "Use 3–6 steps for most topics. Set is_final=true on your last step. "
+            "After the final step, synthesize all insights into your structured JSON response."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "thought": {
+                    "type": "string",
+                    "description": (
+                        "Your detailed reasoning for this step. Be specific — "
+                        "what does this aspect reveal about the story or characters?"
+                    ),
+                },
+                "step_number": {
+                    "type": "integer",
+                    "description": "Current step number, starting at 1",
+                },
+                "total_steps": {
+                    "type": "integer",
+                    "description": "Total number of thinking steps you plan to take (3–6 recommended)",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": (
+                        "The aspect/angle being explored in this step. "
+                        "Examples: 'narrative context', 'character motivation', "
+                        "'emotional impact', 'visual storytelling', 'historical significance', "
+                        "'cultural legacy', 'pacing and scene structure', "
+                        "'superhero feats, signature abilities, and strength highlights'"
+                    ),
+                },
+                "is_final": {
+                    "type": "boolean",
+                    "description": "Set true on the last step to close the thinking session",
+                },
             },
-            "step_number": {
-                "type": "integer",
-                "description": "Current step number, starting at 1",
-            },
-            "total_steps": {
-                "type": "integer",
-                "description": "Total number of thinking steps you plan to take (3–6 recommended)",
-            },
-            "branch": {
-                "type": "string",
-                "description": (
-                    "The aspect/angle being explored in this step. "
-                    "Examples: 'narrative context', 'character motivation', "
-                    "'emotional impact', 'visual storytelling', 'historical significance', "
-                    "'cultural legacy', 'pacing and scene structure'"
-                ),
-            },
-            "is_final": {
-                "type": "boolean",
-                "description": "Set true on the last step to close the thinking session",
-            },
+            "required": ["thought", "step_number", "total_steps"],
         },
-        "required": ["thought", "step_number", "total_steps"],
     },
 }
 

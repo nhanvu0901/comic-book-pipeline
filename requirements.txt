@@ -1,22 +1,28 @@
 # === LLM & API ===
-anthropic>=0.40.0
+openai>=1.50.0
 requests>=2.31.0
-ddgs>=6.0.0
+tavily-python>=0.3.0
 python-dotenv>=1.0.0
 
 # === Comic Scraper ===
-nodriver>=0.38
+# curl_cffi gives us TLS fingerprints indistinguishable from Chrome, which
+# lets us pass batcave.biz's custom SHA-256 proof-of-work challenge without
+# launching a real browser. Solved in ~1 ms in pure Python.
+curl_cffi>=0.7.0
 
-# === Image Picker UI ===
-streamlit>=1.38.0
-Pillow>=10.0.0
+# === Stage 2: Page preprocessing ===
+ultralytics>=8.3.0        # YOLO panel detector (AGPL — personal use only)
+huggingface_hub>=0.24.0   # auto-downloads mosesb/best-comic-panel-detection
+Pillow>=10.0.0            # image IO + dimensions
 
-# === Video Assembly ===
-moviepy>=1.0.3
-imageio>=2.34.0
-imageio-ffmpeg>=0.4.9
-numpy>=1.24.0
-pydub>=0.25.1
+# === Stage 4: TTS (Cartesia via raw HTTP — no SDK dep) ===
+# nothing extra — uses `requests` already in the list above
 
-# === SRT ===
-pysrt>=1.1.2
+# === Stage 5: Video assembly ===
+# ffmpeg is required on PATH (install via `brew install ffmpeg` on macOS).
+# No extra Python deps — we shell out to ffmpeg directly.
+
+# === UI (Flet desktop) ===
+flet>=0.84,<1.0
+flet-audio>=0.84
+flet-video>=0.84

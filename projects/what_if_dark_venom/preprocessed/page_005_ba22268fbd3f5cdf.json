@@ -1,0 +1,148 @@
+{
+  "page_number": 5,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_05.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": true,
+  "page_type": "story",
+  "panels": [
+    {
+      "index": 0,
+      "bbox": {
+        "x": 656,
+        "y": 43,
+        "w": 513,
+        "h": 547
+      },
+      "description": "Reed Richards discusses the sentient nature of the symbiote contained in a canister while The Thing stands nearby.",
+      "characters": [
+        "Reed Richards",
+        "The Thing"
+      ],
+      "dominant_emotion": "contemplative"
+    },
+    {
+      "index": 1,
+      "bbox": {
+        "x": 32,
+        "y": 620,
+        "w": 425,
+        "h": 765
+      },
+      "description": "Reed Richards explains the security measures taken to protect the symbiote from various attempts to steal it.",
+      "characters": [
+        "The Thing",
+        "Reed Richards"
+      ],
+      "dominant_emotion": "serious"
+    },
+    {
+      "index": 2,
+      "bbox": {
+        "x": 480,
+        "y": 624,
+        "w": 421,
+        "h": 761
+      },
+      "description": "The Thing confronts Reed about forgetting their anniversary, while Reed defends his focus on the mission.",
+      "characters": [
+        "The Thing",
+        "Reed Richards"
+      ],
+      "dominant_emotion": "tense"
+    },
+    {
+      "index": 3,
+      "bbox": {
+        "x": 921,
+        "y": 616,
+        "w": 249,
+        "h": 761
+      },
+      "description": "A close-up of The Thing's face, showing a mixture of guilt and sadness.",
+      "characters": [
+        "The Thing"
+      ],
+      "dominant_emotion": "sad"
+    },
+    {
+      "index": 4,
+      "bbox": {
+        "x": 32,
+        "y": 1414,
+        "w": 867,
+        "h": 382
+      },
+      "description": "The Thing suggests Reed should be in a jar too, and Reed reaffirms his dedication to finding a cure for Ben.",
+      "characters": [
+        "The Thing",
+        "Reed Richards"
+      ],
+      "dominant_emotion": "emotional"
+    }
+  ],
+  "text_blocks": [
+    {
+      "panel_index": 0,
+      "text": "...I'D SAY IT'S SURELY ALIVE... BUT SENTIENT IS ANOTHER MATTER ENTIRELY. IT'S FASCINATING, REALLY. AN ORGANIC, SYMBIOTIC BEING THAT RETURNED TO EARTH ATTACHED TO OUR WEB-SLINGING COLLEAGUE IN THE FORM OF A COSTUME.",
+      "type": "speech",
+      "speaker": "Reed Richards"
+    },
+    {
+      "panel_index": 1,
+      "text": "AFTER DETACHING THE SYMBIOTE FROM SPIDER-MAN, WE'VE KEPT IT HERE FOR FURTHER STUDY AND EVALUATION.",
+      "type": "narration",
+      "speaker": null
+    },
+    {
+      "panel_index": 1,
+      "text": "OF COURSE, IT HAS GARNERED PLENTY OF INTEREST... WE'VE HAD MORE THAN A FEW BREAK-IN ATTEMPTS.",
+      "type": "narration",
+      "speaker": null
+    },
+    {
+      "panel_index": 1,
+      "text": "ALL UNSUCCESSFUL THANKS TO OUR NEW SECURITY PROTO--",
+      "type": "narration",
+      "speaker": null
+    },
+    {
+      "panel_index": 2,
+      "text": "YOU FORGOT OUR ANNIVERSARY, REED.",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 2,
+      "text": "I DIDN'T FORGET, BEN. YOU'VE JUST RETURNED FROM MONTHS IN SPACE AND, CONSIDERING WHAT THIS DATE MEANS FOR YOU... I FIGURED IT WAS BEST TO ALLOW YOU TO PROCESS THINGS ON YOUR OWN.",
+      "type": "speech",
+      "speaker": "Reed Richards"
+    },
+    {
+      "panel_index": 3,
+      "text": "TELL THE TRUTH. YER AFRAID OF FEELIN' GUILTY FOR WHAT YA DID... ...FOR TURNIN' ME INTO A MONSTER.",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 4,
+      "text": "MAYBE YA SHOULDA PUT ME IN A GLASS JAR TOO, MR. FANTASTIC.",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 4,
+      "text": "YOU KNOW THAT I DO EVERYTHING I CAN TO FIND A CURE FOR YOU, BEN, AND I WON'T EVER STOP UNTIL I DO. YOU'RE MY FAMILY, AND I'D DO ANYTHING--",
+      "type": "speech",
+      "speaker": "Reed Richards"
+    }
+  ],
+  "page_summary": "Reed Richards and The Thing discuss the captured symbiote. The conversation turns personal as Ben expresses his hurt and resentment over Reed's perceived emotional distance and his responsibility for Ben's condition.",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "ba22268fbd3f5cdf",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": ""
+}

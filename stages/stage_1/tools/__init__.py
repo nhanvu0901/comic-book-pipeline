@@ -19,6 +19,7 @@ from .paraphrase_query import (
     paraphrase_query,
     init as _init_paraphrase,
 )
+from .fetch_wiki import FETCH_WIKI_TOOL, fetch_wiki
 
 # ─── TOOLS list — sent to the LLM API on every call ─────────────────────────
 
@@ -26,6 +27,7 @@ TOOLS = [
     WEB_SEARCH_TOOL,
     SEQUENTIAL_THINKING_TOOL,
     PARAPHRASE_QUERY_TOOL,
+    FETCH_WIKI_TOOL,
 ]
 
 
@@ -46,13 +48,6 @@ def init(client, model):
 def dispatch_tool(name: str, inputs: dict) -> dict:
     """
     Route a tool-use request from the LLM to the correct implementation.
-
-    Args:
-        name:   Tool name as declared in the schema (e.g. "web_search")
-        inputs: The arguments dict the LLM passed to the tool
-
-    Returns:
-        A dict that gets JSON-serialized and sent back to the LLM as tool_result
     """
     if name == "web_search":
         return web_search(
@@ -74,6 +69,13 @@ def dispatch_tool(name: str, inputs: dict) -> dict:
             query=inputs["query"],
             n=inputs.get("n", 3),
             focus=inputs.get("focus", ""),
+        )
+
+    if name == "fetch_wiki":
+        return fetch_wiki(
+            query=inputs["query"],
+            wiki_url=inputs.get("wiki_url", ""),
+            publisher=inputs.get("publisher", ""),
         )
 
     return {"error": f"Unknown tool: '{name}'"}

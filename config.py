@@ -8,82 +8,46 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─── API Keys ───────────────────────────────────────────────────────────────
-GLM_API_KEY = os.getenv("GLM_API_KEY", "")
-GLM_BASE_URL = "https://api.z.ai/api/anthropic"
-GLM_MODEL = "glm-4.7"
+# ─── LLM (OpenRouter, OpenAI-compatible) ────────────────────────────────────
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+# Text LLM for Stage 1 agent / Stage 3 narration synthesis.
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-haiku-4-5")
+# Vision LLM for Stage 2 page preprocessing. Default is a free MoE vision model on OpenRouter.
+VLM_MODEL = os.getenv("VLM_MODEL", "google/gemma-4-26b-a4b-it:free")
 
-SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
-SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+# ─── TTS (Cartesia) ─────────────────────────────────────────────────────────
+CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
+CARTESIA_MODEL = os.getenv("CARTESIA_MODEL", "sonic-2")
+# "Comic Vocal" — cloned from /Users/nhanvu/Desktop/comic.wav (private to this org).
+CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "f7248031-b419-4004-b447-2e9bf32f6b5e")
 
 # ─── Comic Scraper ──────────────────────────────────────────────────────────
 ENABLE_COMIC_SCRAPER = os.getenv("ENABLE_COMIC_SCRAPER", "true").lower() in ("true", "1", "yes")
-ENABLE_VISION_CONFIRM = os.getenv("ENABLE_VISION_CONFIRM", "false").lower() in ("true", "1", "yes")
 # headless=False opens a visible Chrome window — much more reliable against Cloudflare
 COMIC_SCRAPER_HEADLESS = os.getenv("COMIC_SCRAPER_HEADLESS", "false").lower() in ("true", "1", "yes")
-GLM_VISION_MODEL = os.getenv("GLM_VISION_MODEL", "glm-4v-flash")
 
-# ─── Google Drive Bridge (falls back to local ./projects) ───────────────────
+# ─── Project Storage (falls back to local ./projects) ───────────────────────
 _gdrive_env = os.getenv("GDRIVE_BASE", "")
 
 if _gdrive_env:
     GDRIVE_BASE = Path(os.path.expanduser(_gdrive_env))
 else:
-    # No Google Drive configured — use local projects folder next to this file
     GDRIVE_BASE = Path(__file__).parent / "projects"
 
-# Create if doesn't exist
 GDRIVE_BASE.mkdir(parents=True, exist_ok=True)
-
-# ─── Video Output Settings ──────────────────────────────────────────────────
-VIDEO_WIDTH = 1920
-VIDEO_HEIGHT = 1080
-VIDEO_FPS = 30
-MAX_DURATION = 120  # seconds
-
-# ─── Ken Burns Effect ───────────────────────────────────────────────────────
-KB_ZOOM_RANGE = (1.0, 1.15)   # zoom from 100% to 115%
-KB_PAN_SPEED = 0.02            # pan speed as fraction of image size
-
-# ─── Audio / Music ──────────────────────────────────────────────────────────
-BGM_VOLUME = 0.15              # background music volume (0.0 - 1.0)
-NARRATION_VOLUME = 1.0         # narration volume
-AUDIO_FADE_IN = 1.0            # BGM fade in duration (seconds)
-AUDIO_FADE_OUT = 2.0           # BGM fade out duration (seconds)
-
-# ─── Subtitles ──────────────────────────────────────────────────────────────
-SUB_FONT_SIZE = 42
-SUB_FONT_COLOR = "white"
-SUB_STROKE_COLOR = "black"
-SUB_STROKE_WIDTH = 2
-SUB_POSITION = ("center", "bottom")
-SUB_MARGIN_BOTTOM = 60         # pixels from bottom edge
-
-# ─── Transition ─────────────────────────────────────────────────────────────
-CROSSFADE_DURATION = 0.3       # seconds between scenes
-
-# ─── Image Search ───────────────────────────────────────────────────────────
-IMAGE_SEARCH_MAX_RESULTS = 12  # candidates per scene
-IMAGE_OUTPUT_FORMAT = "jpg"
-IMAGE_QUALITY = 95
 
 
 def get_project_path(project_name: str) -> Path:
-    """Get the Google Drive project folder path."""
+    """Return the project folder path, creating it if needed."""
     p = GDRIVE_BASE / project_name
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def get_project_dirs(project_name: str) -> dict:
-    """Create and return all subdirectory paths for a project."""
+    """Return base project folder. Sub-folders are created by stages as they need them."""
     base = get_project_path(project_name)
-    dirs = {
-        "root": base,
-        "images": base / "images",
-        "audio": base / "audio",
-        "output": base / "output",
-    }
-    for d in dirs.values():
-        d.mkdir(parents=True, exist_ok=True)
-    return dirs
+    return {"root": base}

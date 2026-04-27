@@ -1,12 +1,20 @@
 """
-Stage 1: Script Generator — Interactive Comic Book Expert Agent
+Stage 1: Comic Identification + Wiki Context Gathering
 
-A multi-turn conversational agent powered by GLM-4.7 that:
+A multi-turn conversational agent (OpenRouter-backed) that:
 1. ANALYZES the user's prompt (identifies event, characters, era, ambiguities)
-2. SEARCHES the web if needed (recent comics, issue verification)
-3. ASKS clarifying questions (vague prompts, multiple matches, missing details)
-4. PRESENTS an outline for CONFIRMATION before writing
-5. GENERATES the final structured script only after user approval
+2. SEARCHES the web to verify details and find the batcave.biz URL
+3. ASKS clarifying questions if the prompt is ambiguous
+4. FETCHES verified plot text from fandom wikis
+
+Output: comic_context.json containing title, series, issues, publisher, writer,
+artist, characters, batcave_url, wiki_url, plot_summary, confidence.
+
+Downstream stages consume comic_context.json:
+  Stage 2 uses batcave_url to scrape pages, then VLM-preprocesses each page
+  Stage 3 uses plot_summary + preprocessed pages to write ≤58s narration
+  Stage 4 synthesizes TTS audio
+  Stage 5 assembles the 9:16 video
 """
 from .agent import ScriptAgent
 from .cli import main

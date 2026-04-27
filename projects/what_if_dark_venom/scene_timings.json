@@ -1,0 +1,82 @@
+[
+  {
+    "scene_id": 1,
+    "text": "A symbiote. Alien. Alive. And desperate for a host. (page 3 panel 0)",
+    "start": 0.023,
+    "end": 5.573,
+    "page_ref": 3,
+    "panel_ref": 0
+  },
+  {
+    "scene_id": 2,
+    "text": "Ben Grimm arrives at the Baxter Building searching for Reed — but finds something far more dangerous waiting beneath a sheet. (page 4 panel 2)",
+    "start": 5.573,
+    "end": 12.376,
+    "page_ref": 4,
+    "panel_ref": 2
+  },
+  {
+    "scene_id": 3,
+    "text": "Reed explains the symbiote enhances its host's emotions, latching onto their conscience. Ben listens... too closely. (page 9 panel 0)",
+    "start": 12.376,
+    "end": 20.759,
+    "page_ref": 9,
+    "panel_ref": 0
+  },
+  {
+    "scene_id": 4,
+    "text": "The symbiote speaks directly to Ben's deepest desire: to look human again. It offers him everything Reed cannot. (page 9 panel 1)",
+    "start": 20.921,
+    "end": 28.746,
+    "page_ref": 9,
+    "panel_ref": 1
+  },
+  {
+    "scene_id": 5,
+    "text": "Ben's body begins to change. Black tendrils consume him. The Thing — becoming something else entirely. (page 14 panel 4)",
+    "start": 28.746,
+    "end": 37.082,
+    "page_ref": 14,
+    "panel_ref": 4
+  },
+  {
+    "scene_id": 6,
+    "text": "Reed realizes the terrible truth: removing the symbiote means Ben loses his humanity forever. He calls it his responsibility to be a monster. (page 13 panel 3)",
+    "start": 37.082,
+    "end": 46.184,
+    "page_ref": 13,
+    "panel_ref": 3
+  },
+  {
+    "scene_id": 7,
+    "text": "In the chaos, Venom — Ben's symbiote form — kills Reed Richards. Snaps his neck right in front of him. (page 28 panel 1)",
+    "start": 46.184,
+    "end": 52.779,
+    "page_ref": 28,
+    "panel_ref": 1
+  },
+  {
+    "scene_id": 8,
+    "text": "Ben weeps over Reed's body, blaming himself. The symbiote whispers: there is no Fantastic Four. There is only us. (page 29 panel 2)",
+    "start": 52.779,
+    "end": 60.233,
+    "page_ref": 29,
+    "panel_ref": 2
+  },
+  {
+    "scene_id": 9,
+    "text": "But Ben rejects the symbiote's words. With pure rage, he roars: It's just me. (page 29 panel 4)",
+    "start": 60.534,
+    "end": 67.5,
+    "page_ref": 29,
+    "panel_ref": 4
+  },
+  {
+    "scene_id": 10,
+    "text": "We make monsters. We feed them our grief, our anger, our insecurity. And they hold up a mirror. (page 30 panel 3)",
+    "start": 67.5,
+    "end": 75.442,
+    "page_ref": 30,
+    "panel_ref": 3
+  }
+]

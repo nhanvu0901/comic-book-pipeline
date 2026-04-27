@@ -1,0 +1,18 @@
+{
+  "page_number": 16,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_16.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": false,
+  "page_type": "skip",
+  "panels": [],
+  "text_blocks": [],
+  "page_summary": "",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "2f4ce751320735c9",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": "vlm_failure"
+}

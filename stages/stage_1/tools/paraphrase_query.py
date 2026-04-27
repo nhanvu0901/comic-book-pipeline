@@ -27,38 +27,41 @@ from ..ui import Colors
 # ─── Schema ─────────────────────────────────────────────────────────────────
 
 PARAPHRASE_QUERY_TOOL = {
-    "name": "paraphrase_query",
-    "description": (
-        "Generate N semantically diverse reformulations of a search query to maximize "
-        "search coverage. Use this BEFORE web_search when the topic is nuanced, ambiguous, "
-        "or when a single phrasing might miss important results. "
-        "The paraphrases vary in vocabulary, angle, and specificity so that each one "
-        "finds DIFFERENT results. After receiving the paraphrases, call web_search "
-        "separately for each one to gather the broadest set of information."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The original search query to paraphrase",
+    "type": "function",
+    "function": {
+        "name": "paraphrase_query",
+        "description": (
+            "Generate N semantically diverse reformulations of a search query to maximize "
+            "search coverage. Use this BEFORE web_search when the topic is nuanced, ambiguous, "
+            "or when a single phrasing might miss important results. "
+            "The paraphrases vary in vocabulary, angle, and specificity so that each one "
+            "finds DIFFERENT results. After receiving the paraphrases, call web_search "
+            "separately for each one to gather the broadest set of information."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The original search query to paraphrase",
+                },
+                "n": {
+                    "type": "integer",
+                    "description": "Number of paraphrases to generate. Between 2 and 5.",
+                },
+                "focus": {
+                    "type": "string",
+                    "description": (
+                        "Optional dimension to vary across paraphrases: "
+                        "'specificity' (broad to narrow), "
+                        "'perspective' (event vs character vs impact angle), "
+                        "'terminology' (technical jargon vs casual language). "
+                        "Leave empty for free variation."
+                    ),
+                },
             },
-            "n": {
-                "type": "integer",
-                "description": "Number of paraphrases to generate. Between 2 and 5.",
-            },
-            "focus": {
-                "type": "string",
-                "description": (
-                    "Optional dimension to vary across paraphrases: "
-                    "'specificity' (broad to narrow), "
-                    "'perspective' (event vs character vs impact angle), "
-                    "'terminology' (technical jargon vs casual language). "
-                    "Leave empty for free variation."
-                ),
-            },
+            "required": ["query", "n"],
         },
-        "required": ["query", "n"],
     },
 }
 
@@ -136,12 +139,12 @@ def paraphrase_query(query: str, n: int = 3, focus: str = "") -> dict:
     )
 
     try:
-        response = _client.messages.create(
+        response = _client.chat.completions.create(
             model=_model,
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text.strip()
+        raw = (response.choices[0].message.content or "").strip()
 
         # Parse: try direct JSON first, then find array inside text
         try:

@@ -1,0 +1,19 @@
+{
+  "project_name": "what_if_dark_venom",
+  "current_stage": 2,
+  "approved": {
+    "1": true,
+    "2": true,
+    "3": true
+  },
+  "dirty": {
+    "1": false,
+    "2": false,
+    "3": false
+  },
+  "last_prompt": "What If...? Dark: Venom",
+  "chosen_mode": "theme_analysis",
+  "chosen_hook": "What if the monster isn't the symbiote — but the grief and rage it amplifies?",
+  "tts_voice_id": "",
+  "tts_model": ""
+}

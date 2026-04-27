@@ -1,0 +1,40 @@
+{
+  "page_number": 32,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_32.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": false,
+  "page_type": "cover",
+  "panels": [
+    {
+      "index": 0,
+      "bbox": {
+        "x": 0,
+        "y": 952,
+        "w": 893,
+        "h": 891
+      },
+      "description": "A massive, muscular Venom stands menacingly in the foreground against a backdrop of a futuristic city, a skyscraper with a Fantastic Four logo, and police helicopters under a starry sky.",
+      "characters": [
+        "Venom"
+      ],
+      "dominant_emotion": "menacing"
+    }
+  ],
+  "text_blocks": [
+    {
+      "panel_index": 0,
+      "text": "...as man is monster.",
+      "type": "caption",
+      "speaker": null
+    }
+  ],
+  "page_summary": "Cover: Venom looms large and menacingly over a cityscape, with the Baxter Building visible in the background under a starry sky and police helicopters patrolling the area.",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "404c0ce795308351",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": ""
+}

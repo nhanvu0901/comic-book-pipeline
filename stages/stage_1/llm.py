@@ -1,13 +1,14 @@
 """
 LLM client setup, call_llm loop, and JSON extraction.
 
-The TOOLS list and dispatch logic now live in tools/.
-llm.py only handles the HTTP conversation with the model.
+Uses OpenRouter's OpenAI-compatible /v1/chat/completions endpoint. Tool use is
+native OpenAI function-calling format. The TOOLS list and dispatch logic live
+in tools/. llm.py only handles the HTTP conversation with the model.
 """
 import json
 import re
 from pathlib import Path
-from anthropic import Anthropic
+from openai import OpenAI
 
 from .tools import TOOLS, dispatch_tool
 
@@ -19,103 +20,107 @@ def load_system_prompt() -> str:
         return f.read()
 
 
-def create_client(api_key: str, base_url: str) -> Anthropic:
-    return Anthropic(api_key=api_key, base_url=base_url)
+def create_client(api_key: str, base_url: str) -> OpenAI:
+    return OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        default_headers={
+            "HTTP-Referer": "https://github.com/comic-video-pipeline",
+            "X-Title": "Comic Video Pipeline",
+        },
+    )
 
 
-def call_llm(client: Anthropic, messages: list, system: str, model: str) -> tuple[str, list]:
+def _assistant_tool_call_message(choice_message) -> dict:
+    """Serialize an assistant reply with tool_calls into a dict suitable for re-sending."""
+    return {
+        "role": "assistant",
+        "content": choice_message.content,
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in (choice_message.tool_calls or [])
+        ],
+    }
+
+
+def call_llm(client: OpenAI, messages: list, system: str, model: str, tools: list | None = None) -> tuple[str, list]:
     """
     Call the LLM with tool-use support. Handles the tool-call loop internally.
 
-    The LLM may request multiple tools in a single response (parallel tool calls).
-    This function handles all of them before returning to the caller.
+    Args:
+        messages:  conversation history (OpenAI format, without the system message)
+        system:    system prompt, prepended as role=system on each request
+        tools:     optional tool schemas (OpenAI function format). None = all TOOLS. [] = disabled.
 
     Returns:
         (response_text, updated_messages)
     """
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=system,
-        tools=TOOLS,
-        messages=messages,
-    )
+    active_tools = tools if tools is not None else TOOLS
 
-    # Tool-use loop — runs until the LLM stops requesting tools or hits the limit
+    def _request(msgs: list, with_tools: bool):
+        kwargs = {
+            "model": model,
+            "max_tokens": 4096,
+            "messages": [{"role": "system", "content": system}] + msgs,
+        }
+        if with_tools and active_tools:
+            kwargs["tools"] = active_tools
+        return client.chat.completions.create(**kwargs)
+
+    response = _request(messages, with_tools=True)
+    choice = response.choices[0]
+
     iteration = 0
-    while response.stop_reason == "tool_use" and iteration < 15:
+    while choice.finish_reason == "tool_calls" and iteration < 15:
         iteration += 1
+        tool_calls = choice.message.tool_calls or []
 
-        # Collect ALL tool_use blocks from this response (LLM may batch them)
-        tool_uses = [b for b in response.content if b.type == "tool_use"]
+        messages = messages + [_assistant_tool_call_message(choice.message)]
 
-        # Execute each requested tool and collect results
-        tool_results = []
-        for tool_use in tool_uses:
-            result = dispatch_tool(tool_use.name, tool_use.input)
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_use.id,
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+            except json.JSONDecodeError:
+                args = {}
+            result = dispatch_tool(tc.function.name, args)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
                 "content": json.dumps(result),
             })
 
-        # Append: assistant's tool request + our tool results — then call again
-        messages = messages + [
-            {"role": "assistant", "content": response.content},
-            {"role": "user", "content": tool_results},
-        ]
+        response = _request(messages, with_tools=True)
+        choice = response.choices[0]
 
-        response = client.messages.create(
-            model=model,
-            max_tokens=4096,
-            system=system,
-            tools=TOOLS,
-            messages=messages,
-        )
-
-    # If we hit the iteration limit and the LLM still wants to call tools,
-    # force a final text-only response
-    if response.stop_reason == "tool_use" and iteration >= 15:
-        # Append the last tool calls with a "budget exhausted" result
-        tool_uses = [b for b in response.content if b.type == "tool_use"]
-        tool_results = []
-        for tool_use in tool_uses:
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_use.id,
+    # Budget exhausted and the model still wants tools — force a text-only reply.
+    if choice.finish_reason == "tool_calls" and iteration >= 15:
+        tool_calls = choice.message.tool_calls or []
+        messages = messages + [_assistant_tool_call_message(choice.message)]
+        for tc in tool_calls:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
                 "content": json.dumps({"note": "Tool call budget exhausted. Please respond with your final answer now."}),
             })
+        response = _request(messages, with_tools=False)
+        choice = response.choices[0]
 
-        messages = messages + [
-            {"role": "assistant", "content": response.content},
-            {"role": "user", "content": tool_results},
-        ]
-
-        response = client.messages.create(
-            model=model,
-            max_tokens=4096,
-            system=system,
-            messages=messages,  # No tools param → LLM can only respond with text
-        )
-
-    # Extract final text from the last response
-    text_block = next((b for b in response.content if hasattr(b, "text")), None)
-    text = text_block.text.strip() if text_block else ""
-
-    final_messages = messages + [
-        {"role": "assistant", "content": response.content}
-    ]
-
-    return text, final_messages
+    text = (choice.message.content or "").strip()
+    messages = messages + [{"role": "assistant", "content": choice.message.content}]
+    return text, messages
 
 
 def _fix_json(text: str) -> str:
     """Fix common LLM JSON errors before parsing."""
-    # Fix unquoted year ranges like 2009-2010 → "2009-2010"
     text = re.sub(r':\s*(\d{4})\s*-\s*(\d{4})\s*([,}\]])', r': "\1-\2"\3', text)
-    # Fix trailing commas before } or ]
     text = re.sub(r',\s*([}\]])', r'\1', text)
-    # Fix null without quotes (already valid JSON, but some models output None)
     text = re.sub(r':\s*None\s*([,}\]])', r': null\1', text)
     return text
 
@@ -136,14 +141,12 @@ def extract_json(raw: str) -> dict | None:
                 except json.JSONDecodeError:
                     continue
 
-    # Try parsing the whole thing
     for attempt_text in [raw, _fix_json(raw)]:
         try:
             return json.loads(attempt_text)
         except json.JSONDecodeError:
             continue
 
-    # Try finding JSON-like structure in the text
     brace_start = raw.find("{")
     brace_end = raw.rfind("}")
     if brace_start != -1 and brace_end != -1:

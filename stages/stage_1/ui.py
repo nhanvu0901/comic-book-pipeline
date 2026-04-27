@@ -2,7 +2,6 @@
 Terminal UI helpers — colors, styled print functions, and user input.
 """
 import sys
-import textwrap
 
 
 class Colors:
@@ -18,21 +17,16 @@ class Colors:
 
 
 def print_header(text):
-    print(f"\n{Colors.BOLD}{Colors.HEADER}{'═' * 70}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.HEADER}  {text}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.HEADER}{'═' * 70}{Colors.END}\n")
+    print(f"\n{Colors.BOLD}{Colors.HEADER}══ {text} ══{Colors.END}\n")
 
 
 def print_phase(phase_name, emoji="🔹"):
     print(f"\n{Colors.BOLD}{Colors.CYAN}{emoji} PHASE: {phase_name}{Colors.END}")
-    print(f"{Colors.DIM}{'─' * 50}{Colors.END}")
 
 
 def print_agent(text):
     """Print agent's conversational message."""
-    wrapped = textwrap.fill(text, width=68, initial_indent="  ", subsequent_indent="  ")
-    print(f"{Colors.GREEN}🤖 PanelNarrator:{Colors.END}")
-    print(f"{Colors.GREEN}{wrapped}{Colors.END}")
+    print(f"{Colors.GREEN}🤖 PanelNarrator:{Colors.END} {text}")
 
 
 def print_info(label, value):

@@ -1,0 +1,98 @@
+{
+  "page_number": 25,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_25.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": true,
+  "page_type": "story",
+  "panels": [
+    {
+      "index": 0,
+      "bbox": {
+        "x": 0,
+        "y": 221,
+        "w": 391,
+        "h": 899
+      },
+      "description": "Sue Storm and Reed Richards react in terror as debris flies around them during an explosion.",
+      "characters": [
+        "Sue Storm",
+        "Reed Richards"
+      ],
+      "dominant_emotion": "terror"
+    },
+    {
+      "index": 1,
+      "bbox": {
+        "x": 408,
+        "y": 227,
+        "w": 340,
+        "h": 887
+      },
+      "description": "Silhouettes of figures fall through a dark, debris-filled void following a massive impact.",
+      "characters": [],
+      "dominant_emotion": "chaos"
+    },
+    {
+      "index": 2,
+      "bbox": {
+        "x": 765,
+        "y": 209,
+        "w": 435,
+        "h": 909
+      },
+      "description": "Reed Richards looks around frantically in the rubble while Sue Storm lies unconscious on the ground.",
+      "characters": [
+        "Reed Richards",
+        "Sue Storm"
+      ],
+      "dominant_emotion": "desperation"
+    }
+  ],
+  "text_blocks": [
+    {
+      "panel_index": 0,
+      "text": "DR. CONNORS? WHAT HAPPENED TO BEN? IS HE--?",
+      "type": "speech",
+      "speaker": "Sue Storm"
+    },
+    {
+      "panel_index": 1,
+      "text": "THOOM",
+      "type": "sfx",
+      "speaker": null
+    },
+    {
+      "panel_index": 1,
+      "text": "REED!",
+      "type": "speech",
+      "speaker": "Reed Richards"
+    },
+    {
+      "panel_index": 2,
+      "text": "SUE... TELL ME YOU'RE OKAY--",
+      "type": "speech",
+      "speaker": "Reed Richards"
+    },
+    {
+      "panel_index": 3,
+      "text": "ARE YOU READY TO SSSSEEE THE FULL POTENTIAL OF THIS SSSSUIT, REED RICHARDSSSS?",
+      "type": "speech",
+      "speaker": "Monster"
+    },
+    {
+      "panel_index": 3,
+      "text": "WHAM",
+      "type": "sfx",
+      "speaker": null
+    }
+  ],
+  "page_summary": "Following a violent explosion, Reed Richards frantically searches for an unconscious Sue Storm amidst the rubble. A monstrous entity wearing a black suit emerges from the chaos to taunt Reed and threaten Sue.",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "da0a4cdd20c8769d",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": ""
+}

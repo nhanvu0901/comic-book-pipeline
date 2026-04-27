@@ -1,7 +1,8 @@
 """
-Comic Scraper — scrape comic pages from batcave.biz using nodriver.
+Comic Scraper — scrape comic pages from batcave.biz via pure HTTP (curl_cffi).
 
-Uses window.__DATA__ embedded JSON for efficient chapter/image discovery.
+Solves the site's SHA-256 proof-of-work challenge in Python, then reads
+window.__DATA__ embedded JSON for chapters / image URLs. No browser needed.
 """
 from .readcomiconline import discover_issues, scrape_issue_pages, scrape_single_page
 

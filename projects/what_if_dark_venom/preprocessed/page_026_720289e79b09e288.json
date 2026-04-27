@@ -1,0 +1,131 @@
+{
+  "page_number": 26,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_26.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": true,
+  "page_type": "story",
+  "panels": [
+    {
+      "index": 0,
+      "bbox": {
+        "x": 579,
+        "y": 0,
+        "w": 621,
+        "h": 353
+      },
+      "description": "The Thing struggles with immense physical pain while straining his muscular arms.",
+      "characters": [
+        "The Thing"
+      ],
+      "dominant_emotion": "pain"
+    },
+    {
+      "index": 1,
+      "bbox": {
+        "x": 0,
+        "y": 393,
+        "w": 618,
+        "h": 471
+      },
+      "description": "A close-up of a man's face showing intense agony and blood dripping from his mouth.",
+      "characters": [
+        "Man"
+      ],
+      "dominant_emotion": "agony"
+    },
+    {
+      "index": 2,
+      "bbox": {
+        "x": 0,
+        "y": 809,
+        "w": 665,
+        "h": 464
+      },
+      "description": "The Thing stands inside a containment unit, preparing to break out.",
+      "characters": [
+        "The Thing"
+      ],
+      "dominant_emotion": "determination"
+    },
+    {
+      "index": 3,
+      "bbox": {
+        "x": 0,
+        "y": 1266,
+        "w": 888,
+        "h": 578
+      },
+      "description": "A blonde woman watches as Venom attacks another person in the background.",
+      "characters": [
+        "Blonde Woman",
+        "Venom"
+      ],
+      "dominant_emotion": "alarm"
+    }
+  ],
+  "text_blocks": [
+    {
+      "panel_index": 0,
+      "text": "...HRGN...",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 1,
+      "text": "HRGN!",
+      "type": "speech",
+      "speaker": null
+    },
+    {
+      "panel_index": 2,
+      "text": "COME... ON...",
+      "type": "speech",
+      "speaker": "The Thing"
+    },
+    {
+      "panel_index": 3,
+      "text": "GET AWAY FROM HIM!",
+      "type": "speech",
+      "speaker": null
+    },
+    {
+      "panel_index": 4,
+      "text": "COME ON!",
+      "type": "speech",
+      "speaker": null
+    },
+    {
+      "panel_index": 4,
+      "text": "WHUMP",
+      "type": "sfx",
+      "speaker": null
+    },
+    {
+      "panel_index": 6,
+      "text": "LUNGH!",
+      "type": "speech",
+      "speaker": null
+    },
+    {
+      "panel_index": 6,
+      "text": "KRAAAK",
+      "type": "sfx",
+      "speaker": null
+    },
+    {
+      "panel_index": 7,
+      "text": "...UNGH...",
+      "type": "speech",
+      "speaker": null
+    }
+  ],
+  "page_summary": "The Thing undergoes a painful transformation or breakout, shattering glass to escape containment. Meanwhile, a chaotic fight ensues involving Venom and a blonde woman who is injured during the struggle.",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "720289e79b09e288",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": ""
+}

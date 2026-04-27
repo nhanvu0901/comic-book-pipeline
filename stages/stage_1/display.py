@@ -1,8 +1,7 @@
 """
 Pretty-print handlers for each conversation phase.
 """
-import textwrap
-from .ui import Colors, print_phase, print_info, print_agent
+from .ui import Colors, print_phase, print_info
 
 
 def display_analysis(data: dict):
@@ -44,85 +43,42 @@ def display_analysis(data: dict):
             print(f"       {series} {issues} ({year})")
             print(f"       Writer: {writer}")
             if brief:
-                wrapped = textwrap.fill(brief, width=55, initial_indent="       ", subsequent_indent="       ")
-                print(f"{Colors.DIM}{wrapped}{Colors.END}")
+                print(f"       {Colors.DIM}{brief}{Colors.END}")
 
     if data.get("needs_web_search"):
         print(f"\n  {Colors.DIM}🌐 Web search recommended: {data.get('search_reason', 'More info needed')}{Colors.END}")
 
 
-def display_confirmation(data: dict):
-    """Pretty-print the confirmation/outline phase output."""
-    print_phase("STORY OUTLINE", "📋")
+def display_comic_context(ctx: dict):
+    """Pretty-print the final comic_context before save."""
+    print_phase("COMIC CONTEXT", "📘")
 
-    source = data.get("confirmed_source", {})
-    print_info("Title", source.get("title", "?"))
-    print_info("Series", f"{source.get('series', '?')} {source.get('issues', '')}")
-    print_info("Year", source.get("year", "?"))
-    print_info("Writer", source.get("writer", "?"))
-    print_info("Artist", source.get("artist", "?"))
-    print_info("Era", source.get("era", "?"))
+    print_info("Title", ctx.get("title", "?"))
+    print_info("Series", f"{ctx.get('series', '?')} {ctx.get('issues', '')}".strip())
+    print_info("Year", ctx.get("year", "?"))
+    print_info("Publisher", ctx.get("publisher", "?"))
+    print_info("Writer", ctx.get("writer", "?"))
+    print_info("Artist", ctx.get("artist", "?"))
+    print_info("Era", ctx.get("era", "?"))
 
-    summary = data.get("story_summary", "")
-    if summary:
-        print(f"\n  {Colors.BOLD}📖 Summary:{Colors.END}")
-        wrapped = textwrap.fill(summary, width=64, initial_indent="     ", subsequent_indent="     ")
-        print(wrapped)
+    chars = ctx.get("characters", [])
+    if chars:
+        print_info("Characters", ", ".join(chars))
 
-    outline = data.get("scene_outline", [])
-    if outline:
-        print(f"\n  {Colors.BOLD}🎬 Scene Breakdown ({len(outline)} scenes):{Colors.END}")
-        for s in outline:
-            sid = s.get("scene_id", "?")
-            beat = s.get("beat", "?")
-            dur = s.get("estimated_seconds", "?")
-            print(f"     {Colors.BOLD}[{sid:>2}]{Colors.END} {beat} {Colors.DIM}({dur}s){Colors.END}")
+    batcave = ctx.get("batcave_url", "")
+    if batcave:
+        print_info("batcave_url", batcave)
+    else:
+        print(f"  {Colors.YELLOW}⚠️  batcave_url missing — set it manually before Stage 2{Colors.END}")
 
-    total = data.get("estimated_duration_seconds", "?")
-    tone = data.get("tone", "?")
-    style = data.get("narrator_style", "?")
+    wiki = ctx.get("wiki_url", "")
+    if wiki:
+        print_info("wiki_url", wiki)
 
-    print(f"\n  {Colors.BOLD}⏱️  Estimated duration:{Colors.END} {total}s")
-    print(f"  {Colors.BOLD}🎭 Tone:{Colors.END} {tone}")
-    print(f"  {Colors.BOLD}🎙️  Narrator style:{Colors.END} {style}")
-
-    msg = data.get("message_to_user", "")
-    if msg:
-        print()
-        print_agent(msg)
-
-
-def display_script_summary(data: dict):
-    """Pretty-print a summary of the generated script."""
-    print_phase("SCRIPT GENERATED", "✅")
-
-    print_info("Title", data.get("title", "?"))
-    source = data.get("comic_source", {})
-    print_info("Source", f"{source.get('series', '?')} {source.get('issues', '')} ({source.get('year', '?')})")
-    print_info("Writer/Artist", f"{source.get('writer', '?')} / {source.get('artist', '?')}")
-
-    scenes = data.get("scenes", [])
-    print(f"\n  {Colors.BOLD}🎬 {len(scenes)} Scenes:{Colors.END}")
-
-    total_words = 0
-    for s in scenes:
-        sid = s.get("scene_id", "?")
-        narration = s.get("narration", "")
-        effect = s.get("effect", "?")
-        mood = s.get("mood", "?")
-        words = len(narration.split())
-        total_words += words
-        duration_est = round(words / 3.0, 1)
-
-        print(f"\n     {Colors.BOLD}Scene {sid}{Colors.END} [{effect}] [{mood}]")
-        wrapped = textwrap.fill(
-            f'"{narration}"',
-            width=60,
-            initial_indent="       ",
-            subsequent_indent="       ",
-        )
-        print(f"{Colors.DIM}{wrapped}{Colors.END}")
-        print(f"       {Colors.DIM}~{duration_est}s ({words} words){Colors.END}")
-
-    total_dur = round(total_words / 3.0)
-    print(f"\n  {Colors.BOLD}📊 Total:{Colors.END} {len(scenes)} scenes, ~{total_words} words, ~{total_dur}s narration")
+    plot = ctx.get("plot_summary", "")
+    if plot:
+        print(f"\n  {Colors.BOLD}📖 Plot summary ({len(plot)} chars):{Colors.END}")
+        preview = plot[:400] + ("..." if len(plot) > 400 else "")
+        print(f"     {Colors.DIM}{preview}{Colors.END}")
+    else:
+        print(f"\n  {Colors.YELLOW}⚠️  No plot summary — downstream will rely on VLM page reading only{Colors.END}")

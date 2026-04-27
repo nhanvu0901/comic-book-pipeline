@@ -1,0 +1,98 @@
+{
+  "page_number": 27,
+  "source_image": "/Users/nhanvu/Documents/youtuber/comic/comic-video-pipeline/.cache/comic_scraper/series-6587/chapter-34073/page_27.jpg",
+  "image_dimensions": {
+    "width": 1200,
+    "height": 1844
+  },
+  "is_story_page": true,
+  "page_type": "story",
+  "panels": [
+    {
+      "index": 0,
+      "bbox": {
+        "x": 33,
+        "y": 747,
+        "w": 819,
+        "h": 911
+      },
+      "description": "Venom looms over a terrified Dr. Connors amidst rubble, while a close-up of Venom's snarling face is shown on the left.",
+      "characters": [
+        "Venom",
+        "Dr. Connors"
+      ],
+      "dominant_emotion": "menacing"
+    },
+    {
+      "index": 1,
+      "bbox": {
+        "x": 561,
+        "y": 1195,
+        "w": 605,
+        "h": 603
+      },
+      "description": "Venom grabs Dr. Connors by the throat as he mocks him, while a character sits defeated in the background debris.",
+      "characters": [
+        "Venom",
+        "Dr. Connors"
+      ],
+      "dominant_emotion": "aggressive"
+    }
+  ],
+  "text_blocks": [
+    {
+      "panel_index": 0,
+      "text": "HRSSSSS!",
+      "type": "sfx",
+      "speaker": null
+    },
+    {
+      "panel_index": 0,
+      "text": "YOU THOUGHT I WASSSS NOTHING MORE THAN A CREATURE. YOU THOUGHT YOU WERE THE SSSSMARTEST MAN AROUND WHEN WE WERE SSSSTUCK ON BATTLEWORD...",
+      "type": "speech",
+      "speaker": "Venom"
+    },
+    {
+      "panel_index": 1,
+      "text": "YOU DON'T SSSSSEEM SO SSSSSMART--",
+      "type": "speech",
+      "speaker": "Venom"
+    },
+    {
+      "panel_index": 1,
+      "text": "NO...",
+      "type": "speech",
+      "speaker": "Dr. Connors"
+    },
+    {
+      "panel_index": 2,
+      "text": "KAFF... H-HOW...?",
+      "type": "speech",
+      "speaker": "Dr. Connors"
+    },
+    {
+      "panel_index": 2,
+      "text": "I WILL ENJOY THISSSS.",
+      "type": "speech",
+      "speaker": "Venom"
+    },
+    {
+      "panel_index": 2,
+      "text": "SHOMP",
+      "type": "sfx",
+      "speaker": null
+    },
+    {
+      "panel_index": 3,
+      "text": "DR. CONNORS...",
+      "type": "speech",
+      "speaker": "Dr. Connors"
+    }
+  ],
+  "page_summary": "Venom confronts and physically assaults Dr. Connors amidst a field of rubble. The page depicts Venom mocking Connors' intellect before violently biting into his shoulder, leaving Connors wounded and gasping.",
+  "issue_label": "#1",
+  "vlm_model": "google/gemma-4-26b-a4b-it:free",
+  "content_hash": "1c13ef41bcbe8ad6",
+  "preprocessing_method": "yolo+vlm",
+  "skip_reason": ""
+}
