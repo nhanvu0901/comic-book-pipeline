@@ -1,77 +1,82 @@
 """
-Panel bounding-box detection via a YOLO model fine-tuned on Western comics.
+Panel bounding-box detection via Magi v3 (Florence-2 based, ICCV 2025).
 
-Model: mosesb/best-comic-panel-detection (Apache 2.0 weights, YOLOv12x).
-Library: ultralytics (AGPL — fine for personal use; user has confirmed
-personal-use-only for this pipeline).
+Model: ragavsachdeva/magiv3 (academic-research license)
+Inference: whole-page detection with page-level attention (no tiling needed).
+Input: RGB color preserved — Magi's default loader desaturates to grayscale,
+which loses Western color comic information; we skip that step.
 
-Device selection: MPS on Apple Silicon, CUDA on NVIDIA, else CPU.
+Device selection: CUDA > MPS > CPU. FP16 only on CUDA.
 """
 from pathlib import Path
 from functools import lru_cache
 
+import numpy as np
+import torch
+from PIL import Image
+from transformers import AutoModelForCausalLM, AutoProcessor
 
-_HF_REPO = "mosesb/best-comic-panel-detection"
-_WEIGHTS_FILENAME = "best.pt"
+
+_HF_REPO = "ragavsachdeva/magiv3"
+
+MIN_AREA_RATIO = 0.01
+MAX_ASPECT_RATIO = 6.0
 
 
 def _pick_device() -> str:
-    try:
-        import torch
-        if torch.backends.mps.is_available():
-            return "mps"
-        if torch.cuda.is_available():
-            return "cuda"
-    except Exception:
-        pass
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
     return "cpu"
 
 
 @lru_cache(maxsize=1)
 def _load_model():
-    """Load YOLO weights from HuggingFace (cached after first call)."""
-    from ultralytics import YOLO
-    from huggingface_hub import hf_hub_download
+    device = _pick_device()
+    dtype = torch.float16 if device == "cuda" else torch.float32
+    model = AutoModelForCausalLM.from_pretrained(
+        _HF_REPO,
+        torch_dtype=dtype,
+        trust_remote_code=True,
+    ).to(device).eval()
+    processor = AutoProcessor.from_pretrained(_HF_REPO, trust_remote_code=True)
+    return model, processor
 
-    weights_path = hf_hub_download(repo_id=_HF_REPO, filename=_WEIGHTS_FILENAME)
-    return YOLO(weights_path)
 
-
-def detect_panels(image_path: Path | str, conf: float = 0.25, imgsz: int = 1280) -> list[dict]:
+def detect_panels(image_path: Path | str) -> list[dict]:
     """
-    Run YOLO panel detection on a single image.
+    Run Magi v3 panel detection on a single image.
 
     Returns:
         List of panel dicts sorted in Western reading order (LTR, top-to-bottom):
             [{"bbox": {"x": int, "y": int, "w": int, "h": int}, "confidence": float}, ...]
     """
-    model = _load_model()
-    results = model.predict(
-        source=str(image_path),
-        device=_pick_device(),
-        imgsz=imgsz,
-        conf=conf,
-        verbose=False,
-    )
-    if not results:
-        return []
+    model, processor = _load_model()
 
-    boxes = results[0].boxes
-    if boxes is None or len(boxes) == 0:
-        return []
+    img = Image.open(image_path).convert("RGB")
+    img_array = np.array(img)
+    page_w, page_h = img.size
+    page_area = page_w * page_h
+
+    with torch.no_grad():
+        results = model.predict_detections_and_associations([img_array], processor)
+
+    panel_bboxes = results[0].get("panels", []) if results else []
 
     panels: list[dict] = []
-    for i in range(len(boxes)):
-        x1, y1, x2, y2 = [float(v) for v in boxes.xyxy[i].tolist()]
-        conf_i = float(boxes.conf[i].item())
+    for box in panel_bboxes:
+        x1, y1, x2, y2 = (int(v) for v in box[:4])
+        w, h = x2 - x1, y2 - y1
+        if w <= 0 or h <= 0:
+            continue
+        area_ratio = (w * h) / page_area
+        aspect = max(w / max(h, 1), h / max(w, 1))
+        if area_ratio < MIN_AREA_RATIO or aspect > MAX_ASPECT_RATIO:
+            continue
         panels.append({
-            "bbox": {
-                "x": int(round(x1)),
-                "y": int(round(y1)),
-                "w": int(round(x2 - x1)),
-                "h": int(round(y2 - y1)),
-            },
-            "confidence": round(conf_i, 3),
+            "bbox": {"x": x1, "y": y1, "w": w, "h": h},
+            "confidence": 1.0,
         })
 
     return sort_western_reading_order(panels)

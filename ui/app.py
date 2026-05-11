@@ -9,17 +9,18 @@ from __future__ import annotations
 
 import flet as ft
 
-from .screens import s1_identify, s2_preprocess, s3_narrate, s4_tts, s5_video
+from .screens import s1_identify, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video
 from .state import AppState, list_projects, load_state, save_state
 from .theme import BG, BG_PANEL, BORDER, ACCENT, TEXT_MUTED, TEXT_PRIMARY, apply_theme
 
 
 STAGE_BUILDERS = {
     1: s1_identify.build,
-    2: s2_preprocess.build,
-    3: s3_narrate.build,
-    4: s4_tts.build,
-    5: s5_video.build,
+    2: s2_download.build,
+    3: s2_preprocess.build,
+    4: s3_narrate.build,
+    5: s4_tts.build,
+    6: s5_video.build,
 }
 
 
@@ -50,7 +51,7 @@ async def main(page: ft.Page):
         page.update()
 
     def goto_stage(stage: int):
-        if stage < 1 or stage > 5:
+        if stage < 1 or stage > 6:
             return
         state.current_stage = stage
         save_state(state)

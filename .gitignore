@@ -19,9 +19,13 @@ Thumbs.db
 *.mp3
 *.srt
 
-# Comic scraper cache
-.cache/comic_scraper/
-
 # Temp
 *.tmp
 *.bak
+
+# Stage logs
+logs/
+projects/
+.understand-anything/
+bin/
+comic-pipeline-course/

@@ -32,7 +32,7 @@ def stepper_nav(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
             padding=ft.padding.only(left=20, top=22, bottom=18),
         ),
     ]
-    for stage in range(1, 6):
+    for stage in range(1, 7):
         label, color = status_for(state, stage)
         active = stage == state.current_stage
         items.append(_step_row(stage, active, label, color, on_go, state))
@@ -61,15 +61,9 @@ def _step_row(
     stage: int, active: bool, label: str, color: str,
     on_go: Callable[[int], None], state: AppState,
 ) -> ft.Control:
-    enabled = state.is_approved(stage) or stage == state.current_stage or stage == 1
-
     def _click(_e, s=stage):
-        if enabled:
-            on_go(s)
+        on_go(s)
 
-    dot = ft.Container(
-        width=10, height=10, border_radius=5, bgcolor=color,
-    )
     number = ft.Text(
         f"{stage}", size=13, weight=ft.FontWeight.BOLD,
         color=TEXT_PRIMARY if active else TEXT_MUTED,
@@ -79,23 +73,26 @@ def _step_row(
         color=TEXT_PRIMARY if active else TEXT_MUTED,
         weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400,
     )
-    chip = ft.Container(
-        content=ft.Text(label, size=9, color=color, weight=ft.FontWeight.BOLD,
-                        ),
-        padding=ft.padding.symmetric(horizontal=6, vertical=2),
-        border=ft.border.all(1, color),
-        border_radius=3,
-    )
-    row = ft.Container(
-        content=ft.Row([number, dot, title, ft.Container(expand=True), chip],
-                       spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+    row_items: list[ft.Control] = [number, title, ft.Container(expand=True)]
+    if label != "DONE":
+        row_items.insert(1, ft.Container(
+            width=10, height=10, border_radius=5, bgcolor=color,
+        ))
+        row_items.append(ft.Container(
+            content=ft.Text(label, size=9, color=color, weight=ft.FontWeight.BOLD),
+            padding=ft.padding.symmetric(horizontal=6, vertical=2),
+            border=ft.border.all(1, color),
+            border_radius=3,
+        ))
+    return ft.Container(
+        content=ft.Row(row_items, spacing=10,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
         padding=ft.padding.symmetric(horizontal=18, vertical=14),
         bgcolor=BG_ELEVATED if active else None,
         border=ft.border.only(left=ft.BorderSide(3, color if active else BG_PANEL)),
-        on_click=_click if enabled else None,
-        ink=enabled,
+        on_click=_click,
+        ink=True,
     )
-    return row
 
 
 def three_col(

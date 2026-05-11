@@ -209,40 +209,31 @@ def discover_issues(series_url: str, headless: bool | None = None) -> list[dict]
 
 def scrape_issue_pages(
     reader_url: str,
-    issue_slug: str = "",
-    series_slug: str = "",
-    cache_dir: str | Path = ".cache/comic_scraper",
+    *,
+    project_root: Path,
+    chapter_index: int = 1,
     headless: bool | None = None,
 ) -> list[Path]:
     """
-    Scrape all pages from a comic issue reader page.
-
-    Strategy (no browser — pure HTTP):
-      - Fetch the reader URL with an authenticated curl_cffi session.
-      - Parse window.__DATA__.images for the ordered list of image URLs.
-      - Download each image with Referer: https://batcave.biz/ + session cookies.
+    Scrape all pages from a comic issue reader page into the project's
+    raw_comic/ folder, prefixed with chXX_ so multiple chapters can coexist.
 
     Args:
         reader_url: e.g. "https://batcave.biz/reader/6587/34073"
-        issue_slug: Cache directory label (auto-derived from URL if empty).
-        series_slug: Cache directory label (auto-derived from URL if empty).
-        cache_dir: Local cache directory root.
+        project_root: Path to projects/<slug>/.
+        chapter_index: 1-based chapter number, used as filename prefix.
         headless: Ignored (kept for backwards compatibility).
 
     Returns:
         Sorted list of local file paths for each downloaded page.
     """
-    if not series_slug:
-        series_slug = _url_to_cache_key(reader_url, "series")
-    if not issue_slug:
-        issue_slug = _url_to_cache_key(reader_url, "issue")
+    raw_dir = Path(project_root) / "raw_comic"
+    raw_dir.mkdir(parents=True, exist_ok=True)
 
-    issue_dir = Path(cache_dir) / series_slug / issue_slug
-    issue_dir.mkdir(parents=True, exist_ok=True)
-
-    existing = sorted(issue_dir.glob("page_*.jpg"))
+    prefix = f"ch{chapter_index:02d}_"
+    existing = sorted(raw_dir.glob(f"{prefix}page_*.jpg"))
     if existing:
-        print(f"[scraper] Using cached pages: {len(existing)} pages in {issue_dir}")
+        print(f"[scraper] Using cached pages: {len(existing)} pages in {raw_dir} ({prefix}*)")
         return existing
 
     data = _fetch_data(reader_url)
@@ -262,7 +253,7 @@ def scrape_issue_pages(
 
     pages: list[Path] = []
     for i, url in enumerate(image_urls, start=1):
-        page_path = issue_dir / f"page_{i:02d}.jpg"
+        page_path = raw_dir / f"{prefix}page_{i:02d}.jpg"
         if page_path.exists():
             pages.append(page_path)
             continue
@@ -281,29 +272,20 @@ def scrape_issue_pages(
 def scrape_single_page(
     reader_url: str,
     page_num: int,
-    issue_slug: str = "",
-    series_slug: str = "",
-    cache_dir: str | Path = ".cache/comic_scraper",
+    *,
+    project_root: Path,
+    chapter_index: int = 1,
 ) -> Path | None:
     """Scrape a single page from an issue. Uses cache if available."""
-    pages = scrape_issue_pages(reader_url, issue_slug, series_slug, cache_dir)
+    pages = scrape_issue_pages(
+        reader_url, project_root=project_root, chapter_index=chapter_index,
+    )
     if 1 <= page_num <= len(pages):
         return pages[page_num - 1]
     return None
 
 
 # ─── URL / slug helpers ───────────────────────────────────────────────────────
-
-
-def _url_to_cache_key(url: str, part: str) -> str:
-    """Extract a usable cache key from a batcave.biz URL."""
-    m = re.search(r"/reader/(\d+)/(\d+)", url)
-    if m:
-        return f"series-{m.group(1)}" if part == "series" else f"chapter-{m.group(2)}"
-    m = re.search(r"/(\d+-[^/]+?)(?:\.html)?$", url)
-    if m:
-        return m.group(1)[:60]
-    return re.sub(r"[^a-zA-Z0-9-]", "-", url.split("/")[-1])[:60]
 
 
 def build_issue_slug(source_issue: str) -> str:

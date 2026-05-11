@@ -16,11 +16,10 @@ from dataclasses import dataclass
 
 import requests
 
-from config import CARTESIA_API_KEY, CARTESIA_MODEL, CARTESIA_VOICE_ID
+from config import CARTESIA_API_KEY, CARTESIA_API_VERSION, CARTESIA_MODEL, CARTESIA_VOICE_ID
 
 
 _CARTESIA_URL = "https://api.cartesia.ai/tts/sse"
-_CARTESIA_VERSION = "2024-11-13"
 
 
 @dataclass
@@ -30,54 +29,60 @@ class CartesiaResult:
     word_timestamps: list[dict]   # [{"word": str, "start": float, "end": float}]
 
 
+VALID_EMOTIONS = (
+    "neutral", "happy", "excited", "enthusiastic", "elated", "euphoric",
+    "triumphant", "amazed", "surprised", "flirtatious", "curious", "content",
+    "peaceful", "serene", "calm", "grateful", "affectionate", "trust",
+    "sympathetic", "anticipation", "mysterious", "angry", "mad", "outraged",
+    "frustrated", "agitated", "threatened", "disgusted", "contempt", "envious",
+    "sarcastic", "ironic", "sad", "dejected", "melancholic", "disappointed",
+    "hurt", "guilty", "bored", "tired", "rejected", "nostalgic", "wistful",
+    "apologetic", "hesitant", "insecure", "confused", "resigned", "anxious",
+    "panicked", "alarmed", "scared", "proud", "confident", "distant",
+    "skeptical", "contemplative", "determined",
+)
+
+
 def synthesize(
     text: str,
     *,
     voice_id: str | None = None,
     model: str | None = None,
     speed: float = 1.0,
+    volume: float = 1.0,
+    emotion: str = "neutral",
+    language: str = "en",
     sample_rate: int = 44100,
     timeout: int = 120,
 ) -> CartesiaResult:
-    """
-    Generate TTS audio + word timestamps for `text`.
-
-    Args:
-        text:         script to speak. Newlines/punctuation preserved.
-        voice_id:     Cartesia voice UUID. Defaults to CARTESIA_VOICE_ID
-                      ("Comic Vocal" — cloned from comic.wav).
-        model:        Cartesia model. Defaults to CARTESIA_MODEL (sonic-2).
-        speed:        Speaking speed 0.7-1.3. 1.0 = natural.
-        sample_rate:  Output WAV sample rate. 44100 is our default for quality.
-        timeout:      Request timeout in seconds.
-
-    Returns:
-        CartesiaResult with .wav_bytes (WAV header included), .sample_rate,
-        and .word_timestamps (list of dicts with word/start/end).
-    """
+    """Generate TTS audio + word timestamps for `text`. Supports SSML <break time="500ms"/> tags."""
     if not CARTESIA_API_KEY:
         raise RuntimeError("CARTESIA_API_KEY is empty — add it to .env")
     if not text or not text.strip():
         raise ValueError("synthesize() called with empty text")
+    if emotion not in VALID_EMOTIONS:
+        raise ValueError(f"emotion {emotion!r} not in valid enum (got: {emotion}); see VALID_EMOTIONS")
 
     body = {
         "model_id": model or CARTESIA_MODEL,
         "transcript": text,
-        "voice": {
-            "mode": "id",
-            "id": voice_id or CARTESIA_VOICE_ID,
-            "__experimental_controls": {"speed": speed},
-        },
+        "voice": {"mode": "id", "id": voice_id or CARTESIA_VOICE_ID},
+        "language": language,
         "output_format": {
             "container": "raw",
             "encoding": "pcm_s16le",
             "sample_rate": sample_rate,
         },
+        "generation_config": {
+            "speed": speed,
+            "volume": volume,
+            "emotion": emotion,
+        },
         "add_timestamps": True,
     }
     headers = {
         "X-API-Key": CARTESIA_API_KEY,
-        "Cartesia-Version": _CARTESIA_VERSION,
+        "Cartesia-Version": CARTESIA_API_VERSION,
         "Content-Type": "application/json",
     }
 

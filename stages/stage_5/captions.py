@@ -1,118 +1,79 @@
+"""Generate Advanced SubStation Alpha (.ass) word-by-word captions."""
+import re
+
+
+WORDS_PER_CHUNK = 2
+MIN_CHUNK_DURATION = 0.18
+ASS_HEADER = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: ComicsUnlocked,Anton,84,&H00FFFFFF,&H00000000,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,8,0,5,60,60,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-Pre-render caption chunks as transparent PNGs using Pillow.
-
-Style: ALL CAPS bold, white fill, 4px black stroke. Centered text. PNG
-is sized to fit the text plus a small padding. The assembler overlays
-each PNG on the video at its (start, end) time using ffmpeg.
-"""
-from dataclasses import dataclass
-from pathlib import Path
-
-from PIL import Image, ImageDraw, ImageFont
-
-from .fonts import resolve_font_path
 
 
-FONT_SIZE = 68
-STROKE_WIDTH = 5
-FILL = (255, 255, 255, 255)
-STROKE = (0, 0, 0, 255)
-MAX_CAPTION_WIDTH = 980      # px — stay inside 1080 frame with 50px margin
-LINE_SPACING = 8             # extra px between wrapped lines
+def build_ass(word_timestamps: list[dict], total_duration: float) -> str:
+    """Build an .ass subtitle file string with word-by-word ALL-WHITE reveal."""
+    events: list[str] = []
+    chunks = _chunk_words(word_timestamps)
+    for chunk in chunks:
+        start = max(0.0, float(chunk["start"]))
+        end = min(total_duration, float(chunk["end"]))
+        if end <= start:
+            end = start + MIN_CHUNK_DURATION
+        text = chunk["text"].upper()
+        line = (
+            f"Dialogue: 0,{_fmt_time(start)},{_fmt_time(end)},ComicsUnlocked,,"
+            f"0,0,0,,{{\\c&Hffffff&}}{text}"
+        )
+        events.append(line)
+    return ASS_HEADER + "\n".join(events) + "\n"
 
 
-@dataclass
-class RenderedCaption:
-    text: str
-    start: float
-    end: float
-    scene_id: int
-    image_path: str
-    width: int
-    height: int
-
-
-def render_caption_pngs(
-    chunks: list[dict],
-    out_dir: Path,
-    *,
-    font_path: str | None = None,
-    font_size: int = FONT_SIZE,
-) -> list[RenderedCaption]:
-    """
-    Render one PNG per chunk. Returns list aligned with the chunks input.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fp = font_path or resolve_font_path()
-    font = ImageFont.truetype(fp, font_size)
-
-    rendered: list[RenderedCaption] = []
-    for i, c in enumerate(chunks):
-        text = str(c.get("text", "")).strip().upper()
+def _chunk_words(words: list[dict]) -> list[dict]:
+    cleaned: list[dict] = []
+    for w in words:
+        text = str(w.get("word", "")).strip()
         if not text:
             continue
+        cleaned.append({
+            "word": text,
+            "start": float(w.get("start", 0.0)),
+            "end": float(w.get("end", 0.0)),
+        })
 
-        lines = _wrap_text(text, font, MAX_CAPTION_WIDTH)
-        png = _render_lines(lines, font, font_size)
-        path = out_dir / f"cap_{i:03d}.png"
-        png.save(path, "PNG")
-        rendered.append(RenderedCaption(
-            text=text,
-            start=float(c.get("start", 0.0)),
-            end=float(c.get("end", 0.0)),
-            scene_id=int(c.get("scene_id", 0)),
-            image_path=str(path),
-            width=png.width,
-            height=png.height,
-        ))
-    return rendered
-
-
-def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
-    """Greedy word wrap to fit within max_width px."""
-    words = text.split()
-    lines: list[str] = []
-    current: list[str] = []
-    for w in words:
-        candidate = " ".join(current + [w])
-        bb = font.getbbox(candidate)
-        if (bb[2] - bb[0]) <= max_width:
-            current.append(w)
-        else:
-            if current:
-                lines.append(" ".join(current))
-            current = [w]
-    if current:
-        lines.append(" ".join(current))
-    return lines or [text]
+    chunks: list[dict] = []
+    i = 0
+    n = len(cleaned)
+    while i < n:
+        group = cleaned[i:i + WORDS_PER_CHUNK]
+        if not group:
+            break
+        text = " ".join(g["word"] for g in group)
+        text = _strip_punct_for_display(text)
+        chunks.append({
+            "text": text,
+            "start": group[0]["start"],
+            "end": group[-1]["end"],
+        })
+        i += WORDS_PER_CHUNK
+    return chunks
 
 
-def _render_lines(lines: list[str], font: ImageFont.FreeTypeFont, font_size: int) -> Image.Image:
-    # Measure
-    widths, heights = [], []
-    for ln in lines:
-        bb = font.getbbox(ln)
-        widths.append(bb[2] - bb[0])
-        heights.append(bb[3] - bb[1])
-    line_h = max(heights) if heights else font_size
-    total_h = line_h * len(lines) + LINE_SPACING * (len(lines) - 1) + 2 * STROKE_WIDTH + 20
-    total_w = max(widths) + 2 * STROKE_WIDTH + 20
+def _strip_punct_for_display(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
 
-    img = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
 
-    y = STROKE_WIDTH + 10
-    for ln in lines:
-        bb = font.getbbox(ln)
-        lw = bb[2] - bb[0]
-        x = (total_w - lw) // 2
-        d.text(
-            (x, y),
-            ln,
-            font=font,
-            fill=FILL,
-            stroke_width=STROKE_WIDTH,
-            stroke_fill=STROKE,
-        )
-        y += line_h + LINE_SPACING
-    return img
+def _fmt_time(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds - (h * 3600 + m * 60)
+    return f"{h}:{m:02d}:{s:05.2f}"

@@ -7,11 +7,11 @@ import json
 import queue
 import re
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from config import GDRIVE_BASE
+from config import PROJECTS_ROOT
 
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
@@ -77,76 +77,118 @@ class InputBridge:
         return self._pending
 
 
+# ─── Phase approval bridge (new interactive agent flow) ────────────────────
+
+@dataclass
+class PhaseApprovalBridge:
+    """
+    Thread-safe channel for the per-phase approve/reject loop.
+
+    The agent worker thread calls submit_result() → blocks until the UI
+    calls approve() or reject(feedback). Tokens stream via on_token callback.
+    """
+    on_phase_result: Callable | None = None
+    on_token: Callable[[str], None] | None = None
+    on_log: Callable[[str], None] | None = None
+
+    def __post_init__(self):
+        self._decision_q: queue.Queue[tuple[bool, str]] = queue.Queue()
+        self._cancelled = False
+
+    def submit_result(self, phase_result) -> tuple[bool, str]:
+        """Called from worker thread. Blocks until UI decides."""
+        if self._cancelled:
+            return False, ""
+        if self.on_phase_result:
+            try:
+                self.on_phase_result(phase_result)
+            except Exception:
+                pass
+        try:
+            return self._decision_q.get(timeout=600)
+        except queue.Empty:
+            return False, ""
+
+    def approve(self) -> None:
+        self._decision_q.put((True, ""))
+
+    def reject(self, feedback: str) -> None:
+        self._decision_q.put((False, feedback))
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        try:
+            self._decision_q.put_nowait((False, ""))
+        except queue.Full:
+            pass
+
+    def log(self, msg: str) -> None:
+        if self.on_log:
+            self.on_log(msg)
+
+    def token(self, t: str) -> None:
+        if self.on_token:
+            self.on_token(t)
+
+
 # ─── Stage 1 ────────────────────────────────────────────────────────────────
 
 def run_stage_1(
     prompt: str,
-    log: Callable[[str], None],
-    ask_user: Callable[[str], str] | None = None,
+    bridge: PhaseApprovalBridge,
+    mode: str = "narrate_1_comic",
 ) -> tuple[dict, str]:
     """
-    Invoke Stage 1. Returns (comic_context, project_name).
-
-    The agent occasionally pauses for input (clarifying questions, final
-    confirm). If `ask_user` is provided, each such prompt is routed to it
-    (synchronously — ask_user blocks the worker thread until the user
-    answers). If not provided, we default to "skip"/"1" for non-interactive
-    runs.
+    Invoke Stage 1 with interactive per-phase approval.
+    Returns (comic_context, project_name).
     """
-    from stages.stage_1.agent import ScriptAgent
+    from stages.stage_1.agent import ScriptAgent, PhaseResult, PhaseDecision
     from stages.stage_1.storage import save_comic_context, slugify
-    from stages.stage_1 import ui as _ui
     from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL, get_project_dirs
 
-    # Fallback for when the caller didn't hand us a live input channel
-    _fallback = iter(["skip", "1"])
-    def _default_ask(p: str) -> str:
-        try:
-            return next(_fallback)
-        except StopIteration:
-            return ""
+    def _on_phase_result(result: PhaseResult) -> PhaseDecision:
+        approved, feedback = bridge.submit_result(result)
+        return PhaseDecision(approved=approved, feedback=feedback)
 
-    _asker = ask_user or _default_ask
-
-    def _routed_input(prompt_text: str = "") -> str:
-        log(f"❓ {prompt_text}")
-        ans = _asker(prompt_text) or ""
-        if ans:
-            log(f"   > {ans}")
-        return ans
-
-    # agent.py now calls `_stage1_ui.get_user_input(...)` (module-ref lookup),
-    # so patching the attribute on the ui module is sufficient.
-    original_ui_get = _ui.get_user_input
-    _ui.get_user_input = _routed_input
-
-    import builtins
-    original_print = builtins.print
-    def _log_print(*a, **kw):
-        log(_strip_ansi(" ".join(str(x) for x in a)))
-
-    try:
-        builtins.print = _log_print
-        agent = ScriptAgent(
-            api_key=OPENROUTER_API_KEY,
-            base_url=OPENROUTER_BASE_URL,
-            model=OPENROUTER_MODEL,
-        )
-        ctx = agent.run(prompt)
-    finally:
-        builtins.print = original_print
-        _ui.get_user_input = original_ui_get
+    agent = ScriptAgent(
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_BASE_URL,
+        model=OPENROUTER_MODEL,
+        mode=mode,
+    )
+    ctx = agent.run_interactive(
+        initial_prompt=prompt,
+        on_phase_result=_on_phase_result,
+        on_token=bridge.token,
+        on_log=bridge.log,
+    )
 
     if not ctx:
         raise RuntimeError("Stage 1 returned no comic_context (agent aborted).")
 
     project_name = slugify(prompt or ctx.get("title", "untitled_project"))
+    from stages.stage_1.tools.summarize_context import enrich_with_summary
+    enrich_with_summary(ctx, progress=bridge.log)
     save_comic_context(ctx, project_name, get_project_dirs)
+    agent.save_session(get_project_dirs(project_name)["root"])
 
     return ctx, project_name
 
 
-# ─── Stage 2 ────────────────────────────────────────────────────────────────
+# ─── Stage 2: Download ─────────────────────────────────────────────────────
+
+def run_stage_download(project_name: str, log: Callable[[str], None]) -> list[dict]:
+    from stages.stage_2.download import download_comic
+    return download_comic(project_name, progress=log)
+
+
+def load_raw_pages(project_name: str) -> list[dict]:
+    """Load the download manifest for thumbnail display."""
+    from stages.stage_2.download import load_manifest
+    return load_manifest(project_name)
+
+
+# ─── Stage 3: Preprocess ──────────────────────────────────────────────────
 
 def run_stage_2(project_name: str, log: Callable[[str], None]) -> list[dict]:
     from stages.stage_2 import preprocess_project
@@ -154,7 +196,7 @@ def run_stage_2(project_name: str, log: Callable[[str], None]) -> list[dict]:
 
 
 def load_preprocessed(project_name: str) -> list[dict]:
-    prep = GDRIVE_BASE / project_name / "preprocessed"
+    prep = PROJECTS_ROOT / project_name / "preprocessed"
     if not prep.exists():
         return []
     out: list[dict] = []
@@ -170,8 +212,7 @@ def load_preprocessed(project_name: str) -> list[dict]:
 
 def run_stage_3_propose(project_name: str, log: Callable[[str], None]) -> list[dict]:
     from stages.stage_3.pipeline import propose_modes
-    log("[stage3] asking LLM to propose 3 narration modes…")
-    proposals = propose_modes(project_name, n=3)
+    proposals = propose_modes(project_name, n=3, progress=log)
     return [p.to_dict() for p in proposals]
 
 
@@ -182,14 +223,13 @@ def run_stage_3_write(
     log: Callable[[str], None],
 ) -> dict:
     from stages.stage_3.pipeline import write_script, save_narration
-    log(f"[stage3] writing narration in mode={mode}…")
-    narration = write_script(project_name, mode, hook_hint=hook_hint)
-    save_narration(narration, project_name)
+    narration = write_script(project_name, mode, hook_hint=hook_hint, progress=log)
+    save_narration(narration, project_name, progress=log)
     return narration.to_dict()
 
 
 def load_narration(project_name: str) -> dict | None:
-    p = GDRIVE_BASE / project_name / "narration.json"
+    p = PROJECTS_ROOT / project_name / "narration.json"
     if not p.exists():
         return None
     try:
@@ -199,7 +239,7 @@ def load_narration(project_name: str) -> dict | None:
 
 
 def save_narration_edits(project_name: str, narration: dict) -> None:
-    p = GDRIVE_BASE / project_name / "narration.json"
+    p = PROJECTS_ROOT / project_name / "narration.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(narration, indent=2, ensure_ascii=False))
 

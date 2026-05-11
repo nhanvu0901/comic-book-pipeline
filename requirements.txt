@@ -11,9 +11,13 @@ python-dotenv>=1.0.0
 curl_cffi>=0.7.0
 
 # === Stage 2: Page preprocessing ===
-ultralytics>=8.3.0        # YOLO panel detector (AGPL — personal use only)
-huggingface_hub>=0.24.0   # auto-downloads mosesb/best-comic-panel-detection
-Pillow>=10.0.0            # image IO + dimensions
+# Magi v3 panel detector (ragavsachdeva/magiv3, ICCV 2025) — academic-research license only.
+# Florence-2 backbone breaks above transformers 4.49 (forced_bos_token_id removal).
+transformers>=4.40.0,<=4.49.0
+pytorch_metric_learning>=2.0  # Florence-2 runtime dep
+einops>=0.8                   # Florence-2 runtime dep
+timm>=1.0                     # Florence-2 vision backbone
+Pillow>=10.0.0                # image IO + dimensions
 
 # === Stage 4: TTS (Cartesia via raw HTTP — no SDK dep) ===
 # nothing extra — uses `requests` already in the list above

@@ -43,7 +43,7 @@ def main():
 
     if not chosen_mode:
         print(f"🎭 Proposing narration modes for '{args.project}'...\n")
-        proposals = propose_modes(args.project, n=3)
+        proposals = propose_modes(args.project, n=3, progress=print)
         for i, p in enumerate(proposals, start=1):
             print(f"  [{i}] {p.mode}")
             print(f"      hook: {p.hook}")
@@ -65,8 +65,8 @@ def main():
     if hook_hint:
         print(f"    hook hint: {hook_hint}")
 
-    nar = write_script(args.project, chosen_mode, hook_hint=hook_hint)
-    path = save_narration(nar, args.project)
+    nar = write_script(args.project, chosen_mode, hook_hint=hook_hint, progress=print)
+    path = save_narration(nar, args.project, progress=print)
 
     print(f"\n✓ Saved: {path}")
     print(f"   mode:       {nar.mode}")

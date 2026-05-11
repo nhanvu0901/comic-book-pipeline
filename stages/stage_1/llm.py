@@ -8,6 +8,7 @@ in tools/. llm.py only handles the HTTP conversation with the model.
 import json
 import re
 from pathlib import Path
+from typing import Callable
 from openai import OpenAI
 
 from .tools import TOOLS, dispatch_tool
@@ -50,7 +51,14 @@ def _assistant_tool_call_message(choice_message) -> dict:
     }
 
 
-def call_llm(client: OpenAI, messages: list, system: str, model: str, tools: list | None = None) -> tuple[str, list]:
+def call_llm(
+    client: OpenAI,
+    messages: list,
+    system: str,
+    model: str,
+    tools: list | None = None,
+    on_token: Callable[[str],None] | None = None,
+) -> tuple[str, list]:
     """
     Call the LLM with tool-use support. Handles the tool-call loop internally.
 
@@ -58,17 +66,20 @@ def call_llm(client: OpenAI, messages: list, system: str, model: str, tools: lis
         messages:  conversation history (OpenAI format, without the system message)
         system:    system prompt, prepended as role=system on each request
         tools:     optional tool schemas (OpenAI function format). None = all TOOLS. [] = disabled.
+        on_token:  optional callback fired per token for the *final* text response
+                   (not during intermediate tool-call rounds). Enables streaming UI.
 
     Returns:
         (response_text, updated_messages)
     """
     active_tools = tools if tools is not None else TOOLS
 
-    def _request(msgs: list, with_tools: bool):
+    def _request(msgs: list, with_tools: bool, stream: bool = False):
         kwargs = {
             "model": model,
             "max_tokens": 4096,
             "messages": [{"role": "system", "content": system}] + msgs,
+            "stream": stream,
         }
         if with_tools and active_tools:
             kwargs["tools"] = active_tools
@@ -99,8 +110,9 @@ def call_llm(client: OpenAI, messages: list, system: str, model: str, tools: lis
         response = _request(messages, with_tools=True)
         choice = response.choices[0]
 
-    # Budget exhausted and the model still wants tools — force a text-only reply.
-    if choice.finish_reason == "tool_calls" and iteration >= 15:
+    # Budget exhausted — force a text-only reply
+    budget_exhausted = choice.finish_reason == "tool_calls" and iteration >= 15
+    if budget_exhausted:
         tool_calls = choice.message.tool_calls or []
         messages = messages + [_assistant_tool_call_message(choice.message)]
         for tc in tool_calls:
@@ -109,11 +121,25 @@ def call_llm(client: OpenAI, messages: list, system: str, model: str, tools: lis
                 "tool_call_id": tc.id,
                 "content": json.dumps({"note": "Tool call budget exhausted. Please respond with your final answer now."}),
             })
-        response = _request(messages, with_tools=False)
-        choice = response.choices[0]
+        if on_token:
+            stream_resp = _request(messages, with_tools=False, stream=True)
+            chunks: list[str] = []
+            for chunk in stream_resp:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    chunks.append(delta.content)
+                    on_token(delta.content)
+            text = "".join(chunks).strip()
+        else:
+            response = _request(messages, with_tools=False)
+            text = (response.choices[0].message.content or "").strip()
+    else:
+        text = (choice.message.content or "").strip()
+        if on_token and text:
+            for ch in text:
+                on_token(ch)
 
-    text = (choice.message.content or "").strip()
-    messages = messages + [{"role": "assistant", "content": choice.message.content}]
+    messages = messages + [{"role": "assistant", "content": text}]
     return text, messages
 
 

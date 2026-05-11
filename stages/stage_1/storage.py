@@ -23,8 +23,9 @@ def save_conversation_log(agent, project_name: str, get_project_dirs) -> str:
     dirs = get_project_dirs(project_name)
     log_path = str(dirs["root"] / "conversation_log.json")
 
+    messages = getattr(agent, "messages", None) or getattr(agent.history, "messages", [])
     serializable = []
-    for msg in agent.messages:
+    for msg in messages:
         if isinstance(msg.get("content"), list):
             blocks = []
             for block in msg["content"]:

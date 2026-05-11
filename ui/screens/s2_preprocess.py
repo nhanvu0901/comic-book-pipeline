@@ -1,7 +1,7 @@
 """
 Screen 2: Preprocess pages.
 
-Runs the full Stage 2 pipeline (scraper + YOLO + VLM) and shows a thumbnail
+Runs the full Stage 2 pipeline (scraper + Magi + VLM) and shows a thumbnail
 grid of processed pages with a story/skip tag + panel count. Click a
 thumbnail to see the page summary + extracted text in a side panel.
 """
@@ -19,6 +19,7 @@ from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, STATUS_DONE, STATUS_PENDING,
     SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from utils.clear_stage import clear_stage_2
 
 
 def build(
@@ -122,7 +123,7 @@ def build(
             page.update()
             return
         running.visible = True
-        status_text.value = "Running Stage 2 (scraping + YOLO + VLM)… This takes several minutes."
+        status_text.value = "Running preprocessing (Magi + VLM)… This takes several minutes."
         status_text.color = WARN
         page.update()
 
@@ -137,12 +138,12 @@ def build(
             return
 
         render_grid(pages)
-        state.mark_approved(2)
-        state.current_stage = max(state.current_stage, 3)
+        state.mark_approved(3)
+        state.current_stage = max(state.current_stage, 4)
         save_state(state)
 
         running.visible = False
-        status_text.value = f"Stage 2 complete — {len(pages)} pages."
+        status_text.value = f"Preprocessing complete — {len(pages)} pages."
         status_text.color = SUCCESS
         page.update()
         on_state_change()
@@ -150,11 +151,32 @@ def build(
     def run_click(_e):
         page.run_task(_execute)
 
+    def _show_snack(msg: str):
+        sb = ft.SnackBar(content=ft.Text(msg))
+        page.overlay.append(sb)
+        sb.open = True
+        page.update()
+
+    def _do_clear(_e):
+        try:
+            removed = clear_stage_2(
+                state.project_name, raw=False, preprocessed=True,
+            )
+        except Exception as e:
+            _show_snack(str(e))
+            return
+        if removed:
+            _show_snack(f"Cleared preprocessed/ ({len(removed)} item(s))")
+        else:
+            _show_snack("Nothing to clear.")
+        render_grid([])
+        page.update()
+
     def approve_and_go(_e):
-        state.mark_approved(2)
-        state.current_stage = 3
+        state.mark_approved(3)
+        state.current_stage = 4
         save_state(state)
-        on_go(3)
+        on_go(4)
 
     # Center + right columns
     center = ft.Column([
@@ -171,19 +193,21 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 2 OF 5", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 3 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Preprocess Pages", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
-            "Downloads the comic pages from batcave.biz, detects panels with YOLO, "
-            "and asks the vision LLM to extract text, speakers, and panel descriptions. "
+            "Detects panels with Magi and asks the vision LLM to extract text, "
+            "speakers, and panel descriptions from downloaded pages. "
             "Cached per page — re-runs are fast.",
             size=12, color=TEXT_MUTED,
         ),
         ft.Container(height=16),
         primary_button("Run Preprocessing", run_click, icon=ft.Icons.PLAY_ARROW),
+        ft.Container(height=8),
+        secondary_button("Clear preprocessed", _do_clear, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=12),
         primary_button("Approve & Continue →", approve_and_go,
-                       disabled=not state.is_approved(2)),
+                       disabled=not state.is_approved(3)),
         ft.Container(height=20),
         ft.Text("Selected page", size=10, color=TEXT_MUTED),
         ft.Container(content=detail_ctl, expand=True),
@@ -192,7 +216,7 @@ def build(
     return three_col(
         center, right, state=state, on_go=on_go,
         header_title="Preprocess Pages",
-        header_subtitle="Scrape the comic, detect panels, and extract text.",
+        header_subtitle="Detect panels and extract text from downloaded pages.",
     )
 
 

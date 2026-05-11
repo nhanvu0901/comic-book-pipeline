@@ -1,12 +1,8 @@
 """
-Stage 2 orchestrator: for a project, scrape pages and enrich each one.
+Stage 2 orchestrator: preprocess downloaded comic pages.
 
-Flow per project:
-  1. Load projects/<slug>/comic_context.json.
-  2. Resolve requested issues to batcave.biz chapter reader URLs.
-  3. Scrape each chapter's pages (cached by the scraper itself).
-  4. For each page: SHA-256 cache check → YOLO panels → (if >0 panels) VLM enrich.
-  5. Persist a JSON per page to projects/<slug>/preprocessed/page_NNN_<hash>.json.
+Reads the download manifest written by download.py, then for each page:
+  SHA-256 cache check → Magi panel detect → VLM enrich → persist JSON.
 
 Sequential processing keeps things simple and well under OpenRouter's
 20 RPM / 50 RPD free-tier limits for a typical 22-page issue.
@@ -18,10 +14,8 @@ from typing import Callable
 
 from PIL import Image
 
-from config import VLM_MODEL, get_project_dirs, GDRIVE_BASE
-from utils.comic_scraper import scrape_issue_pages
+from config import VLM_MODEL, get_project_dirs
 from .cache import image_hash, load_cached, save_cached
-from .issue_resolver import resolve_chapters
 from .panel_detect import detect_panels
 from .schema import PanelInfo, PreprocessedPage, TextBlock
 from .vlm_extract import extract_page
@@ -34,62 +28,79 @@ def preprocess_project(
     force_refresh: bool = False,
 ) -> list[dict]:
     """
-    Run the full Stage 2 pipeline for a project. Returns list of page dicts
-    (also written to disk as individual JSON files).
+    Run preprocessing on already-downloaded comic pages.
+    Reads raw_comic/manifest.json written by the download stage.
+    Returns list of page dicts (also written to disk as individual JSON files).
     """
     log = progress or print
 
-    ctx_path = GDRIVE_BASE / project_name / "comic_context.json"
-    if not ctx_path.exists():
-        raise FileNotFoundError(f"comic_context.json not found for project '{project_name}' "
-                                f"(looked at {ctx_path}). Run Stage 1 first.")
-
-    ctx = json.loads(ctx_path.read_text())
-    batcave_url = ctx.get("batcave_url", "").strip()
-    issues = ctx.get("issues", "").strip()
-    if not batcave_url:
-        raise ValueError("comic_context.json has no batcave_url — cannot scrape pages.")
-
     project_root = get_project_dirs(project_name)["root"]
-    log(f"[stage2] project={project_name} issues={issues!r} batcave_url={batcave_url}")
+    manifest_path = project_root / "raw_comic" / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"No download manifest found for project '{project_name}'. "
+            "Run the Download stage first."
+        )
 
-    chapters = resolve_chapters(batcave_url, issues)
-    if not chapters:
-        raise RuntimeError(f"No chapters resolved for issues={issues!r} at {batcave_url}")
-    log(f"[stage2] resolved {len(chapters)} chapter(s) to scrape")
+    manifest = json.loads(manifest_path.read_text())
+    total_chapters = len(manifest)
+    log(f"[preprocess] project={project_name} — {total_chapters} chapter(s) from manifest")
+
+    story_context = _load_story_context(project_root, log)
 
     results: list[dict] = []
     global_page_num = 0
 
-    for chapter in chapters:
-        log(f"[stage2] ▶ scraping {chapter['label']} ({chapter['reader_url']})")
-        try:
-            page_paths = scrape_issue_pages(chapter["reader_url"])
-        except Exception as e:
-            log(f"[stage2]   scrape failed: {e}")
-            continue
-
-        total = len(page_paths)
-        log(f"[stage2]   got {total} page(s) — starting preprocessing")
+    for chapter in manifest:
+        label = chapter["label"]
+        pages = chapter["pages"]
+        total = len(pages)
+        log(f"[preprocess] ▶ {label}: {total} page(s)")
         t_chapter = time.time()
-        for local_idx, img_path in enumerate(page_paths, start=1):
+
+        for local_idx, img_path_str in enumerate(pages, start=1):
+            img_path = Path(img_path_str)
+            if not img_path.exists():
+                log(f"[preprocess]   ⚠ missing: {img_path.name} — skipping")
+                continue
             global_page_num += 1
-            log(f"[stage2]   ── page {local_idx}/{total} (global p{global_page_num:03d}) "
-                f"{Path(img_path).name}")
+            log(f"[preprocess]   ── page {local_idx}/{total} (global p{global_page_num:03d}) "
+                f"{img_path.name}")
             page_dict = _process_one_page(
                 page_number=global_page_num,
-                issue_label=chapter["label"],
+                issue_label=label,
                 image_path=img_path,
                 project_root=project_root,
                 force_refresh=force_refresh,
                 log=log,
+                story_context=story_context,
             )
             results.append(page_dict)
-        log(f"[stage2]   ✓ chapter {chapter['label']} done in {time.time()-t_chapter:.1f}s")
+        log(f"[preprocess]   ✓ {label} done in {time.time() - t_chapter:.1f}s")
 
     story_count = sum(1 for r in results if r.get("is_story_page"))
-    log(f"[stage2] done — {len(results)} pages processed, {story_count} marked as story pages")
+    log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
     return results
+
+
+def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:
+    ctx_path = project_root / "comic_context.json"
+    if not ctx_path.exists():
+        log("[preprocess] no comic_context.json — VLM runs without story context")
+        return ""
+    try:
+        ctx = json.loads(ctx_path.read_text())
+    except json.JSONDecodeError:
+        log("[preprocess] comic_context.json unreadable — VLM runs without story context")
+        return ""
+    summary = ctx.get("summary") or {}
+    if not summary:
+        log("[preprocess] comic_context.summary missing — VLM runs without story context")
+        return ""
+    from stages.stage_1.tools.summarize_context import format_for_vlm
+    block = format_for_vlm(summary)
+    log(f"[preprocess] story context loaded: {len(block)} chars, {len(summary.get('characters') or [])} characters")
+    return block
 
 
 def _process_one_page(
@@ -100,52 +111,105 @@ def _process_one_page(
     project_root: Path,
     force_refresh: bool,
     log: Callable[[str], None],
+    story_context: str = "",
 ) -> dict:
+    log(f"[stage2]     computing hash for {image_path.name}…")
     h = image_hash(image_path)
+    log(f"[stage2]     hash={h[:16]}…")
 
     if not force_refresh:
         cached = load_cached(project_root, page_number, h)
         if cached is not None:
-            log(f"[stage2]     ✓ cache hit ({h}) — skipping YOLO + VLM")
-            return cached
+            if cached.get("skip_reason") == "vlm_failure":
+                log(f"[stage2]     ⚠ cache had vlm_failure — invalidating and re-running with fallback chain")
+            else:
+                cached_type = cached.get("page_type", "?")
+                cached_panels = len(cached.get("panels", []))
+                log(f"[stage2]     ✓ cache hit — type={cached_type}, {cached_panels} panels — skipping panel detect + VLM")
+                return cached
+    log(f"[stage2]     no cache — running full pipeline")
 
     t0 = time.time()
     with Image.open(image_path) as im:
         width, height = im.size
-    log(f"[stage2]     size={width}×{height} hash={h}")
+    log(f"[stage2]     image loaded: {width}×{height} px, "
+        f"{image_path.stat().st_size / 1024:.0f} KB")
 
-    t_yolo = time.time()
+    # ── Magi panel detection ──
+    log(f"[stage2]     running Magi v3 panel detection…")
+    t_panel = time.time()
     panels_raw = detect_panels(image_path)
-    log(f"[stage2]     YOLO found {len(panels_raw)} panel(s) in {time.time()-t_yolo:.1f}s")
+    panel_dt = time.time() - t_panel
+    log(f"[stage2]     Magi found {len(panels_raw)} panel(s) in {panel_dt:.1f}s")
+    for i, p in enumerate(panels_raw):
+        b = p["bbox"]
+        log(f"[stage2]       panel {i}: {b['w']}×{b['h']} @ ({b['x']},{b['y']}) conf={p['confidence']}")
+
+    # ── Cover shortcut (first page, no panels) ──
+    if not panels_raw and page_number == 1:
+        log(f"[stage2]     first page, no panels detected — marking as COVER, skipping VLM")
+        page = PreprocessedPage(
+            page_number=page_number,
+            source_image=str(image_path.resolve()),
+            image_dimensions={"width": width, "height": height},
+            is_story_page=False,
+            page_type="cover",
+            panels=[],
+            text_blocks=[],
+            page_summary="Cover page",
+            issue_label=issue_label,
+            vlm_model="",
+            vlm_model_used="",
+            content_hash=h,
+            preprocessing_method="magi+vlm",
+            skip_reason="",
+        )
+        out = page.to_dict()
+        save_cached(project_root, page_number, h, out)
+        log(f"[stage2]     → COVER  0 panels, {time.time() - t0:.1f}s total")
+        return out
 
     if not panels_raw:
-        # YOLO found no panels. Could be a cover (single splash) or an ad — ask the
-        # VLM anyway so covers still get metadata; it'll classify as skip if promo.
-        log(f"[stage2]     no panels — asking VLM to classify (cover vs skip)")
+        log(f"[stage2]     no panels on non-first page — VLM will classify (story vs skip)")
 
+    # ── VLM enrichment ──
+    log(f"[stage2]     calling VLM with fallback chain (primary={VLM_MODEL})")
+    log(f"[stage2]     sending {len(panels_raw)} panel bboxes + full page image…")
     t_vlm = time.time()
-    log(f"[stage2]     calling VLM ({VLM_MODEL}) with {len(panels_raw)} panel bboxes…")
-    vlm_data = extract_page(image_path, panels_raw, model=VLM_MODEL)
+    vlm_data = extract_page(image_path, panels_raw, progress=log, story_context=story_context)
     vlm_dt = time.time() - t_vlm
+    vlm_model_used = str(vlm_data.get("_vlm_model_used", ""))
 
     page_type = str(vlm_data.get("page_type", "story")).lower()
     if page_type not in ("cover", "story", "skip"):
         page_type = "story"
     skip_reason = str(vlm_data.get("skip_reason", ""))
 
-    if skip_reason == "vlm_failure":
-        log(f"[stage2]     ✗ VLM failed in {vlm_dt:.1f}s: {vlm_data.get('error','?')[:120]}")
-    else:
-        log(f"[stage2]     ✓ VLM classified as {page_type.upper()}"
-            + (f" ({skip_reason})" if skip_reason else "")
-            + f" — {len(vlm_data.get('panels') or [])} panel descriptions, "
-            f"{len(vlm_data.get('text_blocks') or [])} text blocks in {vlm_dt:.1f}s")
+    vlm_panels = vlm_data.get("panels") or []
+    vlm_text_blocks = vlm_data.get("text_blocks") or []
 
-    # Skip pages get no metadata — enforce empty arrays regardless of VLM output.
+    if skip_reason == "vlm_failure":
+        log(f"[stage2]     ✗ VLM FAILED in {vlm_dt:.1f}s")
+        log(f"[stage2]       error: {vlm_data.get('error','?')[:200]}")
+    else:
+        log(f"[stage2]     ✓ VLM done in {vlm_dt:.1f}s")
+        log(f"[stage2]       page_type={page_type.upper()}"
+            + (f"  skip_reason={skip_reason}" if skip_reason else ""))
+        log(f"[stage2]       {len(vlm_panels)} panel descriptions, "
+            f"{len(vlm_text_blocks)} text blocks")
+        for vp in vlm_panels:
+            desc = str(vp.get("description", ""))[:80]
+            log(f"[stage2]       panel {vp.get('index', '?')}: {desc}")
+        for tb in vlm_text_blocks:
+            txt = str(tb.get("text", ""))[:60]
+            log(f"[stage2]       text [{tb.get('type','?')}] p{tb.get('panel_index','?')}: \"{txt}\"")
+
+    # ── Build output ──
     if page_type == "skip":
         panel_infos: list[PanelInfo] = []
         text_blocks: list[TextBlock] = []
         page_summary = ""
+        log(f"[stage2]     page marked SKIP — clearing panels + text blocks")
     else:
         panel_infos = [
             PanelInfo(
@@ -164,9 +228,12 @@ def _process_one_page(
                 type=str(tb.get("type", "speech")),
                 speaker=tb.get("speaker") or None,
             )
-            for tb in (vlm_data.get("text_blocks") or [])
+            for tb in vlm_text_blocks
         ]
         page_summary = str(vlm_data.get("page_summary", ""))
+        log(f"[stage2]     built {len(panel_infos)} PanelInfo + {len(text_blocks)} TextBlock objects")
+        if page_summary:
+            log(f"[stage2]     summary: {page_summary[:120]}")
 
     page = PreprocessedPage(
         page_number=page_number,
@@ -179,17 +246,20 @@ def _process_one_page(
         page_summary=page_summary,
         issue_label=issue_label,
         vlm_model=VLM_MODEL,
+        vlm_model_used=vlm_model_used,
         content_hash=h,
-        preprocessing_method="yolo+vlm",
+        preprocessing_method="magi+vlm",
         skip_reason=skip_reason,
     )
     out = page.to_dict()
     cache_file = save_cached(project_root, page_number, h, out)
 
+    total_dt = time.time() - t0
     flag = page_type.upper() + (f" ({skip_reason})" if page_type == "skip" and skip_reason else "")
     log(f"[stage2]     → {flag}  {len(panel_infos)} panels, "
-        f"{len(text_blocks)} text blocks, {time.time() - t0:.1f}s total "
-        f"→ {Path(cache_file).name}")
+        f"{len(text_blocks)} text blocks")
+    log(f"[stage2]     timing: Magi={panel_dt:.1f}s  VLM={vlm_dt:.1f}s  total={total_dt:.1f}s")
+    log(f"[stage2]     saved → {Path(cache_file).name}")
     return out
 
 

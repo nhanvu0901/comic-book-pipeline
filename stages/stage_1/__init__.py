@@ -7,8 +7,8 @@ A multi-turn conversational agent (OpenRouter-backed) that:
 3. ASKS clarifying questions if the prompt is ambiguous
 4. FETCHES verified plot text from fandom wikis
 
-Output: comic_context.json containing title, series, issues, publisher, writer,
-artist, characters, batcave_url, wiki_url, plot_summary, confidence.
+Output: comic_context.json containing title, series, issues, year, characters,
+batcave_url, wiki_url, plot_summary, confidence.
 
 Downstream stages consume comic_context.json:
   Stage 2 uses batcave_url to scrape pages, then VLM-preprocesses each page

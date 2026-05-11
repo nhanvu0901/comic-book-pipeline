@@ -1,23 +1,16 @@
 """
-Fetch Wiki tool — retrieves verified plot text from fandom wikis and comic review sites.
+Fetch Wiki tool — retrieves verified plot text from Fandom wikis (direct MediaWiki API)
+with comic review sites as a Tavily-powered fallback.
 
-Why this matters:
-  LLMs hallucinate plot details from training data. This tool fetches the actual
-  verified plot synopsis so the script is grounded in facts.
-
-How it works:
-  1. If wiki_url is provided, try Tavily extract on it directly.
-  2. Search fandom wikis with include_raw_content=True.
-  3. If wikis return no raw_content (403s are common), broaden to review sites
-     (CBR, ScreenRant, comic-watch, etc.) which DO return raw content.
-  4. Combine the best content from multiple sources.
-  5. Extract the plot/synopsis section if possible.
-
-No module-level state — reads TAVILY_API_KEY from env like web_search.py.
+Strategy:
+  1. fetch_fandom() hits marvel/dc/imagecomics fandom subdomains directly via api.php.
+  2. If Fandom misses, Tavily searches the curated review-site list (CBR, ScreenRant, etc.).
+  3. Direct wiki_url= input still tries Tavily extract on that URL up-front.
 """
 import os
 import re
 from ..ui import Colors
+from .fetch_fandom import fetch_fandom
 
 # ─── Schema ─────────────────────────────────────────────────────────────────
 
@@ -26,11 +19,10 @@ FETCH_WIKI_TOOL = {
     "function": {
         "name": "fetch_wiki",
         "description": (
-            "Fetch the verified plot synopsis for a comic book story from fandom wikis "
-            "or review sites. Returns the actual plot text so you can base your script "
-            "on FACTS, not memory. Use this after identifying the comic to get the real "
-            "story details. Searches: marvel.fandom.com, dc.fandom.com, comicvine.gamespot.com, "
-            "plus review sites (CBR, ScreenRant, etc.) as fallback."
+            "Fetch the verified plot synopsis for a comic book story. First tries the "
+            "configured Fandom wikis directly via the MediaWiki Action API. Falls back to "
+            "comic review sites (CBR, ScreenRant, comic-watch, etc.) only if Fandom has "
+            "no entry. Returns the actual plot text so you can base your script on FACTS."
         ),
         "parameters": {
             "type": "object",
@@ -52,7 +44,7 @@ FETCH_WIKI_TOOL = {
                     "type": "string",
                     "description": (
                         "Optional hint: 'marvel', 'dc', 'image', or 'other'. "
-                        "Helps prioritize the right wiki domain."
+                        "Helps prioritize the right Fandom subdomain."
                     ),
                 },
             },
@@ -63,13 +55,6 @@ FETCH_WIKI_TOOL = {
 
 # ─── Domains ─────────────────────────────────────────────────────────────────
 
-_WIKI_DOMAINS = [
-    "marvel.fandom.com",
-    "dc.fandom.com",
-    "imagecomics.fandom.com",
-    "comicvine.gamespot.com",
-]
-
 _REVIEW_DOMAINS = [
     "cbr.com",
     "screenrant.com",
@@ -79,12 +64,6 @@ _REVIEW_DOMAINS = [
     "ign.com",
     "gamesradar.com",
 ]
-
-_PUBLISHER_WIKI = {
-    "marvel": ["marvel.fandom.com", "comicvine.gamespot.com"],
-    "dc": ["dc.fandom.com", "comicvine.gamespot.com"],
-    "image": ["imagecomics.fandom.com", "comicvine.gamespot.com"],
-}
 
 # ─── Plot section extraction ────────────────────────────────────────────────
 
@@ -99,7 +78,6 @@ _NEXT_HEADING_RE = re.compile(
     r"\n(?:#{1,4}\s+|={2,}\s*)\S",
 )
 
-# Also match review article body sections that contain plot details
 _REVIEW_BODY_RE = re.compile(
     r"(?:^|\n)(?:#{1,4}\s*)"
     r"(.+(?:Destroy|Break|Becomes|Transform|Bond|Fight|Kill|Dies|Dark|Brutal|New Venom|Symbiote).+)"
@@ -111,8 +89,7 @@ _MAX_PLOT_LENGTH = 5000
 
 
 def _extract_plot_section(text: str) -> str | None:
-    """Pull out the Plot/Synopsis section from wiki/review text."""
-    # Try ALL standard wiki headings and pick the longest substantial match
+    """Pull out the Plot/Synopsis section from review text."""
     best_section = None
     for match in _PLOT_HEADING_RE.finditer(text):
         start = match.end()
@@ -125,7 +102,6 @@ def _extract_plot_section(text: str) -> str | None:
     if best_section:
         return best_section[:_MAX_PLOT_LENGTH]
 
-    # Try review article content headings that describe plot events
     match = _REVIEW_BODY_RE.search(text)
     if match:
         start = match.end()
@@ -151,13 +127,11 @@ def _score_result(result: dict, query_lower: str) -> int:
     url = result.get("url", "").lower()
     title = result.get("title", "").lower()
 
-    # Has raw content at all
     if len(raw) > 500:
         score += 50
     if len(raw) > 2000:
         score += 30
 
-    # Plot-related keywords in content (more = more likely to have the actual plot)
     content_lower = (raw + snippet).lower()
     plot_keywords = ["symbiote", "bonds", "transforms", "fights", "kills", "defeats",
                      "plot", "synopsis", "review", "recap", "spoiler", "summary",
@@ -165,23 +139,14 @@ def _score_result(result: dict, query_lower: str) -> int:
     for kw in plot_keywords:
         if kw in content_lower:
             score += 5
-    # Extra bonus for "spoiler" or "recap" — these articles tell what happens
     if "spoiler" in content_lower or "recap" in content_lower:
         score += 20
 
-    # Wiki domains get priority
-    for d in _WIKI_DOMAINS:
-        if d in url:
-            score += 20
-            break
-
-    # Review sites with actual content
     for d in _REVIEW_DOMAINS:
         if d in url and len(raw) > 1000:
             score += 15
             break
 
-    # Title relevance
     for word in query_lower.split():
         if word in title:
             score += 3
@@ -192,32 +157,28 @@ def _score_result(result: dict, query_lower: str) -> int:
 # ─── Implementation ─────────────────────────────────────────────────────────
 
 def fetch_wiki(query: str, wiki_url: str = "", publisher: str = "") -> dict:
-    """
-    Fetch verified plot text from wiki or review sites.
-
-    Strategy:
-      1. Try direct URL extraction if wiki_url provided
-      2. Search wiki domains with include_raw_content=True
-      3. Broaden to review sites if wikis have no raw content
-      4. Combine best sources
-
-    Returns:
-        {wiki_url, title, plot_text, plot_length, source, sources_checked}
-    """
-    from tavily import TavilyClient
-
+    """Fetch verified plot text — Fandom MediaWiki API first, review-site Tavily fallback."""
     print(f"  {Colors.DIM}📚 Fetching verified plot for: {query}{Colors.END}")
 
+    fandom_result = fetch_fandom(query, publisher=publisher)
+    if fandom_result.get("plot_text"):
+        return fandom_result
+
     try:
+        from tavily import TavilyClient
         client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
     except Exception as e:
-        print(f"  {Colors.DIM}   Error: {e}{Colors.END}")
-        return {"error": str(e), "plot_text": "", "wiki_url": ""}
+        print(f"  {Colors.DIM}   Tavily unavailable: {e}{Colors.END}")
+        return {
+            "error": str(e),
+            "plot_text": "",
+            "wiki_url": "",
+            "sources_checked": fandom_result.get("sources_checked", []),
+        }
 
     all_results = []
-    sources_checked = []
+    sources_checked: list[str] = list(fandom_result.get("sources_checked", []))
 
-    # ── Step 1: Try direct URL if provided ───────────────────────────────
     if wiki_url and wiki_url.strip():
         try:
             print(f"  {Colors.DIM}   Trying direct extract: {wiki_url}{Colors.END}")
@@ -237,31 +198,6 @@ def fetch_wiki(query: str, wiki_url: str = "", publisher: str = "") -> dict:
             print(f"  {Colors.DIM}   Direct extract failed: {e}{Colors.END}")
             sources_checked.append(f"extract_failed:{wiki_url}")
 
-    # ── Step 2: Search wiki domains ──────────────────────────────────────
-    wiki_domains = _PUBLISHER_WIKI.get(publisher.lower(), _WIKI_DOMAINS) if publisher else _WIKI_DOMAINS
-    print(f"  {Colors.DIM}   Searching wikis: {wiki_domains}{Colors.END}")
-
-    try:
-        wiki_resp = client.search(
-            query=f"{query} plot synopsis",
-            max_results=5,
-            include_domains=wiki_domains,
-            include_raw_content=True,
-        )
-        wiki_results = wiki_resp.get("results", [])
-        all_results.extend(wiki_results)
-        sources_checked.append(f"wiki_search:{len(wiki_results)} results")
-
-        has_wiki_content = any(
-            len(r.get("raw_content", "") or "") > 500 for r in wiki_results
-        )
-        if not has_wiki_content:
-            print(f"  {Colors.DIM}   ⚠ Wikis returned no raw content (likely 403){Colors.END}")
-    except Exception as e:
-        print(f"  {Colors.DIM}   Wiki search error: {e}{Colors.END}")
-        sources_checked.append(f"wiki_search_error:{e}")
-
-    # ── Step 3: Search review sites (always, for broader coverage) ───────
     print(f"  {Colors.DIM}   Searching review sites for plot details...{Colors.END}")
     try:
         review_resp = client.search(
@@ -280,7 +216,6 @@ def fetch_wiki(query: str, wiki_url: str = "", publisher: str = "") -> dict:
         print(f"  {Colors.DIM}   Review search error: {e}{Colors.END}")
         sources_checked.append(f"review_search_error:{e}")
 
-    # ── Step 4: Rank and pick best content ───────────────────────────────
     if not all_results:
         return {
             "error": "No results found from any source",
@@ -294,7 +229,6 @@ def fetch_wiki(query: str, wiki_url: str = "", publisher: str = "") -> dict:
     scored = [(r, _score_result(r, query_lower)) for r in all_results]
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    # Try to extract plot section from best results
     best_plot = None
     best_url = ""
     best_title = ""
@@ -305,7 +239,6 @@ def fetch_wiki(query: str, wiki_url: str = "", publisher: str = "") -> dict:
         if not raw or len(raw) < 200:
             continue
 
-        # Try structured plot extraction first
         plot = _extract_plot_section(raw)
         if plot and len(plot) > 100:
             best_plot = plot
@@ -315,7 +248,6 @@ def fetch_wiki(query: str, wiki_url: str = "", publisher: str = "") -> dict:
             print(f"  {Colors.DIM}   ✓ Found plot section from {best_url} ({len(plot)} chars){Colors.END}")
             break
 
-    # If no structured plot section, use the longest raw content
     if not best_plot:
         for result, score in scored:
             raw = result.get("raw_content", "") or ""
@@ -327,7 +259,6 @@ def fetch_wiki(query: str, wiki_url: str = "", publisher: str = "") -> dict:
                 print(f"  {Colors.DIM}   Using full content from {best_url} ({len(best_plot)} chars){Colors.END}")
                 break
 
-    # Last resort: combine all snippets
     if not best_plot:
         snippets = []
         for result, score in scored:

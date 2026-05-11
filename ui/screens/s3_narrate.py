@@ -26,6 +26,7 @@ from ..theme import (
     TEXT_PRIMARY, WARN,
 )
 from stages.stage_3.modes import MODES_BY_KEY
+from utils.clear_stage import clear_stage_3
 
 
 def build(
@@ -200,13 +201,55 @@ def build(
                         current["total_word_count"] / 2.9, 2
                     )
                     save_narration_edits(state.project_name, current)
-        state.mark_approved(3)
-        state.current_stage = 4
+        state.mark_approved(4)
+        state.current_stage = 5
         save_state(state)
-        on_go(4)
+        on_go(5)
 
     def rewrite_click(_e):
         page.run_task(_write_script)
+
+    def _show_snack(msg: str):
+        sb = ft.SnackBar(content=ft.Text(msg))
+        page.overlay.append(sb)
+        sb.open = True
+        page.update()
+
+    def _do_clear_3(dialog):
+        try:
+            removed = clear_stage_3(state.project_name)
+        except Exception as e:
+            page.pop_dialog()
+            _show_snack(str(e))
+            return
+        page.pop_dialog()
+        if removed:
+            _show_snack(
+                f"Removed {len(removed)} item(s): "
+                + ", ".join(p.name for p in removed)
+            )
+        else:
+            _show_snack("Nothing to clear.")
+        proposals_ctl.content = None
+        proposals_ctl.visible = True
+        script_ctl.visible = False
+        center.controls[0].visible = True
+        center.controls[1].visible = False
+        script_area.value = ""
+        counter.value = ""
+        page.update()
+
+    def open_clear_dialog(_e):
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Clear Stage 3 data"),
+            content=ft.Text("Delete narration.json?"),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                secondary_button("Clear", lambda _e: _do_clear_3(dialog)),
+            ],
+        )
+        page.show_dialog(dialog)
 
     # Center column
     center = ft.Column([
@@ -242,7 +285,7 @@ def build(
 
     # Right column
     right = ft.Column([
-        ft.Text("STEP 3 OF 5", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 4 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Narration Script", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Pick one of three LLM-proposed angles, then edit the generated script. "
@@ -255,6 +298,8 @@ def build(
         secondary_button("Rewrite in current mode", rewrite_click,
                          icon=ft.Icons.REFRESH,
                          disabled=not state.chosen_mode),
+        ft.Container(height=8),
+        secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=14),
         primary_button("Approve & Continue →", approve_and_go,
                        disabled=not (state.project_name and script_ctl.visible)),

@@ -9,7 +9,7 @@ from pathlib import Path
 from config import (
     CARTESIA_MODEL,
     CARTESIA_VOICE_ID,
-    GDRIVE_BASE,
+    PROJECTS_ROOT,
     get_project_dirs,
 )
 from .cartesia_tts import synthesize
@@ -21,15 +21,14 @@ def synthesize_project(
     project_name: str,
     *,
     speed: float = 1.0,
+    volume: float = 1.0,
+    emotion: str = "neutral",
     voice_id: str | None = None,
     model: str | None = None,
     force: bool = False,
 ) -> TTSResult:
-    """
-    Load narration.json, synthesize audio + timings, save all artifacts.
-    Returns TTSResult with paths/timings populated.
-    """
-    root = GDRIVE_BASE / project_name
+    """Load narration.json, synthesize audio + timings via Cartesia, save all artifacts."""
+    root = PROJECTS_ROOT / project_name
     narration_path = root / "narration.json"
     if not narration_path.exists():
         raise FileNotFoundError(f"narration.json missing: {narration_path}. Run Stage 3 first.")
@@ -52,8 +51,10 @@ def synthesize_project(
     else:
         full_text = " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text"))
         print(f"[stage4] synthesizing {len(full_text)} chars via Cartesia "
-              f"({model or CARTESIA_MODEL}, voice={voice_id or CARTESIA_VOICE_ID}, speed={speed})")
-        result = synthesize(full_text, voice_id=voice_id, model=model, speed=speed)
+              f"({model or CARTESIA_MODEL}, voice={voice_id or CARTESIA_VOICE_ID}, "
+              f"speed={speed}, volume={volume}, emotion={emotion})")
+        result = synthesize(full_text, voice_id=voice_id, model=model,
+                            speed=speed, volume=volume, emotion=emotion)
         audio_path.write_bytes(result.wav_bytes)
         words = result.word_timestamps
         words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))

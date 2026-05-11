@@ -10,15 +10,16 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-from config import GDRIVE_BASE
+from config import PROJECTS_ROOT
 
 
 STAGE_NAMES = {
     1: "Identify Comic",
-    2: "Preprocess Pages",
-    3: "Narration Script",
-    4: "TTS Audio",
-    5: "Final Video",
+    2: "Download Comic",
+    3: "Preprocess Pages",
+    4: "Narration Script",
+    5: "TTS Audio",
+    6: "Final Video",
 }
 
 
@@ -31,6 +32,7 @@ class AppState:
 
     # Stage 1
     last_prompt: str = ""
+    pipeline_mode: str = "narrate_1_comic"
     # Stage 3
     chosen_mode: str = ""
     chosen_hook: str = ""
@@ -51,7 +53,7 @@ class AppState:
     def mark_dirty(self, stage: int) -> None:
         self.dirty[str(stage)] = True
         # Cascade: all later stages are also dirty (output depends on this)
-        for s in range(stage + 1, 6):
+        for s in range(stage + 1, 7):
             if self.approved.get(str(s)):
                 self.dirty[str(s)] = True
 
@@ -64,7 +66,7 @@ class AppState:
 
 
 def state_path(project_name: str) -> Path:
-    return GDRIVE_BASE / project_name / "state.json"
+    return PROJECTS_ROOT / project_name / "state.json"
 
 
 def load_state(project_name: str) -> AppState:
@@ -92,11 +94,11 @@ def save_state(s: AppState) -> None:
 
 
 def list_projects() -> list[str]:
-    """Scan GDRIVE_BASE for project directories containing comic_context.json."""
-    if not GDRIVE_BASE.exists():
+    """Scan PROJECTS_ROOT for project directories containing comic_context.json."""
+    if not PROJECTS_ROOT.exists():
         return []
     out: list[str] = []
-    for d in sorted(GDRIVE_BASE.iterdir()):
+    for d in sorted(PROJECTS_ROOT.iterdir()):
         if d.is_dir() and (d / "comic_context.json").exists():
             out.append(d.name)
     return out

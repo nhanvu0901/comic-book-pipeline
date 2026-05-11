@@ -13,13 +13,14 @@ from typing import Callable
 import flet as ft
 from flet_video import Video, VideoMedia
 
-from config import GDRIVE_BASE
+from config import PROJECTS_ROOT
 from ..bridge import format_exception, run_blocking, run_stage_5
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from utils.clear_stage import clear_stage_5
 
 
 def build(
@@ -29,7 +30,7 @@ def build(
     on_go: Callable[[int], None],
     on_state_change: Callable[[], None],
 ) -> ft.Control:
-    final_path = GDRIVE_BASE / state.project_name / "final.mp4" if state.project_name else None
+    final_path = PROJECTS_ROOT / state.project_name / "final.mp4" if state.project_name else None
     existing = final_path and final_path.exists()
 
     video_slot = ft.Container(expand=True, alignment=ft.Alignment.CENTER)
@@ -84,7 +85,7 @@ def build(
         status_text.color = SUCCESS
         _mount_video(p)
 
-        state.mark_approved(5)
+        state.mark_approved(6)
         save_state(state)
         page.update()
         on_state_change()
@@ -95,7 +96,7 @@ def build(
     def open_folder(_e):
         if not state.project_name:
             return
-        folder = GDRIVE_BASE / state.project_name
+        folder = PROJECTS_ROOT / state.project_name
         try:
             subprocess.run(["open", str(folder)], check=False)
         except Exception as e:
@@ -106,6 +107,57 @@ def build(
         save_state(state)
         on_state_change()
         on_go(1)
+
+    def _show_snack(msg: str):
+        sb = ft.SnackBar(content=ft.Text(msg))
+        page.overlay.append(sb)
+        sb.open = True
+        page.update()
+
+    def _do_clear_5(dialog):
+        try:
+            removed = clear_stage_5(state.project_name)
+        except Exception as e:
+            page.pop_dialog()
+            _show_snack(str(e))
+            return
+        page.pop_dialog()
+        if removed:
+            _show_snack(
+                f"Removed {len(removed)} item(s): "
+                + ", ".join(p.name for p in removed)
+            )
+        else:
+            _show_snack("Nothing to clear.")
+        fp = (PROJECTS_ROOT / state.project_name / "final.mp4"
+              if state.project_name else None)
+        if fp and fp.exists():
+            _mount_video(fp)
+            status_text.value = "final.mp4 already exists — press Play below"
+        else:
+            video_slot.content = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.MOVIE_OUTLINED, size=64, color=TEXT_MUTED),
+                    ft.Text("Not assembled yet.", color=TEXT_MUTED, size=13),
+                ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                alignment=ft.Alignment.CENTER,
+                expand=True,
+            )
+            status_text.value = "Click Assemble to build the video."
+        status_text.color = TEXT_MUTED
+        page.update()
+
+    def open_clear_dialog(_e):
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Clear Stage 5 data"),
+            content=ft.Text("Delete _stage5/ scratch (keeps final.mp4)?"),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                secondary_button("Clear", lambda _e: _do_clear_5(dialog)),
+            ],
+        )
+        page.show_dialog(dialog)
 
     center = ft.Column([
         ft.Container(content=video_slot,
@@ -122,7 +174,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 5 OF 5", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 6 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "1080×1920 9:16 H.264 MP4 with Ken Burns on panels, MrBeast-style "
@@ -131,6 +183,8 @@ def build(
         ),
         ft.Container(height=16),
         primary_button("Assemble Video", assemble_click, icon=ft.Icons.MOVIE_FILTER),
+        ft.Container(height=8),
+        secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=8),
         secondary_button("Open Project Folder", open_folder, icon=ft.Icons.FOLDER_OPEN),
         ft.Container(height=20),

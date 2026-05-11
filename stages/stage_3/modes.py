@@ -16,6 +16,11 @@ class NarrationMode:
 
 MODES: list[NarrationMode] = [
     NarrationMode(
+        "panel_walk",
+        "Panel Walk",
+        "Literal panel-by-panel narration: read what each beat's panels actually show, in dramatic order, with brief lore asides only for first mentions of named external concepts. The most panel-faithful style — best when the comic's events are inherently dramatic and don't need a thematic reframe.",
+    ),
+    NarrationMode(
         "lesson",
         "Lesson",
         "Teach the audience something — a principle the story illustrates. Conclusion-oriented.",

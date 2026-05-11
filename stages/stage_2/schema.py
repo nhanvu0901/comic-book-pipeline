@@ -37,8 +37,9 @@ class PreprocessedPage:
     page_summary: str = ""
     issue_label: str = ""           # e.g. "#1", "chapter 5"
     vlm_model: str = ""
+    vlm_model_used: str = ""        # actual model that produced the result (after fallback chain)
     content_hash: str = ""          # sha256 prefix of the image bytes
-    preprocessing_method: str = "yolo+vlm"  # "yolo+vlm" | "heuristic_skip"
+    preprocessing_method: str = "magi+vlm"  # "magi+vlm" | "heuristic_skip"
     skip_reason: str = ""           # specific reason when page_type=="skip"
 
     def to_dict(self) -> dict[str, Any]:

@@ -56,10 +56,6 @@ def display_comic_context(ctx: dict):
     print_info("Title", ctx.get("title", "?"))
     print_info("Series", f"{ctx.get('series', '?')} {ctx.get('issues', '')}".strip())
     print_info("Year", ctx.get("year", "?"))
-    print_info("Publisher", ctx.get("publisher", "?"))
-    print_info("Writer", ctx.get("writer", "?"))
-    print_info("Artist", ctx.get("artist", "?"))
-    print_info("Era", ctx.get("era", "?"))
 
     chars = ctx.get("characters", [])
     if chars:

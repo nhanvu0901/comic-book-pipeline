@@ -13,13 +13,14 @@ from typing import Callable
 import flet as ft
 from flet_audio import Audio, AudioState
 
-from config import GDRIVE_BASE, CARTESIA_MODEL, CARTESIA_VOICE_ID
+from config import PROJECTS_ROOT, CARTESIA_MODEL, CARTESIA_VOICE_ID
 from ..bridge import format_exception, run_blocking, run_stage_4
-from ..layout import log_list, primary_button, three_col
+from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from utils.clear_stage import clear_stage_4
 
 
 # ─── Voice/model presets ────────────────────────────────────────────────────
@@ -53,7 +54,7 @@ def build(
     on_go: Callable[[int], None],
     on_state_change: Callable[[], None],
 ) -> ft.Control:
-    audio_path = GDRIVE_BASE / state.project_name / "audio.wav" if state.project_name else None
+    audio_path = PROJECTS_ROOT / state.project_name / "audio.wav" if state.project_name else None
     existing_audio = bool(audio_path and audio_path.exists())
 
     # ─── Player widgets (defined first so audio handlers can close over them) ──
@@ -166,7 +167,7 @@ def build(
         if not state.project_name:
             info.controls = []
             return
-        root = GDRIVE_BASE / state.project_name
+        root = PROJECTS_ROOT / state.project_name
         sc_path = root / "scene_timings.json"
         cap_path = root / "caption_chunks.json"
         ap = root / "audio.wav"
@@ -244,7 +245,7 @@ def build(
         status_text.color = SUCCESS
 
         # Reload the player with the fresh file
-        new_path = GDRIVE_BASE / state.project_name / "audio.wav"
+        new_path = PROJECTS_ROOT / state.project_name / "audio.wav"
         audio_ctl.src = str(new_path)
         seek_slider.value = 0
         seek_slider.disabled = False
@@ -294,11 +295,73 @@ def build(
     def generate_click(_e):
         page.run_task(_execute)
 
+    def _show_snack(msg: str):
+        sb = ft.SnackBar(content=ft.Text(msg))
+        page.overlay.append(sb)
+        sb.open = True
+        page.update()
+
+    clear_radio = ft.RadioGroup(
+        value="all",
+        content=ft.Column([
+            ft.Radio(value="all", label="Clear all (re-bills Cartesia)"),
+            ft.Radio(value="alignment", label="Clear alignment only (free)"),
+        ], tight=True, spacing=2),
+    )
+
+    def _do_clear_4(dialog):
+        alignment_only = clear_radio.value == "alignment"
+        try:
+            removed = clear_stage_4(state.project_name, alignment_only=alignment_only)
+        except Exception as e:
+            page.pop_dialog()
+            _show_snack(str(e))
+            return
+        page.pop_dialog()
+        if removed:
+            _show_snack(
+                f"Removed {len(removed)} item(s): "
+                + ", ".join(p.name for p in removed)
+            )
+        else:
+            _show_snack("Nothing to clear.")
+        new_path = (PROJECTS_ROOT / state.project_name / "audio.wav"
+                    if state.project_name else None)
+        still_exists = bool(new_path and new_path.exists())
+        audio_ctl.src = str(new_path) if still_exists else None
+        seek_slider.value = 0
+        seek_slider.disabled = not still_exists
+        pos_label.value = _fmt_ms(0)
+        dur_label.value = _fmt_ms(0)
+        duration_ms["v"] = 0
+        is_playing["v"] = False
+        _set_play_icon(False)
+        status_text.value = (
+            "audio.wav: ready — press Play" if still_exists
+            else "audio.wav: not yet synthesized"
+        )
+        status_text.color = TEXT_MUTED
+        _update_info()
+        page.update()
+
+    def open_clear_dialog(_e):
+        clear_radio.value = "all"
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Clear Stage 4 data"),
+            content=clear_radio,
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                secondary_button("Clear", lambda _e: _do_clear_4(dialog)),
+            ],
+        )
+        page.show_dialog(dialog)
+
     def approve_and_go(_e):
-        state.mark_approved(4)
-        state.current_stage = 5
+        state.mark_approved(5)
+        state.current_stage = 6
         save_state(state)
-        on_go(5)
+        on_go(6)
 
     # ─── Layout ────────────────────────────────────────────────────────────
     player_card = ft.Container(
@@ -358,7 +421,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 4 OF 5", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 5 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("TTS Audio", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Cartesia TTS — voice + model selectable. Word-level timestamps.",
                 size=12, color=TEXT_MUTED),
@@ -368,9 +431,11 @@ def build(
         model_dropdown,
         ft.Container(height=14),
         primary_button("Synthesize", generate_click, icon=ft.Icons.GRAPHIC_EQ),
+        ft.Container(height=8),
+        secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=14),
         primary_button("Approve & Continue →", approve_and_go,
-                       disabled=not state.is_approved(4)),
+                       disabled=not state.is_approved(5)),
     ], spacing=10, expand=True)
 
     return three_col(
