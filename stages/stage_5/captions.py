@@ -2,7 +2,7 @@
 import re
 
 
-WORDS_PER_CHUNK = 2
+WORDS_PER_CHUNK = 3
 MIN_CHUNK_DURATION = 0.18
 ASS_HEADER = """[Script Info]
 ScriptType: v4.00+

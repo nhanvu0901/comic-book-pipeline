@@ -19,11 +19,23 @@ UPSCALE_DIM = 2160
 ASPECT_THRESHOLD = 0.7
 
 MOTION_CYCLE = ("zoom_in", "pan_right", "zoom_out")
+SHOT_TARGET_SECONDS = 2.5
+SHOT_MIN_SECONDS = 1.2
+SHOT_MAX_SECONDS = 4.5
+STATIC_MOTION_BELOW_SECONDS = 1.5
+SILENCE_GAP_THRESHOLD = 0.2
+SNAP_WINDOW_SECONDS = 0.5
 
 
-def build_shots(narration: dict) -> list[Shot]:
-    """Split each narration scene into 1-3 visually-distinct shots."""
+def build_shots(
+    narration: dict,
+    *,
+    scene_timings: list[dict] | None = None,
+    word_timestamps: list[dict] | None = None,
+) -> list[Shot]:
+    """Split each narration scene into multiple shots, snapping cuts to silence gaps when audio data is available."""
     scenes = narration.get("scenes") or []
+    timings_by_scene = {int(t.get("scene_id", 0) or 0): t for t in (scene_timings or [])}
     shots: list[Shot] = []
     shot_id = 0
     for s in scenes:
@@ -34,16 +46,14 @@ def build_shots(narration: dict) -> list[Shot]:
         if not source_image or target <= 0.0:
             continue
 
-        if target < 2.0:
-            n_shots = 1
-        elif target < 4.0:
-            n_shots = 2
-        else:
-            n_shots = 3
-
-        per = round(target / n_shots, 3)
-        for i in range(n_shots):
-            dur = per if i < n_shots - 1 else round(target - per * (n_shots - 1), 3)
+        durations = _plan_durations(
+            scene_id=scene_id,
+            target=target,
+            scene_timing=timings_by_scene.get(scene_id),
+            word_timestamps=word_timestamps,
+        )
+        for i, dur in enumerate(durations):
+            motion = "static" if dur < STATIC_MOTION_BELOW_SECONDS else MOTION_CYCLE[i % len(MOTION_CYCLE)]
             shots.append(Shot(
                 shot_id=shot_id,
                 scene_id=scene_id,
@@ -51,10 +61,74 @@ def build_shots(narration: dict) -> list[Shot]:
                 panel_bbox={"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
                             "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))},
                 source_image=source_image,
-                motion=MOTION_CYCLE[i % len(MOTION_CYCLE)],
+                motion=motion,
             ))
             shot_id += 1
     return shots
+
+
+def _plan_durations(
+    *,
+    scene_id: int,
+    target: float,
+    scene_timing: dict | None,
+    word_timestamps: list[dict] | None,
+) -> list[float]:
+    n_shots = max(1, min(4, round(target / SHOT_TARGET_SECONDS)))
+    if n_shots == 1:
+        return [target]
+
+    even_step = target / n_shots
+    rel_splits = [even_step * i for i in range(1, n_shots)]
+
+    if scene_timing and word_timestamps:
+        scene_start = float(scene_timing.get("start", 0.0))
+        scene_end = float(scene_timing.get("end", scene_start + target))
+        gaps_abs = _silence_gaps_in_window(word_timestamps, scene_start, scene_end)
+        rel_splits = [_snap_split_to_gaps(rel, scene_start, gaps_abs) for rel in rel_splits]
+
+    rel_splits = sorted(_clamp_splits(rel_splits, target))
+    boundaries = [0.0] + rel_splits + [target]
+    return [round(max(0.4, boundaries[i + 1] - boundaries[i]), 3) for i in range(n_shots)]
+
+
+def _silence_gaps_in_window(
+    word_timestamps: list[dict], scene_start: float, scene_end: float
+) -> list[float]:
+    gaps: list[float] = []
+    prev_end = scene_start
+    for w in word_timestamps:
+        ws = float(w.get("start", 0.0))
+        we = float(w.get("end", 0.0))
+        if we < scene_start or ws > scene_end:
+            continue
+        if ws - prev_end >= SILENCE_GAP_THRESHOLD:
+            gaps.append((prev_end + ws) / 2.0)
+        prev_end = max(prev_end, we)
+    return gaps
+
+
+def _snap_split_to_gaps(rel_split: float, scene_start: float, gaps_abs: list[float]) -> float:
+    if not gaps_abs:
+        return rel_split
+    abs_split = scene_start + rel_split
+    best_gap = min(gaps_abs, key=lambda g: abs(g - abs_split))
+    if abs(best_gap - abs_split) <= SNAP_WINDOW_SECONDS:
+        return max(SHOT_MIN_SECONDS / 2, best_gap - scene_start)
+    return rel_split
+
+
+def _clamp_splits(splits: list[float], total: float) -> list[float]:
+    if not splits:
+        return splits
+    sorted_splits = sorted(splits)
+    fixed: list[float] = []
+    prev = 0.0
+    for s in sorted_splits:
+        s = max(prev + SHOT_MIN_SECONDS, min(s, total - SHOT_MIN_SECONDS))
+        fixed.append(s)
+        prev = s
+    return fixed
 
 
 def render_shot(
@@ -82,11 +156,13 @@ def render_shot(
 
     cmd = [
         ff, "-y",
+        "-framerate", "1",
         "-loop", "1",
-        "-t", f"{duration:.3f}",
+        "-t", "1",
         "-i", str(framed),
         "-filter_complex", filter_complex,
         "-map", "[v]",
+        "-frames:v", str(frames),
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "23",

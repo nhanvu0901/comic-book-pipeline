@@ -40,6 +40,10 @@ def assemble_project(
     narration = json.loads(narration_path.read_text())
     word_timestamps = json.loads(words_path.read_text())
     audio_duration = _wav_duration(audio_path)
+    scene_timings_path = root / "scene_timings.json"
+    scene_timings = (
+        json.loads(scene_timings_path.read_text()) if scene_timings_path.exists() else []
+    )
 
     shots_dir = root / "shots"
     shots_dir.mkdir(parents=True, exist_ok=True)
@@ -65,10 +69,11 @@ def assemble_project(
 
     bgm = _resolve_bgm(bg_music_path, enable_music, log)
 
-    shots = build_shots(narration)
+    shots = build_shots(narration, scene_timings=scene_timings, word_timestamps=word_timestamps)
     if not shots:
         raise RuntimeError("build_shots produced 0 shots — check narration.json fields")
-    log(f"[stage5] planning {len(shots)} shots across {len(narration.get('scenes') or [])} scenes")
+    silence_aligned = "silence-aligned" if scene_timings and word_timestamps else "even-split"
+    log(f"[stage5] planning {len(shots)} shots across {len(narration.get('scenes') or [])} scenes ({silence_aligned} cuts)")
 
     shot_paths: list[Path] = []
     for s in shots:

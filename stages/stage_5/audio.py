@@ -7,10 +7,10 @@ from typing import Callable
 
 
 MIX_FILTER = (
-    "[1:a]volume=0.35,aloop=loop=-1:size=2e+09[bgm];"
-    "[bgm][0:a]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=300[ducked];"
+    "[1:a]volume=0.22,aloop=loop=-1:size=2e+09[bgm];"
+    "[bgm][0:a]sidechaincompress=threshold=0.04:ratio=8:attack=5:release=250[ducked];"
     "[ducked][0:a]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
-    "[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+    "[mixed]loudnorm=I=-14:TP=-1.0:LRA=9[out]"
 )
 
 

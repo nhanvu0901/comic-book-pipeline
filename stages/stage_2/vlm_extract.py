@@ -29,12 +29,19 @@ Use the STORY CONTEXT only to recognize and disambiguate entities by their canon
 
 STEP 1 — Classify the page into ONE of three types:
 
-  • "cover"  — front/back cover, issue cover, chapter cover, variant cover.
-               Usually shows title, issue number, main character(s) in a splash pose.
-               EXTRACT metadata for covers (characters visible, title text, etc.).
+  • "cover"  — REQUIRES visible title text AND/OR issue-number text on the page itself
+               (e.g. "WHAT IF...? DARK VENOM", "ISSUE #1", series logo, credits block).
+               This is the primary signal. Without that text, the page is NOT a cover.
+               Splash pages featuring a character in a striking pose, aftermath imagery,
+               or iconic finale shot but WITHOUT title/issue-number text are page_type="story"
+               even if they look "cover-like" in composition. Variant/back covers also count
+               as cover only when title or credit text is visibly present.
+               EXTRACT metadata for confirmed covers (characters visible, title text, etc.).
 
-  • "story"  — an actual narrative page from inside the issue.
-               Has panels with action, dialogue, or plot progression.
+  • "story"  — an actual narrative page from inside the issue. Includes:
+               - panels with action, dialogue, or plot progression
+               - full-page splash panels WITHOUT title text (climax, aftermath, transformation reveals)
+               - title-less iconic poses occurring INSIDE the story
                EXTRACT full metadata.
 
   • "skip"   — NOT worth extracting. Any of:

@@ -78,9 +78,35 @@ def preprocess_project(
             results.append(page_dict)
         log(f"[preprocess]   ✓ {label} done in {time.time() - t_chapter:.1f}s")
 
+    _reclassify_mid_doc_covers(results, project_root, log)
+
     story_count = sum(1 for r in results if r.get("is_story_page"))
     log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
     return results
+
+
+def _reclassify_mid_doc_covers(
+    pages: list[dict], project_root: Path, log: Callable[[str], None]
+) -> None:
+    """A real cover sits at the edges of the issue. A page tagged 'cover' in the middle is almost always a misclassified splash — flip it to story so Narration can use it."""
+    total = max((int(p.get("page_number", 0) or 0) for p in pages), default=0)
+    if total < 5:
+        return
+    for p in pages:
+        if p.get("page_type") != "cover":
+            continue
+        pn = int(p.get("page_number", 0) or 0)
+        if pn <= 2 or pn >= total:
+            continue
+        log(f"[preprocess] mid-doc cover at p{pn:03d}/{total} → reclassifying to story (Option 1 heuristic)")
+        p["page_type"] = "story"
+        p["is_story_page"] = True
+        h = str(p.get("content_hash", "") or "")
+        if h:
+            try:
+                save_cached(project_root, pn, h, p)
+            except Exception as exc:
+                log(f"[preprocess]   ⚠ couldn't persist reclassification for p{pn}: {exc}")
 
 
 def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:
