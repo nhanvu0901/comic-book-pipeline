@@ -14,11 +14,11 @@ from typing import Callable
 
 from PIL import Image
 
-from config import VLM_MODEL, get_project_dirs
+from config import VLM_BATCH_SIZE, VLM_MODEL, get_project_dirs
 from .cache import image_hash, load_cached, save_cached
 from .panel_detect import detect_panels
 from .schema import PanelInfo, PreprocessedPage, TextBlock
-from .vlm_extract import extract_page
+from .vlm_extract import extract_page, extract_pages_batch
 
 
 def preprocess_project(
@@ -48,36 +48,123 @@ def preprocess_project(
 
     story_context = _load_story_context(project_root, log)
 
-    results: list[dict] = []
+    # Flatten manifest into a single ordered list of (page_number, label, path).
+    # Continuity in reading flow > chapter boundaries — we batch across chapters
+    # only if they're adjacent in the manifest, which they always are.
+    flat: list[tuple[int, str, Path]] = []
     global_page_num = 0
-
     for chapter in manifest:
         label = chapter["label"]
-        pages = chapter["pages"]
-        total = len(pages)
-        log(f"[preprocess] ▶ {label}: {total} page(s)")
-        t_chapter = time.time()
-
-        for local_idx, img_path_str in enumerate(pages, start=1):
+        for img_path_str in chapter["pages"]:
             img_path = Path(img_path_str)
             if not img_path.exists():
                 log(f"[preprocess]   ⚠ missing: {img_path.name} — skipping")
                 continue
             global_page_num += 1
-            log(f"[preprocess]   ── page {local_idx}/{total} (global p{global_page_num:03d}) "
-                f"{img_path.name}")
-            page_dict = _process_one_page(
-                page_number=global_page_num,
-                issue_label=label,
-                image_path=img_path,
-                project_root=project_root,
-                force_refresh=force_refresh,
-                log=log,
-                story_context=story_context,
-            )
-            results.append(page_dict)
-        log(f"[preprocess]   ✓ {label} done in {time.time() - t_chapter:.1f}s")
+            flat.append((global_page_num, label, img_path))
 
+    log(f"[preprocess] {len(flat)} total page(s); batch_size={VLM_BATCH_SIZE}")
+
+    # ── Phase 1: hash every page, separate cached vs uncached (preserve order) ──
+    page_states: list[dict] = []  # parallel to flat; carries "cached" dict OR None
+    for pn, label, img_path in flat:
+        h = image_hash(img_path)
+        cached = None if force_refresh else load_cached(project_root, pn, h)
+        if cached is not None and cached.get("skip_reason") == "vlm_failure":
+            cached = None  # invalidate prior failures so we retry with batch
+        page_states.append({"pn": pn, "label": label, "img": img_path, "hash": h, "cached": cached})
+
+    cached_count = sum(1 for s in page_states if s["cached"] is not None)
+    log(f"[preprocess] cache: {cached_count}/{len(page_states)} pages have valid results — "
+        f"{len(page_states) - cached_count} need VLM")
+
+    # ── Phase 2: walk pages in order, batching uncached runs ──
+    # Overlap pattern: each batch carries the IMMEDIATELY PRIOR page (its full extracted
+    # data + image) as context. The prior page is NOT re-processed (first-wins lock-in)
+    # — if VLM ignores instructions and emits an entry for it, vlm_extract drops it.
+    results: list[dict] = []
+    running_state = ""  # Fallback memory used when no prior page is available (first batch only)
+    prev_page_dict: dict | None = None
+    prev_image_path: Path | None = None
+    i = 0
+    n = len(page_states)
+    while i < n:
+        s = page_states[i]
+        if s["cached"] is not None:
+            log(f"[preprocess]   ✓ cache hit p{s['pn']:03d} ({s['img'].name})")
+            results.append(s["cached"])
+            # Cached page becomes the prior-context for whatever batch comes next.
+            prev_page_dict = s["cached"]
+            prev_image_path = s["img"]
+            summary = (s["cached"].get("page_summary") or "").strip()
+            if summary and not running_state:
+                running_state = summary[:240]
+            i += 1
+            continue
+
+        # Collect a contiguous run of uncached pages up to VLM_BATCH_SIZE.
+        batch_end = i
+        while batch_end < n and page_states[batch_end]["cached"] is None and (batch_end - i) < VLM_BATCH_SIZE:
+            batch_end += 1
+        batch = page_states[i:batch_end]
+        batch_pns = [b["pn"] for b in batch]
+        overlap_note = f" + prior p{prev_page_dict['page_number']:03d}" if prev_page_dict is not None else ""
+        log(f"[preprocess] ▶ VLM batch of {len(batch)} fresh page(s): {batch_pns}{overlap_note}")
+
+        # Magi panel-detect every page in the batch (Magi for prior page not needed — its data is cached).
+        batch_panels: list[list[dict]] = []
+        batch_dims: list[tuple[int, int]] = []
+        for b in batch:
+            t_panel = time.time()
+            with Image.open(b["img"]) as im:
+                batch_dims.append(im.size)
+            panels_raw = detect_panels(b["img"])
+            log(f"[preprocess]   p{b['pn']:03d}: Magi → {len(panels_raw)} panel(s) "
+                f"in {time.time() - t_panel:.1f}s")
+            batch_panels.append(panels_raw)
+
+        # Call multi-image VLM with overlap. Returns None on total failure → fall back per-page.
+        t_vlm = time.time()
+        vlm_pages, new_state, model_used = extract_pages_batch(
+            [b["img"] for b in batch],
+            batch_panels,
+            progress=log,
+            story_context=story_context,
+            running_state=running_state,
+            prior_page=prev_page_dict,
+            prior_image_path=prev_image_path,
+        )
+        vlm_dt = time.time() - t_vlm
+
+        if vlm_pages is None:
+            log(f"[preprocess]   ✗ batch failed — falling back to per-page extract_page()")
+            for b, panels_raw, dims in zip(batch, batch_panels, batch_dims):
+                page_dict = _build_page_from_single(
+                    page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
+                    panels_raw=panels_raw, dimensions=dims, project_root=project_root,
+                    log=log, story_context=story_context, content_hash=b["hash"],
+                )
+                results.append(page_dict)
+                prev_page_dict = page_dict
+                prev_image_path = b["img"]
+        else:
+            log(f"[preprocess]   ✓ batch ok in {vlm_dt:.1f}s via {model_used}")
+            running_state = new_state or running_state
+            for b, panels_raw, dims, vlm_page in zip(batch, batch_panels, batch_dims, vlm_pages):
+                page_dict = _assemble_page_dict(
+                    page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
+                    panels_raw=panels_raw, dimensions=dims, vlm_data=vlm_page,
+                    content_hash=b["hash"], vlm_model_used=vlm_page.get("_vlm_model_used", model_used),
+                )
+                save_cached(project_root, b["pn"], b["hash"], page_dict)
+                results.append(page_dict)
+                # The LAST page of this batch becomes prior-context for next batch.
+                prev_page_dict = page_dict
+                prev_image_path = b["img"]
+
+        i = batch_end
+
+    log(f"[preprocess] running_state final: {running_state[:200]}")
     _reclassify_mid_doc_covers(results, project_root, log)
 
     story_count = sum(1 for r in results if r.get("is_story_page"))
@@ -129,118 +216,46 @@ def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:
     return block
 
 
-def _process_one_page(
+def _assemble_page_dict(
     *,
     page_number: int,
     issue_label: str,
     image_path: Path,
-    project_root: Path,
-    force_refresh: bool,
-    log: Callable[[str], None],
-    story_context: str = "",
+    panels_raw: list[dict],
+    dimensions: tuple[int, int],
+    vlm_data: dict,
+    content_hash: str,
+    vlm_model_used: str,
 ) -> dict:
-    log(f"[stage2]     computing hash for {image_path.name}…")
-    h = image_hash(image_path)
-    log(f"[stage2]     hash={h[:16]}…")
+    """Turn raw VLM output + Magi bboxes into a PreprocessedPage dict. Pure builder, no I/O."""
+    width, height = dimensions
 
-    if not force_refresh:
-        cached = load_cached(project_root, page_number, h)
-        if cached is not None:
-            if cached.get("skip_reason") == "vlm_failure":
-                log(f"[stage2]     ⚠ cache had vlm_failure — invalidating and re-running with fallback chain")
-            else:
-                cached_type = cached.get("page_type", "?")
-                cached_panels = len(cached.get("panels", []))
-                log(f"[stage2]     ✓ cache hit — type={cached_type}, {cached_panels} panels — skipping panel detect + VLM")
-                return cached
-    log(f"[stage2]     no cache — running full pipeline")
-
-    t0 = time.time()
-    with Image.open(image_path) as im:
-        width, height = im.size
-    log(f"[stage2]     image loaded: {width}×{height} px, "
-        f"{image_path.stat().st_size / 1024:.0f} KB")
-
-    # ── Magi panel detection ──
-    log(f"[stage2]     running Magi v3 panel detection…")
-    t_panel = time.time()
-    panels_raw = detect_panels(image_path)
-    panel_dt = time.time() - t_panel
-    log(f"[stage2]     Magi found {len(panels_raw)} panel(s) in {panel_dt:.1f}s")
-    for i, p in enumerate(panels_raw):
-        b = p["bbox"]
-        log(f"[stage2]       panel {i}: {b['w']}×{b['h']} @ ({b['x']},{b['y']}) conf={p['confidence']}")
-
-    # ── Cover shortcut (first page, no panels) ──
-    if not panels_raw and page_number == 1:
-        log(f"[stage2]     first page, no panels detected — marking as COVER, skipping VLM")
-        page = PreprocessedPage(
+    # Cover shortcut: first page, no panels detected, no VLM data → mark as cover.
+    if not panels_raw and page_number == 1 and not vlm_data:
+        return PreprocessedPage(
             page_number=page_number,
             source_image=str(image_path.resolve()),
             image_dimensions={"width": width, "height": height},
-            is_story_page=False,
-            page_type="cover",
-            panels=[],
-            text_blocks=[],
-            page_summary="Cover page",
-            issue_label=issue_label,
-            vlm_model="",
-            vlm_model_used="",
-            content_hash=h,
-            preprocessing_method="magi+vlm",
-            skip_reason="",
-        )
-        out = page.to_dict()
-        save_cached(project_root, page_number, h, out)
-        log(f"[stage2]     → COVER  0 panels, {time.time() - t0:.1f}s total")
-        return out
-
-    if not panels_raw:
-        log(f"[stage2]     no panels on non-first page — VLM will classify (story vs skip)")
-
-    # ── VLM enrichment ──
-    log(f"[stage2]     calling VLM with fallback chain (primary={VLM_MODEL})")
-    log(f"[stage2]     sending {len(panels_raw)} panel bboxes + full page image…")
-    t_vlm = time.time()
-    vlm_data = extract_page(image_path, panels_raw, progress=log, story_context=story_context)
-    vlm_dt = time.time() - t_vlm
-    vlm_model_used = str(vlm_data.get("_vlm_model_used", ""))
+            is_story_page=False, page_type="cover", panels=[], text_blocks=[],
+            page_summary="Cover page", issue_label=issue_label,
+            vlm_model="", vlm_model_used="", content_hash=content_hash,
+            preprocessing_method="magi+vlm", skip_reason="",
+        ).to_dict()
 
     page_type = str(vlm_data.get("page_type", "story")).lower()
     if page_type not in ("cover", "story", "skip"):
         page_type = "story"
     skip_reason = str(vlm_data.get("skip_reason", ""))
-
-    vlm_panels = vlm_data.get("panels") or []
     vlm_text_blocks = vlm_data.get("text_blocks") or []
 
-    if skip_reason == "vlm_failure":
-        log(f"[stage2]     ✗ VLM FAILED in {vlm_dt:.1f}s")
-        log(f"[stage2]       error: {vlm_data.get('error','?')[:200]}")
-    else:
-        log(f"[stage2]     ✓ VLM done in {vlm_dt:.1f}s")
-        log(f"[stage2]       page_type={page_type.upper()}"
-            + (f"  skip_reason={skip_reason}" if skip_reason else ""))
-        log(f"[stage2]       {len(vlm_panels)} panel descriptions, "
-            f"{len(vlm_text_blocks)} text blocks")
-        for vp in vlm_panels:
-            desc = str(vp.get("description", ""))[:80]
-            log(f"[stage2]       panel {vp.get('index', '?')}: {desc}")
-        for tb in vlm_text_blocks:
-            txt = str(tb.get("text", ""))[:60]
-            log(f"[stage2]       text [{tb.get('type','?')}] p{tb.get('panel_index','?')}: \"{txt}\"")
-
-    # ── Build output ──
     if page_type == "skip":
         panel_infos: list[PanelInfo] = []
         text_blocks: list[TextBlock] = []
         page_summary = ""
-        log(f"[stage2]     page marked SKIP — clearing panels + text blocks")
     else:
         panel_infos = [
             PanelInfo(
-                index=i,
-                bbox=p["bbox"],
+                index=i, bbox=p["bbox"],
                 description=_panel_field(vlm_data, i, "description"),
                 characters=_panel_field(vlm_data, i, "characters", default=[]),
                 dominant_emotion=_panel_field(vlm_data, i, "dominant_emotion"),
@@ -257,35 +272,56 @@ def _process_one_page(
             for tb in vlm_text_blocks
         ]
         page_summary = str(vlm_data.get("page_summary", ""))
-        log(f"[stage2]     built {len(panel_infos)} PanelInfo + {len(text_blocks)} TextBlock objects")
-        if page_summary:
-            log(f"[stage2]     summary: {page_summary[:120]}")
 
-    page = PreprocessedPage(
+    return PreprocessedPage(
         page_number=page_number,
         source_image=str(image_path.resolve()),
         image_dimensions={"width": width, "height": height},
         is_story_page=(page_type == "story"),
-        page_type=page_type,
-        panels=panel_infos,
-        text_blocks=text_blocks,
-        page_summary=page_summary,
-        issue_label=issue_label,
-        vlm_model=VLM_MODEL,
-        vlm_model_used=vlm_model_used,
-        content_hash=h,
-        preprocessing_method="magi+vlm",
+        page_type=page_type, panels=panel_infos, text_blocks=text_blocks,
+        page_summary=page_summary, issue_label=issue_label,
+        vlm_model=VLM_MODEL, vlm_model_used=vlm_model_used,
+        content_hash=content_hash, preprocessing_method="magi+vlm",
         skip_reason=skip_reason,
-    )
-    out = page.to_dict()
-    cache_file = save_cached(project_root, page_number, h, out)
+    ).to_dict()
 
-    total_dt = time.time() - t0
-    flag = page_type.upper() + (f" ({skip_reason})" if page_type == "skip" and skip_reason else "")
-    log(f"[stage2]     → {flag}  {len(panel_infos)} panels, "
-        f"{len(text_blocks)} text blocks")
-    log(f"[stage2]     timing: Magi={panel_dt:.1f}s  VLM={vlm_dt:.1f}s  total={total_dt:.1f}s")
-    log(f"[stage2]     saved → {Path(cache_file).name}")
+
+def _build_page_from_single(
+    *,
+    page_number: int,
+    issue_label: str,
+    image_path: Path,
+    panels_raw: list[dict],
+    dimensions: tuple[int, int],
+    project_root: Path,
+    log: Callable[[str], None],
+    story_context: str,
+    content_hash: str,
+) -> dict:
+    """Single-image fallback: called when a multi-image batch fails."""
+    # First-page-no-panels cover shortcut.
+    if not panels_raw and page_number == 1:
+        log(f"[stage2]     p{page_number:03d} no panels + first page → COVER shortcut")
+        out = _assemble_page_dict(
+            page_number=page_number, issue_label=issue_label, image_path=image_path,
+            panels_raw=[], dimensions=dimensions, vlm_data={},
+            content_hash=content_hash, vlm_model_used="",
+        )
+        save_cached(project_root, page_number, content_hash, out)
+        return out
+
+    log(f"[stage2]     p{page_number:03d} fallback single-image VLM ({len(panels_raw)} panels)…")
+    t_vlm = time.time()
+    vlm_data = extract_page(image_path, panels_raw, progress=log, story_context=story_context)
+    log(f"[stage2]     p{page_number:03d} fallback done in {time.time() - t_vlm:.1f}s")
+
+    out = _assemble_page_dict(
+        page_number=page_number, issue_label=issue_label, image_path=image_path,
+        panels_raw=panels_raw, dimensions=dimensions, vlm_data=vlm_data,
+        content_hash=content_hash,
+        vlm_model_used=str(vlm_data.get("_vlm_model_used", "")),
+    )
+    save_cached(project_root, page_number, content_hash, out)
     return out
 
 

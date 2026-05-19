@@ -50,7 +50,7 @@ def synthesize(
     model: str | None = None,
     speed: float = 1.0,
     volume: float = 1.0,
-    emotion: str = "neutral",
+    emotion: str = "contemplative",
     language: str = "en",
     sample_rate: int = 44100,
     timeout: int = 120,

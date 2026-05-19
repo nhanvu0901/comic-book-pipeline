@@ -165,9 +165,11 @@ def _final_encode(
 ) -> Path:
     ff = _require_ffmpeg()
     fonts_dir = Path(__file__).resolve().parent.parent.parent / "fonts"
-    sub_filter = f"subtitles='{captions}'"
+    # ffmpeg libavfilter strict parser rejects quoted paths in `subtitles=...` —
+    # use explicit `filename=` key with backslash-escaped colons/special chars.
+    sub_filter = f"subtitles=filename={_ffmpeg_escape(str(captions))}"
     if fonts_dir.exists():
-        sub_filter += f":fontsdir='{fonts_dir}'"
+        sub_filter += f":fontsdir={_ffmpeg_escape(str(fonts_dir))}"
     cmd = [
         ff, "-y",
         "-i", str(silent_video),
@@ -190,6 +192,17 @@ def _final_encode(
     ]
     _run(cmd)
     return out_path
+
+
+def _ffmpeg_escape(path: str) -> str:
+    """Escape a path for use inside an ffmpeg filter argument.
+
+    Inside -vf the chars `\\`, `'`, `:`, `[`, `]`, `,` and `;` are special and
+    must be backslash-escaped. Spaces are fine. See ffmpeg-filters(1) "Escaping".
+    """
+    for ch in ("\\", "'", ":", "[", "]", ",", ";"):
+        path = path.replace(ch, "\\" + ch)
+    return path
 
 
 def _wav_duration(path: Path) -> float:

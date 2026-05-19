@@ -50,6 +50,22 @@ VLM_MODELS: list[str] = [
 ]
 VLM_MODEL = os.getenv("VLM_MODEL", VLM_MODELS[0])
 
+# Multi-image-capable subset for batched (multi-page) VLM calls.
+# Probe (scripts/probe_multi_image.py 2026-05) confirmed:
+#   ✓ google/gemini-2.5-flash-lite      — fast (~6s), most accurate, ~$0.0002/page
+#   ✓ google/gemma-4-31b-it:free        — works but free-tier queues 4+ HOURS under load
+#   ✗ qwen/qwen2.5-vl-72b-instruct:free — endpoint 404 (pulled)
+#   ✗ nvidia/nemotron-nano-12b-v2-vl:free — hallucinates image count on multi-image
+# Order: paid-but-fast first, free fallback only when paid hits 429/transient errors.
+_DEFAULT_VLM_BATCH_CHAIN = (
+    "google/gemini-2.5-flash-lite,"
+    "google/gemma-4-31b-it:free"
+)
+VLM_MODELS_BATCH: list[str] = [
+    m.strip() for m in os.getenv("VLM_MODELS_BATCH", _DEFAULT_VLM_BATCH_CHAIN).split(",") if m.strip()
+]
+VLM_BATCH_SIZE = int(os.getenv("VLM_BATCH_SIZE", "3"))  # pages per VLM call
+
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 _DEFAULT_FANDOM_CHAIN = "marvel.fandom.com,dc.fandom.com,imagecomics.fandom.com"
@@ -61,8 +77,8 @@ FANDOM_DOMAINS: list[str] = [
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
 CARTESIA_MODEL = os.getenv("CARTESIA_MODEL", "sonic-3-2026-01-12")
 CARTESIA_API_VERSION = os.getenv("CARTESIA_API_VERSION", "2026-03-01")
-# "Comic Vocal" — cloned from /Users/nhanvu/Desktop/comic.wav (private to this org).
-CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "f7248031-b419-4004-b447-2e9bf32f6b5e")
+# Kyle — Cartesia "Emotive" preset voice; deep male storyteller, responds well to emotion tags.
+CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "c961b81c-a935-4c17-bfb3-ba2239de8c2f")
 
 # ─── Stage 5: Video assembly ────────────────────────────────────────────────
 BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")

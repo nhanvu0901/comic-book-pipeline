@@ -38,9 +38,22 @@ def build_shots(
     timings_by_scene = {int(t.get("scene_id", 0) or 0): t for t in (scene_timings or [])}
     shots: list[Shot] = []
     shot_id = 0
+    prev_scene_end = 0.0  # Each scene "owns" from the previous scene's end → its own end,
+                          # so inter-scene silence (TTS gaps between sentences) is absorbed
+                          # into the visual timeline. Without this, ffmpeg -shortest clips
+                          # the audio tail.
     for s in scenes:
         scene_id = int(s.get("scene_id") or len(shots) + 1)
-        target = float(s.get("target_seconds") or 0.0)
+        # Prefer ACTUAL scene duration from Stage 4 word-alignment over Stage 3's
+        # words-per-second estimate — the LLM estimate underpredicts when TTS uses
+        # a slower emotion (e.g. "contemplative"), causing audio truncation under
+        # ffmpeg's `-shortest` flag. scene_timings.json is the source of truth.
+        timing = timings_by_scene.get(scene_id)
+        if timing and float(timing.get("end", 0)) > float(timing.get("start", 0)):
+            target = float(timing["end"]) - prev_scene_end
+            prev_scene_end = float(timing["end"])
+        else:
+            target = float(s.get("target_seconds") or 0.0)
         bbox = s.get("panel_bbox") or {}
         source_image = str(s.get("source_image") or "")
         if not source_image or target <= 0.0:

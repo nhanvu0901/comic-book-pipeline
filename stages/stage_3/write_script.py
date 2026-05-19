@@ -68,9 +68,16 @@ def write_script(
         errors = _validate(parsed, valid_pages, valid_beat_ids)
         dump["validation_pass2"] = errors
         if errors:
-            raise RuntimeError(
-                "Stage 4 validation failed after retry:\n  - " + "\n  - ".join(errors)
-            )
+            critical = [e for e in errors if _is_critical_error(e)]
+            soft = [e for e in errors if not _is_critical_error(e)]
+            if critical:
+                raise RuntimeError(
+                    "Stage 4 validation failed after retry (critical):\n  - "
+                    + "\n  - ".join(critical)
+                )
+            log(f"[stage4]   ⚠ accepting narration despite {len(soft)} soft issue(s):")
+            for e in soft:
+                log(f"[stage4]     - {e}")
 
     final_model = write_model or gloss_model or beats_model or (model or OPENROUTER_MODEL)
     return _to_narration(parsed, beats, glossary, mode, final_model)
@@ -133,13 +140,19 @@ def outline_beats(
 
     log(f"[stage4]   outline prompt: {len(user)} chars")
     chain = [model] if model else None
+
+    def _has_beats(c: str) -> bool:
+        p = _extract_json(c)
+        return isinstance(p, dict) and isinstance(p.get("beats"), list) and len(p["beats"]) > 0
+
     raw, mdl_used = call_with_chain(
         system=_OUTLINE_SYSTEM,
         user=user,
         models=chain,
-        max_tokens=2000,
+        max_tokens=4000,  # reasoning models can burn 1000+ tokens before producing output
         progress=progress,
         label="outline",
+        validator=_has_beats,
     )
     if debug_dump is not None:
         debug_dump["phase_a_raw"] = raw
@@ -221,13 +234,19 @@ def build_glossary(
 
     log(f"[stage4]   glossary prompt: {len(user)} chars")
     chain = [model] if model else None
+
+    def _has_characters(c: str) -> bool:
+        p = _extract_json(c)
+        return isinstance(p, dict) and isinstance(p.get("characters"), dict) and len(p["characters"]) > 0
+
     raw, mdl_used = call_with_chain(
         system=_GLOSSARY_SYSTEM,
         user=user,
         models=chain,
-        max_tokens=1200,
+        max_tokens=4000,
         progress=progress,
         label="glossary",
+        validator=_has_characters,
     )
     if debug_dump is not None:
         debug_dump["phase_b_raw"] = raw
@@ -360,13 +379,19 @@ def write_scenes(
 
     log(f"[stage4]   write prompt: {len(user)} chars, {len(beats)} beats")
     chain = [model] if model else None
+
+    def _has_scenes(c: str) -> bool:
+        p = _extract_json(c)
+        return isinstance(p, dict) and isinstance(p.get("scenes"), list) and len(p["scenes"]) > 0
+
     raw, mdl_used = call_with_chain(
         system=_WRITE_SYSTEM,
         user=user,
         models=chain,
-        max_tokens=3000,
+        max_tokens=5000,
         progress=progress,
         label="write",
+        validator=_has_scenes,
     )
     if debug_dump is not None:
         debug_dump["phase_c_raw"] = raw
@@ -375,6 +400,19 @@ def write_scenes(
     if not parsed or not isinstance(parsed.get("scenes"), list):
         raise RuntimeError(f"Phase C: no scenes array. Raw:\n{raw[:500]}")
     return parsed, mdl_used
+
+
+def _is_critical_error(msg: str) -> bool:
+    """Errors that mean the narration is structurally broken — must crash.
+    Everything else (word count off, connective wording, scene length) is a soft
+    warning we tolerate so the pipeline can still ship a video."""
+    m = msg.lower()
+    critical_markers = (
+        "no scenes",          # zero scenes returned
+        "page_ref=",          # scene references a page that doesn't exist
+        "beat_id=",           # scene references a beat that wasn't outlined
+    )
+    return any(marker in m for marker in critical_markers)
 
 
 def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> list[str]:
@@ -454,14 +492,20 @@ def _retry_fix(
     )
     log(f"[stage4]   retry prompt: {len(user)} chars")
     chain = [model] if model else None
+
+    def _has_scenes_retry(c: str) -> bool:
+        p = _extract_json(c)
+        return isinstance(p, dict) and isinstance(p.get("scenes"), list) and len(p["scenes"]) > 0
+
     try:
         raw, mdl_used = call_with_chain(
             system=_WRITE_SYSTEM,
             user=user,
             models=chain,
-            max_tokens=3000,
+            max_tokens=5000,
             progress=progress,
             label="retry",
+            validator=_has_scenes_retry,
         )
     except RuntimeError as exc:
         log(f"[stage4]   retry chain exhausted — falling back to original draft ({exc})")
@@ -623,21 +667,49 @@ def _glossary_block(g: Glossary) -> str:
 
 
 def _extract_json(raw: str) -> dict | None:
+    candidates: list[str] = []
     for pat in [r"```json\s*\n(.*?)```", r"```\s*\n(.*?)```"]:
         m = re.search(pat, raw, re.DOTALL)
         if m:
-            try:
-                return json.loads(m.group(1).strip())
-            except json.JSONDecodeError:
-                pass
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
+            candidates.append(m.group(1).strip())
+    candidates.append(raw.strip())
     i, j = raw.find("{"), raw.rfind("}")
-    if i != -1 and j != -1:
+    if i != -1 and j > i:
+        candidates.append(raw[i: j + 1])
+
+    for c in candidates:
         try:
-            return json.loads(raw[i: j + 1])
+            return json.loads(c)
         except json.JSONDecodeError:
-            return None
+            continue
+
+    # Fallback: repair JSON truncated mid-array (LLM cut off before closing brackets).
+    for c in candidates:
+        repaired = _repair_truncated_json(c)
+        if repaired is None:
+            continue
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            continue
     return None
+
+
+def _repair_truncated_json(s: str) -> str | None:
+    """Trim to last complete array element + close unmatched brackets — best-effort
+    repair when an LLM is cut mid-output."""
+    if not s:
+        return None
+    last = s.rfind("},")
+    if last == -1:
+        last_brace = s.rfind("}")
+        if last_brace == -1:
+            return None
+        truncated = s[: last_brace + 1]
+    else:
+        truncated = s[: last + 1]
+    open_braces = truncated.count("{") - truncated.count("}")
+    open_brackets = truncated.count("[") - truncated.count("]")
+    if open_braces < 0 or open_brackets < 0:
+        return None
+    return truncated + ("]" * open_brackets) + ("}" * open_braces)

@@ -34,13 +34,19 @@ def propose_modes(
     log(f"[stage3]   prompt built — {len(user)} chars, {len(story_pages)} story pages")
 
     chain = [model] if model else None
+
+    def _has_proposed_modes(c: str) -> bool:
+        p = _extract_json(c)
+        return isinstance(p, dict) and isinstance(p.get("proposed_modes"), list) and len(p["proposed_modes"]) > 0
+
     content, mdl_used = call_with_chain(
         system=_SYSTEM,
         user=user,
         models=chain,
-        max_tokens=1200,
+        max_tokens=4000,  # reasoning models burn tokens before output — give plenty of headroom
         progress=progress,
         label="propose",
+        validator=_has_proposed_modes,
     )
     log(f"[stage3]   LLM ({mdl_used}) returned {len(content)} chars — parsing JSON…")
     parsed = _extract_json(content)
@@ -117,22 +123,60 @@ def _build_user_prompt(comic_context: dict, story_pages: list[dict], n: int) -> 
 
 
 def _extract_json(raw: str) -> dict | None:
-    patterns = [r"```json\s*\n(.*?)```", r"```\s*\n(.*?)```"]
-    for pat in patterns:
+    # Gather candidate substrings to try
+    candidates: list[str] = []
+    for pat in [r"```json\s*\n(.*?)```", r"```\s*\n(.*?)```"]:
         m = re.search(pat, raw, re.DOTALL)
         if m:
-            try:
-                return json.loads(m.group(1).strip())
-            except json.JSONDecodeError:
-                pass
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
+            candidates.append(m.group(1).strip())
+    candidates.append(raw.strip())
     i, j = raw.find("{"), raw.rfind("}")
-    if i != -1 and j != -1:
+    if i != -1 and j > i:
+        candidates.append(raw[i : j + 1])
+
+    # First pass: plain parse
+    for c in candidates:
         try:
-            return json.loads(raw[i : j + 1])
+            return json.loads(c)
         except json.JSONDecodeError:
-            return None
+            continue
+
+    # Second pass: try to repair truncated JSON (model cut mid-array)
+    for c in candidates:
+        repaired = _repair_truncated_json(c)
+        if repaired is None:
+            continue
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            continue
     return None
+
+
+def _repair_truncated_json(s: str) -> str | None:
+    """Best-effort repair when LLM was cut off mid-array.
+
+    Strategy: find the last `},` in the buffer — that marks the end of a complete
+    array element. Truncate after the `}`, drop the trailing `,`, then naively
+    close any unmatched `[` / `{` with `]` / `}`.
+
+    Works for our common case: array of objects, last element half-written.
+    """
+    if not s:
+        return None
+    # Locate end of last fully-complete array element.
+    last = s.rfind("},")
+    if last == -1:
+        last_brace = s.rfind("}")
+        if last_brace == -1:
+            return None
+        truncated = s[: last_brace + 1]
+    else:
+        truncated = s[: last + 1]  # keep the `}` only (drop the `,`)
+
+    open_braces = truncated.count("{") - truncated.count("}")
+    open_brackets = truncated.count("[") - truncated.count("]")
+    if open_braces < 0 or open_brackets < 0:
+        return None
+
+    return truncated + ("]" * open_brackets) + ("}" * open_braces)

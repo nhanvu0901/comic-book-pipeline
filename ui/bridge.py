@@ -182,6 +182,37 @@ def run_stage_download(project_name: str, log: Callable[[str], None]) -> list[di
     return download_comic(project_name, progress=log)
 
 
+def run_stage_download_from_url(
+    project_name: str,
+    raw_input: str,
+    issues: str,
+    enrich: bool,
+    log: Callable[[str], None],
+) -> list[dict]:
+    """URL-direct download: skip Stage 1. raw_input can be either a series URL
+    or one-or-more reader URLs (whitespace/newline/comma separated)."""
+    from stages.stage_2.url_mode import (
+        classify_url, download_from_readers, download_from_series,
+    )
+    from stages.stage_2.download import load_manifest
+
+    tokens = [t.strip() for t in raw_input.replace(",", "\n").split() if t.strip()]
+    if not tokens:
+        raise ValueError("No URL provided")
+
+    kinds = {classify_url(t) for t in tokens}
+    if len(tokens) == 1 and "series" in kinds:
+        download_from_series(project_name, tokens[0], issues, enrich=enrich, progress=log)
+    elif kinds == {"reader"}:
+        download_from_readers(project_name, tokens, enrich=enrich, progress=log)
+    else:
+        raise ValueError(
+            f"Mixed or unknown URL forms: {tokens!r}. "
+            "Use either a single series URL (with --issues), or N reader URLs."
+        )
+    return load_manifest(project_name)
+
+
 def load_raw_pages(project_name: str) -> list[dict]:
     """Load the download manifest for thumbnail display."""
     from stages.stage_2.download import load_manifest

@@ -11,7 +11,10 @@ from typing import Callable
 
 import flet as ft
 
-from ..bridge import format_exception, load_raw_pages, run_blocking, run_stage_download
+from ..bridge import (
+    format_exception, load_raw_pages, run_blocking,
+    run_stage_download, run_stage_download_from_url,
+)
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
@@ -119,6 +122,79 @@ def build(
     def run_click(_e):
         page.run_task(_execute)
 
+    # ─── URL-direct mode (skip Stage 1) ─────────────────────────────────────
+    url_field = ft.TextField(
+        label="Comic URL(s)",
+        hint_text="One series URL, OR multiple reader URLs (space/newline/comma separated)",
+        multiline=True, min_lines=2, max_lines=4,
+        border_color=BORDER, focused_border_color=ACCENT, text_size=12,
+    )
+    issues_field = ft.TextField(
+        label="Issues (only when series URL)",
+        hint_text="e.g. #1-3, #1,#3,#5  (leave blank for ALL)",
+        border_color=BORDER, focused_border_color=ACCENT, text_size=12,
+    )
+    enrich_switch = ft.Switch(
+        label="Enrich context from wiki (slower, better narration)",
+        value=True, active_color=ACCENT,
+    )
+    url_project_field = ft.TextField(
+        label="Project name (created if new)",
+        hint_text="e.g. dark_venom_2023",
+        value=state.project_name or "",
+        border_color=BORDER, focused_border_color=ACCENT, text_size=12,
+    )
+
+    async def _execute_url():
+        raw = (url_field.value or "").strip()
+        proj = (url_project_field.value or "").strip()
+        if not raw:
+            status_text.value = "Paste at least one URL first."
+            status_text.color = DANGER
+            page.update()
+            return
+        if not proj:
+            status_text.value = "Project name is required for URL-direct mode."
+            status_text.color = DANGER
+            page.update()
+            return
+        state.project_name = proj
+        save_state(state)
+
+        running.visible = True
+        status_text.value = "URL-direct download — bootstrapping context…"
+        status_text.color = WARN
+        page.update()
+
+        try:
+            manifest = await run_blocking(
+                run_stage_download_from_url,
+                proj, raw, (issues_field.value or "").strip(),
+                bool(enrich_switch.value), push_log,
+            )
+        except Exception as e:
+            running.visible = False
+            status_text.value = "Failed — see log."
+            status_text.color = DANGER
+            push_log(format_exception(e))
+            page.update()
+            return
+
+        render_grid(manifest)
+        state.mark_approved(2)
+        state.current_stage = max(state.current_stage, 3)
+        save_state(state)
+
+        running.visible = False
+        total = sum(len(ch.get("pages", [])) for ch in manifest)
+        status_text.value = f"URL-direct download complete — {total} pages."
+        status_text.color = SUCCESS
+        page.update()
+        on_state_change()
+
+    def run_url_click(_e):
+        page.run_task(_execute_url)
+
     def _show_snack(msg: str):
         sb = ft.SnackBar(content=ft.Text(msg))
         page.overlay.append(sb)
@@ -175,13 +251,32 @@ def build(
             size=12, color=TEXT_MUTED,
         ),
         ft.Container(height=16),
-        primary_button("Download", run_click, icon=ft.Icons.DOWNLOAD),
+        primary_button("Download (from Stage 1)", run_click, icon=ft.Icons.DOWNLOAD),
         ft.Container(height=8),
         secondary_button("Clear downloads", _do_clear, icon=ft.Icons.DELETE_OUTLINE),
-        ft.Container(height=12),
+
+        ft.Container(height=18),
+        ft.Divider(height=1, color=BORDER),
+        ft.Container(height=8),
+        ft.Text("OR — URL-DIRECT (skip Stage 1)", size=10,
+                color=TEXT_MUTED, weight=ft.FontWeight.BOLD),
+        ft.Text(
+            "Paste a series URL with --issues, or multiple reader URLs (one per issue). "
+            "Context is fetched silently from wiki/fandom.",
+            size=11, color=TEXT_MUTED,
+        ),
+        ft.Container(height=6),
+        url_project_field,
+        url_field,
+        issues_field,
+        enrich_switch,
+        ft.Container(height=4),
+        primary_button("Download from URL(s)", run_url_click, icon=ft.Icons.LINK),
+
+        ft.Container(height=14),
         primary_button("Continue to Stage 3 →", approve_and_go,
                        disabled=not state.is_approved(2)),
-    ], spacing=8, expand=True)
+    ], spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
 
     return three_col(
         center, right, state=state, on_go=on_go,

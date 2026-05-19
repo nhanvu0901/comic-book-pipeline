@@ -22,7 +22,7 @@ def synthesize_project(
     *,
     speed: float = 1.0,
     volume: float = 1.0,
-    emotion: str = "neutral",
+    emotion: str = "contemplative",
     voice_id: str | None = None,
     model: str | None = None,
     force: bool = False,

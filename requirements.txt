@@ -17,6 +17,9 @@ transformers>=4.40.0,<=4.49.0
 pytorch_metric_learning>=2.0  # Florence-2 runtime dep
 einops>=0.8                   # Florence-2 runtime dep
 timm>=1.0                     # Florence-2 vision backbone
+shapely>=2.0                  # Magi v3 utils.py — panel geometry
+matplotlib>=3.7               # Magi v3 utils.py — diagnostic plotting (lazy-loaded but checked at import)
+networkx>=3.0                 # Magi v3 utils.py — panel association graph
 Pillow>=10.0.0                # image IO + dimensions
 
 # === Stage 4: TTS (Cartesia via raw HTTP — no SDK dep) ===

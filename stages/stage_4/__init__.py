@@ -9,8 +9,8 @@ Takes narration.json (Stage 3 output) and produces:
                            with timing, ready for the video captioner
 
 Uses the Cartesia HTTP SSE endpoint directly (no SDK dep) so we're not locked
-to a specific cartesia-python version. Voice defaults to "Comic Vocal" — a
-clone of comic.wav (CARTESIA_VOICE_ID) on sonic-2. Speed is configurable.
+to a specific cartesia-python version. Default voice is Kyle ("Emotive" preset),
+model sonic-3 — required for emotion/speed/volume controls to take effect.
 """
 from .cli import main
 

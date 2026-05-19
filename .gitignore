@@ -29,3 +29,6 @@ projects/
 .understand-anything/
 bin/
 comic-pipeline-course/
+
+# Research / analysis workspace (reference videos, gap reports, frame extracts)
+research/

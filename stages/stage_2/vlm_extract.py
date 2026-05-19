@@ -20,7 +20,9 @@ from typing import Callable
 
 from openai import OpenAI, RateLimitError
 
-from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, VLM_MODEL, VLM_MODELS
+from config import (
+    OPENROUTER_API_KEY, OPENROUTER_BASE_URL, VLM_MODEL, VLM_MODELS, VLM_MODELS_BATCH,
+)
 
 
 _SYSTEM_PROMPT = """You are a comic book page analyst. You receive one page image, a list of pre-detected panel bounding boxes, and optionally a STORY CONTEXT block listing the comic's named characters, setting, and key objects.
@@ -267,6 +269,283 @@ def extract_page(
         "page_summary": "",
         "_vlm_model_used": "",
     }
+
+
+# ─── Multi-page batch extraction (Approach B + A) ─────────────────────────────
+
+
+_BATCH_SYSTEM_PROMPT = """You are a comic book reader analyst. You receive N comic pages in reading order, plus per-page panel bounding boxes and optionally a STORY CONTEXT block, a PRIOR PAGE block, or a RUNNING NARRATIVE STATE from earlier pages.
+
+CRITICAL READING-FLOW RULE — this is why you are batched, not asked per-page:
+You are simulating how a human reader experiences these pages back-to-back. Each panel description must read as a continuation of the panel before it (within and across pages). Do NOT describe panels as isolated facts. Use pronouns, named characters, and connective phrasing exactly as a human narrator would — "He then…", "Across the room…", "The next page opens with…". When a character was introduced earlier, later panels should reference them by name or pronoun, not redescribe them.
+
+PRIOR PAGE OVERLAP RULE — when a PRIOR PAGE block is present in the user message:
+  • The first image in the batch is the prior page (already analyzed). It is included so you can see it visually for continuity, AND its structured data is provided as text.
+  • DO NOT output a `pages` entry for the prior page. Your `pages` array should contain entries ONLY for the new pages listed under "New page 0", "New page 1", etc.
+  • Use the prior page's last panel as the launch point for new page 0's first panel. Maintain character names and the immediate visual/narrative thread.
+
+DO NOT invent events, dialog, or characters. Every fact must be derivable from the panel image. STORY CONTEXT, PRIOR PAGE, and RUNNING STATE are name-disambiguation aids only — not predictive prompts.
+
+PER-PAGE STEPS (apply to each page independently for classification, but write descriptions with continuity):
+
+  STEP 1 — Classify each page into "cover" | "story" | "skip" (same rules as single-page mode: cover requires visible title/issue text; skip = ad/recap/blank).
+
+  STEP 2 — For "cover" + "story" pages:
+    2a. Per panel: one-sentence description, character list, dominant emotion.
+        Descriptions chain — panel N+1 continues panel N's thread.
+    2b. Extract every text element (speech, narration, sfx, caption, title) into text_blocks, assigned to panel_index.
+    2c. A 2-3 sentence page_summary that recaps what happened on THIS page in plain prose.
+
+OUTPUT: a single JSON object containing a `pages` array (one entry per input page, in order) and a `running_state` string (~150-250 chars) summarizing the story state AFTER reading this batch — for feeding into the next batch.
+
+Return ONLY JSON. No prose, no markdown fences."""
+
+
+_BATCH_RESPONSE_SCHEMA = """{
+  "pages": [
+    {
+      "page_index": 0,
+      "page_type": "cover" | "story" | "skip",
+      "skip_reason": "" | "advertisement" | "recap" | "next_issue_preview" | "letter_column" | "solicit_credits" | "blank_filler",
+      "panels": [
+        {"index": 0, "description": "...", "characters": ["..."], "dominant_emotion": "..."}
+      ],
+      "text_blocks": [
+        {"panel_index": 0, "type": "speech", "speaker": "...", "text": "..."}
+      ],
+      "page_summary": "2-3 sentences."
+    }
+  ],
+  "running_state": "Short prose: where are we in the story now, who is on stage, what tension is unresolved."
+}
+
+RULES:
+  • `pages` length MUST equal the number of input images.
+  • `page_index` is 0-based within the batch (NOT the global page number).
+  • For "skip" pages: panels=[], text_blocks=[], page_summary="".
+  • Always return full JSON shape — do not omit fields."""
+
+
+def _format_prior_page_block(prior_page: dict) -> str:
+    """Render an already-extracted page's data as text for the next batch's prompt.
+
+    The matching image is sent as the FIRST image in the batch — VLM can see it
+    visually AND has its structured data here. VLM is instructed NOT to re-output
+    this page; if it does, the caller drops the entry."""
+    label = prior_page.get("issue_label", "")
+    pn = prior_page.get("page_number", "?")
+    summary = (prior_page.get("page_summary") or "").strip()
+    panels = prior_page.get("panels") or []
+    text_blocks = prior_page.get("text_blocks") or []
+
+    lines: list[str] = [
+        f"PRIOR PAGE (page {pn}{' ' + label if label else ''}) — already analyzed, included here AS CONTEXT ONLY:",
+        f"  page_summary: {summary}" if summary else "  page_summary: (none)",
+    ]
+    if panels:
+        lines.append("  panels:")
+        for p in panels:
+            idx = p.get("index", "?")
+            desc = (p.get("description") or "").strip()
+            chars = ", ".join(p.get("characters") or []) or "?"
+            emo = (p.get("dominant_emotion") or "").strip() or "?"
+            lines.append(f"    panel {idx} [chars: {chars}] [emo: {emo}]: {desc}")
+    if text_blocks:
+        lines.append("  text_blocks:")
+        for tb in text_blocks:
+            spk = tb.get("speaker") or "—"
+            ttype = tb.get("type", "speech")
+            txt = (tb.get("text") or "").strip()
+            lines.append(f"    panel {tb.get('panel_index', '?')} [{ttype}, {spk}]: \"{txt}\"")
+    lines.append(
+        "\nUse this prior page as the immediate context — pick up the narrative thread from its last panel. "
+        "The image of this prior page IS included visually as the first image in the batch (for reference), "
+        "but DO NOT output a `pages` entry for it. Output entries ONLY for the new pages below."
+    )
+    return "\n".join(lines)
+
+
+def _format_batch_user_text(
+    panels_per_page: list[list[dict]],
+    story_context: str = "",
+    running_state: str = "",
+    prior_page: dict | None = None,
+) -> str:
+    context_block = ""
+    if story_context.strip():
+        context_block += (
+            f"STORY CONTEXT (canonical names + setting; do NOT use to predict events):\n"
+            f"{story_context.strip()}\n\n"
+        )
+    if prior_page is not None:
+        context_block += _format_prior_page_block(prior_page) + "\n\n"
+    elif running_state.strip():
+        # Fallback: when no overlap (first batch), still use running_state if present.
+        context_block += (
+            f"RUNNING NARRATIVE STATE (from prior pages — continue from here, do NOT contradict):\n"
+            f"{running_state.strip()}\n\n"
+        )
+
+    pages_block_lines: list[str] = [
+        f"You will analyze {len(panels_per_page)} NEW page(s) in reading order.",
+        "Panel bboxes are top-left origin, in pixels:",
+    ]
+    for pidx, panels in enumerate(panels_per_page):
+        pages_block_lines.append(f"\nNew page {pidx} ({len(panels)} panel(s)):")
+        if not panels:
+            pages_block_lines.append(
+                "  (No panels detected. Treat the page as one panel index 0 — likely splash/cover.)"
+            )
+        for i, p in enumerate(panels):
+            b = p["bbox"]
+            pages_block_lines.append(
+                f"  Panel {i}: x={b['x']}, y={b['y']}, w={b['w']}, h={b['h']}"
+            )
+
+    return (
+        f"{context_block}"
+        + "\n".join(pages_block_lines)
+        + f"\n\nReturn JSON strictly in this shape:\n{_BATCH_RESPONSE_SCHEMA}"
+    )
+
+
+_BATCH_TIMEOUT_S = 90  # fail fast — free-tier providers can queue requests for hours otherwise
+
+
+def _call_model_batch(
+    client: OpenAI, model: str, b64_images: list[str], user_text: str,
+) -> str:
+    content: list[dict] = [{"type": "text", "text": user_text}]
+    for b64 in b64_images:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+        })
+    resp = client.with_options(timeout=_BATCH_TIMEOUT_S).chat.completions.create(
+        model=model,
+        max_tokens=3500,
+        messages=[
+            {"role": "system", "content": _BATCH_SYSTEM_PROMPT},
+            {"role": "user", "content": content},
+        ],
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def extract_pages_batch(
+    image_paths: list[Path],
+    panels_per_page: list[list[dict]],
+    *,
+    models: list[str] | None = None,
+    progress: Callable[[str], None] | None = None,
+    story_context: str = "",
+    running_state: str = "",
+    prior_page: dict | None = None,
+    prior_image_path: Path | None = None,
+) -> tuple[list[dict] | None, str, str]:
+    """Multi-image VLM call with optional prior-page overlap (first-wins lock-in).
+
+    Args:
+      image_paths: NEW pages to extract — one entry per page-to-analyze.
+      panels_per_page: Magi-detected panels for each NEW page.
+      prior_page: Already-extracted dict of the page immediately preceding this batch.
+        Its data is injected as text context; its image is sent as the first image
+        in the batch (visual context). VLM is told NOT to output an entry for it.
+        If the VLM outputs N+1 entries anyway, we drop the first one.
+      prior_image_path: path to the image for prior_page (required if prior_page is set).
+
+    Returns (fresh_pages_list, new_running_state, model_used). pages_list is None
+    on total failure — caller should fall back to per-page extract_page().
+    """
+    n = len(image_paths)
+    if n != len(panels_per_page):
+        raise ValueError(f"image_paths ({n}) and panels_per_page ({len(panels_per_page)}) must align")
+    if n == 0:
+        return [], running_state, ""
+    if prior_page is not None and prior_image_path is None:
+        raise ValueError("prior_page passed without prior_image_path")
+
+    chain = list(models) if models else list(VLM_MODELS_BATCH)
+    log = progress or (lambda _msg: None)
+
+    # Build image list: [prior_image (optional), fresh_images...]
+    all_image_paths: list[Path] = []
+    if prior_page is not None and prior_image_path is not None:
+        all_image_paths.append(prior_image_path)
+    all_image_paths.extend(image_paths)
+    b64_images = [_encode_image(p) for p in all_image_paths]
+
+    user_text = _format_batch_user_text(
+        panels_per_page, story_context, running_state, prior_page=prior_page,
+    )
+
+    client = _client()
+    errors: list[str] = []
+    has_prior = prior_page is not None
+
+    for idx, model in enumerate(chain, start=1):
+        nice_label = f"{n} new" + (f" +1 prior" if has_prior else "")
+        log(f"[vlm-batch] try {idx}/{len(chain)} model={model} ({nice_label})")
+        try:
+            content = _call_model_batch(client, model, b64_images, user_text)
+        except Exception as exc:
+            if _is_rate_limited(exc):
+                log(f"[vlm-batch] ✗ rate-limited on {model} — falling back")
+                errors.append(f"{model}: rate_limited")
+                continue
+            log(f"[vlm-batch] ⚠ {model} transient error: {type(exc).__name__} — retrying once")
+            time.sleep(2)
+            try:
+                content = _call_model_batch(client, model, b64_images, user_text)
+            except Exception as exc2:
+                log(f"[vlm-batch] ✗ {model} failed twice: {type(exc2).__name__}")
+                errors.append(f"{model}: {type(exc2).__name__}: {str(exc2)[:160]}")
+                continue
+
+        if _detect_inline_rate_limit(content):
+            log(f"[vlm-batch] ✗ rate-limited on {model} (inline) — falling back")
+            errors.append(f"{model}: rate_limited_inline")
+            continue
+
+        parsed = _extract_json(content)
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("pages"), list):
+            log(f"[vlm-batch] ⚠ {model} unparseable / missing 'pages' — retrying with sharper prompt")
+            try:
+                content2 = _call_model_batch(client, model, b64_images, user_text + _SHARP_JSON_SUFFIX)
+            except Exception as exc:
+                errors.append(f"{model}: sharp_retry {type(exc).__name__}")
+                continue
+            parsed = _extract_json(content2)
+
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("pages"), list):
+            log(f"[vlm-batch] ✗ {model} no 'pages' array twice — falling back")
+            errors.append(f"{model}: no_pages_array")
+            continue
+
+        pages_out = parsed["pages"]
+
+        # If VLM ignored "do not output prior page" and emitted N+1 entries, drop the first.
+        # Heuristic: when has_prior and len == n+1, assume entry 0 is the prior page.
+        if has_prior and len(pages_out) == n + 1:
+            log(f"[vlm-batch]   VLM also emitted prior page entry — dropping it (first-wins lock-in)")
+            pages_out = pages_out[1:]
+
+        if len(pages_out) != n:
+            log(f"[vlm-batch] ⚠ {model} returned {len(pages_out)} pages, expected {n} — accepting partial")
+            while len(pages_out) < n:
+                pages_out.append({"page_type": "skip", "skip_reason": "vlm_failure",
+                                  "panels": [], "text_blocks": [], "page_summary": ""})
+            pages_out = pages_out[:n]
+
+        for p in pages_out:
+            p["_vlm_model_used"] = model
+
+        new_state = str(parsed.get("running_state") or running_state).strip()
+        log(f"[vlm-batch] ✓ {model} returned {len(pages_out)} fresh page(s); new_state={len(new_state)} chars")
+        return pages_out, new_state, model
+
+    log(f"[vlm-batch] ✗ all {len(chain)} multi-image models exhausted: {' | '.join(errors)}")
+    return None, running_state, ""
 
 
 def _extract_json(raw: str) -> dict | None:

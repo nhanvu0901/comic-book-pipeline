@@ -45,8 +45,15 @@ def call_with_chain(
     max_tokens: int = 2000,
     progress: Callable[[str], None] | None = None,
     label: str = "llm",
+    validator: Callable[[str], bool] | None = None,
 ) -> tuple[str, str]:
-    """Call the LLM chain. Returns (content, model_used). Raises if every model fails."""
+    """Call the LLM chain. Returns (content, model_used). Raises if every model fails.
+
+    If `validator(content)` is provided and returns False, the response is
+    rejected and the chain advances to the next model. Use this to guard against
+    models that leak chain-of-thought reasoning as text instead of returning the
+    requested JSON shape.
+    """
     chain = list(models) if models else list(LLM_MODELS)
     if not chain:
         raise RuntimeError(f"[{label}] no models configured")
@@ -87,6 +94,19 @@ def call_with_chain(
             log(f"[{label}] {model} returned empty — falling back")
             errors.append(f"{model}: empty_content")
             continue
+
+        if validator is not None:
+            try:
+                ok = bool(validator(content))
+            except Exception as vexc:
+                log(f"[{label}] validator raised {type(vexc).__name__} on {model} — treating as fail")
+                ok = False
+            if not ok:
+                preview = content.strip().splitlines()[0][:120] if content.strip() else "(empty)"
+                log(f"[{label}] {model} response failed validator (no usable JSON) — falling back. "
+                    f"First line: {preview!r}")
+                errors.append(f"{model}: validator_failed")
+                continue
 
         log(f"[{label}] {model} returned {len(content)} chars")
         return content, model

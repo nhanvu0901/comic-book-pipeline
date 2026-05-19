@@ -25,13 +25,17 @@ from utils.clear_stage import clear_stage_4
 
 # ─── Voice/model presets ────────────────────────────────────────────────────
 # (label, voice_id) — UUIDs pasted via "Custom" override these.
+# "Emotive"-tagged voices are required for the emotion param to actually work.
 VOICE_PRESETS: list[tuple[str, str]] = [
-    ("Comic Vocal (cloned)", "f7248031-b419-4004-b447-2e9bf32f6b5e"),
-    ("Barbershop Man",       "a0e99841-438c-4a64-b679-ae501e7d6091"),
+    ("Kyle (Emotive, deep male)",   "c961b81c-a935-4c17-bfb3-ba2239de8c2f"),
+    ("Tessa (Emotive, female)",     "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"),
+    ("Comic Vocal (cloned)",        "f7248031-b419-4004-b447-2e9bf32f6b5e"),
+    ("Barbershop Man",              "a0e99841-438c-4a64-b679-ae501e7d6091"),
 ]
 CUSTOM_LABEL = "Custom UUID…"
 
-MODEL_OPTIONS: list[str] = ["sonic-2", "sonic"]
+# sonic-3 first: only model with emotion/speed/volume controls enabled.
+MODEL_OPTIONS: list[str] = ["sonic-3-2026-01-12", "sonic-2", "sonic"]
 
 
 def _fmt_ms(ms: int | float) -> str:
