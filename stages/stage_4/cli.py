@@ -30,9 +30,10 @@ def main():
     parser.add_argument("--project", required=True)
     parser.add_argument("--speed", type=float, default=1.0,
                         help="Cartesia speed 0.6-1.5 (capped near 1.2 in practice). Default 1.0.")
-    parser.add_argument("--atempo", type=float, default=1.3,
+    parser.add_argument("--atempo", type=float, default=1.2,
                         help="ffmpeg atempo post-process factor (preserves pitch). "
-                             "Default 1.3 to hit ~3.4 wps channel benchmark. 1.0 disables.")
+                             "Default 1.2 → ~3.14 wps (slightly under benchmark min but "
+                             "comfortable listening). Use 1.3 to match channel pacing exactly.")
     parser.add_argument("--voice", default=None, help="Cartesia voice UUID (overrides default)")
     parser.add_argument("--model", default=None, help="Cartesia model id (overrides default sonic-2)")
     parser.add_argument("--force", action="store_true", help="Regenerate even if audio.wav exists")

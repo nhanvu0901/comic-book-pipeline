@@ -27,8 +27,8 @@ def synthesize_project(
     emotion: str = "contemplative",
     voice_id: str | None = None,
     model: str | None = None,
-    post_atempo: float = 1.2,  # ffmpeg atempo post-process — Cartesia speed param caps near 1.2
-                                # so we apply final tempo boost externally without pitch shift
+    post_atempo: float = 1.2,  # ffmpeg atempo post-process — slight tempo boost without pitch shift.
+                                # 1.2 → ~3.14 wps (user-tuned; 1.3 felt slightly rushed)
     force: bool = False,
 ) -> TTSResult:
     """Load narration.json, synthesize audio + timings via Cartesia, save all artifacts."""

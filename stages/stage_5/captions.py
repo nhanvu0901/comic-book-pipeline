@@ -67,7 +67,23 @@ def _chunk_words(words: list[dict]) -> list[dict]:
     return chunks
 
 
+_ASCII_NORMALIZE = {
+    # Anton (display font) lacks glyphs for these — they render as garbage (€/boxes).
+    "—": " - ",   # em-dash
+    "–": "-",     # en-dash
+    "‘": "'",     # left single quote
+    "’": "'",     # right single quote / apostrophe
+    "“": '"',     # left double quote
+    "”": '"',     # right double quote
+    "…": "...",   # ellipsis
+    " ": " ",     # non-breaking space
+    "­": "",      # soft hyphen
+}
+
+
 def _strip_punct_for_display(text: str) -> str:
+    for ch, rep in _ASCII_NORMALIZE.items():
+        text = text.replace(ch, rep)
     return re.sub(r"\s+", " ", text).strip()
 
 
