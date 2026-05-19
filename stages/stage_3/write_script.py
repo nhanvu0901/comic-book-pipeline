@@ -424,13 +424,17 @@ def write_scenes(
 
 def _is_critical_error(msg: str) -> bool:
     """Errors that mean the narration is structurally broken — must crash.
-    Everything else (word count off, connective wording, scene length) is a soft
-    warning we tolerate so the pipeline can still ship a video."""
+    Everything else (word count off, connective wording, scene length, beat_id
+    mismatch) is a soft warning we tolerate so the pipeline can still ship a video.
+
+    beat_id mismatch is soft because the field is just metadata for tracing
+    which outline beat a scene came from — downstream (TTS, video) doesn't
+    consume it. When the writer ignores beat limits but still produces good
+    scenes, we keep the scenes."""
     m = msg.lower()
     critical_markers = (
-        "no scenes",          # zero scenes returned
+        "no scenes",          # zero scenes returned — pipeline can't proceed
         "page_ref=",          # scene references a page that doesn't exist
-        "beat_id=",           # scene references a beat that wasn't outlined
     )
     return any(marker in m for marker in critical_markers)
 
