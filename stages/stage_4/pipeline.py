@@ -3,12 +3,14 @@ Stage 4 orchestrator: load narration.json → Cartesia TTS → align → persist
 """
 import io
 import json
+import subprocess
 import wave
 from pathlib import Path
 
 from config import (
     CARTESIA_MODEL,
     CARTESIA_VOICE_ID,
+    FFMPEG_BIN,
     PROJECTS_ROOT,
     get_project_dirs,
 )
@@ -20,11 +22,13 @@ from .schema import TTSResult
 def synthesize_project(
     project_name: str,
     *,
-    speed: float = 1.15,  # match Cartesia default; offsets contemplative emotion's slower delivery
+    speed: float = 1.35,  # offsets contemplative slower delivery; targets ~3.4 wps channel benchmark
     volume: float = 1.0,
     emotion: str = "contemplative",
     voice_id: str | None = None,
     model: str | None = None,
+    post_atempo: float = 1.2,  # ffmpeg atempo post-process — Cartesia speed param caps near 1.2
+                                # so we apply final tempo boost externally without pitch shift
     force: bool = False,
 ) -> TTSResult:
     """Load narration.json, synthesize audio + timings via Cartesia, save all artifacts."""
@@ -57,8 +61,24 @@ def synthesize_project(
                             speed=speed, volume=volume, emotion=emotion)
         audio_path.write_bytes(result.wav_bytes)
         words = result.word_timestamps
-        words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))
         duration = _wav_duration(audio_path)
+        print(f"[stage4] cartesia output: {duration:.2f}s, {len(words)} words "
+              f"({len(words)/duration:.2f} wps)")
+
+        if post_atempo and post_atempo != 1.0:
+            print(f"[stage4] post-process: ffmpeg atempo={post_atempo} (preserves pitch)")
+            _apply_atempo(audio_path, post_atempo)
+            words = [
+                {"word": w["word"],
+                 "start": w["start"] / post_atempo,
+                 "end": w["end"] / post_atempo}
+                for w in words
+            ]
+            duration = _wav_duration(audio_path)
+            print(f"[stage4] post-process done: {duration:.2f}s, "
+                  f"{len(words)/duration:.2f} wps")
+
+        words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))
         print(f"[stage4] saved audio: {audio_path} ({duration:.2f}s, {len(words)} words)")
 
     scene_timings = align_scenes_to_words(scenes, words)
@@ -87,3 +107,31 @@ def synthesize_project(
 def _wav_duration(path: Path) -> float:
     with wave.open(str(path), "rb") as wf:
         return wf.getnframes() / float(wf.getframerate())
+
+
+def _resolve_ffmpeg() -> str:
+    import os
+    import shutil
+    if os.path.isabs(FFMPEG_BIN) and os.path.isfile(FFMPEG_BIN):
+        return FFMPEG_BIN
+    p = shutil.which(FFMPEG_BIN) or shutil.which("ffmpeg")
+    if not p:
+        raise FileNotFoundError(f"ffmpeg not found (FFMPEG_BIN={FFMPEG_BIN}). Check .env or PATH.")
+    return p
+
+
+def _apply_atempo(audio_path: Path, factor: float) -> None:
+    """Apply ffmpeg atempo in-place. Preserves pitch (unlike asetrate). factor must
+    be in [0.5, 2.0]; ffmpeg chains multiple atempo if needed but we keep single-stage."""
+    ff = _resolve_ffmpeg()
+    tmp = audio_path.with_suffix(".sped.wav")
+    res = subprocess.run(
+        [ff, "-y", "-i", str(audio_path),
+         "-filter:a", f"atempo={factor}",
+         "-c:a", "pcm_s16le",
+         str(tmp)],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        raise RuntimeError(f"ffmpeg atempo failed: {res.stderr[-500:]}")
+    tmp.replace(audio_path)
