@@ -9,12 +9,12 @@ from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 
 
-_TARGET_WORDS_MIN = 170
-_TARGET_WORDS_MAX = 200
-_WORDS_PER_SEC = 3.4
+_TARGET_WORDS_MIN = 220  # TheComicCivilian: 237-257 words, avg 249
+_TARGET_WORDS_MAX = 260
+_WORDS_PER_SEC = 4.0     # was 3.4 (ComicsUnlocked); TheComicCivilian runs 4.18-4.45
 
-_SCENE_MIN_WORDS = 20  # was 12 — push closer to channel benchmark (avg ~25w/scene)
-_SCENE_MAX_WORDS = 30
+_SCENE_MIN_WORDS = 25    # was 20 — push higher to hit 220+ total
+_SCENE_MAX_WORDS = 35
 _HOOK_MIN_WORDS = 18
 _HOOK_MAX_WORDS = 30
 
@@ -98,8 +98,9 @@ Each beat has:
 Beats are in dramatic order (which is usually but not always chronological). The first beat is COLD_OPEN — the moment that should hook the viewer. The last beat is LANDING — the line that pays it off. Pick beats that compress the story to its 3-5 most cinematic page sequences. Skip filler.
 
 Constraints from successful 60-second comic Shorts (sample of 30 ComicsUnlocked videos):
-- 7-8 beats preferred (5-6 only if the story is one extremely tight sequence).
-  More beats give the narration writer room to hit the 170-200 word channel target.
+- 8-10 beats preferred (was 5-8). Channel-benchmark Shorts use 8-10 distinct
+  visual moments. More beats give the narration writer room to hit the
+  220-260 word channel target AND give Stage 5 more visual changes to cut to.
 - Each beat covers 1-4 input pages. Don't spread one beat across the whole comic.
 - COLD_OPEN beat must contain a concrete visual action, not exposition.
 - LANDING must be a payoff, twist, or final image — never a CTA or question.
@@ -126,7 +127,7 @@ def outline_beats(
         f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + "\n"
-        f"TASK: Extract 5-8 beats that build a {mode} arc from this story. "
+        f"TASK: Extract 8-10 beats that build a {mode} arc from this story. "
         f"Choose beats that compress the comic into its most cinematic moments. "
         f"Reference real page numbers from the input.\n\n"
         f"Return JSON in this exact shape:\n"
@@ -273,25 +274,26 @@ _WRITE_SYSTEM = """You are PanelNarrator, writing 60-second narration for YouTub
 
 This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
-1) HOOK (scene 1) — CRITICAL — calibrated from real top-performing Shorts
-   - 18-28 words, drops the viewer in mid-action OR mid-question.
-   - Pick exactly ONE archetype. Real channel-benchmark examples shown:
+1) HOOK (scene 1) — MANDATORY interrogative or scenic opener.
 
-     A (Recommended) — "What if/Why/How [setup-question]?" then immediate answer.
+   Real top-performing Shorts (TheComicCivilian + ComicsUnlocked) almost ALWAYS
+   open with one of these two archetypes:
+
+     A (PREFERRED) — "What if/Why/How [setup-question]?" then immediate twist.
+       Real: "What if Peter Parker never took off the alien suit? He thought it
+              was the only thing..."
        Real: "What if your superpower was so disgusting that the government sealed
-              your mouth shut to stop you from..."
-     B (Recommended) — "In [time/place], [Named Character] [does specific action]..."
-       Real: "In an alternate universe, Venom arrives on Earth and bonds to Eddie
-              Brock for 500 years. However, this..."
-     C — "[Named Character] [vivid concrete action] only to realize [twist]..."
-       Real: "Batman wakes up from a nightmare and gets out of bed, only to realize
-              that his legs won't..."
-     D — "Everyone thinks [X], but [Y]." — use sparingly.
+              your mouth shut..."
 
-   - PREFER archetypes A or B (interrogative or scenic opener). They draw the
-     viewer in without naming a character first. Archetype C is the third choice.
-   - Must contain at least one specific action verb.
-   - NO floating fragments ("The war."). NO "In today's video", "Today we're looking at".
+     B (SECOND CHOICE) — "In [time/place], [character action]..."
+       Real: "In an alternate universe, Venom arrives on Earth and bonds to Eddie
+              Brock for 500 years..."
+
+   - Hook must be 18-28 words.
+   - DO NOT start with a character name as the first word (e.g. "The Green Goblin
+     unleashes..." is WRONG — start with "What if..." instead).
+   - DO NOT start with floating fragments. NO "In today's video", "Today we're
+     looking at", or any framing acknowledgement.
 
 2) CONNECTIVE GRAMMAR (scenes 2 onward)
    - Every scene from #2 onward MUST start with one of these connectives, exactly: But, However, As, When, After, Eventually, Instead, With, Now, Suddenly, Then, Until, Meanwhile, Soon.
@@ -332,12 +334,12 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    GOOD: "Ben confronts Reed for forgetting the anniversary of the accident that turned him into the Thing."  (anchored to what the comic actually means)
 
 7) LENGTH BUDGET — STRICT, BENCHMARK-CALIBRATED
-   - 5-8 scenes total.
-   - **170-200 words total** — non-negotiable lower bound. Channel-benchmark videos
-     (ComicsUnlocked recent Shorts: 171, 179, 195 words) hit this every time.
-     If your draft is under 170 words, expand mid-tier scenes with one more clause
-     about consequence/reaction. Do NOT pad with filler — add substance.
-   - Target 55 seconds spoken at 3.4 words/second.
+   - **8-10 scenes** total (was 5-8 — more scenes = more visual cuts in final video).
+   - **220-260 words total** — non-negotiable lower bound. Channel-benchmark videos
+     (TheComicCivilian recent Shorts: 229, 237, 248, 252, 257 words) hit this every time.
+     If your draft is under 220 words, ADD more scenes (split a complex beat in two)
+     or expand consequence/reaction clauses. Do NOT pad with filler — add substance.
+   - Target 55 seconds spoken at 4.0 words/second.
 
 8) PAGE/PANEL TAGGING
    - Every scene maps to ONE (page_ref, panel_ref) — pick the most visually impactful panel of that beat.
@@ -481,8 +483,8 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         if not (floor <= wc <= _SCENE_MAX_WORDS):
             errors.append(f"scene {i} is {wc} words, want {floor}-{_SCENE_MAX_WORDS}")
 
-    if not (160 <= total_words <= 210):
-        errors.append(f"total words {total_words} not in 160..210")
+    if not (210 <= total_words <= 270):
+        errors.append(f"total words {total_words} not in 210..270")
     return errors
 
 
@@ -504,7 +506,7 @@ def _retry_fix(
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
         f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words. Last scene may dip to 8.\n"
-        f"- Total: 160-210 words ({_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} ideal). 5-8 scenes.\n\n"
+        f"- Total: 210-270 words ({_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} ideal). 8-10 scenes.\n\n"
         f"PRIOR DRAFT (fix in place, keep beat_id/page_ref/panel_ref unchanged unless they were flagged):\n{prior}\n\n"
         f"Return ONLY the corrected JSON."
     )
