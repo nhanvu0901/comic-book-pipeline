@@ -9,13 +9,13 @@ from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 
 
-_TARGET_WORDS_MIN = 150
-_TARGET_WORDS_MAX = 190
+_TARGET_WORDS_MIN = 170
+_TARGET_WORDS_MAX = 200
 _WORDS_PER_SEC = 3.4
 
-_SCENE_MIN_WORDS = 12
+_SCENE_MIN_WORDS = 20  # was 12 — push closer to channel benchmark (avg ~25w/scene)
 _SCENE_MAX_WORDS = 30
-_HOOK_MIN_WORDS = 15
+_HOOK_MIN_WORDS = 18
 _HOOK_MAX_WORDS = 30
 
 _CONNECTIVES = (
@@ -98,7 +98,8 @@ Each beat has:
 Beats are in dramatic order (which is usually but not always chronological). The first beat is COLD_OPEN — the moment that should hook the viewer. The last beat is LANDING — the line that pays it off. Pick beats that compress the story to its 3-5 most cinematic page sequences. Skip filler.
 
 Constraints from successful 60-second comic Shorts (sample of 30 ComicsUnlocked videos):
-- 5-8 beats total. Fewer if the story is one tight sequence.
+- 7-8 beats preferred (5-6 only if the story is one extremely tight sequence).
+  More beats give the narration writer room to hit the 170-200 word channel target.
 - Each beat covers 1-4 input pages. Don't spread one beat across the whole comic.
 - COLD_OPEN beat must contain a concrete visual action, not exposition.
 - LANDING must be a payoff, twist, or final image — never a CTA or question.
@@ -272,14 +273,24 @@ _WRITE_SYSTEM = """You are PanelNarrator, writing 60-second narration for YouTub
 
 This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
-1) HOOK (scene 1)
-   - 18-28 words, drops the viewer in mid-action.
-   - Pick exactly ONE archetype:
-     A. "After [setup], [Named Character] [does specific action], [twist]."
-     B. "Why/How/What [question]?"
-     C. "Everyone thinks [X], but [Y]."
-     D. "In [time/place], [Named Character] [action]."
-   - Must contain at least one canonical name and at least one verb.
+1) HOOK (scene 1) — CRITICAL — calibrated from real top-performing Shorts
+   - 18-28 words, drops the viewer in mid-action OR mid-question.
+   - Pick exactly ONE archetype. Real channel-benchmark examples shown:
+
+     A (Recommended) — "What if/Why/How [setup-question]?" then immediate answer.
+       Real: "What if your superpower was so disgusting that the government sealed
+              your mouth shut to stop you from..."
+     B (Recommended) — "In [time/place], [Named Character] [does specific action]..."
+       Real: "In an alternate universe, Venom arrives on Earth and bonds to Eddie
+              Brock for 500 years. However, this..."
+     C — "[Named Character] [vivid concrete action] only to realize [twist]..."
+       Real: "Batman wakes up from a nightmare and gets out of bed, only to realize
+              that his legs won't..."
+     D — "Everyone thinks [X], but [Y]." — use sparingly.
+
+   - PREFER archetypes A or B (interrogative or scenic opener). They draw the
+     viewer in without naming a character first. Archetype C is the third choice.
+   - Must contain at least one specific action verb.
    - NO floating fragments ("The war."). NO "In today's video", "Today we're looking at".
 
 2) CONNECTIVE GRAMMAR (scenes 2 onward)
@@ -288,7 +299,11 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - These are documented in 95%+ of successful comic Shorts and create the "and then... and then..." feeling that holds retention.
 
 3) SENTENCE SHAPE
-   - Each scene = ONE compound sentence, 18-25 words. Median for the channel is 19.
+   - Each scene = ONE compound sentence, **22-26 words** (NOT 15-18 — short scenes
+     are the #1 reason narration falls under the 170-word channel benchmark).
+   - Build each scene with: (a) subject + main action, (b) ", as/while/until ..."
+     internal connective, (c) consequence/reaction clause. That structure naturally
+     hits 22+ words without padding.
    - Use INTERNAL connectives (", but ...", " as ...", " until ...") to keep the sentence flowing.
    - NO fragments. NO 5-word stub scenes. The only exception: the LAST scene may drop to as low as 8 words for a punchy landing.
 
@@ -316,10 +331,13 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    BAD: "Ben confronts Reed about forgetting their anniversary."  (sounds romantic, misleads)
    GOOD: "Ben confronts Reed for forgetting the anniversary of the accident that turned him into the Thing."  (anchored to what the comic actually means)
 
-7) LENGTH BUDGET
+7) LENGTH BUDGET — STRICT, BENCHMARK-CALIBRATED
    - 5-8 scenes total.
-   - 150-190 words total.
-   - Target 58 seconds spoken at 3.4 words/second.
+   - **170-200 words total** — non-negotiable lower bound. Channel-benchmark videos
+     (ComicsUnlocked recent Shorts: 171, 179, 195 words) hit this every time.
+     If your draft is under 170 words, expand mid-tier scenes with one more clause
+     about consequence/reaction. Do NOT pad with filler — add substance.
+   - Target 55 seconds spoken at 3.4 words/second.
 
 8) PAGE/PANEL TAGGING
    - Every scene maps to ONE (page_ref, panel_ref) — pick the most visually impactful panel of that beat.
@@ -463,8 +481,8 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         if not (floor <= wc <= _SCENE_MAX_WORDS):
             errors.append(f"scene {i} is {wc} words, want {floor}-{_SCENE_MAX_WORDS}")
 
-    if not (140 <= total_words <= 200):
-        errors.append(f"total words {total_words} not in 140..200")
+    if not (160 <= total_words <= 210):
+        errors.append(f"total words {total_words} not in 160..210")
     return errors
 
 
@@ -486,7 +504,7 @@ def _retry_fix(
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
         f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words. Last scene may dip to 8.\n"
-        f"- Total: 140-200 words ({_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} ideal). 5-8 scenes.\n\n"
+        f"- Total: 160-210 words ({_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} ideal). 5-8 scenes.\n\n"
         f"PRIOR DRAFT (fix in place, keep beat_id/page_ref/panel_ref unchanged unless they were flagged):\n{prior}\n\n"
         f"Return ONLY the corrected JSON."
     )

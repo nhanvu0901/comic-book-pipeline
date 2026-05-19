@@ -48,7 +48,7 @@ def synthesize(
     *,
     voice_id: str | None = None,
     model: str | None = None,
-    speed: float = 1.0,
+    speed: float = 1.15,  # contemplative emotion runs ~2.6 wps natively; bump to hit ~3.4 wps benchmark
     volume: float = 1.0,
     emotion: str = "contemplative",
     language: str = "en",

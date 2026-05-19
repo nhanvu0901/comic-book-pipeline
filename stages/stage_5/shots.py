@@ -19,7 +19,12 @@ UPSCALE_DIM = 2160
 ASPECT_THRESHOLD = 0.7
 
 MOTION_CYCLE = ("zoom_in", "pan_right", "zoom_out")
-SHOT_TARGET_SECONDS = 2.5
+# ComicsUnlocked-calibrated: one continuous Ken-Burns motion per scene, NOT
+# multiple sub-shots that cycle direction. Reference videos hold a single panel
+# for 10-30 seconds with subtle zoom — that's the "documentary" feel we want.
+# Sub-shot splitting created jittery direction changes (3.35s avg vs 11s target).
+SHOTS_PER_SCENE = 1
+SHOT_TARGET_SECONDS = 2.5  # legacy — used only if SHOTS_PER_SCENE > 1
 SHOT_MIN_SECONDS = 1.2
 SHOT_MAX_SECONDS = 4.5
 STATIC_MOTION_BELOW_SECONDS = 1.5
@@ -59,14 +64,26 @@ def build_shots(
         if not source_image or target <= 0.0:
             continue
 
-        durations = _plan_durations(
-            scene_id=scene_id,
-            target=target,
-            scene_timing=timings_by_scene.get(scene_id),
-            word_timestamps=word_timestamps,
-        )
+        if SHOTS_PER_SCENE <= 1:
+            # ONE continuous motion per scene — matches ComicsUnlocked's 10-30s
+            # held-panel-with-Ken-Burns style. Motion cycles per-scene for variety,
+            # not per-sub-shot (which created hard cuts mid-scene).
+            durations = [target]
+        else:
+            durations = _plan_durations(
+                scene_id=scene_id,
+                target=target,
+                scene_timing=timings_by_scene.get(scene_id),
+                word_timestamps=word_timestamps,
+            )
         for i, dur in enumerate(durations):
-            motion = "static" if dur < STATIC_MOTION_BELOW_SECONDS else MOTION_CYCLE[i % len(MOTION_CYCLE)]
+            if dur < STATIC_MOTION_BELOW_SECONDS:
+                motion = "static"
+            elif SHOTS_PER_SCENE <= 1:
+                # Rotate motion based on scene_id so consecutive scenes differ.
+                motion = MOTION_CYCLE[(scene_id - 1) % len(MOTION_CYCLE)]
+            else:
+                motion = MOTION_CYCLE[i % len(MOTION_CYCLE)]
             shots.append(Shot(
                 shot_id=shot_id,
                 scene_id=scene_id,

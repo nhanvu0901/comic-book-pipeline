@@ -20,7 +20,7 @@ from .schema import TTSResult
 def synthesize_project(
     project_name: str,
     *,
-    speed: float = 1.0,
+    speed: float = 1.15,  # match Cartesia default; offsets contemplative emotion's slower delivery
     volume: float = 1.0,
     emotion: str = "contemplative",
     voice_id: str | None = None,
