@@ -22,9 +22,9 @@ from .schema import TTSResult
 def synthesize_project(
     project_name: str,
     *,
-    speed: float = 1.35,  # offsets contemplative slower delivery; targets ~3.4 wps channel benchmark
+    speed: float = 1.0,  # Cartesia speed param caps near 1.2; let atempo post-process do the tempo work
     volume: float = 1.0,
-    emotion: str = "contemplative",
+    emotion: str = "confident",  # even-paced documentary narrator (vs contemplative's dramatic pauses)
     voice_id: str | None = None,
     model: str | None = None,
     post_atempo: float = 1.2,  # ffmpeg atempo post-process — slight tempo boost without pitch shift.
@@ -53,7 +53,11 @@ def synthesize_project(
         words = json.loads(words_path.read_text())
         duration = _wav_duration(audio_path)
     else:
-        full_text = " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text"))
+        raw_text = " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text"))
+        full_text = _normalize_for_tts(raw_text)
+        if full_text != raw_text:
+            print(f"[stage4] normalized {len(raw_text) - len(full_text)} char(s) for TTS "
+                  f"(em-dashes etc. → commas to avoid dramatic pauses)")
         print(f"[stage4] synthesizing {len(full_text)} chars via Cartesia "
               f"({model or CARTESIA_MODEL}, voice={voice_id or CARTESIA_VOICE_ID}, "
               f"speed={speed}, volume={volume}, emotion={emotion})")
@@ -107,6 +111,28 @@ def synthesize_project(
 def _wav_duration(path: Path) -> float:
     with wave.open(str(path), "rb") as wf:
         return wf.getnframes() / float(wf.getframerate())
+
+
+_TTS_REPLACEMENTS = {
+    # Cartesia interprets em-dash as a dramatic ~1s pause. Use comma for a short
+    # natural pause instead — keeps pacing consistent.
+    "—": ", ",
+    "–": ", ",
+    "…": ", ",   # ellipsis also drags
+    "‘": "'", "’": "'", "“": '"', "”": '"',
+    " ": " ", "­": "",  # NBSP, soft hyphen
+}
+
+
+def _normalize_for_tts(text: str) -> str:
+    """Strip chars that Cartesia interprets as long pauses or rendering glitches."""
+    for ch, rep in _TTS_REPLACEMENTS.items():
+        text = text.replace(ch, rep)
+    # Collapse repeated commas / spaces (em-dash → comma can create ", ," sequences)
+    import re
+    text = re.sub(r",\s*,", ",", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def _resolve_ffmpeg() -> str:

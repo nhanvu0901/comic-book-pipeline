@@ -81,9 +81,25 @@ _ASCII_NORMALIZE = {
 }
 
 
+def _fix_double_encoded(text: str) -> str:
+    """Cartesia sometimes returns text that's UTF-8 bytes mis-decoded as Latin-1
+    (em-dash → 'â\\x80\\x94'). If Latin-1-range chars are present, try the
+    'latin-1 → utf-8' round-trip to recover the real Unicode codepoint."""
+    if not any(0x80 <= ord(c) <= 0xFF for c in text):
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
 def _strip_punct_for_display(text: str) -> str:
+    text = _fix_double_encoded(text)
     for ch, rep in _ASCII_NORMALIZE.items():
         text = text.replace(ch, rep)
+    # Final guard: any char still outside ASCII gets replaced with space — Anton
+    # has no fallback glyphs and would render boxes/euro signs otherwise.
+    text = "".join(c if ord(c) < 128 else " " for c in text)
     return re.sub(r"\s+", " ", text).strip()
 
 

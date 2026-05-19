@@ -48,9 +48,9 @@ def synthesize(
     *,
     voice_id: str | None = None,
     model: str | None = None,
-    speed: float = 1.35,  # contemplative runs ~2.6 wps natively; 1.35 hits ~3.4 wps channel benchmark
+    speed: float = 1.0,  # post-process atempo handles final pacing (Cartesia speed caps near 1.2)
     volume: float = 1.0,
-    emotion: str = "contemplative",
+    emotion: str = "confident",  # documentary-narrator rhythm — even pacing, no dramatic pauses
     language: str = "en",
     sample_rate: int = 44100,
     timeout: int = 120,
