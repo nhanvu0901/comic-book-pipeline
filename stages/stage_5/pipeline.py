@@ -69,7 +69,20 @@ def assemble_project(
 
     bgm = _resolve_bgm(bg_music_path, enable_music, log)
 
-    shots = build_shots(narration, scene_timings=scene_timings, word_timestamps=word_timestamps)
+    # Load caption_chunks + preprocessed pages for caption-chunk shot strategy
+    caption_chunks_path = root / "caption_chunks.json"
+    caption_chunks = (
+        json.loads(caption_chunks_path.read_text()) if caption_chunks_path.exists() else []
+    )
+    pages_by_number = _load_preprocessed_pages(root)
+
+    shots = build_shots(
+        narration,
+        scene_timings=scene_timings,
+        word_timestamps=word_timestamps,
+        caption_chunks=caption_chunks,
+        pages_by_number=pages_by_number,
+    )
     if not shots:
         raise RuntimeError("build_shots produced 0 shots — check narration.json fields")
     silence_aligned = "silence-aligned" if scene_timings and word_timestamps else "even-split"
@@ -117,6 +130,24 @@ def assemble_project(
         bgm_used=str(bgm) if bgm else None,
         shots=shots,
     )
+
+
+def _load_preprocessed_pages(project_root: Path) -> dict[int, dict]:
+    """Load all preprocessed page JSONs keyed by page_number — used to find candidate
+    panels per page for the caption-chunk shot strategy."""
+    prep = project_root / "preprocessed"
+    if not prep.exists():
+        return {}
+    out: dict[int, dict] = {}
+    for p in sorted(prep.glob("page_*.json")):
+        try:
+            page = json.loads(p.read_text())
+            pn = int(page.get("page_number", 0) or 0)
+            if pn:
+                out[pn] = page
+        except Exception:
+            continue
+    return out
 
 
 def _resolve_bgm(

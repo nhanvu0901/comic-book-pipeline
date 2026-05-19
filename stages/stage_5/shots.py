@@ -19,13 +19,16 @@ UPSCALE_DIM = 2160
 ASPECT_THRESHOLD = 0.7
 
 MOTION_CYCLE = ("zoom_in", "pan_right", "zoom_out")
-# ComicsUnlocked-calibrated: one continuous Ken-Burns motion per scene, NOT
-# multiple sub-shots that cycle direction. Reference videos hold a single panel
-# for 10-30 seconds with subtle zoom — that's the "documentary" feel we want.
-# Sub-shot splitting created jittery direction changes (3.35s avg vs 11s target).
-SHOTS_PER_SCENE = 1
-SHOT_TARGET_SECONDS = 2.5  # legacy — used only if SHOTS_PER_SCENE > 1
-SHOT_MIN_SECONDS = 1.2
+
+# Two strategies:
+#   "scene"          — one continuous Ken-Burns per scene (ComicsUnlocked: 4-5 shots, 10-30s each)
+#   "caption_chunk"  — one shot per caption chunk (TheComicCivilian: 35-40 shots, ~1.5s each,
+#                      visual changes EVERY time the on-screen text changes)
+SHOT_STRATEGY = "caption_chunk"
+
+SHOTS_PER_SCENE = 1            # used when SHOT_STRATEGY == "scene"
+SHOT_TARGET_SECONDS = 2.5
+SHOT_MIN_SECONDS = 0.6         # caption-chunk mode: ~0.5-2s per shot
 SHOT_MAX_SECONDS = 4.5
 STATIC_MOTION_BELOW_SECONDS = 1.5
 SILENCE_GAP_THRESHOLD = 0.2
@@ -37,8 +40,29 @@ def build_shots(
     *,
     scene_timings: list[dict] | None = None,
     word_timestamps: list[dict] | None = None,
+    caption_chunks: list[dict] | None = None,
+    pages_by_number: dict[int, dict] | None = None,
 ) -> list[Shot]:
-    """Split each narration scene into multiple shots, snapping cuts to silence gaps when audio data is available."""
+    """Split each narration scene into shots.
+
+    Strategy depends on SHOT_STRATEGY:
+      • "scene"         — one shot per scene (one continuous Ken-Burns)
+      • "caption_chunk" — one shot per caption chunk (visual changes WITH the text,
+                           cycling through the page's panels for visual variety)
+    """
+    if SHOT_STRATEGY == "caption_chunk" and caption_chunks and pages_by_number is not None:
+        return _build_shots_per_chunk(
+            narration, caption_chunks, pages_by_number, scene_timings or [],
+        )
+    return _build_shots_per_scene(narration, scene_timings, word_timestamps)
+
+
+def _build_shots_per_scene(
+    narration: dict,
+    scene_timings: list[dict] | None,
+    word_timestamps: list[dict] | None,
+) -> list[Shot]:
+    """ComicsUnlocked-style: one continuous Ken-Burns shot per scene."""
     scenes = narration.get("scenes") or []
     timings_by_scene = {int(t.get("scene_id", 0) or 0): t for t in (scene_timings or [])}
     shots: list[Shot] = []
@@ -94,6 +118,76 @@ def build_shots(
                 motion=motion,
             ))
             shot_id += 1
+    return shots
+
+
+def _build_shots_per_chunk(
+    narration: dict,
+    caption_chunks: list[dict],
+    pages_by_number: dict[int, dict],
+    scene_timings: list[dict],
+) -> list[Shot]:
+    """TheComicCivilian-style: one shot per caption chunk, cycling through the
+    scene's page's panels for visual variety. Shot duration = chunk duration
+    (extended slightly to absorb inter-chunk silence)."""
+    scenes = narration.get("scenes") or []
+    scenes_by_id = {int(s.get("scene_id") or i): s for i, s in enumerate(scenes, start=1)}
+    timings_by_scene = {int(t.get("scene_id", 0) or 0): t for t in (scene_timings or [])}
+
+    # Map each chunk to its scene by time
+    def find_scene_for_chunk(c):
+        c_mid = (float(c.get("start", 0)) + float(c.get("end", 0))) / 2
+        for st in scene_timings:
+            if float(st.get("start", 0)) <= c_mid < float(st.get("end", 1e9)):
+                return scenes_by_id.get(int(st.get("scene_id", 0)))
+        # fallback: first scene
+        return scenes_by_id.get(1) if scenes_by_id else None
+
+    # Track per-page panel cycle index so consecutive chunks on the same page
+    # get different panels (visual variety).
+    page_panel_idx: dict[int, int] = {}
+
+    shots: list[Shot] = []
+    for i, chunk in enumerate(caption_chunks):
+        c_start = float(chunk.get("start", 0))
+        c_end = float(chunk.get("end", c_start + 1.0))
+        scene = find_scene_for_chunk(chunk)
+        if scene is None:
+            continue
+        # Extend shot end to next chunk start (or scene end / audio end) to absorb gap silence.
+        if i + 1 < len(caption_chunks):
+            next_start = float(caption_chunks[i + 1].get("start", c_end))
+            c_end_extended = max(c_end, next_start)
+        else:
+            # last chunk: extend to the very end of the last scene's audio
+            c_end_extended = max(c_end, max((float(st.get("end", 0)) for st in scene_timings), default=c_end))
+        dur = max(0.4, c_end_extended - c_start)
+
+        page_ref = int(scene.get("page_ref", 0) or 0)
+        page = pages_by_number.get(page_ref) if pages_by_number else None
+        panels_on_page = (page.get("panels") or []) if page else []
+
+        # Pick a panel: cycle through the page's panels for variety
+        if panels_on_page:
+            idx = page_panel_idx.get(page_ref, 0) % len(panels_on_page)
+            panel = panels_on_page[idx]
+            bbox = panel.get("bbox") or {}
+            source_image = str(page.get("source_image") or "") if page else str(scene.get("source_image") or "")
+            page_panel_idx[page_ref] = idx + 1
+        else:
+            bbox = scene.get("panel_bbox") or {}
+            source_image = str(scene.get("source_image") or "")
+
+        motion = "static" if dur < STATIC_MOTION_BELOW_SECONDS else MOTION_CYCLE[i % len(MOTION_CYCLE)]
+        shots.append(Shot(
+            shot_id=i,
+            scene_id=int(scene.get("scene_id") or 1),
+            duration_seconds=dur,
+            panel_bbox={"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
+                        "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))},
+            source_image=source_image,
+            motion=motion,
+        ))
     return shots
 
 
