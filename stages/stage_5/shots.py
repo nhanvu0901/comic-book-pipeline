@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, ImageFilter
+from PIL import Image
 
 from .schema import Shot
 
@@ -16,8 +16,6 @@ TARGET_ASPECT = OUTPUT_W / OUTPUT_H
 FPS = 30
 PADDING_PCT = 0.05
 UPSCALE_DIM = 2160
-ASPECT_THRESHOLD = 0.7
-
 MOTION_CYCLE = ("zoom_in", "pan_right", "zoom_out")
 
 # Two strategies:
@@ -332,36 +330,19 @@ def _zoompan_expr(motion: str, frames: int) -> str:
 
 
 def _prepare_panel_frame(panel_png: Path, out_path: Path) -> Path:
-    """Pre-render the cropped panel as a 1080x1920 frame with cover-scale or blur-fill background."""
+    """Always cover-scale the panel to fill 1080×1920. Wide panels lose edge
+    content — channel data (65/66 audited frames from 11 reference videos)
+    shows this is the right trade-off vs blurred letterbox backgrounds."""
     with Image.open(panel_png) as im:
         im = im.convert("RGB")
         iw, ih = im.size
-        aspect = iw / max(1, ih)
-        if aspect < ASPECT_THRESHOLD:
-            scale = max(OUTPUT_W / iw, OUTPUT_H / ih)
-            new_w = max(OUTPUT_W, int(round(iw * scale)))
-            new_h = max(OUTPUT_H, int(round(ih * scale)))
-            scaled = im.resize((new_w, new_h), Image.LANCZOS)
-            x0 = (new_w - OUTPUT_W) // 2
-            y0 = (new_h - OUTPUT_H) // 2
-            frame = scaled.crop((x0, y0, x0 + OUTPUT_W, y0 + OUTPUT_H))
-        else:
-            bg_scale = max(OUTPUT_W / iw, OUTPUT_H / ih) * 1.2
-            bg_w = int(round(iw * bg_scale))
-            bg_h = int(round(ih * bg_scale))
-            bg = im.resize((bg_w, bg_h), Image.LANCZOS).filter(ImageFilter.GaussianBlur(radius=20))
-            x0 = (bg_w - OUTPUT_W) // 2
-            y0 = (bg_h - OUTPUT_H) // 2
-            frame = bg.crop((x0, y0, x0 + OUTPUT_W, y0 + OUTPUT_H))
-            fg_h = OUTPUT_H
-            fg_w = max(1, int(round(iw * fg_h / max(1, ih))))
-            if fg_w > OUTPUT_W:
-                fg_w = OUTPUT_W
-                fg_h = max(1, int(round(ih * fg_w / max(1, iw))))
-            fg = im.resize((fg_w, fg_h), Image.LANCZOS)
-            paste_x = (OUTPUT_W - fg_w) // 2
-            paste_y = (OUTPUT_H - fg_h) // 2
-            frame.paste(fg, (paste_x, paste_y))
+        scale = max(OUTPUT_W / iw, OUTPUT_H / ih)
+        new_w = max(OUTPUT_W, int(round(iw * scale)))
+        new_h = max(OUTPUT_H, int(round(ih * scale)))
+        scaled = im.resize((new_w, new_h), Image.LANCZOS)
+        x0 = (new_w - OUTPUT_W) // 2
+        y0 = (new_h - OUTPUT_H) // 2
+        frame = scaled.crop((x0, y0, x0 + OUTPUT_W, y0 + OUTPUT_H))
     frame.save(out_path, "PNG")
     return out_path
 

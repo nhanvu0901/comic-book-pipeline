@@ -1,6 +1,8 @@
 """Stage 3 narration writer: outline_beats -> build_glossary -> write_scenes -> validate."""
 import json
+import random
 import re
+from pathlib import Path
 from typing import Callable
 
 from config import OPENROUTER_MODEL
@@ -9,18 +11,20 @@ from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 
 
-_TARGET_WORDS_MIN = 220  # TheComicCivilian: 237-257 words, avg 249
-_TARGET_WORDS_MAX = 260
-_WORDS_PER_SEC = 4.0     # was 3.4 (ComicsUnlocked); TheComicCivilian runs 4.18-4.45
+_TARGET_WORDS_MIN = 240  # Channel mean 242 (219-video sample), median 241
+_TARGET_WORDS_MAX = 280
+_WORDS_PER_SEC = 4.0     # Channel mean 3.9 wps
 
-_SCENE_MIN_WORDS = 25    # was 20 — push higher to hit 220+ total
+_SCENE_MIN_WORDS = 22    # was 25 — lower per-scene min so writer can fit 12 sentences
 _SCENE_MAX_WORDS = 35
 _HOOK_MIN_WORDS = 18
 _HOOK_MAX_WORDS = 30
 
+# Channel connective frequencies (219-video sample): But 16.7%, So 9.0%, When 6.8%,
+# However 3.1%, Then 1.8%, After 1.5%. "So" was missing — added per design spec.
 _CONNECTIVES = (
-    "But", "However", "As", "When", "After", "Eventually", "Instead",
-    "With", "Now", "Suddenly", "Then", "Until", "Meanwhile", "Soon",
+    "But", "So", "However", "When", "After", "Then", "Eventually",
+    "As", "Instead", "With", "Now", "Suddenly", "Until", "Meanwhile", "Soon",
 )
 
 
@@ -98,9 +102,10 @@ Each beat has:
 Beats are in dramatic order (which is usually but not always chronological). The first beat is COLD_OPEN — the moment that should hook the viewer. The last beat is LANDING — the line that pays it off. Pick beats that compress the story to its 3-5 most cinematic page sequences. Skip filler.
 
 Constraints from successful 60-second comic Shorts (sample of 30 ComicsUnlocked videos):
-- 8-10 beats preferred (was 5-8). Channel-benchmark Shorts use 8-10 distinct
-  visual moments. More beats give the narration writer room to hit the
-  220-260 word channel target AND give Stage 5 more visual changes to cut to.
+- 10-12 beats preferred. Channel-benchmark Shorts average 12 sentences
+  (across 219 analyzed videos) — beats map 1:1 to scenes, so we need a
+  matching beat count to hit the 240-280 word channel target AND give
+  Stage 5 enough visual changes for the 35+ caption-chunk cuts.
 - Each beat covers 1-4 input pages. Don't spread one beat across the whole comic.
 - COLD_OPEN beat must contain a concrete visual action, not exposition.
 - LANDING must be a payoff, twist, or final image — never a CTA or question.
@@ -127,7 +132,7 @@ def outline_beats(
         f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + "\n"
-        f"TASK: Extract 8-10 beats that build a {mode} arc from this story. "
+        f"TASK: Extract 10-12 beats that build a {mode} arc from this story. "
         f"Choose beats that compress the comic into its most cinematic moments. "
         f"Reference real page numbers from the input.\n\n"
         f"Return JSON in this exact shape:\n"
@@ -274,26 +279,24 @@ _WRITE_SYSTEM = """You are PanelNarrator, writing 60-second narration for YouTub
 
 This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
-1) HOOK (scene 1) — MANDATORY interrogative or scenic opener.
+1) HOOK FORMULA — MANDATORY "When [event], [twist]..." structure
 
-   Real top-performing Shorts (TheComicCivilian + ComicsUnlocked) almost ALWAYS
-   open with one of these two archetypes:
+   Channel benchmark (66% of 219 analyzed @TheComicCivilian videos open with "When..."):
+     ✓ "When Miles Morales investigated a rooftop while being invisible, he came across..."
+     ✓ "When members of the Titans and Justice League were kidnapped, Wonder Woman..."
+     ✓ "When Frank Castle entered Valhalla, he couldn't find peace, so Odin..."
 
-     A (PREFERRED) — "What if/Why/How [setup-question]?" then immediate twist.
-       Real: "What if Peter Parker never took off the alien suit? He thought it
-              was the only thing..."
-       Real: "What if your superpower was so disgusting that the government sealed
-              your mouth shut..."
+   Acceptable but less common alternates:
+     ◐ "After [event happened], [character action]..." (~10% of channel)
+     ◐ "What if [question]?" (rare on this channel — used by other channels)
 
-     B (SECOND CHOICE) — "In [time/place], [character action]..."
-       Real: "In an alternate universe, Venom arrives on Earth and bonds to Eddie
-              Brock for 500 years..."
+   HARD BAN:
+     ✗ Starting with a character name as the first word ("The Goblin unleashes..." is WRONG)
+     ✗ "In an alternate universe..." (different channel's signature, don't copy)
+     ✗ "Today we're looking at..." / "In today's video" / any framing meta-talk
 
-   - Hook must be 18-28 words.
-   - DO NOT start with a character name as the first word (e.g. "The Green Goblin
-     unleashes..." is WRONG — start with "What if..." instead).
-   - DO NOT start with floating fragments. NO "In today's video", "Today we're
-     looking at", or any framing acknowledgement.
+   The hook MUST be 18-28 words and end with an open thread that pulls the viewer
+   into scene 2 (use a comma + "..." or end with an unresolved promise).
 
 2) CONNECTIVE GRAMMAR (scenes 2 onward)
    - Every scene from #2 onward MUST start with one of these connectives, exactly: But, However, As, When, After, Eventually, Instead, With, Now, Suddenly, Then, Until, Meanwhile, Soon.
@@ -333,13 +336,13 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    BAD: "Ben confronts Reed about forgetting their anniversary."  (sounds romantic, misleads)
    GOOD: "Ben confronts Reed for forgetting the anniversary of the accident that turned him into the Thing."  (anchored to what the comic actually means)
 
-7) LENGTH BUDGET — STRICT, BENCHMARK-CALIBRATED
-   - **8-10 scenes** total (was 5-8 — more scenes = more visual cuts in final video).
-   - **220-260 words total** — non-negotiable lower bound. Channel-benchmark videos
-     (TheComicCivilian recent Shorts: 229, 237, 248, 252, 257 words) hit this every time.
-     If your draft is under 220 words, ADD more scenes (split a complex beat in two)
-     or expand consequence/reaction clauses. Do NOT pad with filler — add substance.
-   - Target 55 seconds spoken at 4.0 words/second.
+7) LENGTH BUDGET — STRICT, CHANNEL-CALIBRATED
+   - **10-12 scenes** total (channel average 12 sentences across 219 videos).
+   - **240-280 words total** — non-negotiable lower bound. Channel mean is 242
+     words. If your draft is under 240, ADD more scenes (split a complex beat
+     in two) or expand consequence/reaction clauses. Do NOT pad with filler —
+     add substance.
+   - Target 60 seconds spoken at ~4.0 words/second.
 
 8) PAGE/PANEL TAGGING
    - Every scene maps to ONE (page_ref, panel_ref) — pick the most visually impactful panel of that beat.
@@ -373,6 +376,7 @@ def write_scenes(
     mode_info = MODES_BY_KEY[mode]
 
     lore_block = _lore_notes_block(comic_context, all_pages or [])
+    few_shot = _load_few_shot_examples(n=3)
 
     user = (
         f"COMIC CONTEXT:\n{_ctx_block(comic_context)}\n\n"
@@ -382,7 +386,8 @@ def write_scenes(
         + "\n"
         f"BEATS (write one scene per beat, in order):\n{_beats_block(beats)}\n\n"
         f"GLOSSARY (use these exact names):\n{_glossary_block(glossary)}\n\n"
-        f"PAGE DETAIL (for picking the right panel_ref):\n{_pages_block_compact(story_pages)}\n\n"
+        + (f"{few_shot}\n\n" if few_shot else "")
+        + f"PAGE DETAIL (for picking the right panel_ref):\n{_pages_block_compact(story_pages)}\n\n"
         f"WORD BUDGET: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} total words across all scenes.\n"
         f"CONNECTIVE WHITELIST (scene 2 onward MUST start with one): {', '.join(_CONNECTIVES)}.\n\n"
         f"Write the script now. Return JSON in this exact shape:\n"
@@ -444,8 +449,8 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
     scenes = parsed.get("scenes") or []
     if not scenes:
         return ["no scenes in output"]
-    if not (5 <= len(scenes) <= 8):
-        errors.append(f"scene count {len(scenes)} not in 5..8")
+    if not (9 <= len(scenes) <= 14):
+        errors.append(f"scene count {len(scenes)} not in 9..14")
 
     total_words = 0
     for i, s in enumerate(scenes, start=1):
@@ -487,8 +492,8 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         if not (floor <= wc <= _SCENE_MAX_WORDS):
             errors.append(f"scene {i} is {wc} words, want {floor}-{_SCENE_MAX_WORDS}")
 
-    if not (210 <= total_words <= 270):
-        errors.append(f"total words {total_words} not in 210..270")
+    if not (230 <= total_words <= 290):
+        errors.append(f"total words {total_words} not in 230..290")
     return errors
 
 
@@ -510,7 +515,7 @@ def _retry_fix(
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
         f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words. Last scene may dip to 8.\n"
-        f"- Total: 210-270 words ({_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} ideal). 8-10 scenes.\n\n"
+        f"- Total: 230-290 words ({_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} ideal). 10-12 scenes.\n\n"
         f"PRIOR DRAFT (fix in place, keep beat_id/page_ref/panel_ref unchanged unless they were flagged):\n{prior}\n\n"
         f"Return ONLY the corrected JSON."
     )
@@ -586,6 +591,87 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
         beats=beats,
         glossary=glossary,
     )
+
+
+_FEW_SHOT_CACHE: str | None = None
+_VTT_TIME_RE = re.compile(r"(\d+):(\d+):(\d+)\.(\d+)")
+
+
+def _parse_vtt_cues(vtt_path: Path) -> list[str]:
+    """Extract deduped cue texts from a YouTube auto-sub .vtt file."""
+    try:
+        text = vtt_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    cues: list[str] = []
+    cur_text: list[str] = []
+    seen: set[str] = set()
+    in_cue = False
+    for line in text.splitlines():
+        if " --> " in line:
+            if cur_text:
+                t = " ".join(cur_text).strip()
+                key = t.lower()
+                if t and key not in seen:
+                    seen.add(key)
+                    cues.append(t)
+            cur_text = []
+            in_cue = True
+            continue
+        if in_cue and line.strip() and "<" not in line and not line.startswith(("WEBVTT", "Kind:", "Language:")):
+            cleaned = re.sub(r"<[^>]+>", "", line).strip()
+            if cleaned:
+                cur_text.append(cleaned)
+    if cur_text:
+        t = " ".join(cur_text).strip()
+        if t and t.lower() not in seen:
+            cues.append(t)
+    return cues
+
+
+def _load_few_shot_examples(n: int = 3) -> str:
+    """Pick n .vtt files from research/reference/, extract first 80 words of each
+    (hook + 1-2 scenes), format as channel-style demonstration block.
+
+    Cached after first call. Deterministic sample via fixed seed. Returns ""
+    if research/reference/ is missing — graceful degrade."""
+    global _FEW_SHOT_CACHE
+    if _FEW_SHOT_CACHE is not None:
+        return _FEW_SHOT_CACHE
+
+    ref_dir = Path(__file__).resolve().parent.parent.parent / "research" / "reference"
+    if not ref_dir.exists():
+        _FEW_SHOT_CACHE = ""
+        return ""
+    vtts = sorted(ref_dir.glob("*.en.vtt"))
+    if not vtts:
+        _FEW_SHOT_CACHE = ""
+        return ""
+
+    sample = random.Random(42).sample(vtts, min(n, len(vtts)))
+    blocks: list[str] = []
+    for vtt in sample:
+        cues = _parse_vtt_cues(vtt)
+        if not cues:
+            continue
+        full = " ".join(cues)
+        snippet = " ".join(full.split()[:80])
+        if snippet:
+            blocks.append(f"Example {len(blocks)+1} hook + opening:\n{snippet}")
+
+    if not blocks:
+        _FEW_SHOT_CACHE = ""
+        return ""
+
+    _FEW_SHOT_CACHE = (
+        "CHANNEL STYLE EXAMPLES (real top-performing Shorts from the channel "
+        "we are mimicking — study their hook rhythm, sentence density, and "
+        "connective usage):\n\n"
+        + "\n\n".join(blocks)
+        + "\n\nMatch this rhythm and density. Don't copy any specific story — "
+        "apply the STRUCTURAL shape to OUR comic."
+    )
+    return _FEW_SHOT_CACHE
 
 
 def _lore_notes_block(ctx: dict, all_pages: list[dict]) -> str:
