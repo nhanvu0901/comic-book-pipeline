@@ -125,12 +125,12 @@ def _build_shots_per_chunk(
     pages_by_number: dict[int, dict],
     scene_timings: list[dict],
 ) -> list[Shot]:
-    """TheComicCivilian-style: one shot per caption chunk, cycling through the
-    scene's page's panels for visual variety. Shot duration = chunk duration
-    (extended slightly to absorb inter-chunk silence)."""
+    """TheComicCivilian-style: one shot per caption chunk, with SMART panel
+    selection scoring each candidate panel against the chunk text. Pool spans
+    the scene's page ±1 adjacent pages; never repeats within a scene; falls
+    back to widest pool only when exhausted."""
     scenes = narration.get("scenes") or []
     scenes_by_id = {int(s.get("scene_id") or i): s for i, s in enumerate(scenes, start=1)}
-    timings_by_scene = {int(t.get("scene_id", 0) or 0): t for t in (scene_timings or [])}
 
     # Map each chunk to its scene by time
     def find_scene_for_chunk(c):
@@ -138,12 +138,11 @@ def _build_shots_per_chunk(
         for st in scene_timings:
             if float(st.get("start", 0)) <= c_mid < float(st.get("end", 1e9)):
                 return scenes_by_id.get(int(st.get("scene_id", 0)))
-        # fallback: first scene
         return scenes_by_id.get(1) if scenes_by_id else None
 
-    # Track per-page panel cycle index so consecutive chunks on the same page
-    # get different panels (visual variety).
-    page_panel_idx: dict[int, int] = {}
+    # Per-scene set of (page_num, panel_idx) already used, so we don't pick
+    # the same panel twice WITHIN one scene's chunks.
+    used_by_scene: dict[int, set] = {}
 
     shots: list[Shot] = []
     for i, chunk in enumerate(caption_chunks):
@@ -152,29 +151,27 @@ def _build_shots_per_chunk(
         scene = find_scene_for_chunk(chunk)
         if scene is None:
             continue
-        # Extend shot end to next chunk start (or scene end / audio end) to absorb gap silence.
         if i + 1 < len(caption_chunks):
             next_start = float(caption_chunks[i + 1].get("start", c_end))
             c_end_extended = max(c_end, next_start)
         else:
-            # last chunk: extend to the very end of the last scene's audio
             c_end_extended = max(c_end, max((float(st.get("end", 0)) for st in scene_timings), default=c_end))
         dur = max(0.4, c_end_extended - c_start)
 
-        page_ref = int(scene.get("page_ref", 0) or 0)
-        page = pages_by_number.get(page_ref) if pages_by_number else None
-        panels_on_page = (page.get("panels") or []) if page else []
-
-        # Pick a panel: cycle through the page's panels for variety
-        if panels_on_page:
-            idx = page_panel_idx.get(page_ref, 0) % len(panels_on_page)
-            panel = panels_on_page[idx]
-            bbox = panel.get("bbox") or {}
-            source_image = str(page.get("source_image") or "") if page else str(scene.get("source_image") or "")
-            page_panel_idx[page_ref] = idx + 1
-        else:
+        sid = int(scene.get("scene_id") or 1)
+        used = used_by_scene.setdefault(sid, set())
+        panel, source_image = _select_panel_for_chunk(
+            chunk_text=str(chunk.get("text", "")),
+            scene=scene,
+            pages_by_number=pages_by_number or {},
+            used_panel_keys=used,
+        )
+        if panel is None:
+            # Last resort — no panel data anywhere. Use scene's own bbox.
             bbox = scene.get("panel_bbox") or {}
             source_image = str(scene.get("source_image") or "")
+        else:
+            bbox = panel.get("bbox") or {}
 
         motion = "static" if dur < STATIC_MOTION_BELOW_SECONDS else MOTION_CYCLE[i % len(MOTION_CYCLE)]
         shots.append(Shot(
@@ -187,6 +184,91 @@ def _build_shots_per_chunk(
             motion=motion,
         ))
     return shots
+
+
+_PANEL_STOPWORDS = {
+    "the", "a", "an", "is", "was", "are", "were", "and", "or", "of", "to", "in",
+    "on", "with", "that", "this", "as", "but", "so", "when", "then", "after",
+    "while", "he", "she", "they", "his", "her", "their", "him", "them", "it",
+    "its", "by", "for", "at", "from", "into", "over", "before", "during",
+}
+
+
+def _score_panel(panel: dict, chunk_text: str, scene: dict) -> float:
+    """Heuristic relevance: +3 per shared character first-name, +1 per shared
+    non-stopword between panel.description and chunk_text."""
+    score = 0.0
+    chunk_words = {w.lower().strip(",.!?:;\"'") for w in chunk_text.split()}
+    chunk_words -= _PANEL_STOPWORDS
+
+    panel_chars = panel.get("characters", []) or []
+    for ch in panel_chars:
+        first = (ch.split()[0].lower() if ch else "").strip(",.!?:;\"'")
+        if first and first in chunk_words:
+            score += 3.0
+
+    desc = panel.get("description", "") or ""
+    desc_words = {w.lower().strip(",.!?:;\"'") for w in desc.split()}
+    desc_words -= _PANEL_STOPWORDS
+    score += len(desc_words & chunk_words) * 1.0
+    return score
+
+
+def _select_panel_for_chunk(
+    *,
+    chunk_text: str,
+    scene: dict,
+    pages_by_number: dict[int, dict],
+    used_panel_keys: set,
+) -> tuple[dict | None, str]:
+    """Pick BEST-MATCH panel from pool (scene.page_ref ± 1 adjacent pages).
+
+    Never picks an already-used (page, panel_idx) within the same scene's chunks.
+    Falls back to ±2 pool with repetition allowed if the ±1 pool is exhausted.
+    Returns (panel_dict_or_None, source_image_path)."""
+    page_ref = int(scene.get("page_ref", 0) or 0)
+
+    def gather(pages_range):
+        out = []  # (score, panel, source_image, key)
+        for pn in pages_range:
+            page = pages_by_number.get(pn)
+            if not page:
+                continue
+            src = str(page.get("source_image") or "")
+            for idx, panel in enumerate(page.get("panels") or []):
+                key = (pn, idx)
+                if key in used_panel_keys:
+                    continue
+                s = _score_panel(panel, chunk_text, scene)
+                out.append((s, panel, src, key))
+        return out
+
+    candidates = gather(range(page_ref - 1, page_ref + 2))
+    if not candidates:
+        candidates = gather(range(page_ref - 2, page_ref + 3))
+
+    if candidates:
+        candidates.sort(key=lambda t: -t[0])
+        score, panel, src, key = candidates[0]
+        used_panel_keys.add(key)
+        return panel, src
+
+    # Last resort — wider pool, repetition allowed
+    best: tuple[float, dict, str] | None = None
+    for pn in range(max(1, page_ref - 3), page_ref + 4):
+        page = pages_by_number.get(pn)
+        if not page:
+            continue
+        src = str(page.get("source_image") or "")
+        for panel in (page.get("panels") or []):
+            s = _score_panel(panel, chunk_text, scene)
+            if best is None or s > best[0]:
+                best = (s, panel, src)
+    if best:
+        return best[1], best[2]
+
+    # No panel data anywhere — caller will fall back to scene's own bbox
+    return None, str(scene.get("source_image") or "")
 
 
 def _plan_durations(

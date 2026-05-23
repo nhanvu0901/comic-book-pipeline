@@ -2,6 +2,7 @@
 import json
 import random
 import re
+import statistics
 from pathlib import Path
 from typing import Callable
 
@@ -15,17 +16,37 @@ _TARGET_WORDS_MIN = 240  # Channel mean 242 (219-video sample), median 241
 _TARGET_WORDS_MAX = 280
 _WORDS_PER_SEC = 4.0     # Channel mean 3.9 wps
 
-_SCENE_MIN_WORDS = 22    # was 25 — lower per-scene min so writer can fit 12 sentences
-_SCENE_MAX_WORDS = 35
+_SCENE_MIN_WORDS = 14    # channel does 9-14 word sentences too — one event each
+_SCENE_MAX_WORDS = 25    # was 35 — hard ceiling, anything longer crams events
+_TARGET_SENT_LEN = 20    # channel median; used by median soft-validator
 _HOOK_MIN_WORDS = 18
 _HOOK_MAX_WORDS = 30
 
 # Channel connective frequencies (219-video sample): But 16.7%, So 9.0%, When 6.8%,
-# However 3.1%, Then 1.8%, After 1.5%. "So" was missing — added per design spec.
+# However 3.1%, Then 1.8%, After 1.5%. "Just then" / "That's when" are channel-
+# signature multi-word pivots — added per pipeline v3 spec.
 _CONNECTIVES = (
     "But", "So", "However", "When", "After", "Then", "Eventually",
     "As", "Instead", "With", "Now", "Suddenly", "Until", "Meanwhile", "Soon",
+    "Just then", "That's when",
 )
+
+
+def _starts_with_connective(text: str) -> str | None:
+    """Return the connective the sentence starts with, or None.
+
+    Match LONGEST first so "Just then" beats "Just" and "That's when" beats
+    a hypothetical "That". Case-insensitive prefix match, ignores trailing
+    comma/space."""
+    t = text.lstrip().lower()
+    for c in sorted(_CONNECTIVES, key=len, reverse=True):
+        cl = c.lower()
+        if t.startswith(cl):
+            # Boundary: next char should be space/comma/end
+            n = len(cl)
+            if n == len(t) or t[n] in " ,.;:!?":
+                return c
+    return None
 
 
 def write_script(
@@ -180,9 +201,117 @@ def outline_beats(
             summary=str(b.get("summary", "")).strip(),
             characters_active=[str(c).strip() for c in (b.get("characters_active") or []) if str(c).strip()],
         ))
-    if not (5 <= len(beats) <= 8):
-        log(f"[stage4]   warning: outline returned {len(beats)} beats (want 5-8) — continuing")
+    if not (8 <= len(beats) <= 12):
+        log(f"[stage4]   warning: outline returned {len(beats)} beats (want 10-12)")
+
+    # Page-gap validation — retry once with bridge instruction if jumps > 5.
+    issues = _validate_outline(beats)
+    if issues:
+        log(f"[stage4]   outline validation: {len(issues)} issue(s) — retry with bridge")
+        for iss in issues[:3]:
+            log(f"[stage4]     - {iss}")
+        beats = _retry_outline_with_bridge(
+            beats, issues, comic_context, story_pages, mode,
+            hook_hint=hook_hint, model=model, progress=progress, debug_dump=debug_dump,
+        ) or beats
     return beats, mdl_used
+
+
+def _validate_outline(beats: list[Beat], max_gap: int = 5) -> list[str]:
+    """Soft validation of outline. Returns issue strings; empty = OK."""
+    issues: list[str] = []
+    if len(beats) < 8:
+        issues.append(f"only {len(beats)} beats (target 10-12)")
+
+    sorted_beats = sorted(
+        [b for b in beats if b.page_refs],
+        key=lambda b: min(b.page_refs),
+    )
+    for prev, nxt in zip(sorted_beats, sorted_beats[1:]):
+        prev_end = max(prev.page_refs)
+        next_start = min(nxt.page_refs)
+        gap = next_start - prev_end
+        if gap > max_gap:
+            issues.append(
+                f"beat {prev.id}→{nxt.id} page-gap {gap} "
+                f"(pages {prev_end+1}-{next_start-1} skipped — insert bridge)"
+            )
+    return issues
+
+
+def _retry_outline_with_bridge(
+    original_beats: list[Beat],
+    issues: list[str],
+    comic_context: dict,
+    story_pages: list[dict],
+    mode: str,
+    *,
+    hook_hint: str = "",
+    model: str | None = None,
+    progress: Callable[[str], None] | None = None,
+    debug_dump: dict | None = None,
+) -> list[Beat] | None:
+    """Re-ask the LLM to fix the outline by inserting bridge beats for skipped pages."""
+    log = progress or (lambda _msg: None)
+    mode_info = MODES_BY_KEY[mode]
+
+    issue_block = "\n".join(f"- {iss}" for iss in issues)
+    prior = json.dumps(
+        {"beats": [{
+            "id": b.id, "function": b.function, "name": b.name,
+            "page_refs": b.page_refs, "summary": b.summary,
+            "characters_active": b.characters_active,
+        } for b in original_beats]},
+        indent=2,
+    )
+    user = (
+        f"Your previous outline draft had page-coverage issues. Fix by INSERTING new "
+        f"BRIDGE beats that summarize the skipped pages so the narrative flows linearly.\n\n"
+        f"ISSUES:\n{issue_block}\n\n"
+        f"PRIOR OUTLINE:\n{prior}\n\n"
+        f"STORY PAGES (for picking bridge content):\n{_pages_block_compact(story_pages)}\n\n"
+        f"Return the COMPLETE corrected outline (with bridge beats inserted in order) "
+        f"in the same JSON shape. Total 10-12 beats. Page-gap between consecutive "
+        f"beats MUST be ≤ 5."
+    )
+
+    def _has_beats(c: str) -> bool:
+        p = _extract_json(c)
+        return isinstance(p, dict) and isinstance(p.get("beats"), list) and len(p["beats"]) > 0
+
+    try:
+        raw, mdl_used = call_with_chain(
+            system=_OUTLINE_SYSTEM, user=user,
+            models=[model] if model else None,
+            max_tokens=4000, progress=progress, label="outline-bridge",
+            validator=_has_beats,
+        )
+    except RuntimeError as exc:
+        log(f"[stage4]   outline-bridge retry chain exhausted — keeping original ({exc})")
+        return None
+
+    if debug_dump is not None:
+        debug_dump["phase_a_bridge_raw"] = raw
+        debug_dump["phase_a_bridge_model"] = mdl_used
+    parsed = _extract_json(raw)
+    if not parsed or not isinstance(parsed.get("beats"), list):
+        log(f"[stage4]   outline-bridge unparseable — keeping original")
+        return None
+
+    new_beats: list[Beat] = []
+    for i, b in enumerate(parsed["beats"], start=1):
+        new_beats.append(Beat(
+            id=int(b.get("id", i) or i),
+            function=str(b.get("function", "SETUP")).upper().strip(),
+            name=str(b.get("name", "")).strip(),
+            page_refs=[int(x) for x in (b.get("page_refs") or []) if str(x).strip()],
+            key_panels=[{"page": int(kp.get("page", 0)), "panel": int(kp.get("panel", 0))}
+                        for kp in (b.get("key_panels") or []) if isinstance(kp, dict)],
+            summary=str(b.get("summary", "")).strip(),
+            characters_active=[str(c).strip() for c in (b.get("characters_active") or []) if str(c).strip()],
+        ))
+    log(f"[stage4]   outline-bridge ok — {len(new_beats)} beats")
+    return new_beats
 
 
 _GLOSSARY_SYSTEM = """You are PanelGlossarist. Your job is to give the narrator a stable name for every entity in the story.
@@ -303,12 +432,19 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - The schema field "connective" is REQUIRED non-null for every scene where scene_id >= 2.
    - These are documented in 95%+ of successful comic Shorts and create the "and then... and then..." feeling that holds retention.
 
-3) SENTENCE SHAPE
-   - Each scene = ONE compound sentence, **22-26 words** (NOT 15-18 — short scenes
-     are the #1 reason narration falls under the 170-word channel benchmark).
-   - Build each scene with: (a) subject + main action, (b) ", as/while/until ..."
-     internal connective, (c) consequence/reaction clause. That structure naturally
-     hits 22+ words without padding.
+3) SENTENCE SHAPE — CRITICAL FOR LISTENABILITY
+   - Each scene = ONE simple compound sentence, **14-22 words**. Channel median 20.
+   - **ONE event per sentence.** NOT "X happens while Y happens but Z is also true."
+   - Channel examples (count the events):
+     ✓ "When Frank Castle entered Valhalla, he couldn't find peace." (9w, 1 event)
+     ✓ "So, Odin returned his cosmic powers and turned him into Ghost Rider again." (13w, 1 event)
+     ✓ "Just then, Frank went back in time determined to fix his past mistakes." (14w, 1 event)
+   - ANTI-pattern (do NOT write):
+     ✗ "When suit tears during Secret Wars, tendrils ooze while Reed realizes,
+        but tube cracks, and Thing is about to discover it." (5 events crammed,
+        confusing for the listener).
+   - More short sentences > fewer long ones. The video has 47+ caption chunks
+     to fill — shorter scenes flow better with the rapid visual cuts.
    - Use INTERNAL connectives (", but ...", " as ...", " until ...") to keep the sentence flowing.
    - NO fragments. NO 5-word stub scenes. The only exception: the LAST scene may drop to as low as 8 words for a punchy landing.
 
@@ -347,6 +483,16 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 8) PAGE/PANEL TAGGING
    - Every scene maps to ONE (page_ref, panel_ref) — pick the most visually impactful panel of that beat.
    - Every scene must reference its beat_id.
+
+8.5) PAGE COVERAGE — MANDATORY LINEAR FLOW
+   - Your scenes MUST move through the comic pages monotonically: each scene's
+     page_ref ≥ previous scene's page_ref.
+   - The gap between consecutive scenes' page_refs MUST be ≤ 5 pages. If a beat
+     genuinely requires skipping 6+ pages, INSERT a bridge sentence that summarizes
+     the skipped events. Example bridge: "Eventually, after [one-clause summary],
+     [next event]…"
+   - DO NOT jump from page 10 to page 32 without bridging — the viewer loses the
+     throughline and characters/items appear from nowhere.
 
 9) CONTINUITY ANCHOR
    - For each scene from #2 onward, you will see a "prev_anchor" — the last 6-8 words of the previous scene. Continue from this thread; do not reset the subject without re-introducing them.
@@ -483,9 +629,10 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         conn = (s.get("connective") or "").strip()
         if conn not in _CONNECTIVES:
             errors.append(f"scene {i} connective {conn!r} not in whitelist")
-        first_word = text.split(",", 1)[0].split()[0] if text else ""
-        first_word = first_word.rstrip(",.;:!?")
-        if first_word not in _CONNECTIVES:
+        # Match multi-word connectives ("Just then", "That's when") via prefix scan.
+        text_start_conn = _starts_with_connective(text)
+        if text_start_conn is None:
+            first_word = text.split()[0] if text else ""
             errors.append(f"scene {i} text starts with {first_word!r}, not a whitelist connective")
 
         floor = 8 if is_last else _SCENE_MIN_WORDS
@@ -494,6 +641,16 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
 
     if not (230 <= total_words <= 290):
         errors.append(f"total words {total_words} not in 230..290")
+
+    # Median sentence-length soft check (excluding hook).
+    body_lens = [len(str(s.get("text", "")).split()) for s in scenes[1:]]
+    if body_lens:
+        med = statistics.median(body_lens)
+        if med > _TARGET_SENT_LEN + 3:  # 23+ median = overstuffing
+            errors.append(
+                f"median scene length {med:.0f}w > {_TARGET_SENT_LEN+3} "
+                f"(target {_TARGET_SENT_LEN}w; channel median 20w)"
+            )
     return errors
 
 
