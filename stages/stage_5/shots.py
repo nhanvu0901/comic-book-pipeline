@@ -145,6 +145,7 @@ def _build_shots_per_chunk(
     used_by_scene: dict[int, set] = {}
 
     shots: list[Shot] = []
+    prev_panel: dict | None = None  # tracks selected panel from previous chunk for E coherence
     for i, chunk in enumerate(caption_chunks):
         c_start = float(chunk.get("start", 0))
         c_end = float(chunk.get("end", c_start + 1.0))
@@ -165,7 +166,9 @@ def _build_shots_per_chunk(
             scene=scene,
             pages_by_number=pages_by_number or {},
             used_panel_keys=used,
+            prev_panel=prev_panel,
         )
+        prev_panel = panel  # track for next iteration's coherence score
         if panel is None:
             # Last resort — no panel data anywhere. Use scene's own bbox.
             bbox = scene.get("panel_bbox") or {}
@@ -194,24 +197,139 @@ _PANEL_STOPWORDS = {
 }
 
 
-def _score_panel(panel: dict, chunk_text: str, scene: dict) -> float:
-    """Heuristic relevance: +3 per shared character first-name, +1 per shared
-    non-stopword between panel.description and chunk_text."""
+def _score_panel(
+    panel: dict,
+    chunk_text: str,
+    scene: dict,
+    *,
+    page_text_blocks: list[dict] | None = None,
+    prev_panel: dict | None = None,
+) -> float:
+    """Hybrid panel relevance scoring (pipeline v5 Phase 1).
+
+    Component weights — see docs/superpowers/specs/2026-05-24-pipeline-v5-...:
+      +5.0 × dialog word overlap   (B — strongest: channel paraphrases dialog)
+      +3.0 × character first-name overlap
+      +2.0 if emotion matches
+      +1.5 × char overlap with prev shot panel  (E — sequence coherence)
+      +1.0 × description word overlap  (current keyword scoring)
+      +0.5 × log(panel area / 100000)  (C — visual salience)
+    """
+    import math
+    from .emotion_lexicon import detect_chunk_emotion
+
     score = 0.0
     chunk_words = {w.lower().strip(",.!?:;\"'") for w in chunk_text.split()}
     chunk_words -= _PANEL_STOPWORDS
 
+    # ── Character overlap (existing, +3 per first-name match) ────────────
     panel_chars = panel.get("characters", []) or []
     for ch in panel_chars:
         first = (ch.split()[0].lower() if ch else "").strip(",.!?:;\"'")
         if first and first in chunk_words:
             score += 3.0
 
+    # ── B: Dialog word overlap (strongest channel-style signal) ──────────
+    # page_text_blocks contain all text on the page; we filter to this panel
+    # via tb.panel_index. Channel narrations paraphrase comic dialog closely.
+    panel_idx = int(panel.get("index", -1))
+    if page_text_blocks:
+        dialog_words: set[str] = set()
+        for tb in page_text_blocks:
+            if int(tb.get("panel_index", -1)) != panel_idx:
+                continue
+            if tb.get("type") not in ("speech", "narration", "caption"):
+                continue
+            for w in str(tb.get("text", "")).lower().split():
+                dialog_words.add(w.strip(",.!?:;\"'"))
+        dialog_words -= _PANEL_STOPWORDS
+        score += 5.0 * len(dialog_words & chunk_words)
+
+    # ── F: Emotion match (+2 if chunk emotion matches panel) ─────────────
+    chunk_emotion = detect_chunk_emotion(chunk_text)
+    if chunk_emotion and chunk_emotion == panel.get("dominant_emotion", ""):
+        score += 2.0
+
+    # ── E: Sequence coherence (+1.5 × shared chars with prev shot) ──────
+    if prev_panel is not None:
+        prev_chars = {
+            (c.split()[0].lower() if c else "").strip(",.!?:;\"'")
+            for c in (prev_panel.get("characters", []) or [])
+        }
+        this_chars = {
+            (c.split()[0].lower() if c else "").strip(",.!?:;\"'")
+            for c in panel_chars
+        }
+        score += 1.5 * len(prev_chars & this_chars)
+
+    # ── Description keyword overlap (existing, +1 per non-stopword) ─────
     desc = panel.get("description", "") or ""
     desc_words = {w.lower().strip(",.!?:;\"'") for w in desc.split()}
     desc_words -= _PANEL_STOPWORDS
-    score += len(desc_words & chunk_words) * 1.0
+    score += 1.0 * len(desc_words & chunk_words)
+
+    # ── C: Visual salience (bigger panels = more important moments) ─────
+    bbox = panel.get("bbox", {}) or {}
+    area = int(bbox.get("w", 0) or 0) * int(bbox.get("h", 0) or 0)
+    if area > 100000:
+        score += 0.5 * math.log(area / 100000)
+
     return score
+
+
+def _llm_judge_tiebreak(
+    chunk_text: str,
+    top_candidates: list[tuple[float, dict, str, tuple[int, int]]],
+) -> tuple[float, dict, str, tuple[int, int]] | None:
+    """G: when top heuristic candidates score within 1.0 of each other, ask an
+    LLM which panel best visualizes the caption. Returns winning tuple or
+    None on failure (caller falls back to heuristic top)."""
+    if len(top_candidates) <= 1:
+        return top_candidates[0] if top_candidates else None
+
+    # Build prompt: list candidates with their characters / emotion / dialog / desc
+    panel_blocks = []
+    for i, (_, panel, _src, (pn, idx)) in enumerate(top_candidates[:5]):
+        chars = ", ".join(panel.get("characters", []) or []) or "?"
+        emotion = panel.get("dominant_emotion", "?")
+        desc = (panel.get("description", "") or "")[:120]
+        panel_blocks.append(
+            f"  {chr(65 + i)}. page {pn} panel {idx}\n"
+            f"     characters: {chars}\n"
+            f"     emotion: {emotion}\n"
+            f"     visual: {desc}"
+        )
+
+    prompt = (
+        f"Caption to visualize: {chunk_text!r}\n\n"
+        f"Candidate comic panels:\n"
+        + "\n".join(panel_blocks)
+        + "\n\nWhich panel best visualizes the caption? Reply with ONE LETTER only "
+          "(A, B, C, D, or E). No explanation, no punctuation, just the letter."
+    )
+
+    try:
+        # Import lazily so Stage 5 doesn't pull in Stage 3 LLM machinery at import time
+        from stages.stage_3._llm import call_with_chain
+        raw, _ = call_with_chain(
+            system="You pick comic panels. Reply with one letter only.",
+            user=prompt,
+            max_tokens=10,
+            label="panel-judge",
+        )
+    except Exception:
+        return None  # caller falls back to heuristic top
+
+    if not raw:
+        return None
+    # Find first letter in {A,B,C,D,E}
+    letter = next((c for c in raw.upper() if c in "ABCDE"), None)
+    if letter is None:
+        return None
+    idx = ord(letter) - ord("A")
+    if 0 <= idx < min(5, len(top_candidates)):
+        return top_candidates[idx]
+    return None
 
 
 def _select_panel_for_chunk(
@@ -220,6 +338,7 @@ def _select_panel_for_chunk(
     scene: dict,
     pages_by_number: dict[int, dict],
     used_panel_keys: set,
+    prev_panel: dict | None = None,
 ) -> tuple[dict | None, str]:
     """Pick BEST-MATCH panel from pool (scene.page_ref ± 1 adjacent pages).
 
@@ -235,11 +354,16 @@ def _select_panel_for_chunk(
             if not page:
                 continue
             src = str(page.get("source_image") or "")
+            page_tb = page.get("text_blocks") or []
             for idx, panel in enumerate(page.get("panels") or []):
                 key = (pn, idx)
                 if key in used_panel_keys:
                     continue
-                s = _score_panel(panel, chunk_text, scene)
+                s = _score_panel(
+                    panel, chunk_text, scene,
+                    page_text_blocks=page_tb,
+                    prev_panel=prev_panel,
+                )
                 out.append((s, panel, src, key))
         return out
 
@@ -248,7 +372,17 @@ def _select_panel_for_chunk(
         candidates = gather(range(page_ref - 2, page_ref + 3))
 
     if candidates:
+        # Sort by score desc
         candidates.sort(key=lambda t: -t[0])
+
+        # G: LLM-as-judge tie-breaker — only when top 2 scores are close
+        if len(candidates) >= 2 and (candidates[0][0] - candidates[1][0]) < 1.0:
+            winner = _llm_judge_tiebreak(chunk_text, candidates[:5])
+            if winner is not None:
+                _, panel, src, key = winner
+                used_panel_keys.add(key)
+                return panel, src
+
         score, panel, src, key = candidates[0]
         used_panel_keys.add(key)
         return panel, src
@@ -260,8 +394,10 @@ def _select_panel_for_chunk(
         if not page:
             continue
         src = str(page.get("source_image") or "")
+        page_tb = page.get("text_blocks") or []
         for panel in (page.get("panels") or []):
-            s = _score_panel(panel, chunk_text, scene)
+            s = _score_panel(panel, chunk_text, scene,
+                             page_text_blocks=page_tb, prev_panel=prev_panel)
             if best is None or s > best[0]:
                 best = (s, panel, src)
     if best:
