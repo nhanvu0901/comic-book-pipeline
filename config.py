@@ -39,6 +39,28 @@ LLM_MODELS: list[str] = [
     m.strip() for m in os.getenv("LLM_MODELS", _DEFAULT_LLM_CHAIN).split(",") if m.strip()
 ]
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", LLM_MODELS[0])
+
+# Creative writing chain — separate from LLM_MODELS, used only by Stage 3 phase C
+# (write_scenes + retry_fix). Other phases keep LLM_MODELS.
+#
+# Selection criteria for creative narrative writing:
+#   1. Creative-tuned / instruction-following (sentence variance, storyteller voice)
+#   2. Low hallucination (won't invent characters/events not in panel data)
+#   3. Reliable JSON output (some models leak chain-of-thought as text)
+#
+# Avoid: NVIDIA Nemotron Super (leaks CoT instead of JSON), DeepSeek V4 Flash
+# (returns empty content under load), gpt-oss-120b (hallucinates), Owl Alpha
+# (hidden identity, unpredictable).
+_DEFAULT_CREATIVE_CHAIN = (
+    "nousresearch/hermes-3-llama-3.1-405b,"   # Hermes line is creative-storytelling tuned
+    "meta-llama/llama-3.3-70b-instruct,"      # Reliable instruction-follower, low halluc
+    "qwen/qwen3-next-80b-a3b-instruct,"       # Modern alternative, accurate
+    "google/gemini-2.5-flash-lite"            # Paid fallback, guaranteed working
+)
+CREATIVE_LLM_MODELS: list[str] = [
+    m.strip() for m in os.getenv("CREATIVE_LLM_MODELS", _DEFAULT_CREATIVE_CHAIN).split(",")
+    if m.strip()
+]
 _DEFAULT_VLM_CHAIN = (
     "google/gemma-4-31b-it:free,"
     "qwen/qwen2.5-vl-72b-instruct:free,"

@@ -6,7 +6,7 @@ import statistics
 from pathlib import Path
 from typing import Callable
 
-from config import OPENROUTER_MODEL
+from config import CREATIVE_LLM_MODELS, OPENROUTER_MODEL
 from .modes import MODES_BY_KEY
 from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
@@ -432,19 +432,24 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - The schema field "connective" is REQUIRED non-null for every scene where scene_id >= 2.
    - These are documented in 95%+ of successful comic Shorts and create the "and then... and then..." feeling that holds retention.
 
-3) SENTENCE SHAPE — CRITICAL FOR LISTENABILITY
-   - Each scene = ONE simple compound sentence, **14-22 words**. Channel median 20.
+3) SENTENCE SHAPE — MIX SHORT + MEDIUM + LONG (variance is the channel signature)
+   - **DO NOT write uniformly-sized sentences.** Real scripts vary.
+   - Target distribution across 12-14 scenes (including the outro credit):
+     • 2-3 short PUNCH sentences (5-12 words) — for landing/twist moments
+     • 6-8 medium sentences (14-22 words) — main flow
+     • 1-2 long setup sentences (23-30 words) — exposition/context
+     • 1 outro credit "The comic is X" (5-8 words)
    - **ONE event per sentence.** NOT "X happens while Y happens but Z is also true."
-   - Channel examples (count the events):
-     ✓ "When Frank Castle entered Valhalla, he couldn't find peace." (9w, 1 event)
-     ✓ "So, Odin returned his cosmic powers and turned him into Ghost Rider again." (13w, 1 event)
-     ✓ "Just then, Frank went back in time determined to fix his past mistakes." (14w, 1 event)
+   - Channel punch examples (5-12w, hit hard):
+     ✓ "But, even as an infant, Thanos was a unit." (9w)
+     ✓ "Stating they would die anyway." (5w)
+     ✓ "But he only stopped punching once he remembered his aunt." (10w)
+   - Channel medium examples:
+     ✓ "So, Odin returned his cosmic powers and turned him into Ghost Rider again." (13w)
    - ANTI-pattern (do NOT write):
      ✗ "When suit tears during Secret Wars, tendrils ooze while Reed realizes,
-        but tube cracks, and Thing is about to discover it." (5 events crammed,
-        confusing for the listener).
-   - More short sentences > fewer long ones. The video has 47+ caption chunks
-     to fill — shorter scenes flow better with the rapid visual cuts.
+        but tube cracks, and Thing is about to discover it." (5 events crammed).
+   - Uniformity is the AI-tell. Variance is the channel signature.
    - Use INTERNAL connectives (", but ...", " as ...", " until ...") to keep the sentence flowing.
    - NO fragments. NO 5-word stub scenes. The only exception: the LAST scene may drop to as low as 8 words for a punchy landing.
 
@@ -502,6 +507,62 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - No "what do you think in the comments", no "subscribe", no questions to viewer at the end.
    - No stage directions, no scene numbers inside text.
 
+11) VOICE & RHYTHM — channel-calibrated from 219 reference Shorts
+
+   11a. SENTENCE LENGTH VARIANCE — mix short + long
+        See rule 3 above. Target 2-3 punch sentences (5-12w), 6-8 medium (14-22w),
+        1-2 long (23-30w), 1 outro credit. Uniformity is the AI-tell.
+
+   11b. STORYTELLER VOICE — not panel-reader
+        After INTRODUCING a character by canonical name, switch to PRONOUNS
+        (he/him/she/her) for the next 2-3 sentences. Re-introduce by name
+        only when the scene shifts to a different character.
+        Channel: "When Frank Castle entered Valhalla, he couldn't find peace.
+        So, Odin returned his cosmic powers and turned him into Ghost Rider again."
+        AVOID: "Reed Richards X... Reed Y... Reed Z..." every sentence (AI-tell).
+
+   11c. SHOW DON'T TELL — concrete actions over named emotions
+        Channel: "Peter unmasked Hobgoblin and threatened to kill him." (concrete)
+        AVOID: "voices deep distrust and fear" (you NAMED the emotion).
+        Anchor feelings in CONCRETE physical state:
+          ✓ "He was haunted by nightmares."
+          ✓ "Frank couldn't find peace."
+          ✗ "Reed expresses anxiety about the symbiote situation."
+
+   11d. NATURAL TEMPORAL MARKERS
+        Prefer narrative-prose phrases over bullet-y connectives:
+          ✓ "There he had a nightmare where..."
+          ✓ "Then later that night, while visiting Aunt May..."
+          ✓ "Frank had traveled to this specific planet to get advice."
+        AVOID over-using: "Meanwhile, X." / "Eventually, Y." (too bullet-y).
+        Use these sparingly — at most one "Meanwhile" or "Eventually" per script.
+
+   11e. "STATING X" DIALOG ATTRIBUTION
+        Channel uses participle phrases for what characters say. Use 1-3 times per script:
+          ✓ "...stating the suit was alive and was messing with his head."
+          ✓ "Stating a timeline where the Punisher raised Thanos would be even worse."
+
+   11f. CONCRETE FINAL IMAGE
+        End the LAST narrative scene (before the outro credit) with a physical,
+        visual moment — NOT an abstract concept:
+          ✓ "...left Hobgoblin's dead body hanging in a spider web."
+          ✓ "...he decides to protect this new universe and the life inside."
+          ✗ "...reinforcing man's inherent monstrosity and the darkness within."
+        (Abstract endings give the viewer's eye nowhere to land.)
+
+   11g. OUTRO CREDIT — MANDATORY closing line
+        After ALL narrative scenes, ADD a FINAL very-short closing scene
+        crediting the source. Format: "The comic is [comic title]." (5-8 words).
+        Channel uses this in 100% of their videos. The outro scene MUST have:
+          - text: "The comic is [actual comic title from COMIC CONTEXT]."
+          - connective: null
+          - page_ref: same as the last narrative scene's page_ref
+          - panel_ref: any valid panel on that page
+        Channel examples:
+          "The comic is Spider-Man the Spider Shadow issue"
+          "The comic is Cosmic Ghost"
+        DO NOT SKIP — this is the channel's identity closer.
+
 Return ONLY JSON. No prose, no markdown fences."""
 
 
@@ -522,7 +583,7 @@ def write_scenes(
     mode_info = MODES_BY_KEY[mode]
 
     lore_block = _lore_notes_block(comic_context, all_pages or [])
-    few_shot = _load_few_shot_examples(n=3)
+    few_shot = _load_few_shot_examples(n=2)  # v4: full scripts (2 × ~400w each)
 
     user = (
         f"COMIC CONTEXT:\n{_ctx_block(comic_context)}\n\n"
@@ -541,15 +602,22 @@ def write_scenes(
         f'  "title": "<short punchy title for this Short>",\n'
         f'  "hook": "<scene 1 text, also stored in scenes[0].text>",\n'
         f'  "scenes": [\n'
-        f'    {{"text": "...", "page_ref": 3, "panel_ref": 0, "connective": null, "beat_id": 1}},\n'
+        f'    {{"text": "When ...", "page_ref": 3, "panel_ref": 0, "connective": null, "beat_id": 1}},\n'
         f'    {{"text": "But ...", "page_ref": 3, "panel_ref": 2, "connective": "But", "beat_id": 2}},\n'
-        f"    ...\n"
+        f"    ...,\n"
+        f'    {{"text": "[concrete final image scene]", "page_ref": <last>, "panel_ref": 0, "connective": "<conn>", "beat_id": <last>}},\n'
+        f'    {{"text": "The comic is <title>.", "page_ref": <last>, "panel_ref": 0, "connective": null, "beat_id": <last>}}\n'
         f"  ]\n"
-        f"}}"
+        f"}}\n\n"
+        f"REMINDER: the FINAL scene MUST be the \"The comic is X.\" outro credit "
+        f"(5-8 words, connective=null). See rule 11g."
     )
 
     log(f"[stage4]   write prompt: {len(user)} chars, {len(beats)} beats")
-    chain = [model] if model else None
+    # Phase C uses CREATIVE_LLM_MODELS (Claude Sonnet primary) — sentence-length
+    # variance + storyteller voice are HARD for small models. Other phases keep
+    # using LLM_MODELS via default call_with_chain behavior.
+    chain = [model] if model else list(CREATIVE_LLM_MODELS)
 
     def _has_scenes(c: str) -> bool:
         p = _extract_json(c)
@@ -604,6 +672,18 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         wc = len(text.split())
         total_words += wc
         is_last = (i == len(scenes))
+
+        # Outro credit detection: last scene, short, null connective, contains
+        # "comic is" — skip per-scene validation (no connective enforcement,
+        # no length-floor enforcement). Channel-signature closer per spec 11g.
+        is_outro = (
+            is_last
+            and s.get("connective") in (None, "", "null")
+            and wc <= 12
+            and "comic is" in text.lower()
+        )
+        if is_outro:
+            continue
 
         try:
             pref = int(s.get("page_ref", 0) or 0)
@@ -677,7 +757,7 @@ def _retry_fix(
         f"Return ONLY the corrected JSON."
     )
     log(f"[stage4]   retry prompt: {len(user)} chars")
-    chain = [model] if model else None
+    chain = [model] if model else list(CREATIVE_LLM_MODELS)
 
     def _has_scenes_retry(c: str) -> bool:
         p = _extract_json(c)
@@ -786,12 +866,14 @@ def _parse_vtt_cues(vtt_path: Path) -> list[str]:
     return cues
 
 
-def _load_few_shot_examples(n: int = 3) -> str:
-    """Pick n .vtt files from research/reference/, extract first 80 words of each
-    (hook + 1-2 scenes), format as channel-style demonstration block.
+def _load_few_shot_examples(n: int = 2, cap_words: int = 400) -> str:
+    """Pick n .vtt files, extract FULL transcript (capped at cap_words for token
+    budget), format as end-to-end channel-style demonstration. Strong creative
+    LLMs (Sonnet) absorb the full arc — voice, length variance, pronoun discipline,
+    \"stating X\" attribution, the \"The comic is X\" outro — from these examples.
 
-    Cached after first call. Deterministic sample via fixed seed. Returns ""
-    if research/reference/ is missing — graceful degrade."""
+    Cached after first call. Deterministic via Random(42). Returns \"\" if
+    research/reference/ missing — graceful degrade."""
     global _FEW_SHOT_CACHE
     if _FEW_SHOT_CACHE is not None:
         return _FEW_SHOT_CACHE
@@ -812,21 +894,22 @@ def _load_few_shot_examples(n: int = 3) -> str:
         if not cues:
             continue
         full = " ".join(cues)
-        snippet = " ".join(full.split()[:80])
+        snippet = " ".join(full.split()[:cap_words])
         if snippet:
-            blocks.append(f"Example {len(blocks)+1} hook + opening:\n{snippet}")
+            blocks.append(f"=== FULL CHANNEL SCRIPT {len(blocks)+1} ===\n{snippet}")
 
     if not blocks:
         _FEW_SHOT_CACHE = ""
         return ""
 
     _FEW_SHOT_CACHE = (
-        "CHANNEL STYLE EXAMPLES (real top-performing Shorts from the channel "
-        "we are mimicking — study their hook rhythm, sentence density, and "
-        "connective usage):\n\n"
+        "FULL CHANNEL SCRIPTS BELOW — study the COMPLETE arc: hook → setup → "
+        "complications → climax → resolution → outro credit. Mirror the voice, "
+        "sentence-length variance, pronoun-after-intro pattern, \"stating X\" "
+        "attribution, and the \"The comic is X\" outro.\n\n"
         + "\n\n".join(blocks)
-        + "\n\nMatch this rhythm and density. Don't copy any specific story — "
-        "apply the STRUCTURAL shape to OUR comic."
+        + "\n\nApply this voice to OUR comic — don't reuse any of THEIR "
+          "specific story content."
     )
     return _FEW_SHOT_CACHE
 
