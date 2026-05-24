@@ -76,12 +76,24 @@ def assemble_project(
     )
     pages_by_number = _load_preprocessed_pages(root)
 
+    # v5 Phase 2: load Magi cluster → character name mapping for hybrid scoring
+    cluster_to_name_path = root / "cluster_to_name.json"
+    cluster_to_name: dict[int, str] = {}
+    if cluster_to_name_path.exists():
+        try:
+            raw = json.loads(cluster_to_name_path.read_text())
+            cluster_to_name = {int(k): str(v) for k, v in raw.items()}
+            log(f"[stage5] loaded cluster_to_name: {len(cluster_to_name)} named clusters")
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            log(f"[stage5] cluster_to_name.json unreadable: {exc}")
+
     shots = build_shots(
         narration,
         scene_timings=scene_timings,
         word_timestamps=word_timestamps,
         caption_chunks=caption_chunks,
         pages_by_number=pages_by_number,
+        cluster_to_name=cluster_to_name,
     )
     if not shots:
         raise RuntimeError("build_shots produced 0 shots — check narration.json fields")

@@ -15,6 +15,10 @@ class PanelInfo:
     description: str = ""           # one-sentence VLM description
     characters: list[str] = field(default_factory=list)
     dominant_emotion: str = ""
+    # Pipeline v5 Phase 2 — Magi V3 character cluster info
+    cluster_ids: list[int] = field(default_factory=list)
+    # cluster_id → name mapping is per-project, not per-panel; resolved during
+    # Stage 5 scoring via projects/<name>/cluster_to_name.json
 
 
 @dataclass
@@ -23,6 +27,9 @@ class TextBlock:
     text: str
     type: str = "speech"            # speech | narration | sfx | caption
     speaker: str | None = None      # None for narration/sfx/caption
+    # Pipeline v5 Phase 2 — Magi V3 association
+    speaker_cluster_id: int | None = None
+    bbox: dict = field(default_factory=dict)  # text bbox from Magi {x,y,w,h}
 
 
 @dataclass

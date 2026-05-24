@@ -16,7 +16,7 @@ from PIL import Image
 
 from config import VLM_BATCH_SIZE, VLM_MODEL, get_project_dirs
 from .cache import image_hash, load_cached, save_cached
-from .panel_detect import detect_panels
+from .panel_detect import assign_to_panels, detect_full, detect_panels
 from .schema import PanelInfo, PreprocessedPage, TextBlock
 from .vlm_extract import extract_page, extract_pages_batch
 
@@ -111,17 +111,21 @@ def preprocess_project(
         overlap_note = f" + prior p{prev_page_dict['page_number']:03d}" if prev_page_dict is not None else ""
         log(f"[preprocess] ▶ VLM batch of {len(batch)} fresh page(s): {batch_pns}{overlap_note}")
 
-        # Magi panel-detect every page in the batch (Magi for prior page not needed — its data is cached).
+        # Magi v3 full extraction: panels + characters (with cluster_id) + texts (with OCR + speaker)
         batch_panels: list[list[dict]] = []
         batch_dims: list[tuple[int, int]] = []
+        batch_magi: list[dict] = []  # full Magi outputs per page
         for b in batch:
             t_panel = time.time()
             with Image.open(b["img"]) as im:
                 batch_dims.append(im.size)
-            panels_raw = detect_panels(b["img"])
-            log(f"[preprocess]   p{b['pn']:03d}: Magi → {len(panels_raw)} panel(s) "
+            magi = detect_full(b["img"])
+            panels_raw = magi["panels"]
+            log(f"[preprocess]   p{b['pn']:03d}: Magi → {len(panels_raw)} panel(s), "
+                f"{len(magi['characters'])} char(s), {len(magi['texts'])} text(s) "
                 f"in {time.time() - t_panel:.1f}s")
             batch_panels.append(panels_raw)
+            batch_magi.append(magi)
 
         # Call multi-image VLM with overlap. Returns None on total failure → fall back per-page.
         t_vlm = time.time()
@@ -138,11 +142,12 @@ def preprocess_project(
 
         if vlm_pages is None:
             log(f"[preprocess]   ✗ batch failed — falling back to per-page extract_page()")
-            for b, panels_raw, dims in zip(batch, batch_panels, batch_dims):
+            for b, panels_raw, dims, magi in zip(batch, batch_panels, batch_dims, batch_magi):
                 page_dict = _build_page_from_single(
                     page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
                     panels_raw=panels_raw, dimensions=dims, project_root=project_root,
                     log=log, story_context=story_context, content_hash=b["hash"],
+                    magi_data=magi,
                 )
                 results.append(page_dict)
                 prev_page_dict = page_dict
@@ -150,11 +155,12 @@ def preprocess_project(
         else:
             log(f"[preprocess]   ✓ batch ok in {vlm_dt:.1f}s via {model_used}")
             running_state = new_state or running_state
-            for b, panels_raw, dims, vlm_page in zip(batch, batch_panels, batch_dims, vlm_pages):
+            for b, panels_raw, dims, vlm_page, magi in zip(batch, batch_panels, batch_dims, vlm_pages, batch_magi):
                 page_dict = _assemble_page_dict(
                     page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
                     panels_raw=panels_raw, dimensions=dims, vlm_data=vlm_page,
                     content_hash=b["hash"], vlm_model_used=vlm_page.get("_vlm_model_used", model_used),
+                    magi_data=magi,
                 )
                 save_cached(project_root, b["pn"], b["hash"], page_dict)
                 results.append(page_dict)
@@ -167,9 +173,47 @@ def preprocess_project(
     log(f"[preprocess] running_state final: {running_state[:200]}")
     _reclassify_mid_doc_covers(results, project_root, log)
 
+    # v5 Phase 2: resolve Magi cluster_ids → character names via VLM
+    _resolve_clusters_after_preprocess(results, project_root, log)
+
     story_count = sum(1 for r in results if r.get("is_story_page"))
     log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
     return results
+
+
+def _resolve_clusters_after_preprocess(
+    pages: list[dict], project_root: Path, log: Callable[[str], None]
+) -> None:
+    """v5 Phase 2: VLM-name Magi character clusters. Skips if no clusters found
+    or cluster_to_name.json already exists."""
+    out_path = project_root / "cluster_to_name.json"
+    if out_path.exists():
+        log(f"[preprocess] cluster_to_name.json already exists — skipping naming")
+        return
+    # Any cluster_ids in any panel?
+    has_clusters = any(
+        panel.get("cluster_ids") for page in pages for panel in (page.get("panels") or [])
+    )
+    if not has_clusters:
+        log("[preprocess] no Magi cluster_ids — skipping VLM naming (run with --force after updating Magi)")
+        return
+
+    ctx_path = project_root / "comic_context.json"
+    if not ctx_path.exists():
+        log("[preprocess] no comic_context.json — skipping cluster naming")
+        return
+    try:
+        comic_context = json.loads(ctx_path.read_text())
+    except json.JSONDecodeError:
+        log("[preprocess] comic_context.json unreadable — skipping cluster naming")
+        return
+
+    log("[preprocess] resolving Magi cluster names via VLM…")
+    from .cluster_namer import resolve_cluster_names
+    try:
+        resolve_cluster_names(pages, comic_context, project_root, progress=log)
+    except Exception as exc:
+        log(f"[preprocess]   cluster naming failed: {type(exc).__name__}: {exc}")
 
 
 def _reclassify_mid_doc_covers(
@@ -226,8 +270,16 @@ def _assemble_page_dict(
     vlm_data: dict,
     content_hash: str,
     vlm_model_used: str,
+    magi_data: dict | None = None,
 ) -> dict:
-    """Turn raw VLM output + Magi bboxes into a PreprocessedPage dict. Pure builder, no I/O."""
+    """Combine VLM output + Magi (v3 full) outputs into a PreprocessedPage dict.
+
+    VLM provides: page_type, page_summary, per-panel description/characters/emotion.
+    Magi provides: panel bboxes, character bboxes + cluster_ids, text bboxes + OCR
+                   + speaker associations.
+
+    We merge: each panel gets Magi's cluster_ids of characters inside it, and the
+    text_blocks list is built from Magi's OCR (more accurate than VLM)."""
     width, height = dimensions
 
     # Cover shortcut: first page, no panels detected, no VLM data → mark as cover.
@@ -248,29 +300,72 @@ def _assemble_page_dict(
     skip_reason = str(vlm_data.get("skip_reason", ""))
     vlm_text_blocks = vlm_data.get("text_blocks") or []
 
+    # Build Magi assignments: which panel each char/text bbox belongs to.
+    panel_chars: dict[int, list[int]] = {}
+    panel_texts: dict[int, list[int]] = {}
+    if magi_data:
+        try:
+            panel_chars, panel_texts = assign_to_panels(
+                panels_raw, magi_data.get("characters", []), magi_data.get("texts", []),
+            )
+        except Exception:
+            panel_chars, panel_texts = {}, {}
+
     if page_type == "skip":
         panel_infos: list[PanelInfo] = []
         text_blocks: list[TextBlock] = []
         page_summary = ""
     else:
-        panel_infos = [
-            PanelInfo(
+        # Per-panel cluster IDs from Magi characters inside that panel.
+        magi_chars_list = (magi_data or {}).get("characters", [])
+        magi_texts_list = (magi_data or {}).get("texts", [])
+
+        panel_infos = []
+        for i, p in enumerate(panels_raw):
+            cluster_ids = []
+            for char_idx in panel_chars.get(i, []):
+                if 0 <= char_idx < len(magi_chars_list):
+                    cid = magi_chars_list[char_idx].get("cluster_id", -1)
+                    if cid >= 0:
+                        cluster_ids.append(cid)
+            panel_infos.append(PanelInfo(
                 index=i, bbox=p["bbox"],
                 description=_panel_field(vlm_data, i, "description"),
                 characters=_panel_field(vlm_data, i, "characters", default=[]),
                 dominant_emotion=_panel_field(vlm_data, i, "dominant_emotion"),
-            )
-            for i, p in enumerate(panels_raw)
-        ]
-        text_blocks = [
-            TextBlock(
-                panel_index=int(tb.get("panel_index", -1)),
-                text=str(tb.get("text", "")),
-                type=str(tb.get("type", "speech")),
-                speaker=tb.get("speaker") or None,
-            )
-            for tb in vlm_text_blocks
-        ]
+                cluster_ids=cluster_ids,  # NEW v5 Phase 2
+            ))
+
+        # Build text_blocks PREFERRING Magi (with OCR + speaker cluster) over VLM.
+        # VLM text_blocks become fallback if Magi extracted no text on this page.
+        if magi_texts_list:
+            text_blocks = []
+            # Reverse map: text_idx → panel_idx
+            text_to_panel: dict[int, int] = {}
+            for pi, t_idxs in panel_texts.items():
+                for ti in t_idxs:
+                    text_to_panel[ti] = pi
+            for ti, tx in enumerate(magi_texts_list):
+                if not str(tx.get("ocr", "")).strip():
+                    continue
+                text_blocks.append(TextBlock(
+                    panel_index=text_to_panel.get(ti, -1),
+                    text=str(tx.get("ocr", "")),
+                    type=str(tx.get("type", "narration")),
+                    speaker=None,  # VLM-style name not from Magi; resolved later if cluster_to_name available
+                    speaker_cluster_id=tx.get("speaker_cluster_id"),
+                    bbox=tx.get("bbox", {}),
+                ))
+        else:
+            text_blocks = [
+                TextBlock(
+                    panel_index=int(tb.get("panel_index", -1)),
+                    text=str(tb.get("text", "")),
+                    type=str(tb.get("type", "speech")),
+                    speaker=tb.get("speaker") or None,
+                )
+                for tb in vlm_text_blocks
+            ]
         page_summary = str(vlm_data.get("page_summary", ""))
 
     return PreprocessedPage(
@@ -297,6 +392,7 @@ def _build_page_from_single(
     log: Callable[[str], None],
     story_context: str,
     content_hash: str,
+    magi_data: dict | None = None,
 ) -> dict:
     """Single-image fallback: called when a multi-image batch fails."""
     # First-page-no-panels cover shortcut.
@@ -306,6 +402,7 @@ def _build_page_from_single(
             page_number=page_number, issue_label=issue_label, image_path=image_path,
             panels_raw=[], dimensions=dimensions, vlm_data={},
             content_hash=content_hash, vlm_model_used="",
+            magi_data=magi_data,
         )
         save_cached(project_root, page_number, content_hash, out)
         return out
@@ -320,6 +417,7 @@ def _build_page_from_single(
         panels_raw=panels_raw, dimensions=dimensions, vlm_data=vlm_data,
         content_hash=content_hash,
         vlm_model_used=str(vlm_data.get("_vlm_model_used", "")),
+        magi_data=magi_data,
     )
     save_cached(project_root, page_number, content_hash, out)
     return out

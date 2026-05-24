@@ -40,6 +40,7 @@ def build_shots(
     word_timestamps: list[dict] | None = None,
     caption_chunks: list[dict] | None = None,
     pages_by_number: dict[int, dict] | None = None,
+    cluster_to_name: dict[int, str] | None = None,
 ) -> list[Shot]:
     """Split each narration scene into shots.
 
@@ -51,6 +52,7 @@ def build_shots(
     if SHOT_STRATEGY == "caption_chunk" and caption_chunks and pages_by_number is not None:
         return _build_shots_per_chunk(
             narration, caption_chunks, pages_by_number, scene_timings or [],
+            cluster_to_name=cluster_to_name or {},
         )
     return _build_shots_per_scene(narration, scene_timings, word_timestamps)
 
@@ -124,6 +126,8 @@ def _build_shots_per_chunk(
     caption_chunks: list[dict],
     pages_by_number: dict[int, dict],
     scene_timings: list[dict],
+    *,
+    cluster_to_name: dict[int, str] | None = None,
 ) -> list[Shot]:
     """TheComicCivilian-style: one shot per caption chunk, with SMART panel
     selection scoring each candidate panel against the chunk text. Pool spans
@@ -167,6 +171,7 @@ def _build_shots_per_chunk(
             pages_by_number=pages_by_number or {},
             used_panel_keys=used,
             prev_panel=prev_panel,
+            cluster_to_name=cluster_to_name or {},
         )
         prev_panel = panel  # track for next iteration's coherence score
         if panel is None:
@@ -204,6 +209,7 @@ def _score_panel(
     *,
     page_text_blocks: list[dict] | None = None,
     prev_panel: dict | None = None,
+    cluster_to_name: dict[int, str] | None = None,
 ) -> float:
     """Hybrid panel relevance scoring (pipeline v5 Phase 1).
 
@@ -228,6 +234,20 @@ def _score_panel(
         first = (ch.split()[0].lower() if ch else "").strip(",.!?:;\"'")
         if first and first in chunk_words:
             score += 3.0
+
+    # ── D: Magi cluster-id match via cluster_to_name (v5 Phase 2) ────────
+    # For each cluster_id in this panel, look up its character name via
+    # cluster_to_name, then check if that name's first-word appears in chunk.
+    # +3 per match. Independent of VLM-extracted characters list.
+    panel_cluster_ids = panel.get("cluster_ids", []) or []
+    if cluster_to_name and panel_cluster_ids:
+        for cid in panel_cluster_ids:
+            name = cluster_to_name.get(int(cid), "")
+            if not name or name.lower() == "unknown":
+                continue
+            first = name.split()[0].lower().strip(",.!?:;\"'")
+            if first and first in chunk_words:
+                score += 3.0
 
     # ── B: Dialog word overlap (strongest channel-style signal) ──────────
     # page_text_blocks contain all text on the page; we filter to this panel
@@ -339,6 +359,7 @@ def _select_panel_for_chunk(
     pages_by_number: dict[int, dict],
     used_panel_keys: set,
     prev_panel: dict | None = None,
+    cluster_to_name: dict[int, str] | None = None,
 ) -> tuple[dict | None, str]:
     """Pick BEST-MATCH panel from pool (scene.page_ref ± 1 adjacent pages).
 
@@ -363,6 +384,7 @@ def _select_panel_for_chunk(
                     panel, chunk_text, scene,
                     page_text_blocks=page_tb,
                     prev_panel=prev_panel,
+                    cluster_to_name=cluster_to_name,
                 )
                 out.append((s, panel, src, key))
         return out
@@ -397,7 +419,8 @@ def _select_panel_for_chunk(
         page_tb = page.get("text_blocks") or []
         for panel in (page.get("panels") or []):
             s = _score_panel(panel, chunk_text, scene,
-                             page_text_blocks=page_tb, prev_panel=prev_panel)
+                             page_text_blocks=page_tb, prev_panel=prev_panel,
+                             cluster_to_name=cluster_to_name)
             if best is None or s > best[0]:
                 best = (s, panel, src)
     if best:
