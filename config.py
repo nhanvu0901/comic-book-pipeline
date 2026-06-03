@@ -50,22 +50,37 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", LLM_MODELS[0])
 #
 # Avoid: NVIDIA Nemotron Super (leaks CoT instead of JSON), DeepSeek V4 Flash
 # (returns empty content under load), gpt-oss-120b (hallucinates), Owl Alpha
-# (hidden identity, unpredictable).
+# (hidden identity, unpredictable), Hermes 3 405B (verified 2026-05-24 to inject
+# fabricated meme/online-personality references — "YuanfenOnline", "Venom szn",
+# "It's morphin time" memes — completely unrelated to source comic).
 _DEFAULT_CREATIVE_CHAIN = (
-    "nousresearch/hermes-3-llama-3.1-405b,"   # Hermes line is creative-storytelling tuned
-    "meta-llama/llama-3.3-70b-instruct,"      # Reliable instruction-follower, low halluc
-    "qwen/qwen3-next-80b-a3b-instruct,"       # Modern alternative, accurate
-    "google/gemini-2.5-flash-lite"            # Paid fallback, guaranteed working
+    "deepseek/deepseek-v4-flash:free,"        # Primary: NEW V4, 1M ctx — fits wiki+panels+few-shots
+    "deepseek/deepseek-v4-flash,"             # Paid backup: $0.10/$0.20 per M, same model
+    "qwen/qwen3-next-80b-a3b-instruct,"       # Fallback: prev primary, good variance
+    "google/gemini-2.5-flash-lite"            # Last resort paid
 )
 CREATIVE_LLM_MODELS: list[str] = [
     m.strip() for m in os.getenv("CREATIVE_LLM_MODELS", _DEFAULT_CREATIVE_CHAIN).split(",")
     if m.strip()
 ]
+
+# Fact-checker chain — Stage 3 Phase D (fidelity) + Phase E (wiki cross-check).
+# Use reasoning/thinking models — they analyze claims more rigorously than
+# instruction-only models, and are less pedantic about phrasing differences.
+_DEFAULT_FIDELITY_CHAIN = (
+    "arcee-ai/trinity-large-thinking:free,"        # Primary: reasoning, 262K ctx
+    "nvidia/nemotron-3-super-120b-a12b:free,"      # Backup: 120B reasoning, 1M ctx
+    "google/gemini-2.5-flash-lite"                  # Last resort paid
+)
+FIDELITY_LLM_MODELS: list[str] = [
+    m.strip() for m in os.getenv("FIDELITY_LLM_MODELS", _DEFAULT_FIDELITY_CHAIN).split(",")
+    if m.strip()
+]
 _DEFAULT_VLM_CHAIN = (
-    "google/gemma-4-31b-it:free,"
-    "qwen/qwen2.5-vl-72b-instruct:free,"
-    "nvidia/nemotron-nano-12b-v2-vl:free,"
-    "google/gemini-2.5-flash-lite"
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"  # NEW Primary: 30B MoE, reasoning, 256K ctx, multimodal
+    "google/gemma-4-31b-it:free,"                           # Backup: 31B, 262K ctx
+    "google/gemma-3-27b-it,"                                # Paid backup: $0.08/$0.16 per M, 27B, stable
+    "google/gemini-2.5-flash-lite"                          # Last resort paid
 )
 VLM_MODELS: list[str] = [
     m.strip() for m in os.getenv("VLM_MODELS", _DEFAULT_VLM_CHAIN).split(",") if m.strip()

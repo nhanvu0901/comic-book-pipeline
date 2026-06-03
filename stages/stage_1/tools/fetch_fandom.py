@@ -27,7 +27,15 @@ def _publisher_subdomain_map() -> dict[str, str]:
 
 
 def _priority_order(publisher: str) -> list[str]:
-    """Return the wiki priority list, putting the publisher's wiki first if known."""
+    """Return the wiki list to query.
+
+    If the publisher is known and maps to a configured wiki, query ONLY that
+    wiki — no fallback to other publishers' wikis (a Marvel comic is never on
+    dc.fandom.com, so trying DC/Image is wasted API calls).
+
+    If the publisher is unknown/unmapped, fall back to trying all configured
+    wikis in priority order.
+    """
     from config import FANDOM_DOMAINS
     base = list(FANDOM_DOMAINS)
     pub = (publisher or "").strip().lower()
@@ -37,8 +45,7 @@ def _priority_order(publisher: str) -> list[str]:
     primary = pmap.get(pub)
     if not primary or primary not in base:
         return base
-    ordered = [primary] + [d for d in base if d != primary]
-    return ordered
+    return [primary]  # publisher known → query only its wiki, skip the rest
 
 
 def _http_get_json(url: str) -> dict | None:

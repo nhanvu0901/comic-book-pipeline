@@ -311,7 +311,7 @@ def run_stage_5(project_name: str, log: Callable[[str], None]) -> str:
     original = print
     builtins.print = lambda *a, **k: log(_strip_ansi(" ".join(str(x) for x in a)))
     try:
-        final = assemble_project(project_name, keep_intermediates=False)
+        final = assemble_project(project_name, force=True)
     finally:
         builtins.print = original
     return str(final)

@@ -3,6 +3,11 @@ openai>=1.50.0
 requests>=2.31.0
 tavily-python>=0.3.0
 python-dotenv>=1.0.0
+# Claude Agent SDK — Stage 1/3 text LLM routes through the local Claude Code
+# engine (subscription auth via ~/.claude.json) via claude_agent_sdk.query(),
+# falling back to the OpenRouter chain when unavailable. Streaming connection,
+# so it avoids the cold-start/throttle of spawning `claude -p` per call.
+claude-agent-sdk>=0.2.8
 
 # === Comic Scraper ===
 # curl_cffi gives us TLS fingerprints indistinguishable from Chrome, which
@@ -27,7 +32,17 @@ Pillow>=10.0.0                # image IO + dimensions
 
 # === Stage 5: Video assembly ===
 # ffmpeg is required on PATH (install via `brew install ffmpeg` on macOS).
-# No extra Python deps — we shell out to ffmpeg directly.
+# We shell out to ffmpeg directly for encoding.
+# opencv: crop panels + mirror flip; also the emergency fallback for bubble-text
+# removal. Headless build = no GUI deps.
+opencv-python-headless>=4.10
+numpy>=1.24                   # cv2 mask arrays
+# LaMa deep inpainting — erases the comic's own speech-bubble text seamlessly
+# (replaces the smeary cv2.inpaint). Reconstructs the bubble/art behind the text.
+# NOTE: install with --no-deps (its pinned pillow==9.5.0 won't build on py3.14;
+# we use the newer Pillow + torch already present):
+#   uv pip install --no-deps simple-lama-inpainting
+simple-lama-inpainting==0.1.2  # needs: torch, Pillow, numpy (already installed)
 
 # === UI (Flet desktop) ===
 flet>=0.84,<1.0

@@ -97,6 +97,19 @@ def assemble_project(
     )
     if not shots:
         raise RuntimeError("build_shots produced 0 shots — check narration.json fields")
+
+    # BUG #122 Fix C: guarantee the silent video is at least as long as the
+    # audio. ffmpeg's `-shortest` in _final_encode trims to the shorter input —
+    # if the summed shot durations fall short of the TTS audio (here ~0.25s),
+    # the last word ("Venom.") gets clipped. Extend the final shot to cover the
+    # audio plus a small tail so nothing is cut.
+    total_shot_dur = sum(s.duration_seconds for s in shots)
+    if total_shot_dur < audio_duration:
+        pad = (audio_duration - total_shot_dur) + 0.20
+        shots[-1].duration_seconds += pad
+        log(f"[stage5] extended last shot +{pad:.2f}s so video ≥ audio "
+            f"({audio_duration:.2f}s) — prevents -shortest clipping the last word")
+
     silence_aligned = "silence-aligned" if scene_timings and word_timestamps else "even-split"
     log(f"[stage5] planning {len(shots)} shots across {len(narration.get('scenes') or [])} scenes ({silence_aligned} cuts)")
 
@@ -108,6 +121,11 @@ def assemble_project(
         else:
             render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log)
         shot_paths.append(sp)
+
+    # Debug log: record every shot's panel selection (page, bbox, image path,
+    # upscale factor) so we can inspect "why did this shot pick that panel"
+    # without re-running. Flags shots upscaled ≥3× (too-zoomed candidates).
+    _write_shots_log(shots, caption_chunks, shots_dir, root / "shots.json", log)
 
     if silent_video_path.exists() and not force:
         log(f"[stage5] reusing {silent_video_path.name}")
@@ -142,6 +160,56 @@ def assemble_project(
         bgm_used=str(bgm) if bgm else None,
         shots=shots,
     )
+
+
+def _write_shots_log(shots, caption_chunks, shots_dir, out_path, log):
+    """Write shots.json — a per-shot debug record of which panel was chosen.
+
+    Each entry: shot_id, scene_id, caption text, page, panel bbox, the rendered
+    panel image path, the native crop size, the cover-scale upscale factor, and
+    an upscale_warning flag (≥3× = panel too small → blown up → likely the
+    'too zoomed, can't tell what it is' bug). Purely a debug artifact; nothing
+    downstream reads it."""
+    import re
+    from PIL import Image
+    from .shots import OUTPUT_W, OUTPUT_H
+
+    def _page_of(src: str) -> int | None:
+        m = re.search(r"page[_-]?(\d+)", Path(src).name)
+        return int(m.group(1)) if m else None
+
+    entries = []
+    for s in shots:
+        native_png = shots_dir / "_panels" / f"panel_{s.shot_id:03d}.png"
+        framed_png = native_png.with_name(native_png.stem + "_9x16.png")
+        nw = nh = scale = None
+        if native_png.exists():
+            try:
+                with Image.open(native_png) as im:
+                    nw, nh = im.size
+                scale = round(max(OUTPUT_W / nw, OUTPUT_H / nh), 2)
+            except Exception:
+                pass
+        text = ""
+        if 0 <= s.shot_id < len(caption_chunks):
+            text = str(caption_chunks[s.shot_id].get("text", ""))
+        entries.append({
+            "shot_id": s.shot_id,
+            "scene_id": s.scene_id,
+            "caption_text": text,
+            "duration_seconds": round(s.duration_seconds, 2),
+            "motion": s.motion,
+            "page": _page_of(s.source_image),
+            "source_image": s.source_image,
+            "panel_bbox": s.panel_bbox,
+            "panel_png": str(framed_png),
+            "panel_native_size": [nw, nh] if nw else None,
+            "scale_factor": scale,
+            "upscale_warning": bool(scale and scale >= 3.0),
+        })
+    out_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
+    n_warn = sum(1 for e in entries if e["upscale_warning"])
+    log(f"[stage5] wrote shots.json ({len(entries)} shots, {n_warn} with upscale_warning ≥3×)")
 
 
 def _load_preprocessed_pages(project_root: Path) -> dict[int, dict]:

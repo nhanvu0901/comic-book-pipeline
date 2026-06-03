@@ -116,11 +116,35 @@ def resolve_cluster_names(
         log("[cluster-namer] no Magi clusters found in pages — skipping")
         return {}
 
-    known_chars = comic_context.get("characters") or []
+    # Build canonical character roster from wiki (summary.characters) with visual
+    # descriptions. Wiki is GROUND TRUTH per user. VLM only matches crops to wiki
+    # entries — does NOT invent names.
     summary_chars = (comic_context.get("summary") or {}).get("characters") or []
-    char_list_str = ", ".join(known_chars) if known_chars else "(unknown — guess by visual)"
-    if summary_chars and not known_chars:
-        char_list_str = ", ".join(c.get("name", "") for c in summary_chars if c.get("name"))
+    known_chars = comic_context.get("characters") or []
+
+    if summary_chars:
+        # Use wiki characters with visual descriptions — gold standard
+        char_entries: list[str] = []
+        for c in summary_chars:
+            name = c.get("name", "").strip()
+            if not name:
+                continue
+            aliases = [a for a in (c.get("aliases") or []) if a.strip()]
+            visual = (c.get("visual") or "").strip()
+            role = (c.get("role") or "").strip()
+            entry = f"• {name}"
+            if aliases:
+                entry += f" (aka {', '.join(aliases)})"
+            if visual:
+                entry += f" — VISUAL: {visual}"
+            if role:
+                entry += f" — ROLE: {role[:120]}"
+            char_entries.append(entry)
+        char_list_str = "\n".join(char_entries)
+    elif known_chars:
+        char_list_str = ", ".join(known_chars)
+    else:
+        char_list_str = "(no wiki data — VLM must guess from visual)"
 
     client = _vlm_client()
     chain = list(VLM_MODELS_BATCH)
@@ -131,16 +155,21 @@ def resolve_cluster_names(
             continue
         crops_b64 = [_crop_to_b64(p, bbox) for p, bbox in samples[:3]]
         prompt = (
-            f"You are identifying a comic character. The {len(crops_b64)} images "
-            f"below show different panels where this character appears.\n\n"
-            f"Comic context:\n"
-            f"  Title: {comic_context.get('title', '?')}\n"
-            f"  Series: {comic_context.get('series', '?')} {comic_context.get('issues', '')}\n"
-            f"  Known characters in this story: {char_list_str}\n\n"
-            f"Which named character is shown? Match visual to the character list.\n"
-            f"If unclear, respond 'Unknown'.\n\n"
-            f"Return JSON: "
-            f'{{"name": "<one from list, or Unknown>", "confidence": "high|medium|low"}}'
+            f"Identify which CANONICAL character appears in these {len(crops_b64)} "
+            f"comic panel crops. The character must be ONE from the wiki roster below.\n\n"
+            f"Comic: {comic_context.get('title', '?')} "
+            f"({comic_context.get('series', '?')} {comic_context.get('issues', '')})\n\n"
+            f"CANONICAL ROSTER (from Marvel/DC Fandom wiki — ground truth):\n"
+            f"{char_list_str}\n\n"
+            f"INSTRUCTIONS:\n"
+            f"  1. Compare crop visuals against the VISUAL descriptions above.\n"
+            f"  2. Note that a single character can have multiple forms — e.g. Ben Grimm "
+            f"     appears as both rocky Thing AND symbiote-covered Venom Thing. Both → 'Ben Grimm'.\n"
+            f"  3. Pick the canonical NAME (not alias) from the roster.\n"
+            f"  4. If crop doesn't match ANY wiki entry, return 'Unknown'.\n"
+            f"  5. Do NOT invent characters outside the roster.\n\n"
+            f'Return JSON: {{"name": "<canonical name from roster, or Unknown>", '
+            f'"confidence": "high|medium|low", "reasoning": "<which visual cue matched>"}}'
         )
         content: list[dict] = [{"type": "text", "text": prompt}]
         for b64 in crops_b64:
