@@ -67,7 +67,14 @@ def _collect(system: str, user: str, model: str) -> str:
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system or None,
-            max_turns=1,            # single completion, no agent loop
+            # ROOT-CAUSE FIX: the engine defaults to ADAPTIVE extended thinking —
+            # on complex creative prompts the model silently reasons for MINUTES
+            # before the first text token (measured: 85-330s+), which looked like
+            # a hang and blew every timeout. Disabling thinking → first token ~7s,
+            # full narration ~31s. thinking-disabled needs max_turns=2 (the engine
+            # finalizes in a second message round; =1 errors "max turns reached").
+            thinking={"type": "disabled"},
+            max_turns=2,
             allowed_tools=[],       # pure text generation — no tools
             include_partial_messages=True,  # stream deltas (avoids buffered hang)
         )

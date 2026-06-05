@@ -111,7 +111,8 @@ def call_with_chain(
     # Writer phases + the Stage-5 panel-judge route through the Claude SDK (Opus);
     # outline/glossary/fidelity/wiki-check stay on the OpenRouter chain. (Judge
     # prompts are tiny, so the SDK answers fast even under concurrent load.)
-    _use_sdk = (label == "write" or label.startswith("retry") or label == "panel-judge")
+    _use_sdk = (label == "write" or label.startswith("retry") or label == "panel-judge"
+                or label == "intro")
     if _use_sdk and sdk_available():
         log(f"[{label}] via claude SDK ({CLAUDE_SDK_MODEL})")
         sdk_out = sdk_complete(system, user, log=log)

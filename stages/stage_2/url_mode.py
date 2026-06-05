@@ -105,6 +105,47 @@ def download_from_series(
 # ─── Reader URLs form ───────────────────────────────────────────────────────
 
 
+def _chapter_meta_from_reader(reader_url: str, log: Callable[[str], None]) -> dict:
+    """Ask batcave's reader-page window.__DATA__ for the REAL chapter title.
+
+    The reader __DATA__ carries `chapters: [{id, title}]` with entries like
+    'Power Rangers: Ranger Slayer (2020-) #1' — the canonical series name,
+    year, and issue number. We use that (NOT the user-typed project name) as
+    the wiki query. Returns {"title", "issues", "year", "source_title"} or {}.
+    """
+    try:
+        from utils.comic_scraper.readcomiconline import _fetch_data
+        m = _READER_URL_RE.match(reader_url)
+        chap_id = int(m.group(2)) if m else None
+        data = _fetch_data(reader_url) or {}
+        chapters = data.get("chapters") or []
+        raw = ""
+        for c in chapters:
+            if c.get("id") == chap_id:
+                raw = (c.get("title") or c.get("title_en") or "").strip()
+                break
+        if not raw and chapters:
+            raw = (chapters[0].get("title") or chapters[0].get("title_en") or "").strip()
+        if not raw:
+            return {}
+        # 'Power Rangers: Ranger Slayer (2020-) #1' → title / year / issue
+        ym = re.search(r"\((\d{4})", raw)
+        im = re.search(r"(#\d+(?:\.\d+)?)\s*$", raw)
+        title = re.sub(r"\s*\(\d{4}[^)]*\)", "", raw)
+        if im:
+            title = title[: title.rfind(im.group(1))]
+        title = title.strip(" -–")
+        return {
+            "title": title,
+            "issues": im.group(1) if im else "",
+            "year": ym.group(1) if ym else "",
+            "source_title": raw,
+        }
+    except Exception as exc:
+        log(f"[url-mode] reader meta fetch failed ({type(exc).__name__}: {exc}) — using project-name hint")
+        return {}
+
+
 def download_from_readers(
     project_name: str,
     reader_urls: list[str],
@@ -124,15 +165,27 @@ def download_from_readers(
     # Infer series URL from the first reader: /reader/{news_id}/{chap_id}
     m = _READER_URL_RE.match(urls[0])
     news_id = m.group(1) if m else "unknown"
-    # We don't know the slug from a reader URL alone — fall back to news_id.
-    # discover_issues isn't called, so we can't auto-grab the slug. User-supplied
-    # project name is the source of truth.
     project_root = _ensure_project_root(project_name)
-    title_hint = project_name.replace("_", " ").title()
 
-    issues_label = ", ".join(f"chap_{m.group(2)}"
-                             for m in (_READER_URL_RE.match(u) for u in urls) if m)
+    # Source of truth for title/issue/year is batcave's own reader __DATA__
+    # (canonical chapter title) — NOT the user-typed project name. Project name
+    # only remains as a fallback hint when the meta fetch fails.
+    meta = _chapter_meta_from_reader(urls[0], log)
+    title_hint = meta.get("title") or project_name.replace("_", " ").title()
+    if meta.get("source_title"):
+        log(f"[url-mode] real title from batcave: {meta['source_title']!r}")
+
+    issues_label = meta.get("issues") or ", ".join(
+        f"chap_{m.group(2)}" for m in (_READER_URL_RE.match(u) for u in urls) if m)
     log(f"[url-mode] {len(urls)} reader URL(s) — news_id={news_id}, issues={issues_label}")
+
+    extra: dict = {"reader_urls": urls}
+    if meta.get("title"):
+        # Override (not setdefault) any hint-derived fields from a previous run.
+        extra.update({"title": meta["title"], "series": meta["title"],
+                      "issues": issues_label})
+        if meta.get("year"):
+            extra["year"] = meta["year"]
 
     ctx = _write_minimal_context(
         project_root=project_root,
@@ -141,7 +194,7 @@ def download_from_readers(
         batcave_url=f"https://{_BATCAVE_HOST}/{news_id}-{project_name}.html",  # best-effort
         issues=issues_label,
         log=log,
-        extra={"reader_urls": urls},
+        extra=extra,
     )
     if enrich:
         ctx = _enrich_context_silent(ctx, project_root=project_root, log=log)
@@ -225,19 +278,29 @@ def _enrich_context_silent(
 
     title = ctx.get("title", "")
     issues = ctx.get("issues", "")
-    query = f"{title} {issues}".strip() if issues else title
+    # batcave chapter ids ("chap_21727") mean nothing to any wiki — strip them.
+    issues_q = re.sub(r"chap_?\d+", "", issues, flags=re.IGNORECASE).strip(" ,")
+    query = f"{title} {issues_q}".strip() if issues_q else title
     log(f"[url-mode] enriching context: querying fandom + wiki for '{query}'")
 
     plot = ""
     publisher = ctx.get("publisher", "")
     try:
         fandom = fetch_fandom(query, publisher=publisher)
+        if (isinstance(fandom, dict) and not (fandom.get("plot_text") or "").strip()
+                and query != title):
+            # Whole chain missed with "<title> <issue>" — retry once with the bare title.
+            log(f"[url-mode] fandom miss for {query!r} — retrying with bare title {title!r}")
+            fandom = fetch_fandom(title, publisher=publisher)
         if isinstance(fandom, dict):
-            plot = (fandom.get("text") or fandom.get("synopsis") or "").strip()
-            if fandom.get("publisher") and not publisher:
-                ctx["publisher"] = str(fandom["publisher"]).strip()
+            # fetch_fandom returns the synopsis under "plot_text" (see fetch_fandom.py)
+            plot = (fandom.get("plot_text") or "").strip()
             if plot:
-                log(f"[url-mode] fandom hit: {len(plot)} chars")
+                if fandom.get("wiki_url"):
+                    ctx["wiki_url"] = fandom["wiki_url"]
+                if fandom.get("title"):
+                    ctx["wiki_page_title"] = fandom["title"]
+                log(f"[url-mode] fandom hit: {len(plot)} chars ({fandom.get('source','')})")
     except Exception as exc:
         log(f"[url-mode] fandom fetch failed: {exc}")
 

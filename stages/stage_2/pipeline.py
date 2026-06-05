@@ -8,6 +8,7 @@ Sequential processing keeps things simple and well under OpenRouter's
 20 RPM / 50 RPD free-tier limits for a typical 22-page issue.
 """
 import json
+import re
 import time
 from pathlib import Path
 from typing import Callable
@@ -260,6 +261,26 @@ def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:
     return block
 
 
+# Ad-page markers, checked against the page's OWN OCR text (word-boundary
+# regexes — "ign" must not match "design"/"lightning"). ≥2 DISTINCT markers on
+# one page = advertisement; a single hit can occur in real dialog.
+_AD_MARKER_PATTERNS = [
+    r"\bon[- ]sale\b", r"\bin stores\b", r"\bavailable now\b",
+    r"\bdiscover yours\b", r"\bvolumes?\s+[\dI]", r"\bsubscribe\b",
+    r"\bentertainment weekly\b", r"\bign\b", r"\.com\b", r"\bisbn\b",
+    r"\bnext issue\b", r"\bfree preview\b", r"\bgraphic novel\b",
+]
+
+
+def _looks_like_ad(corpus: str) -> bool:
+    """True when a page's OCR text reads like a house ad / promo page."""
+    low = " ".join(corpus.lower().split())
+    if not low:
+        return False
+    hits = sum(1 for p in _AD_MARKER_PATTERNS if re.search(p, low))
+    return hits >= 2
+
+
 def _assemble_page_dict(
     *,
     page_number: int,
@@ -299,6 +320,19 @@ def _assemble_page_dict(
         page_type = "story"
     skip_reason = str(vlm_data.get("skip_reason", ""))
     vlm_text_blocks = vlm_data.get("text_blocks") or []
+
+    # Deterministic ad guard: the VLM can hallucinate a story summary for
+    # back-matter house ads (real case: a trailing BOOM! ad classified "story"
+    # with a summary copied from the previous page's finale). Magi's OCR is
+    # honest — if the page's own text reads like an ad, force skip regardless
+    # of what the VLM said.
+    if page_type == "story":
+        _ocr_corpus = " ".join(
+            [str(t.get("text", "")) for t in (magi_data or {}).get("texts", [])]
+            + [str(tb.get("text", "")) for tb in vlm_text_blocks]
+        )
+        if _looks_like_ad(_ocr_corpus):
+            page_type, skip_reason = "skip", "advertisement"
 
     # Build Magi assignments: which panel each char/text bbox belongs to.
     panel_chars: dict[int, list[int]] = {}

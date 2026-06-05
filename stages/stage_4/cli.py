@@ -30,9 +30,9 @@ def main():
     parser.add_argument("--project", required=True)
     parser.add_argument("--speed", type=float, default=1.0,
                         help="Cartesia speed 0.6-1.5 (capped near 1.2 in practice). Default 1.0.")
-    parser.add_argument("--atempo", type=float, default=1.3,
-                        help="ffmpeg atempo factor (preserves pitch). Default 1.3 → "
-                             "~3.7 wps, matching TheComicCivilian channel pace. 1.0 disables.")
+    parser.add_argument("--atempo", type=float, default=1.1,
+                        help="ffmpeg atempo factor (preserves pitch). Default 1.1 → "
+                             "~3.2 wps, a calmer/more intelligible pace (user-chosen). 1.0 disables.")
     parser.add_argument("--voice", default=None, help="Cartesia voice UUID (overrides default)")
     parser.add_argument("--model", default=None, help="Cartesia model id (overrides default sonic-2)")
     parser.add_argument("--force", action="store_true", help="Regenerate even if audio.wav exists")

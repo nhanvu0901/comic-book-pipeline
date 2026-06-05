@@ -21,6 +21,7 @@ class Scene:
     target_seconds: float = 0.0    # estimated narration duration
     connective: str | None = None  # required for scene_id >= 2 (But/However/As/...)
     beat_id: int = 0               # links back to Beat.id from Phase A
+    is_intro: bool = False         # teaser opener ("Ever wonder...?") shown over the cover
 
 
 @dataclass

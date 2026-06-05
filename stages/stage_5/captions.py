@@ -4,6 +4,11 @@ import re
 
 WORDS_PER_CHUNK = 3
 MIN_CHUNK_DURATION = 0.18
+
+# Karaoke-fill colours (ASS uses BGR hex, not RGB).
+_SPOKEN_COLOR = "&H00FFFF&"   # yellow  — words already reached by the voice
+_UNSPOKEN_COLOR = "&Hffffff&"  # white   — words not yet spoken
+
 ASS_HEADER = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -20,50 +25,66 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def build_ass(word_timestamps: list[dict], total_duration: float) -> str:
-    """Build an .ass subtitle file string with word-by-word ALL-WHITE reveal."""
+    """Build an .ass subtitle string with karaoke-fill highlighting: within each
+    3-word chunk, every word starts white and turns yellow as the voice reaches
+    it (already-spoken words stay yellow). One Dialogue event per word — each
+    spans from that word's onset to the next word's onset, so the fill advances
+    with no gap or flicker."""
     events: list[str] = []
-    chunks = _chunk_words(word_timestamps)
-    for chunk in chunks:
-        start = max(0.0, float(chunk["start"]))
-        end = min(total_duration, float(chunk["end"]))
-        if end <= start:
-            end = start + MIN_CHUNK_DURATION
-        text = chunk["text"].upper()
-        line = (
-            f"Dialogue: 0,{_fmt_time(start)},{_fmt_time(end)},ComicsUnlocked,,"
-            f"0,0,0,,{{\\c&Hffffff&}}{text}"
-        )
-        events.append(line)
+    for chunk in _chunk_words(word_timestamps):
+        words = chunk["words"]  # [{"text","start","end"}], display-normalized, non-empty
+        if not words:
+            continue
+        chunk_end = min(total_duration, float(words[-1]["end"]))
+        for k, w in enumerate(words):
+            seg_start = max(0.0, float(w["start"]))
+            # Hold each highlight until the next word begins (chunk end for the last).
+            seg_end = float(words[k + 1]["start"]) if k + 1 < len(words) else chunk_end
+            seg_end = min(total_duration, seg_end)
+            if seg_end <= seg_start:
+                seg_end = seg_start + MIN_CHUNK_DURATION
+            text = _colorize(words, k)
+            events.append(
+                f"Dialogue: 0,{_fmt_time(seg_start)},{_fmt_time(seg_end)},ComicsUnlocked,,"
+                f"0,0,0,,{text}"
+            )
     return ASS_HEADER + "\n".join(events) + "\n"
+
+
+def _colorize(words: list[dict], spoken_upto: int) -> str:
+    """Render the chunk with words[0..spoken_upto] yellow, the rest white."""
+    parts = []
+    for j, w in enumerate(words):
+        color = _SPOKEN_COLOR if j <= spoken_upto else _UNSPOKEN_COLOR
+        parts.append(f"{{\\c{color}}}{w['text'].upper()}")
+    return " ".join(parts)
 
 
 def _chunk_words(words: list[dict]) -> list[dict]:
     cleaned: list[dict] = []
     for w in words:
-        text = str(w.get("word", "")).strip()
-        if not text:
+        raw = str(w.get("word", "")).strip()
+        if not raw:
+            continue
+        disp = _strip_punct_for_display(raw)
+        if not disp:  # pure-punctuation token — keep timing off the captions
             continue
         cleaned.append({
-            "word": text,
+            "text": disp,
             "start": float(w.get("start", 0.0)),
             "end": float(w.get("end", 0.0)),
         })
 
     chunks: list[dict] = []
-    i = 0
-    n = len(cleaned)
-    while i < n:
+    for i in range(0, len(cleaned), WORDS_PER_CHUNK):
         group = cleaned[i:i + WORDS_PER_CHUNK]
         if not group:
             break
-        text = " ".join(g["word"] for g in group)
-        text = _strip_punct_for_display(text)
         chunks.append({
-            "text": text,
+            "words": group,
             "start": group[0]["start"],
             "end": group[-1]["end"],
         })
-        i += WORDS_PER_CHUNK
     return chunks
 
 

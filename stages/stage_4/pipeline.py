@@ -27,8 +27,10 @@ def synthesize_project(
     emotion: str = "confident",  # even-paced documentary narrator (vs contemplative's dramatic pauses)
     voice_id: str | None = None,
     model: str | None = None,
-    post_atempo: float = 1.3,  # ffmpeg atempo — pitch-preserving tempo boost.
-                                # 1.3 → ~3.7+ wps (TheComicCivilian channel benchmark)
+    post_atempo: float = 1.1,  # ffmpeg atempo — pitch-preserving tempo boost.
+                                # 1.1 → calmer, more intelligible pace (user-chosen over
+                                # the 1.3 channel benchmark). ~3.2 wps. Keep narration near
+                                # ~225 words so a 1.1-paced video still lands under ~72s.
     force: bool = False,
 ) -> TTSResult:
     """Load narration.json, synthesize audio + timings via Cartesia, save all artifacts."""

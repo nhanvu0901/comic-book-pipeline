@@ -108,13 +108,52 @@ def _extract_synopsis1(wikitext: str) -> str | None:
     m = re.search(r'\|\s*Synopsis1\s*=\s*(.*?)(?=\n\|\s|\n\}\})', wikitext, re.DOTALL)
     if not m:
         return None
-    return m.group(1).strip()
+    body = m.group(1).strip()
+    # Empty Synopsis1 can bleed into the next infobox field (| Appearing1 = ...).
+    # A real synopsis is prose, never a pipe-field list.
+    if body.startswith("|") or "Featured Characters:" in body:
+        return None
+    return body
+
+
+def _title_matches(query: str, title: str) -> bool:
+    """Guard against wrong-wiki fallthrough: a search hit must share most of the
+    query's significant words (e.g. 'Power Rangers: Ranger Slayer' must NOT
+    accept dc.fandom's best fuzzy hit 'Unknown Soldier Vol 4 2')."""
+    def norm(s: str) -> list[str]:
+        return re.findall(r"[a-z0-9]+", s.lower())
+    skip = {"vol", "the", "comic", "issue", "and"}
+    q = [w for w in norm(query) if len(w) > 2 and w not in skip]
+    if not q:
+        return True
+    t = set(norm(title))
+    hits = sum(1 for w in q if w in t)
+    return hits >= max(1, int(len(q) * 0.6))
+
+
+def _extract_section(wikitext: str, names: tuple[str, ...] = ("Plot", "Synopsis", "Summary", "Story")) -> str | None:
+    """Pull a ==Plot== / ==Synopsis== h2 section body (non-Marvel wikis like
+    powerrangers.fandom use sections instead of the |Synopsis1= infobox field).
+    Tries names in order — Plot first, as it is the detailed scene-by-scene one."""
+    for name in names:
+        m = re.search(
+            rf'^==\s*{name}\s*==\s*\n(.*?)(?=\n==[^=]|\Z)',
+            wikitext, re.DOTALL | re.IGNORECASE | re.MULTILINE,
+        )
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    return None
 
 
 def _strip_wiki_links(text: str) -> str:
-    """Convert [[link|display]] -> display and [[link]] -> link."""
+    """Convert [[link|display]] -> display and [[link]] -> link; drop refs/templates."""
+    text = re.sub(r'<ref[^>]*>.*?</ref>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<ref[^>]*/>', '', text)
+    text = re.sub(r'\{\{[^{}]*\}\}', '', text)
+    text = re.sub(r'\[\[(?:File|Image):[^\[\]]*\]\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\[\[([^\[\]\|]+)\|([^\[\]]+)\]\]', r'\2', text)
     text = re.sub(r'\[\[([^\[\]]+)\]\]', r'\1', text)
+    text = text.replace("'''", "").replace("''", "")
     return text
 
 
@@ -134,6 +173,9 @@ def fetch_fandom(query: str, publisher: str = "") -> dict:
         if not title:
             print(f"  {Colors.DIM}📚 Fandom: {wiki} miss{Colors.END}")
             continue
+        if not _title_matches(query, title):
+            print(f"  {Colors.DIM}📚 Fandom: {wiki} irrelevant hit {title!r} — skip{Colors.END}")
+            continue
 
         sources_checked.append(f"parse:{title}")
         wikitext = _parse_wikitext(wiki, title)
@@ -142,19 +184,25 @@ def fetch_fandom(query: str, publisher: str = "") -> dict:
             continue
 
         synopsis = _extract_synopsis1(wikitext)
+        source = "fandom_synopsis1"
+        if not synopsis or len(synopsis) < _MIN_PLOT_CHARS:
+            # Non-Marvel wikis (powerrangers, starwars, ...) use ==Plot==/==Synopsis==
+            # sections instead of the |Synopsis1= infobox field.
+            synopsis = _extract_section(wikitext)
+            source = "fandom_section"
         if not synopsis or len(synopsis) < _MIN_PLOT_CHARS:
             print(f"  {Colors.DIM}📚 Fandom: {wiki} miss{Colors.END}")
             continue
 
         cleaned = _strip_wiki_links(synopsis).strip()
         url = _page_url(wiki, title)
-        print(f"  {Colors.DIM}📚 Fandom: {wiki} ✓ ({len(cleaned)} chars){Colors.END}")
+        print(f"  {Colors.DIM}📚 Fandom: {wiki} ✓ ({len(cleaned)} chars, {source}){Colors.END}")
         return {
             "plot_text": cleaned,
             "plot_length": len(cleaned),
             "wiki_url": url,
             "title": title,
-            "source": "fandom_synopsis1",
+            "source": source,
             "sources_checked": sources_checked,
         }
 

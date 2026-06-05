@@ -105,7 +105,11 @@ VLM_BATCH_SIZE = int(os.getenv("VLM_BATCH_SIZE", "3"))  # pages per VLM call
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
-_DEFAULT_FANDOM_CHAIN = "marvel.fandom.com,dc.fandom.com,imagecomics.fandom.com"
+_DEFAULT_FANDOM_CHAIN = (
+    "marvel.fandom.com,dc.fandom.com,imagecomics.fandom.com,"
+    "powerrangers.fandom.com,darkhorse.fandom.com,valiant.fandom.com,"
+    "turtlepedia.fandom.com,starwars.fandom.com"
+)
 FANDOM_DOMAINS: list[str] = [
     d.strip() for d in os.getenv("FANDOM_DOMAINS", _DEFAULT_FANDOM_CHAIN).split(",") if d.strip()
 ]

@@ -1,5 +1,6 @@
 """Shot list construction and per-shot ffmpeg Ken Burns rendering."""
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,6 +15,52 @@ OUTPUT_W = 1080
 OUTPUT_H = 1920
 TARGET_ASPECT = OUTPUT_W / OUTPUT_H
 FPS = 30
+
+# ── Semantic text↔panel alignment (TODO #124) ───────────────────────────────
+# A small local sentence-embedding model scores how well a narration chunk
+# matches a panel's VLM description — far more reliable than lexical word
+# overlap ("mistletoe" vs "spear", "reverted to mortal form" vs "FIZAPPT").
+# Lazy-loaded singleton; if unavailable the scorer degrades gracefully to 0.
+_SENT_MODEL = None
+_SENT_MODEL_TRIED = False
+_EMBED_CACHE: dict[str, "object"] = {}
+
+
+def _sent_model():
+    global _SENT_MODEL, _SENT_MODEL_TRIED
+    if _SENT_MODEL_TRIED:
+        return _SENT_MODEL
+    _SENT_MODEL_TRIED = True
+    try:
+        from sentence_transformers import SentenceTransformer
+        _SENT_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    except Exception:
+        _SENT_MODEL = None
+    return _SENT_MODEL
+
+
+def _embed(text: str):
+    """Cached unit-normalized embedding for a piece of text (or None)."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    if text in _EMBED_CACHE:
+        return _EMBED_CACHE[text]
+    m = _sent_model()
+    if m is None:
+        return None
+    vec = m.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+    _EMBED_CACHE[text] = vec
+    return vec
+
+
+def _semantic_sim(a: str, b: str) -> float:
+    """Cosine similarity in [0,1] between two texts (0 if model unavailable)."""
+    va, vb = _embed(a), _embed(b)
+    if va is None or vb is None:
+        return 0.0
+    import numpy as np
+    return max(0.0, min(1.0, float(np.dot(va, vb))))
 PADDING_PCT = 0.05
 UPSCALE_DIM = 2160
 # Erase the comic's own speech-bubble text from panels before render (the video
@@ -467,26 +514,55 @@ def _score_panel(
             else:
                 score -= 5.0 * (prev_pg - panel_page)
 
-    # ── Description keyword overlap (boosted +2 per match) ─────────────
-    # Boosted from +1→+2 so visual cues ("sewer", "reptilian", "skyline")
-    # in narration text reliably push toward visually matching panels.
+    # ── Semantic text↔panel match (TODO #124) — REPLACES lexical desc overlap ──
+    # Cosine(narration chunk, panel description) via a local sentence-embedding
+    # model. Captures meaning, not shared tokens: "reverted to his mortal form,
+    # Donald Blake" scores ~0 against the abstract "FIZAPPT sound effect" panel
+    # but high against a panel actually depicting Blake. The old word-overlap
+    # term is removed — it measured the same (chunk, desc) pair lexically and
+    # would double-count.
     desc = panel.get("description", "") or ""
-    desc_words = {w.lower().strip(",.!?:;\"'") for w in desc.split()}
-    desc_words -= _PANEL_STOPWORDS
-    # chunk's own words ×3 (strong differentiator), scene background ×1 (context)
-    score += 3.0 * len(desc_words & chunk_own) + 1.0 * len(desc_words & scene_bg)
+    sim_chunk = _semantic_sim(chunk_text, desc)
+    sim_scene = _semantic_sim(scene_text, desc)
+    score += 6.0 * sim_chunk + 1.0 * sim_scene
 
-    # ── H: page_ref exact bonus (+10 if panel page == scene's page_ref) ──
-    # Narration's page_ref is the canonical scene page. Only panels on neighbor
-    # pages with massive other-signal boosts should beat it.
+    # ── H: page_ref bonus — LOOSENED +10 → +4 (TODO #125) ───────────────
+    # Narration's page_ref is the scene's canonical page, but a FULL +10 trapped
+    # selection on that page even when its only free panel was irrelevant (the
+    # FIZAPPT case). +4 keeps it a preference, not a trap, so a semantically
+    # matching panel on the NEXT page (forward-only widening) can win.
     if scene_page_ref_int and panel_page and scene_page_ref_int == panel_page:
-        score += 10.0
+        score += 4.0
 
-    # ── C: Visual salience (bigger panels = more important moments) ─────
+    # ── C: Visual salience (TODO #124 signal 3) — bigger panel = more important
+    # moment (splash/reveal). Replaces the old near-negligible +0.5·log term with
+    # a normalized [0,1] bonus weighted +3. The small-panel upscale penalty above
+    # stays as a separate image-QUALITY guard (distinct axis: blur vs importance).
     bbox = panel.get("bbox", {}) or {}
     area = int(bbox.get("w", 0) or 0) * int(bbox.get("h", 0) or 0)
-    if area > 100000:
-        score += 0.5 * math.log(area / 100000)
+    if area > 50000:
+        area_saliency = min(1.0, math.log(area / 50000) / 3.0)
+        score += 3.0 * area_saliency
+
+    # ── Text-coverage penalty (Fix 1) — avoid text-WALL panels ───────────
+    # A panel drowning in caption/dialogue (e.g. a full-page epilogue splash with
+    # a paragraph of text, ~26% covered) is a poor visual: cluttered, and LaMa
+    # must inpaint a huge text area → smears. Measured: clean panels 2-7% covered,
+    # text-walls 25%+. Penalize above 15% so a cleaner panel wins when one exists.
+    if area > 0 and page_text_blocks:
+        px, py, pw, ph = (int(bbox.get(k, 0) or 0) for k in ("x", "y", "w", "h"))
+        text_area = 0
+        for tb in page_text_blocks:
+            tbb = tb.get("bbox") or {}
+            tx, ty = int(tbb.get("x", 0) or 0), int(tbb.get("y", 0) or 0)
+            tw, th = int(tbb.get("w", 0) or 0), int(tbb.get("h", 0) or 0)
+            ix0, iy0 = max(px, tx), max(py, ty)
+            ix1, iy1 = min(px + pw, tx + tw), min(py + ph, ty + th)
+            if ix1 > ix0 and iy1 > iy0:
+                text_area += (ix1 - ix0) * (iy1 - iy0)
+        coverage = text_area / area
+        if coverage > 0.15:
+            score -= min(8.0, 30.0 * (coverage - 0.15))
 
     return score
 
@@ -580,6 +656,16 @@ def _is_skip_page(page: dict) -> bool:
     role_hits = sum(1 for w in role_words if w in text_corpus)
     if role_hits >= 2:  # ≥2 role labels = unambiguously a credits/title page
         return True
+    # House-ad detector — same idea on the page's own OCR text. Real case: a
+    # trailing BOOM! ad ("ON-SALE NOW!", "— IGN", "DISCOVER YOURS") slipped
+    # through as page_type="story" with a hallucinated story summary.
+    ad_patterns = (r"\bON[- ]SALE\b", r"\bIN STORES\b", r"\bAVAILABLE NOW\b",
+                   r"\bDISCOVER YOURS\b", r"\bVOLUMES?\s+[\dI]", r"\bSUBSCRIBE\b",
+                   r"\bENTERTAINMENT WEEKLY\b", r"\bIGN\b", r"\.COM\b", r"\bISBN\b",
+                   r"\bNEXT ISSUE\b", r"\bFREE PREVIEW\b", r"\bGRAPHIC NOVEL\b")
+    ad_hits = sum(1 for p in ad_patterns if re.search(p, text_corpus))
+    if ad_hits >= 2:  # ≥2 distinct ad markers = house ad / promo page
+        return True
     return False
 
 
@@ -598,6 +684,24 @@ def _select_panel_for_chunk(
     Falls back to ±2 pool with repetition allowed if the ±1 pool is exhausted.
     Returns (panel_dict_or_None, source_image_path)."""
     page_ref = int(scene.get("page_ref", 0) or 0)
+
+    # Intro teaser scene: ALWAYS show the cover full-frame. The cover is a
+    # page_type=="cover" page, which _is_skip_page() deliberately filters out for
+    # story shots — so we resolve it directly here and bypass the skip filter.
+    if scene.get("is_intro"):
+        cover = pages_by_number.get(page_ref)
+        if cover:
+            src = str(cover.get("source_image") or "")
+            dims = cover.get("image_dimensions") or {}
+            iw = int(dims.get("width", 0) or 0)
+            ih = int(dims.get("height", 0) or 0)
+            panels = cover.get("panels") or []
+            if iw and ih:
+                full = {"bbox": {"x": 0, "y": 0, "w": iw, "h": ih}, "_page_number": page_ref}
+                return full, src
+            if panels:
+                p = dict(panels[0]); p["_page_number"] = page_ref
+                return p, src
 
     def gather(pages_range):
         out = []  # (score, panel, source_image, key)
@@ -625,14 +729,17 @@ def _select_panel_for_chunk(
                 out.append((s, panel_with_pg, src, key))
         return out
 
-    # A: keep each shot on the scene's OWN page. Only widen to neighbor pages
-    # when page_ref itself has no unused panels left (a 1-panel splash page, or a
-    # page already consumed by an earlier scene that shared this page_ref).
-    candidates = gather([page_ref])
+    # FORWARD-ONLY widening (TODO #125): always include the scene's page AND the
+    # next 1-2 pages, NEVER an earlier page. This mirrors reading order — scenes
+    # march forward through the comic and an early panel can't resurface late
+    # (kills the "random early panel appears at the end" duplication). When the
+    # scene's own page has no good free panel (e.g. only the abstract FIZAPPT
+    # left), a semantically matching panel on the NEXT page can now win, because
+    # the page_ref bonus was loosened to +4. Backward fallback is gone on purpose.
+    candidates = gather([page_ref, page_ref + 1, page_ref + 2])
     if not candidates:
-        candidates = gather(range(page_ref - 1, page_ref + 2))
-    if not candidates:
-        candidates = gather(range(page_ref - 2, page_ref + 3))
+        # Last resort only: the scene's forward window is entirely exhausted.
+        candidates = gather(range(page_ref, page_ref + 5))
 
     if candidates:
         # Sort by score desc

@@ -12,9 +12,14 @@ from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 
 
-_TARGET_WORDS_MIN = 240  # Channel mean 242 (219-video sample), median 241
-_TARGET_WORDS_MAX = 280
-_WORDS_PER_SEC = 4.0     # Channel mean 3.9 wps
+# Calibrated for the user-chosen 1.1 atempo pace. MEASURED actual rate at 1.1:
+# ~2.88 wps (not the earlier 3.22 estimate). The teaser intro (~12 words) is
+# prepended on top of the body, so the body targets ~175-195 → final ~187-207
+# words → ~65-72s at 2.88 wps, landing inside the (54-72.08s) duration band and
+# the (187-285) word band.
+_TARGET_WORDS_MIN = 175
+_TARGET_WORDS_MAX = 195
+_WORDS_PER_SEC = 2.88    # MEASURED 1.1 atempo pace (was 4.0 at the 1.3 benchmark pace)
 
 _SCENE_MIN_WORDS = 14    # channel does 9-14 word sentences too — one event each
 _SCENE_MAX_WORDS = 25    # was 35 — hard ceiling, anything longer crams events
@@ -49,6 +54,108 @@ def _starts_with_connective(text: str) -> str | None:
     return None
 
 
+_INTRO_SYSTEM = """You are HookWriter. BEFORE the main narration is written, you produce ONE short teaser intro sentence for a YouTube Short about a comic.
+
+STEP 1 — classify the comic's STORY TYPE from its title + premise:
+  • "what_if"   — an alternate-reality / "What If...?" premise (a canonical event went the other way)
+  • "alternate" — an alternate-universe / Elseworld / dark-mirror timeline story
+  • "explainer" — a story that explains a character's origin, a power, a death, or a piece of lore
+  • "standard"  — a straightforward in-continuity story
+
+STEP 2 — write the intro line:
+  • If story_type is what_if / alternate / explainer → you MUST use the "Ever wonder ...?" structure:
+      what_if / alternate →  "Ever wonder what if <premise>?"
+      explainer           →  "Ever wonder how <X>?"  or  "Ever wonder why <X>?"
+  • If story_type is standard → a short scenic OR interrogative teaser (no fixed template).
+
+HARD RULES for the intro line:
+  - 8-16 words, exactly ONE sentence, ends with "?".
+  - Name the hero AND the premise so a viewer instantly grasps the stakes.
+  - It is a TEASER, not a summary — do NOT reveal the ending/twist.
+  - No meta talk ("in this video", "today", "let's see"). No spoilers.
+
+Return ONLY JSON, no markdown: {"story_type": "what_if|alternate|explainer|standard", "intro_line": "Ever wonder what if ...?"}"""
+
+
+def generate_intro(
+    comic_context: dict,
+    *,
+    model: str | None = None,
+    progress: Callable[[str], None] | None = None,
+    debug_dump: dict | None = None,
+) -> dict:
+    """Dedicated pre-write LLM call: classify story type + craft the teaser intro
+    line shown over the cover. Returns {"story_type", "intro_line"}; falls back to
+    a deterministic "Ever wonder...?" line if the LLM output is unusable."""
+    log = progress or (lambda _msg: None)
+    dump = debug_dump if debug_dump is not None else {}
+
+    title = str(comic_context.get("title", "")).strip()
+    plot = str(comic_context.get("plot_summary", "")).strip()
+    if not plot:
+        plot = str((comic_context.get("summary") or {}).get("story_arc", "")).strip()
+    chars = ", ".join(comic_context.get("characters", []) or [])
+
+    user = (
+        f"COMIC TITLE: {title}\n"
+        f"PUBLISHER: {comic_context.get('publisher','?')}\n"
+        f"KEY CHARACTERS: {chars or '?'}\n\n"
+        f"PREMISE / PLOT (ground truth):\n{plot[:1800]}\n\n"
+        f"Write the intro JSON now."
+    )
+
+    def _valid(out: str) -> bool:
+        try:
+            d = _json_loads_loose(out)
+            line = str(d.get("intro_line", "")).strip()
+        except Exception:
+            return False
+        return 6 <= len(line.split()) <= 20 and line.endswith("?")
+
+    try:
+        content, used = call_with_chain(
+            system=_INTRO_SYSTEM, user=user,
+            models=list(CREATIVE_LLM_MODELS) or None,
+            max_tokens=300, progress=progress, label="intro", validator=_valid,
+        )
+        data = _json_loads_loose(content)
+        story_type = str(data.get("story_type", "")).strip().lower() or "standard"
+        intro_line = " ".join(str(data.get("intro_line", "")).split()).strip()
+        dump["intro"] = {"story_type": story_type, "intro_line": intro_line, "model": used}
+        log(f"[stage4] intro ({story_type}): {intro_line!r}")
+        return {"story_type": story_type, "intro_line": intro_line}
+    except Exception as exc:
+        # Deterministic fallback so the pipeline never blocks on the intro.
+        hero = (comic_context.get("characters") or ["this hero"])[0]
+        fallback = f"Ever wonder what if {hero} took a darker path?"
+        log(f"[stage4] intro LLM failed ({type(exc).__name__}); using fallback: {fallback!r}")
+        return {"story_type": "what_if", "intro_line": fallback}
+
+
+def _find_cover_page(all_pages: list[dict] | None, story_pages: list[dict]) -> int:
+    """Page number of the comic's cover (page_type=='cover'); else the lowest
+    page number seen, else 1 — used as the intro scene's visual."""
+    for p in (all_pages or []):
+        if str(p.get("page_type", "")).lower() == "cover":
+            return int(p.get("page_number", 1) or 1)
+    pages = [int(p.get("page_number", 0) or 0) for p in (all_pages or story_pages or [])]
+    pages = [n for n in pages if n > 0]
+    return min(pages) if pages else 1
+
+
+def _json_loads_loose(text: str) -> dict:
+    """Parse JSON that may be wrapped in markdown fences or have prose around it."""
+    t = (text or "").strip()
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.IGNORECASE).strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        m = re.search(r"\{.*\}", t, re.DOTALL)
+        if m:
+            return json.loads(m.group(0))
+        raise
+
+
 def write_script(
     comic_context: dict,
     story_pages: list[dict],
@@ -60,12 +167,16 @@ def write_script(
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
 ) -> Narration:
-    """Run outline -> glossary -> write -> validate (+ 1 retry)."""
+    """Run intro -> outline -> glossary -> write -> validate (+ retries)."""
     if mode not in MODES_BY_KEY:
         raise ValueError(f"Unknown mode: {mode!r}. Valid: {sorted(MODES_BY_KEY)}")
 
     log = progress or (lambda _msg: None)
     dump = debug_dump if debug_dump is not None else {}
+
+    log("[stage4] phase A0 — generating teaser intro…")
+    intro = generate_intro(comic_context, model=model, progress=progress, debug_dump=dump)
+    cover_page = _find_cover_page(all_pages, story_pages)
 
     log(f"[stage4] phase A — outlining beats (mode={mode})…")
     beats, beats_model = outline_beats(comic_context, story_pages, mode, hook_hint=hook_hint, model=model,
@@ -120,11 +231,11 @@ def write_script(
         # tier do we then prefer fewer issues.
         _scenes = parsed.get("scenes") or []
         _words = sum(len(str(s.get("text", "")).split()) for s in _scenes)
-        length_ok = 1 if (9 <= len(_scenes) <= 17 and _words >= 187) else 0
+        length_ok = 1 if (9 <= len(_scenes) <= 17 and _words >= 170) else 0
         # words_ok: within the benchmark word band (≤285 ⇒ ≤~70s). Prefer an
         # in-band draft over a longer one, and prefer fewer CRITICAL issues,
         # then fewer total issues, then the shorter draft (snappier video).
-        words_ok = 1 if 187 <= _words <= 285 else 0
+        words_ok = 1 if 170 <= _words <= 195 else 0
         n_critical = sum(1 for e in errors if _is_critical_error(e))
         key = (length_ok, words_ok, -n_critical, -len(errors), -_words)
         if key > best_key:
@@ -154,6 +265,29 @@ def write_script(
         log(f"[stage4]   ⚠ shipping with {len(errors)} unresolved issue(s) (best draft kept)")
         for e in errors[:10]:
             log(f"[stage4]     - {e}")
+
+    # Prepend the teaser intro as scene 1 (shown over the cover) AFTER the body
+    # validation/retry loop — so it never interferes with fidelity/wiki/length
+    # checks on the story body. Renumber the body scenes; the original hook
+    # scene becomes scene 2 (its "When…" lead-in is a valid connective).
+    intro_line = (intro.get("intro_line") or "").strip()
+    if intro_line:
+        body = parsed.get("scenes") or []
+        for s in body:
+            s["scene_id"] = int(s.get("scene_id", 0) or 0) + 1
+            if s["scene_id"] == 2 and not s.get("connective"):
+                s["connective"] = _starts_with_connective(str(s.get("text", "")))
+        intro_scene = {
+            "scene_id": 1,
+            "text": intro_line,
+            "page_ref": cover_page,
+            "panel_ref": -1,        # whole cover
+            "connective": None,
+            "beat_id": 0,
+            "is_intro": True,
+        }
+        parsed["scenes"] = [intro_scene] + body
+        parsed["hook"] = intro_line  # thumbnail / opening line is now the teaser
 
     final_model = write_model or gloss_model or beats_model or (model or OPENROUTER_MODEL)
     return _to_narration(parsed, beats, glossary, mode, final_model)
@@ -626,19 +760,22 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 7) LENGTH BUDGET — STRICT, CHANNEL-CALIBRATED — HARD CEILING
    - **12-14 scenes** total (channel average 12; we allow 13-14 for canonical
      coverage of climax beats).
-   - **240-280 words total — HARD CEILING. NOT FLEXIBLE.**
-     • If draft > 280 words → MUST trim. Audio at 70s+ overshoots YouTube
-       Shorts budget and fails benchmark `duration_in_range`.
-     • If draft < 240 → ADD scenes covering missing canonical beats.
-   - Before returning JSON, COUNT your total words. If > 280, tighten the
+   - **175-195 words total — HARD CEILING. NOT FLEXIBLE.**
+     • Narration is spoken at a calm 1.1 pace (~2.9 words/second). A separate
+       teaser intro line is added on top of your draft, so YOUR body must stay
+       lean: >195 words → the final video overshoots the ~72s Shorts budget and
+       fails benchmark `duration_in_range`.
+     • If draft > 195 words → MUST trim. If draft < 175 → ADD scenes covering
+       missing canonical beats.
+   - Before returning JSON, COUNT your total words. If > 195, tighten the
      longest 2-3 scenes (cut adjectives, drop secondary clauses, merge twins).
      Keep ALL canonical beats — trim FLOURISH, not CONTENT.
-   - Sentence-by-sentence target distribution (12-13 scenes, 240-280 words):
-     • 2-3 PUNCH (5-12w)
-     • 7-9 MEDIUM (14-22w)
-     • 1-2 LONG (23-28w)  ← lowered max from 30 to 28 to save 4-6 words total
+   - Sentence-by-sentence target distribution (11-13 scenes, 175-195 words):
+     • 2-3 PUNCH (5-10w)
+     • 6-8 MEDIUM (12-18w)
+     • 1 LONG (20-24w)
      • 1 OUTRO (5-8w)
-   - Target ~60s spoken at ~4.0 words/second.
+   - Target ~68s spoken at ~2.9 words/second.
 
 8) PAGE/PANEL TAGGING
    - Every scene maps to ONE (page_ref, panel_ref) — pick the most visually impactful panel of that beat.
@@ -1034,6 +1171,7 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
             target_seconds=round(wc / _WORDS_PER_SEC, 2),
             connective=str(conn).strip() if conn else None,
             beat_id=int(s.get("beat_id", 0) or 0),
+            is_intro=bool(s.get("is_intro")),
         ))
         total_words += wc
 
@@ -1477,7 +1615,10 @@ def _wiki_cross_check(
         log("[stage4]   phase E: no wiki plot_summary available — skipping cross-check")
         return []
 
-    scenes = parsed.get("scenes") or []
+    # Skip the teaser intro scene — it is a deliberately speculative "Ever
+    # wonder...?" hook, not a panel/plot-grounded claim, so it must not be
+    # cross-checked against the canonical plot.
+    scenes = [s for s in (parsed.get("scenes") or []) if not s.get("is_intro")]
     if not scenes:
         return []
 
@@ -1626,7 +1767,7 @@ def _retry_fix_with_wiki(
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
         f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words. Last scene may dip to 8.\n"
-        f"- Total: 230-290 words ({_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} ideal). 10-12 scenes.\n"
+        f"- Total: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} words (HARD ceiling — calm 1.1 pace). 11-13 scenes.\n"
         f"- ANCHOR every claim to the canonical wiki plot above. Do NOT invent.\n"
         f"- Include missing canonical beats (anniversary, Sue Storm, Lizard's machine, etc.) if flagged.\n"
         f"- CRITICAL — NO two consecutive scenes may restate the same beat. If a "

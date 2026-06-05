@@ -53,6 +53,17 @@ STEP 1 — Classify the page into ONE of three types:
                - letter column / reader mail
                - solicit / editorial / credits-only page
                - blank, filler, or end-of-story divider
+               AD CHECK (do this FIRST): mentally transcribe the page's visible text,
+               THEN classify. The page is an ADVERTISEMENT if ANY of these hold:
+                 · review quotes with press attribution ("— IGN", "Entertainment Weekly")
+                 · sales language: "ON SALE", "IN STORES", "AVAILABLE NOW", "DISCOVER",
+                   price, ISBN, barcode
+                 · catalog of OTHER books: cover thumbnails in a grid, "VOLUMES 1-9"
+                 · publisher URLs, social handles, QR codes
+                 · poster-style image with logo + tagline, NO sequential panels, NO
+                   gutters, NO speech balloons spoken BY characters IN a scene
+               House ads often reuse the SAME artwork and characters as the story —
+               artwork similarity is NOT evidence of "story".
                For skip pages: set page_type="skip", fill skip_reason with the specific
                category, and return EMPTY panels, text_blocks, and page_summary.
                DO NOT extract any metadata for skip pages.
@@ -289,6 +300,15 @@ DO NOT invent events, dialog, or characters. Every fact must be derivable from t
 PER-PAGE STEPS (apply to each page independently for classification, but write descriptions with continuity):
 
   STEP 1 — Classify each page into "cover" | "story" | "skip" (same rules as single-page mode: cover requires visible title/issue text; skip = ad/recap/blank).
+    AD CHECK first: mentally transcribe the page's visible text BEFORE classifying.
+    Review quotes with press attribution ("— IGN", "Entertainment Weekly"), sales
+    language ("ON SALE", "IN STORES", "AVAILABLE NOW", "DISCOVER"), volume/catalog
+    listings, publisher URLs/social handles, prices/barcodes → page_type="skip",
+    skip_reason="advertisement".
+    CLASSIFY EACH PAGE ON ITS OWN CONTENT — NEVER use story continuity from the
+    prior page to justify "story": house ads reuse the same artwork and characters
+    as the story. A trailing page after one containing "THE END" is back-matter
+    (skip) unless it unmistakably continues the story with sequential panels.
 
   STEP 2 — For "cover" + "story" pages:
     2a. Per panel: one-sentence description, character list, dominant emotion.
