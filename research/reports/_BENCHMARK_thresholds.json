@@ -1,0 +1,147 @@
+{
+  "benchmark": {
+    "n_references": 10,
+    "stats": {
+      "duration_s": {
+        "mean": 57.7,
+        "median": 56.25,
+        "stdev": 5.72,
+        "min": 48.11,
+        "max": 70.08,
+        "p10": 54.06,
+        "p90": 70.08
+      },
+      "word_count": {
+        "mean": 230.5,
+        "median": 240.0,
+        "stdev": 34.24,
+        "min": 179,
+        "max": 285,
+        "p10": 187,
+        "p90": 285
+      },
+      "wps": {
+        "mean": 3.99,
+        "median": 4.04,
+        "stdev": 0.35,
+        "min": 3.46,
+        "max": 4.58,
+        "p10": 3.47,
+        "p90": 4.58
+      },
+      "sentence_count": {
+        "mean": 12.4,
+        "median": 12.5,
+        "stdev": 3.06,
+        "min": 8,
+        "max": 17,
+        "p10": 9,
+        "p90": 17
+      },
+      "chunk_count": {
+        "mean": 34.5,
+        "median": 35.0,
+        "stdev": 4.95,
+        "min": 27,
+        "max": 43,
+        "p10": 29,
+        "p90": 43
+      },
+      "sentence_stdev": {
+        "mean": 8.6,
+        "median": 8.61,
+        "stdev": 2.02,
+        "min": 4.76,
+        "max": 11.72,
+        "p10": 6.98,
+        "p90": 11.72
+      },
+      "punch_sentences": {
+        "mean": 3.2,
+        "median": 4.0,
+        "stdev": 2.15,
+        "min": 0,
+        "max": 7,
+        "p10": 1,
+        "p90": 7
+      },
+      "long_sentences": {
+        "mean": 2.1,
+        "median": 2.0,
+        "stdev": 0.74,
+        "min": 1,
+        "max": 3,
+        "p10": 1,
+        "p90": 3
+      },
+      "shot_cuts": {
+        "mean": 29.3,
+        "median": 38.5,
+        "stdev": 16.53,
+        "min": 4,
+        "max": 44,
+        "p10": 6,
+        "p90": 44
+      },
+      "caption_clean_pct": {
+        "mean": 96.66,
+        "median": 100.0,
+        "stdev": 7.04,
+        "min": 83.3,
+        "max": 100.0,
+        "p10": 83.3,
+        "p90": 100.0
+      },
+      "panel_full_frame_pct": {
+        "mean": 88.33,
+        "median": 91.65,
+        "stdev": 13.71,
+        "min": 66.7,
+        "max": 100.0,
+        "p10": 66.7,
+        "p90": 100.0
+      },
+      "unique_character_count": {
+        "mean": 2.1,
+        "median": 2.0,
+        "stdev": 1.2,
+        "min": 0,
+        "max": 4,
+        "p10": 1,
+        "p90": 4
+      }
+    },
+    "hook_archetype_distribution": {
+      "interrogative": 2,
+      "scenic": 1,
+      "character_action": 1,
+      "temporal-when": 2,
+      "other_character": 3,
+      "temporal-other": 1
+    },
+    "outro_present_pct": 60.0
+  },
+  "qualifying": {
+    "duration_min": 54.06,
+    "duration_max": 72.08,
+    "word_count_min": 187,
+    "word_count_max": 285,
+    "wps_min": 2.6,
+    "wps_max": 3.3,
+    "sentence_count_min": 9,
+    "sentence_count_max": 17,
+    "chunk_count_min": 29,
+    "sentence_stdev_min": 3.0,
+    "punch_sentences_min": 1,
+    "long_sentences_min": 1,
+    "caption_clean_pct_min": 83.3,
+    "panel_full_frame_pct_min": 66.7,
+    "outro_required": true,
+    "hook_archetype_allowed": [
+      "interrogative",
+      "temporal-when",
+      "temporal-other",
+      "scenic"
+    ]
+  }
+}
