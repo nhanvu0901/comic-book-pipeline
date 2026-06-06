@@ -21,6 +21,10 @@ from .panel_detect import assign_to_panels, detect_full, detect_panels
 from .schema import PanelInfo, PreprocessedPage, TextBlock
 from .vlm_extract import extract_page, extract_pages_batch
 
+# The last N pages of an issue (covers/credits/ads/cliffhanger back-matter) are
+# processed single-page instead of batched — batching mislabels them.
+_BACKMATTER_TAIL = 4
+
 
 def preprocess_project(
     project_name: str,
@@ -103,9 +107,38 @@ def preprocess_project(
             i += 1
             continue
 
-        # Collect a contiguous run of uncached pages up to VLM_BATCH_SIZE.
+        # Back-matter (credits/ads/covers/cliffhanger) clusters in the last few
+        # pages, where multi-image batching mislabels it: the VLM's continuity
+        # bias + a dropped/shifted page index makes a credits page inherit a
+        # neighbor's story description and be tagged "story" (then chosen as the
+        # outro). Single-page extract_page() has no continuity bias and is
+        # verified to classify these correctly (credits -> skip/solicit_credits),
+        # so we process the trailing pages one-by-one via the per-page path.
+        if i >= n - _BACKMATTER_TAIL:
+            s = page_states[i]
+            with Image.open(s["img"]) as im:
+                dims = im.size
+            magi = detect_full(s["img"])
+            log(f"[preprocess]   p{s['pn']:03d}: Magi → {len(magi['panels'])} panel(s) "
+                f"(back-matter tail → single-page, no batch)")
+            page_dict = _build_page_from_single(
+                page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
+                panels_raw=magi["panels"], dimensions=dims, project_root=project_root,
+                log=log, story_context=story_context, content_hash=s["hash"],
+                magi_data=magi,
+            )
+            results.append(page_dict)
+            prev_page_dict = page_dict
+            prev_image_path = s["img"]
+            i += 1
+            continue
+
+        # Collect a contiguous run of uncached pages up to VLM_BATCH_SIZE (never
+        # crossing into the single-page back-matter tail).
         batch_end = i
-        while batch_end < n and page_states[batch_end]["cached"] is None and (batch_end - i) < VLM_BATCH_SIZE:
+        tail_start = n - _BACKMATTER_TAIL
+        while (batch_end < n and page_states[batch_end]["cached"] is None
+               and (batch_end - i) < VLM_BATCH_SIZE and batch_end < tail_start):
             batch_end += 1
         batch = page_states[i:batch_end]
         batch_pns = [b["pn"] for b in batch]
