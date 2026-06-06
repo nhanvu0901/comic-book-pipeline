@@ -1184,23 +1184,42 @@ def _scene_stems(text: str) -> set[str]:
 
 
 def _detect_redundant_scenes(scenes: list[dict], threshold: int = 4) -> list[str]:
-    """BUG #122 Fix A: flag consecutive scenes that repeat the same content
-    (≥`threshold` shared content stems). The ending often pads by restating the
-    prior beat — e.g. S12 'overpowered the Lizard' then S13 'after overpowering
-    the Lizard'. Sharing the names AND the action means the scenes are
-    redundant. Flagged scenes trigger a Stage 3 retry to merge/differentiate."""
+    """Flag scenes that restate the same content — checked across ALL scene pairs
+    (not just consecutive), so "struck Reed" in sc4 and sc6 (separated by sc5) is
+    caught, and "severed arm" repeated in sc10/sc11 is caught. Two signals:
+      (a) >=`threshold` shared content stems (the original consecutive heuristic,
+          now all-pairs), OR
+      (b) a repeated KEY NOUN PHRASE — a distinctive 2-word noun pair that
+          appears verbatim in two different scenes (e.g. "severed arm")."""
+    import re
     issues: list[str] = []
-    for i in range(len(scenes) - 1):
-        a, b = scenes[i], scenes[i + 1]
-        sa = _scene_stems(str(a.get("text", "")))
-        sb = _scene_stems(str(b.get("text", "")))
-        shared = sa & sb
-        if len(shared) >= threshold:
-            issues.append(
-                f"scenes {a.get('scene_id', i+1)}-{b.get('scene_id', i+2)} repeat "
-                f"the same content (shared: {', '.join(sorted(shared))}) — merge them "
-                f"or make the second advance the story instead of restating it"
-            )
+    body = [s for s in scenes if not s.get("is_intro") and not s.get("is_outro")]
+
+    def key_bigrams(text: str) -> set[str]:
+        words = [w for w in re.findall(r"[a-zA-Z]+", text.lower())
+                 if len(w) >= 4 and w not in _REDUNDANCY_STOP]
+        return {f"{words[i]} {words[i+1]}" for i in range(len(words) - 1)}
+
+    n = len(body)
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = body[i], body[j]
+            sa, sb = _scene_stems(str(a.get("text", ""))), _scene_stems(str(b.get("text", "")))
+            shared = sa & sb
+            shared_bigrams = key_bigrams(str(a.get("text", ""))) & key_bigrams(str(b.get("text", "")))
+            ai = a.get("scene_id", i + 1); bi = b.get("scene_id", j + 1)
+            if shared_bigrams:
+                issues.append(
+                    f"scenes {ai}-{bi} repeat the same content "
+                    f"(repeated phrase: {', '.join(sorted(shared_bigrams))}) — "
+                    f"rewrite the later scene to advance the story instead of restating it"
+                )
+            elif len(shared) >= threshold:
+                issues.append(
+                    f"scenes {ai}-{bi} repeat the same content "
+                    f"(shared: {', '.join(sorted(shared))}) — rewrite the later scene "
+                    f"to advance the story instead of restating it"
+                )
     return issues
 
 
