@@ -190,6 +190,16 @@ def fetch_fandom(query: str, publisher: str = "") -> dict:
             # sections instead of the |Synopsis1= infobox field.
             synopsis = _extract_section(wikitext)
             source = "fandom_section"
+        # TPB fallback: a Marvel search often returns the COLLECTED edition page
+        # ("... TPB Vol 1 1") whose Synopsis1 is empty — the real plot lives on
+        # the single-issue page ("... Vol 1 1"). Retry without "TPB".
+        if (not synopsis or len(synopsis) < _MIN_PLOT_CHARS) and "TPB" in title:
+            alt = title.replace("TPB ", "").replace(" TPB", "").strip()
+            alt_wt = _parse_wikitext(wiki, alt)
+            if alt_wt:
+                alt_syn = _extract_synopsis1(alt_wt) or _extract_section(alt_wt)
+                if alt_syn and len(alt_syn) >= _MIN_PLOT_CHARS:
+                    synopsis, title, source = alt_syn, alt, "fandom_synopsis1_detpb"
         if not synopsis or len(synopsis) < _MIN_PLOT_CHARS:
             print(f"  {Colors.DIM}📚 Fandom: {wiki} miss{Colors.END}")
             continue
