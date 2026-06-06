@@ -1184,27 +1184,46 @@ def _scene_stems(text: str) -> set[str]:
 
 
 def _detect_redundant_scenes(scenes: list[dict], threshold: int = 4) -> list[str]:
-    """Flag scenes that restate the same content — checked across ALL scene pairs
-    (not just consecutive), so "struck Reed" in sc4 and sc6 (separated by sc5) is
-    caught, and "severed arm" repeated in sc10/sc11 is caught. Two signals:
-      (a) >=`threshold` shared content stems (the original consecutive heuristic,
-          now all-pairs), OR
-      (b) a repeated KEY NOUN PHRASE — a distinctive 2-word noun pair that
-          appears verbatim in two different scenes (e.g. "severed arm")."""
+    """All-pairs content-repeat detection. Proper nouns (characters/places) recur
+    normally across a story, so they are EXCLUDED — only repeated DESCRIPTIVE
+    content is flagged ("severed arm"), never entity names ("Reed Richards",
+    "Venom symbiote"). Two signals: a repeated descriptive bigram, or
+    >=threshold shared non-entity content stems."""
     import re
     issues: list[str] = []
     body = [s for s in scenes if not s.get("is_intro") and not s.get("is_outro")]
 
+    # Capitalized words (minus sentence-openers/connectives) = proper nouns.
+    openers = {c.lower() for c in _CONNECTIVES} | {
+        "the", "a", "an", "his", "her", "their", "this", "that", "with", "now",
+        "then", "soon", "but", "and", "as", "when", "after", "meanwhile",
+        "he", "she", "it", "they",
+    }
+    entities: set[str] = set()
+    for s in body:
+        for w in re.findall(r"\b[A-Z][a-zA-Z]+\b", str(s.get("text", ""))):
+            lw = w.lower()
+            if lw not in openers:
+                entities.add(lw)
+    entity_stems = {w[:5] for w in entities}
+
     def key_bigrams(text: str) -> set[str]:
         words = [w for w in re.findall(r"[a-zA-Z]+", text.lower())
                  if len(w) >= 4 and w not in _REDUNDANCY_STOP]
-        return {f"{words[i]} {words[i+1]}" for i in range(len(words) - 1)}
+        out: set[str] = set()
+        for i in range(len(words) - 1):
+            w1, w2 = words[i], words[i + 1]
+            if w1 in entities or w2 in entities:
+                continue  # entity-name bigram → normal recurrence, skip
+            out.add(f"{w1} {w2}")
+        return out
 
     n = len(body)
     for i in range(n):
         for j in range(i + 1, n):
             a, b = body[i], body[j]
-            sa, sb = _scene_stems(str(a.get("text", ""))), _scene_stems(str(b.get("text", "")))
+            sa = _scene_stems(str(a.get("text", ""))) - entity_stems
+            sb = _scene_stems(str(b.get("text", ""))) - entity_stems
             shared = sa & sb
             shared_bigrams = key_bigrams(str(a.get("text", ""))) & key_bigrams(str(b.get("text", "")))
             ai = a.get("scene_id", i + 1); bi = b.get("scene_id", j + 1)
