@@ -270,6 +270,16 @@ def write_script(
     # validation/retry loop — so it never interferes with fidelity/wiki/length
     # checks on the story body. Renumber the body scenes; the original hook
     # scene becomes scene 2 (its "When…" lead-in is a valid connective).
+    # Mark the writer's outro credit ("The comic is X.") so Stage 5 can resolve
+    # it to the comic's FINAL splash page (the money shot / bookend) rather than
+    # reusing the last narrative scene's page. panel_ref=-1 → whole page.
+    body0 = parsed.get("scenes") or []
+    if body0:
+        last = body0[-1]
+        if "comic is" in str(last.get("text", "")).lower():
+            last["is_outro"] = True
+            last["panel_ref"] = -1
+
     intro_line = (intro.get("intro_line") or "").strip()
     if intro_line:
         body = parsed.get("scenes") or []
@@ -441,6 +451,15 @@ def outline_beats(
     if not (8 <= len(beats) <= 12):
         log(f"[stage4]   warning: outline returned {len(beats)} beats (want 10-12)")
 
+    # Deterministic page ordering: the recap is a page-by-page walk and Stage 5
+    # is forward-only, so beats MUST be non-decreasing in page. Sort here instead
+    # of relying on the soft prompt rule (which let venom emit pg12 before pg11).
+    before = [min(b.page_refs) if b.page_refs else 0 for b in beats]
+    beats = _order_beats_by_page(beats)
+    after = [min(b.page_refs) if b.page_refs else 0 for b in beats]
+    if before != after:
+        log(f"[stage4]   reordered beats to monotonic page order: {before} -> {after}")
+
     # Page-gap validation — retry once with bridge instruction if jumps > 5.
     issues = _validate_outline(beats)
     if issues:
@@ -452,6 +471,25 @@ def outline_beats(
             hook_hint=hook_hint, model=model, progress=progress, debug_dump=debug_dump,
         ) or beats
     return beats, mdl_used
+
+
+def _order_beats_by_page(beats: list[Beat]) -> list[Beat]:
+    """Make the beat sheet match the comic's reading order: stable-sort beats by
+    their lowest page_ref so page progression is monotonic (the video is a
+    page-by-page walk; forward-only Stage-5 selection breaks if narration jumps
+    back a page). Stable sort preserves the outliner's order among same-page
+    beats. Beats with no page_refs keep their relative position by inheriting the
+    previous beat's page (so they don't sink to the front)."""
+    def primary(b: Beat, fallback: int) -> int:
+        return min(b.page_refs) if b.page_refs else fallback
+    running = 0
+    keyed: list[tuple[int, int, Beat]] = []
+    for idx, b in enumerate(beats):
+        pg = primary(b, running)
+        running = max(running, pg)
+        keyed.append((pg, idx, b))
+    keyed.sort(key=lambda t: (t[0], t[1]))  # stable by (page, original index)
+    return [t[2] for t in keyed]
 
 
 def _validate_outline(beats: list[Beat], max_gap: int = 5) -> list[str]:
@@ -1107,6 +1145,23 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         )
 
     errors.extend(_detect_redundant_scenes(scenes))
+
+    # Defense-in-depth: scenes must not move backward in pages (Stage 5 is
+    # forward-only). Beats are page-sorted in outline_beats, so this should never
+    # fire — if it does, the writer reassigned page_ref out of order. Skip the
+    # intro (scene 1, cover) and outro (whole-page) which are bookends.
+    prev_pg = 0
+    for s in parsed.get("scenes") or []:
+        if s.get("is_intro") or s.get("is_outro"):
+            continue
+        pg = int(s.get("page_ref", 0) or 0)
+        if pg and pg < prev_pg:
+            errors.append(
+                f"scene {s.get('scene_id','?')} page_ref={pg} goes backward "
+                f"(prev {prev_pg}) — non-monotonic page order"
+            )
+        prev_pg = max(prev_pg, pg)
+
     return errors
 
 
@@ -1172,6 +1227,7 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
             connective=str(conn).strip() if conn else None,
             beat_id=int(s.get("beat_id", 0) or 0),
             is_intro=bool(s.get("is_intro")),
+            is_outro=bool(s.get("is_outro")),
         ))
         total_words += wc
 
