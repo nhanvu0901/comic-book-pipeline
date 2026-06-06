@@ -551,11 +551,19 @@ def extract_pages_batch(
             pages_out = pages_out[1:]
 
         if len(pages_out) != n:
-            log(f"[vlm-batch] ⚠ {model} returned {len(pages_out)} pages, expected {n} — accepting partial")
-            while len(pages_out) < n:
-                pages_out.append({"page_type": "skip", "skip_reason": "vlm_failure",
-                                  "panels": [], "text_blocks": [], "page_summary": ""})
-            pages_out = pages_out[:n]
+            # Count mismatch = the pages[] array no longer lines up 1:1 with the
+            # input images. The VLM almost always drops a blank/back-matter page
+            # MID-batch (e.g. a near-empty page), which shifts every later entry
+            # onto the WRONG image — a credits page then inherits the prior page's
+            # story description and is mislabeled "story". Padding the tail does
+            # NOT fix a mid-batch shift, so we must NOT trust positional alignment.
+            # Abandon this model; if the whole chain mismatches, the caller falls
+            # back to per-page extract_page() (verified to classify each page
+            # correctly, including credits → skip/solicit_credits).
+            log(f"[vlm-batch] ✗ {model} returned {len(pages_out)} pages, expected {n} "
+                f"— misaligned, NOT padding (falling back)")
+            errors.append(f"{model}: count_mismatch_{len(pages_out)}_vs_{n}")
+            continue
 
         for p in pages_out:
             p["_vlm_model_used"] = model
