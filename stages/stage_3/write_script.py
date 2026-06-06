@@ -213,10 +213,8 @@ def write_script(
         halluc = _detect_hallucinations(parsed, glossary, comic_context, story_pages)
         if halluc:
             errors = halluc + errors
-        fid_issues = _fidelity_check(parsed, story_pages, comic_context,
-                                      model=model, progress=progress)
-        if fid_issues:
-            errors = errors + [f"fidelity: {i}" for i in fid_issues]
+        # Single grounding check (merged fidelity + wiki): flags canon
+        # contradictions AND invented drama. All grounding issues are critical.
         wiki_issues = _wiki_cross_check(parsed, comic_context,
                                          model=model, progress=progress)
         if wiki_issues:
@@ -1650,11 +1648,14 @@ Return STRICT JSON only:
 }
 
 RULES:
-  • ONLY flag issues where wiki CONTRADICTS narration (substituted character,
-    wrong action, wrong order). Stylistic phrasing differences are FINE.
-  • For missing_beats, you MUST include keywords_searched + scenes_checked +
-    verified_absent=true. Beats without proof of absence are silently dropped.
-  • If everything is canonical: {"issues": [], "missing_beats": []}"""
+  • Flag a scene when it CONTRADICTS the wiki (substituted character, wrong
+    action, wrong order). Stylistic phrasing differences are FINE.
+  • ALSO flag a scene when it states a FACT or EMOTION that is NOT supported by
+    the wiki plot — invented drama. Examples to flag: "rage consumed him",
+    "the city watched in fear", "tongue extended mocking them" when no such
+    detail appears in the plot. Grounded pronouns/connectives ("he", "then",
+    "meanwhile") are FINE; invented events/feelings are NOT.
+  • If everything is canonical and grounded: {"issues": [], "missing_beats": []}"""
 
 
 def _wiki_cross_check(
