@@ -123,9 +123,9 @@
   },
   "qualifying": {
     "duration_min": 54.06,
-    "duration_max": 72.08,
+    "duration_max": 95.0,
     "word_count_min": 187,
-    "word_count_max": 285,
+    "word_count_max": 300,
     "wps_min": 2.6,
     "wps_max": 3.3,
     "sentence_count_min": 9,

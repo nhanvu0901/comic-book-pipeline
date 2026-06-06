@@ -18,7 +18,9 @@ from ._llm import call_with_chain
 # words → ~65-72s at 2.88 wps, landing inside the (54-72.08s) duration band and
 # the (187-285) word band.
 _TARGET_WORDS_MIN = 175
-_TARGET_WORDS_MAX = 195
+_TARGET_WORDS_MAX = 260   # dense comics keep all canon beats; fat (drama/repeats)
+                          # is removed by grounding + dedup, not by dropping content.
+                          # ~260 words ≈ ~90s at 2.88 wps.
 _WORDS_PER_SEC = 2.88    # MEASURED 1.1 atempo pace (was 4.0 at the 1.3 benchmark pace)
 
 _SCENE_MIN_WORDS = 14    # channel does 9-14 word sentences too — one event each
@@ -233,7 +235,7 @@ def write_script(
         # words_ok: within the benchmark word band (≤285 ⇒ ≤~70s). Prefer an
         # in-band draft over a longer one, and prefer fewer CRITICAL issues,
         # then fewer total issues, then the shorter draft (snappier video).
-        words_ok = 1 if 170 <= _words <= 195 else 0
+        words_ok = 1 if 170 <= _words <= 260 else 0
         n_critical = sum(1 for e in errors if _is_critical_error(e))
         key = (length_ok, words_ok, -n_critical, -len(errors), -_words)
         if key > best_key:
