@@ -10,24 +10,37 @@ from config import CREATIVE_LLM_MODELS, FIDELITY_LLM_MODELS, OPENROUTER_MODEL
 from .modes import MODES_BY_KEY
 from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
+from .._embedding import semantic_sim as _semantic_sim
 
 
 # Calibrated for the user-chosen 1.1 atempo pace. MEASURED actual rate at 1.1:
-# ~2.88 wps (not the earlier 3.22 estimate). The teaser intro (~12 words) is
-# prepended on top of the body, so the body targets ~175-195 → final ~187-207
-# words → ~65-72s at 2.88 wps, landing inside the (54-72.08s) duration band and
-# the (187-285) word band.
-_TARGET_WORDS_MIN = 175
-_TARGET_WORDS_MAX = 260   # dense comics keep all canon beats; fat (drama/repeats)
-                          # is removed by grounding + dedup, not by dropping content.
-                          # ~260 words ≈ ~90s at 2.88 wps.
+# ~2.88 wps (not the earlier 3.22 estimate). The teaser intro (~14-18 words) is
+# prepended on top of the body, so the body targets ~165-195 → final ~180-213
+# words → ~63-74s at 2.88 wps, landing inside the (54-95s) duration band and the
+# (187-320) benchmark word band — clearly snappier than the old ~90s/297w output.
+#
+# SINGLE SOURCE OF TRUTH for the word budget. Previously three places disagreed
+# (system prompt said 175-195, this user-message budget said 175-260, and the
+# validator demanded 230-290) — the validator won and pulled output to ~283
+# words of long, compound, multi-event sentences. All three now read these
+# constants / the validator band below.
+_TARGET_WORDS_MIN = 165
+_TARGET_WORDS_MAX = 230   # body ceiling (~70s at 2.88 wps). Raised from 195 to let
+                          # each TURN carry its grounded cause/why clause (causal
+                          # narration) — connected story beats one-event-per-scene
+                          # over a flat events list. Still trim flourish, not canon.
 _WORDS_PER_SEC = 2.88    # MEASURED 1.1 atempo pace (was 4.0 at the 1.3 benchmark pace)
 
-_SCENE_MIN_WORDS = 14    # channel does 9-14 word sentences too — one event each
-_SCENE_MAX_WORDS = 25    # was 35 — hard ceiling, anything longer crams events
-_TARGET_SENT_LEN = 20    # channel median; used by median soft-validator
-_HOOK_MIN_WORDS = 18
-_HOOK_MAX_WORDS = 30
+_SCENE_MIN_WORDS = 5     # punch sentences go as low as 5w ("Stating they would
+                         # die anyway.") — floor must allow them, not block them.
+_SCENE_MAX_WORDS = 24    # was 17 — a CAUSAL scene carries one event + its grounded
+                         # 'why' clause (~24w). Punchiness is held by the median +
+                         # punch-count gates below, not a low per-scene ceiling.
+_TARGET_SENT_LEN = 14    # channel-punchy median; used by median soft-validator
+_PUNCH_MAX_WORDS = 11    # a "punch" sentence: lands one beat hard
+_MIN_PUNCH_SCENES = 3    # enforce variance toward SHORT (the channel signature)
+_HOOK_MIN_WORDS = 14
+_HOOK_MAX_WORDS = 26
 
 # Channel connective frequencies (219-video sample): But 16.7%, So 9.0%, When 6.8%,
 # However 3.1%, Then 1.8%, After 1.5%. "Just then" / "That's when" are channel-
@@ -193,6 +206,10 @@ def write_script(
     parsed, write_model = write_scenes(beats, glossary, comic_context, story_pages, mode,
                                        hook_hint=hook_hint, all_pages=all_pages,
                                        model=model, progress=progress, debug_dump=dump)
+    # Deterministic anchoring: page_ref/panel_ref come from the page-sorted beats,
+    # not the writer. 1 beat → 1 scene. This is the single source of truth for
+    # which page each scene maps to (see the beat-anchoring design doc).
+    parsed = _anchor_scenes_to_beats(parsed, beats, progress)
 
     valid_pages = {int(p.get("page_number", 0)) for p in story_pages}
     valid_beat_ids = {b.id for b in beats}
@@ -203,11 +220,13 @@ def write_script(
 
     # Multi-pass validation loop: validate → fidelity → wiki → retry.
     # Wiki mismatches are CRITICAL but we give the LLM up to MAX_PASSES tries
-    # to land canonical narration before giving up.
-    MAX_PASSES = 3
+    # to land canonical narration before giving up. 4 (was 3) gives the order +
+    # state-tracking + fidelity checks one more round to converge before best-draft.
+    MAX_PASSES = 4
     best_parsed = parsed
     # (length_ok, words_ok, -critical, -errors, -words): higher is better.
-    best_key = (-1, -1, -(10 ** 9), -(10 ** 9), -(10 ** 9))
+    # (complete, -n_critical, words_ok, -errors, -words) — see selection below.
+    best_key = (-1, -(10 ** 9), -1, -(10 ** 9), -(10 ** 9))
     pass_num = 0
     while pass_num < MAX_PASSES:
         pass_num += 1
@@ -223,21 +242,21 @@ def write_script(
             errors = errors + [f"wiki: {i}" for i in wiki_issues]
         dump[f"validation_pass{pass_num}"] = errors
 
-        # Best-draft selection (fix a): a draft that is too SHORT trivially has
-        # few redundancy/wiki issues — so "fewest issues" alone wrongly favored
-        # a 5-scene/96-word truncated draft over a complete one. Gate on length
-        # FIRST: a draft meeting the scene + word minimums always beats a draft
-        # that doesn't, regardless of issue count. Only within the same length
-        # tier do we then prefer fewer issues.
+        # Best-draft selection. The OLD key gated on length FIRST (words >= 165),
+        # which shipped a complete-but-211w draft with 7 CRITICAL wiki/order errors
+        # over a clean 160w draft (0 critical) — because 160 < 165 flipped its
+        # length bit off. Fidelity must beat a few-word length miss. New priority:
+        #   1. COMPLETE (truncation guard, lenient: enough scenes + not drastically
+        #      short) — never ship a real 5-scene/96-word truncation.
+        #   2. FEWEST CRITICAL issues (order/fidelity/wiki) — this is what matters.
+        #   3. in the punchy word band (preference, not a gate).
+        #   4. fewest total issues, then shorter.
         _scenes = parsed.get("scenes") or []
         _words = sum(len(str(s.get("text", "")).split()) for s in _scenes)
-        length_ok = 1 if (9 <= len(_scenes) <= 17 and _words >= 170) else 0
-        # words_ok: within the benchmark word band (≤285 ⇒ ≤~70s). Prefer an
-        # in-band draft over a longer one, and prefer fewer CRITICAL issues,
-        # then fewer total issues, then the shorter draft (snappier video).
-        words_ok = 1 if 170 <= _words <= 260 else 0
+        complete = 1 if (9 <= len(_scenes) <= 17 and _words >= 130) else 0
+        words_ok = 1 if _TARGET_WORDS_MIN <= _words <= _TARGET_WORDS_MAX + 20 else 0
         n_critical = sum(1 for e in errors if _is_critical_error(e))
-        key = (length_ok, words_ok, -n_critical, -len(errors), -_words)
+        key = (complete, -n_critical, words_ok, -len(errors), -_words)
         if key > best_key:
             best_parsed = parsed
             best_key = key
@@ -249,17 +268,20 @@ def write_script(
         critical = [e for e in errors if _is_critical_error(e)]
         log(f"[stage4]   pass {pass_num}/{MAX_PASSES}: {len(errors)} issue(s) "
             f"({len(critical)} critical, {len(_scenes)} scenes / {_words}w, "
-            f"length_ok={bool(length_ok)})")
+            f"complete={bool(complete)})")
         if pass_num >= MAX_PASSES:
             log(f"[stage4]   ⚠ MAX_PASSES reached; shipping best draft "
-                f"(length_ok={best_key[0]==1}, words_ok={best_key[1]==1}, "
-                f"{-best_key[3]} issues)")
+                f"(complete={best_key[0]==1}, critical={-best_key[1]}, "
+                f"words_ok={best_key[2]==1}, {-best_key[3]} issues)")
             parsed = best_parsed
             errors = []  # don't raise — fall through with best draft
             break
         log(f"[stage4]   retrying (pass {pass_num+1}/{MAX_PASSES})…")
         parsed = _retry_fix_with_wiki(parsed, errors, comic_context,
                                        model, progress, dump)
+        # Re-anchor: the retry may rewrite prose / re-key beat_ids, but page_ref
+        # and panel_ref stay deterministic so a retry can never re-break paging.
+        parsed = _anchor_scenes_to_beats(parsed, beats, progress)
 
     if errors:
         log(f"[stage4]   ⚠ shipping with {len(errors)} unresolved issue(s) (best draft kept)")
@@ -313,7 +335,18 @@ Each beat has:
 - page_refs: which input pages feed this beat
 - key_panels: 1-3 strongest visual moments [{"page": int, "panel": int}]
 - summary: ONE factual sentence of what happens (no narration voice yet)
+- cause: the wiki-grounded REASON/MOTIVE this beat happens — the "why" behind it
+  (e.g. "Reed's experiment turned Ben into the Thing and he forgot the accident's
+  anniversary" → why Ben resents Reed; "the symbiote marked Ben as its perfect
+  host to corrupt him" → why it later abandons the Lizard for Ben). "" if none.
 - characters_active: who is on stage in this beat
+
+CAUSAL CHAIN — connect cause→effect, set up motives before they pay off:
+  The story is a chain of motivated turns, not just events. For each beat, fill
+  `cause` from the wiki. CRITICAL: when a motive introduced early pays off later
+  (the symbiote choosing Ben as "perfect host" → later abandoning the Lizard to
+  reclaim Ben), make sure the SETUP is captured in an EARLY beat's summary/cause
+  so the payoff is connected, not out of nowhere.
 
 Beats are in dramatic order (which is usually but not always chronological). The first beat is COLD_OPEN — the moment that should hook the viewer. The last beat is LANDING — the line that pays it off.
 
@@ -407,7 +440,7 @@ def outline_beats(
         + f"{{\n"
         + f'  "beats": [\n'
         + f'    {{"id": 1, "function": "COLD_OPEN", "name": "...", "page_refs": [3], '
-        + f'"key_panels": [{{"page": 3, "panel": 0}}], "summary": "...", "characters_active": ["..."]}},\n'
+        + f'"key_panels": [{{"page": 3, "panel": 0}}], "summary": "...", "cause": "...", "characters_active": ["..."]}},\n'
         + f"    ...\n"
         + f"  ]\n"
         + f"}}"
@@ -446,21 +479,21 @@ def outline_beats(
             key_panels=[{"page": int(kp.get("page", 0)), "panel": int(kp.get("panel", 0))}
                         for kp in (b.get("key_panels") or []) if isinstance(kp, dict)],
             summary=str(b.get("summary", "")).strip(),
+            cause=str(b.get("cause", "")).strip(),
             characters_active=[str(c).strip() for c in (b.get("characters_active") or []) if str(c).strip()],
         ))
     if not (8 <= len(beats) <= 12):
         log(f"[stage4]   warning: outline returned {len(beats)} beats (want 10-12)")
 
-    # Deterministic page ordering: the recap is a page-by-page walk and Stage 5
-    # is forward-only, so beats MUST be non-decreasing in page. Sort here instead
-    # of relying on the soft prompt rule (which let venom emit pg12 before pg11).
-    before = [min(b.page_refs) if b.page_refs else 0 for b in beats]
-    beats = _order_beats_by_page(beats)
-    after = [min(b.page_refs) if b.page_refs else 0 for b in beats]
-    if before != after:
-        log(f"[stage4]   reordered beats to monotonic page order: {before} -> {after}")
+    # Canonical (wiki/causal) order — NOT page order. The outliner emits beats in
+    # story order; we only force COLD_OPEN first + LANDING last. Page is no longer
+    # the ordering authority (the comic's layout ≠ story order broke the timeline);
+    # each scene's panel is chosen by content grounding instead.
+    beats = _order_beats_canonical(beats)
 
-    # Page-gap validation — retry once with bridge instruction if jumps > 5.
+    # Page-COVERAGE validation — retry once with bridge instruction if a large page
+    # range is skipped. (This is about completeness, not order; _validate_outline
+    # sorts by page internally just for the gap test.)
     issues = _validate_outline(beats)
     if issues:
         log(f"[stage4]   outline validation: {len(issues)} issue(s) — retry with bridge")
@@ -470,26 +503,209 @@ def outline_beats(
             beats, issues, comic_context, story_pages, mode,
             hook_hint=hook_hint, model=model, progress=progress, debug_dump=debug_dump,
         ) or beats
+        beats = _order_beats_canonical(beats)  # re-apply bookend invariant after bridge
+
+    # Visual grounding: replace the outliner's UNRELIABLE panel-index guess with a
+    # content-matched pick (beat summary ↔ panel descriptions). Sets key_panels
+    # (the VISUAL anchor); does NOT change narration order.
+    beats = _ground_beat_panels(beats, story_pages, progress)
     return beats, mdl_used
 
 
-def _order_beats_by_page(beats: list[Beat]) -> list[Beat]:
-    """Make the beat sheet match the comic's reading order: stable-sort beats by
-    their lowest page_ref so page progression is monotonic (the video is a
-    page-by-page walk; forward-only Stage-5 selection breaks if narration jumps
-    back a page). Stable sort preserves the outliner's order among same-page
-    beats. Beats with no page_refs keep their relative position by inheriting the
-    previous beat's page (so they don't sink to the front)."""
-    def primary(b: Beat, fallback: int) -> int:
-        return min(b.page_refs) if b.page_refs else fallback
-    running = 0
-    keyed: list[tuple[int, int, Beat]] = []
-    for idx, b in enumerate(beats):
-        pg = primary(b, running)
-        running = max(running, pg)
-        keyed.append((pg, idx, b))
-    keyed.sort(key=lambda t: (t[0], t[1]))  # stable by (page, original index)
-    return [t[2] for t in keyed]
+def _ground_beat_panels(
+    beats: list[Beat],
+    story_pages: list[dict],
+    progress: Callable[[str], None] | None = None,
+) -> list[Beat]:
+    """Pick each beat's key_panel by CONTENT, not the outliner's guess.
+
+    The outliner emits key_panels by guessing panel indices from text — unreliable,
+    so Stage 5 ends up honoring a panel that doesn't depict the beat. Here we pick,
+    among the panels on the beat's own page_refs, the one whose VLM description best
+    matches the beat SUMMARY (a rich, stable sentence — unlike the now-punchy
+    narration). The chosen (page, panel) overwrites key_panels, so `_beat_anchor`
+    and the scene's page_ref/panel_ref become content-grounded and Stage 5's
+    relevance + cross-check lock onto the right panel. Deterministic (embedding),
+    no LLM. Beats whose pages have no usable panel/description keep their anchor."""
+    log = progress or (lambda _msg: None)
+    panels_by_page: dict[int, list[dict]] = {}
+    for p in story_pages or []:
+        pn = int(p.get("page_number", 0) or 0)
+        if pn:
+            panels_by_page[pn] = p.get("panels") or []
+
+    regrounded = 0
+    for beat in beats:
+        summary = (beat.summary or "").strip()
+        if not summary:
+            continue
+        active = {c.split()[0].lower() for c in (beat.characters_active or []) if c}
+        # Search the beat's own pages PLUS one page either side of that range — the
+        # outliner's page_refs are sometimes off by a page, so the true depicting
+        # panel can sit just outside (fixes V4). A small per-page distance penalty
+        # keeps a locality prior: an out-of-range panel must clearly out-match the
+        # in-range ones to win.
+        ref_set = {int(p) for p in (beat.page_refs or []) if int(p) in panels_by_page}
+        if ref_set:
+            lo, hi = min(ref_set), max(ref_set)
+            search_pages = [p for p in range(lo - 1, hi + 2) if p in panels_by_page]
+        else:
+            search_pages = []
+        best: tuple[float, int, int] | None = None  # (score, page, panel_index)
+        for pg in search_pages:
+            dist_penalty = 0.0 if pg in ref_set else 0.04
+            for idx, panel in enumerate(panels_by_page.get(pg, [])):
+                desc = str(panel.get("description", "") or "").strip()
+                if not desc:
+                    continue
+                score = _semantic_sim(summary, desc) - dist_penalty
+                # small nudge: a panel showing the beat's active characters
+                pchars = {str(c).split()[0].lower() for c in (panel.get("characters") or []) if c}
+                if active and (active & pchars):
+                    score += 0.05 * len(active & pchars)
+                if best is None or score > best[0]:
+                    best = (score, int(pg), idx)
+        if best is not None:
+            prev = beat.key_panels[0] if beat.key_panels else None
+            beat.key_panels = [{"page": best[1], "panel": best[2]}]
+            if not prev or prev.get("page") != best[1] or prev.get("panel") != best[2]:
+                regrounded += 1
+    if regrounded:
+        log(f"[stage4]   grounded {regrounded} beat panel(s) by description match")
+    return beats
+
+
+def _beat_anchor(beat: Beat) -> tuple[int, int]:
+    """The deterministic (page_ref, panel_ref) a beat maps to.
+
+    The outliner (Phase A) already chose each beat's strongest visual moment with
+    full per-panel detail, so the beat — not the writer — owns the visual anchor:
+      - first key_panel (the moment the outliner flagged), else
+      - the beat's lowest page as a whole-page (-1) shot, else
+      - (0, -1) for a beat with no pages (should not happen post-outline).
+    panel_ref of -1 means "whole page" in the Scene schema."""
+    if beat.key_panels:
+        kp = beat.key_panels[0]
+        return int(kp.get("page", 0) or 0), int(kp.get("panel", -1))
+    if beat.page_refs:
+        return min(beat.page_refs), -1
+    return 0, -1
+
+
+def _order_beats_canonical(beats: list[Beat]) -> list[Beat]:
+    """Narration order = the comic's CAUSAL/wiki order, NOT page order.
+
+    Earlier we stable-sorted beats by anchor PAGE, on the assumption "page order ==
+    reading order". That is false when the comic's layout ≠ story order (Venom: the
+    LANDING splash sits on page 30 but the CLIMAX kill is on page 31 → page-sort put
+    the landing BEFORE the kill). Page-sorting kept re-breaking the timeline. Now
+    that each scene's panel is chosen by CONTENT grounding (`_ground_beat_panels` +
+    Stage 5), narration no longer has to be page-monotonic — so we keep the
+    outliner's emitted order (it is told to emit beats in wiki causal order) and
+    only enforce the two structural invariants that actually matter:
+
+      - all COLD_OPEN beat(s) first (in their emitted order),
+      - all LANDING beat(s) last (in their emitted order),
+      - everything else keeps the outliner's order.
+
+    This fixes LANDING-before-CLIMAX without risking a mid-story reorder. Stage 5's
+    forward-only walk is relaxed to a soft backward penalty (it trusts grounding)."""
+    def fn(b: Beat) -> str:
+        return (b.function or "").upper().strip()
+    cold = [b for b in beats if fn(b) == "COLD_OPEN"]
+    land = [b for b in beats if fn(b) == "LANDING"]
+    mid = [b for b in beats if fn(b) not in ("COLD_OPEN", "LANDING")]
+    return cold + mid + land
+
+
+def _anchor_scenes_to_beats(
+    parsed: dict,
+    beats: list[Beat],
+    progress: Callable[[str], None] | None = None,
+) -> dict:
+    """Deterministic 1 beat → 1 scene. The writer authored prose keyed loosely by
+    beat_id; we re-key it to the canonical, page-sorted beat list so that:
+
+      - every beat gets exactly one scene (no dropped middle beats — the Venom bug),
+      - scenes follow page-sorted beat order (page_ref is monotonic),
+      - page_ref/panel_ref come from `_beat_anchor`, never from the writer
+        (kills the writer-mis-tags-page class — the Marvel Zombies bug).
+
+    Matching is two-pass and pool-consuming so no writer scene is reused:
+      1. exact beat_id match (first non-empty wins),
+      2. positional fill of still-unmatched beats from leftover scenes in order
+         (recovers a mislabeled beat_id when the writer kept beat order).
+
+    The channel outro credit ("The comic is X.") is not a beat — it is popped off
+    the writer's list and re-appended last, anchored to the final beat with
+    panel_ref=-1 (Stage 5 resolves it to the final splash bookend).
+
+    This runs on EVERY draft (initial write + each retry) so retries can only
+    change prose, never re-introduce a bad page_ref."""
+    log = progress or (lambda _msg: None)
+    if not beats:
+        return parsed
+
+    body = list(parsed.get("scenes") or [])
+    outro_src: dict | None = None
+    if body and "comic is" in str(body[-1].get("text", "")).lower():
+        outro_src = body.pop()
+
+    def _bid(s: dict) -> int:
+        try:
+            return int(s.get("beat_id", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    pool = [s for s in body if str(s.get("text", "")).strip()]
+
+    # PURE POSITIONAL: scene[i] narrates beat[i]. The writer is required (write
+    # prompt) to emit EXACTLY one scene per beat, in beat order, so position is the
+    # reliable mapping. The older beat_id-then-positional pairing and the semantic
+    # re-pairing BOTH proved fragile — they anchored an early event (e.g. "Reed
+    # raised the sonic gun") to a late beat, narrating it at the very end after the
+    # character was already dead, or scrambled the climax. Position can't drift.
+    matched: dict[int, dict] = {}
+    for i, beat in enumerate(beats):
+        if i < len(pool):
+            matched[beat.id] = pool[i]
+    if len(pool) != len(beats):
+        log(f"[stage4]   ⚠ writer emitted {len(pool)} story scenes for {len(beats)} "
+            f"beats — positional anchoring used the first {min(len(pool), len(beats))}")
+
+    anchored: list[dict] = []
+    gaps: list[int] = []
+    for beat in beats:
+        src = matched.get(beat.id)
+        if src is None:
+            gaps.append(beat.id)
+            continue
+        page, panel = _beat_anchor(beat)
+        anchored.append({
+            "text": str(src.get("text", "")).strip(),
+            "page_ref": page,
+            "panel_ref": panel,
+            "connective": src.get("connective"),
+            "beat_id": beat.id,
+        })
+
+    # Re-append the channel outro credit anchored to the final beat.
+    if outro_src is not None:
+        page, _ = _beat_anchor(beats[-1])
+        anchored.append({
+            "text": str(outro_src.get("text", "")).strip(),
+            "page_ref": page,
+            "panel_ref": -1,
+            "connective": None,
+            "beat_id": beats[-1].id,
+        })
+
+    if gaps:
+        log(f"[stage4]   ⚠ {len(gaps)} beat(s) had no prose (coverage gap): {gaps}")
+
+    parsed["scenes"] = anchored
+    parsed["_coverage_gaps"] = gaps
+    return parsed
 
 
 def _validate_outline(beats: list[Beat], max_gap: int = 5) -> list[str]:
@@ -583,6 +799,7 @@ def _retry_outline_with_bridge(
             key_panels=[{"page": int(kp.get("page", 0)), "panel": int(kp.get("panel", 0))}
                         for kp in (b.get("key_panels") or []) if isinstance(kp, dict)],
             summary=str(b.get("summary", "")).strip(),
+            cause=str(b.get("cause", "")).strip(),
             characters_active=[str(c).strip() for c in (b.get("characters_active") or []) if str(c).strip()],
         ))
     log(f"[stage4]   outline-bridge ok — {len(new_beats)} beats")
@@ -699,47 +916,62 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      ✗ "In an alternate universe..." (different channel's signature, don't copy)
      ✗ "Today we're looking at..." / "In today's video" / any framing meta-talk
 
-   The hook MUST be 18-28 words and end with an open thread that pulls the viewer
-   into scene 2 (use a comma + "..." or end with an unresolved promise).
+   The hook MUST be 14-26 words and end with an open thread that pulls the viewer
+   into scene 2 (use a comma + "..." or end with an unresolved promise). The hook
+   is the ONE scene allowed to run long — every other scene stays punchy.
+
+   HOOK = FIRST BEAT ONLY — NO PREVIEW OF LATER EVENTS.
+   The hook narrates ONLY the first beat's own moment. Do NOT pull an event from a
+   later beat into the opener — that creates a contradiction with the next scene.
+     ✗ "When the symbiote sat imprisoned, it was Ben who set it free..."  then next
+        scene "But Ben discovered the caged symbiote." (he frees it, THEN finds the
+        cage? — broken. "set it free" belongs to a LATER beat.)
+     ✓ "When the Venom symbiote sat imprisoned in Reed Richards' lab, it waited
+        bitterly for a way out..."  (only the first beat — the imprisonment.)
+   The teaser line shown over the cover is the only place a future twist is hinted.
 
 2) CONNECTIVE GRAMMAR (scenes 2 onward)
    - Every scene from #2 onward MUST start with one of these connectives, exactly: But, However, As, When, After, Eventually, Instead, With, Now, Suddenly, Then, Until, Meanwhile, Soon.
    - The schema field "connective" is REQUIRED non-null for every scene where scene_id >= 2.
    - These are documented in 95%+ of successful comic Shorts and create the "and then... and then..." feeling that holds retention.
 
-3) SENTENCE SHAPE — MIX SHORT + MEDIUM + LONG (variance is the channel signature)
-   - **DO NOT write uniformly-sized sentences.** Real scripts vary.
+3) SENTENCE SHAPE — SHORT + PUNCHY, ONE EVENT PER SENTENCE (this is the fix)
+   - **ONE EVENT PER SENTENCE — HARD RULE.** Each scene is ONE page held on screen
+     for only a few seconds, so it can show ONE action. If your sentence names two
+     things happening ("X did A as Y did B and warned C"), the viewer sees one page
+     while you narrate three things — it looks WRONG. Pick the single most
+     important action of the beat and narrate only that. Drop the secondary clauses.
+   - **DO NOT write uniformly-sized sentences.** Vary length, but vary toward SHORT.
    - Target distribution across 12-14 scenes (including the outro credit):
-     • 2-3 short PUNCH sentences (5-12 words) — for landing/twist moments
-     • 6-8 medium sentences (14-22 words) — main flow
-     • **MANDATORY: AT LEAST 1 long setup sentence (23-30 words)** — exposition/context.
-       Use the long sentence for a then-then-then momentum moment OR for an
-       establishing scene that needs to set up multiple facts. A script without
-       at least one 23-30w sentence will be rejected and retried.
+     • **AT LEAST 3 short PUNCH sentences (≤11 words)** — landing/twist moments.
+       A script with fewer than 3 punch sentences will be rejected and retried.
+     • the rest are MEDIUM (12-17 words) — main flow
+     • a CAUSAL scene (one event + its grounded 'why' clause, rule 6.7) MAY run to
+       ~24 words; the hook (scene 1) too. Plain scenes over 17w with no causal
+       clause are still rejected — don't pad.
      • 1 outro credit "The comic is X" (5-8 words)
-   - Long sentence example (mandatory pattern):
-     ✓ "When Reed Richards examined the dormant symbiote sample in his lab, the
-        tendrils began creeping toward Ben Grimm, who was visiting that evening
-        to confront Reed about a forgotten anniversary." (28w)
-   - **ONE event per sentence.** NOT "X happens while Y happens but Z is also true."
-   - **NO redundant consecutive scenes.** Each scene must advance the story to a
-     NEW moment — never restate the previous scene's action with a later frame.
-     Collapse an action progression into its single most impactful moment:
-       ✗ Scene A "Reed aims the sonic gun." + Scene B "Reed fires the sonic gun."
-       ✓ One scene: "Reed fires the sonic gun at Ben." (keep the payoff, drop the wind-up)
-     If two scenes you're about to write share the same subject AND action, merge
-     them and use the freed scene for a different story beat.
-   - Channel punch examples (5-12w, hit hard):
+   - Punch examples (≤11w, hit hard — these LAND):
      ✓ "But, even as an infant, Thanos was a unit." (9w)
      ✓ "Stating they would die anyway." (5w)
      ✓ "But he only stopped punching once he remembered his aunt." (10w)
-   - Channel medium examples:
+     ✓ "But Ben crushed the sonic gun and stormed out." (9w)
+   - Medium examples (12-17w):
      ✓ "So, Odin returned his cosmic powers and turned him into Ghost Rider again." (13w)
-   - ANTI-pattern (do NOT write):
-     ✗ "When suit tears during Secret Wars, tendrils ooze while Reed realizes,
-        but tube cracks, and Thing is about to discover it." (5 events crammed).
-   - Uniformity is the AI-tell. Variance is the channel signature.
-   - Use INTERNAL connectives (", but ...", " as ...", " until ...") to keep the sentence flowing.
+   - **NO redundant consecutive scenes.** Each scene advances to a NEW moment —
+     never restate the previous scene's action with a later frame. Collapse an
+     action progression into its single most impactful moment:
+       ✗ Scene A "Reed aims the sonic gun." + Scene B "Reed fires the sonic gun."
+       ✓ One scene: "Reed fires the sonic gun at Ben." (keep the payoff, drop the wind-up)
+   - ANTI-PATTERN — MULTI-EVENT CRAM (do NOT write; this is exactly what we are fixing):
+     ✗ "Now restored to his original human form, Ben reveled in the change as a
+        horrified Reed raised his sonic gun and warned that the symbiote had
+        corrupted Spider-Man's mind." (29w — THREE events on one page)
+     ✓ Split the BEAT's single most important action into one punchy line:
+        "Now human again, Ben revelled in his restored form." (9w)
+        (the gun + the warning belong to OTHER beats — do not cram them here)
+   - Uniformity is the AI-tell. Punchy variance is the channel signature.
+   - Use AT MOST ONE internal connective per sentence. A second " and / while / as "
+     usually means you have crammed a second event — split it out.
    - NO fragments. NO 5-word stub scenes. The only exception: the LAST scene may drop to as low as 8 words for a punchy landing.
 
 4) NAMING / PRONOUN DISCIPLINE
@@ -786,6 +1018,40 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    BAD: "tendrils twitching like a living breath" (poetic invention)
    GOOD: "peered beneath the cloth, finding the glowing symbiote in its container"
 
+6.6) CAUSAL FIDELITY — narrate the BEAT SUMMARY, in story order (this is critical)
+   Each beat gives you a SUMMARY: one factual, wiki-grounded sentence of what
+   happens in that beat. Narrate THAT event and nothing more. The beats are already
+   in correct story order — narrate them in that order; do not jump ahead or back.
+   - Do NOT invent a mechanism, object, or place not in the summary/wiki.
+       ✗ "the Lizard used a machine in a sewer lab to rip the symbiote away"
+         (no machine/sewer-lab in the summary) ✓ "the Lizard betrayed Ben and
+         bonded with the symbiote himself" (what the summary/wiki says)
+   - MATCH THE SEVERITY of the wiki. If the wiki says a character is KILLED, say
+     killed — do not soften to "incapacitated" / "defeated".
+   - Do NOT assert a state before it becomes true. A character is only "re-bonded"
+     AFTER the symbiote returns to them; do not say "fully rebonded" while the
+     villain still has the symbiote. Track who holds the symbiote at each beat.
+   - Do NOT narrate the same event twice (e.g. two scenes both saying the symbiote
+     rebonds with Ben). Each scene is a NEW story step.
+   If the summary and a panel description seem to disagree, the SUMMARY (wiki) wins.
+
+6.7) CONNECT CAUSE → EFFECT — no turn from nowhere (this makes the story land)
+   Each beat may carry a "WHY" (its cause/motive, from the wiki). When a beat is a
+   TURN — a character resents/betrays/decides, or a force changes sides — and the
+   reason is not already on screen, weave that WHY into the scene as ONE short
+   grounded clause. This is still ONE event (the turn) + its reason — NOT two events.
+     ✗ "But Ben resented Reed."  (out of nowhere — why?)
+     ✓ "But Ben resented Reed, the friend whose accident had made him the Thing,
+        for forgetting the anniversary."  (the turn + its grounded cause)
+     ✗ "Then the symbiote abandoned the Lizard and rebonded with Ben."  (why Ben?)
+     ✓ "Then the symbiote abandoned the Lizard and reclaimed Ben — the broken host
+        it had wanted all along."  (pays off the early 'perfect host' setup)
+   SET UP a motive before it pays off: if a later turn relies on an earlier motive
+   (the symbiote choosing Ben as its perfect host), PLANT that motive in the
+   COLD_OPEN / early scene using that beat's WHY, so the payoff feels earned.
+   A scene that carries a causal clause MAY run to ~24 words (others stay punchy,
+   ≤17). Never invent a cause not in the WHY/summary/wiki.
+
 6.5) FACT-CHECK SELF-PASS — before returning JSON
    For EACH scene you write, mentally verify:
    (a) Every named character actually appears in this panel's `characters` list (or page summary)
@@ -795,39 +1061,37 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    If a phrase isn't grounded, REPLACE it with a grounded one or REMOVE it. Better to write a less colorful but accurate scene than a vivid but invented one.
    The user has rejected past drafts that twisted the story. Accuracy beats flourish.
 
-7) LENGTH BUDGET — STRICT, CHANNEL-CALIBRATED — HARD CEILING
-   - **12-14 scenes** total (channel average 12; we allow 13-14 for canonical
-     coverage of climax beats).
-   - **175-195 words total — HARD CEILING. NOT FLEXIBLE.**
-     • Narration is spoken at a calm 1.1 pace (~2.9 words/second). A separate
-       teaser intro line is added on top of your draft, so YOUR body must stay
-       lean: >195 words → the final video overshoots the ~72s Shorts budget and
-       fails benchmark `duration_in_range`.
-     • If draft > 195 words → MUST trim. If draft < 175 → ADD scenes covering
-       missing canonical beats.
-   - Before returning JSON, COUNT your total words. If > 195, tighten the
-     longest 2-3 scenes (cut adjectives, drop secondary clauses, merge twins).
-     Keep ALL canonical beats — trim FLOURISH, not CONTENT.
-   - Sentence-by-sentence target distribution (11-13 scenes, 175-195 words):
-     • 2-3 PUNCH (5-10w)
-     • 6-8 MEDIUM (12-18w)
-     • 1 LONG (20-24w)
+7) LENGTH BUDGET — CHANNEL-CALIBRATED, CONNECTED-BUT-SNAPPY
+   - **12-15 scenes** total (one per beat; channel average 12, we allow more for
+     canonical coverage + causal setup beats).
+   - **165-230 words total.** A calm 1.1 pace (~2.9 wps) → ~63-78s. The extra room
+     over the old 195 ceiling is for CAUSAL clauses (the 'why' of each turn), NOT
+     for flourish. If draft > 230 → trim flourish. If < 165 → ADD a missing
+     canonical/causal beat (never pad with empty adjectives).
+   - Before returning JSON, COUNT your total words. If > 230, tighten by cutting
+     adjectives and any clause that is NOT a grounded cause; keep ONE event (+ its
+     why) per sentence. Keep ALL canonical beats.
+   - Sentence-by-sentence target distribution (12-15 scenes, 165-230 words):
+     • ≥3 PUNCH (≤11w)   ← REQUIRED, will be rejected if fewer
+     • most MEDIUM (12-17w)
+     • a few CAUSAL (≤24w: one event + its grounded 'why'); the hook may be ≤26w
      • 1 OUTRO (5-8w)
-   - Target ~68s spoken at ~2.9 words/second.
+   - Target ~65-75s spoken at ~2.9 words/second.
 
-8) PAGE/PANEL TAGGING
-   - Every scene maps to ONE (page_ref, panel_ref) — pick the most visually impactful panel of that beat.
-   - Every scene must reference its beat_id.
+8) BEAT TAGGING — you do NOT pick pages
+   - Write EXACTLY ONE scene per beat, in the given beat order, and tag it with
+     that beat's beat_id. That is your only structural job.
+   - DO NOT output page_ref or panel_ref. The page and panel each scene maps to
+     are assigned automatically from the beat — picking them is not your job and
+     any value you write is ignored. Spend that effort on the prose.
 
-8.5) PAGE COVERAGE — MANDATORY LINEAR FLOW
-   - Your scenes MUST move through the comic pages monotonically: each scene's
-     page_ref ≥ previous scene's page_ref.
-   - The gap between consecutive scenes' page_refs MUST be ≤ 5 pages. If a beat
-     genuinely requires skipping 6+ pages, INSERT a bridge sentence that summarizes
-     the skipped events. Example bridge: "Eventually, after [one-clause summary],
-     [next event]…"
-   - DO NOT jump from page 10 to page 32 without bridging — the viewer loses the
-     throughline and characters/items appear from nowhere.
+8.5) NARRATIVE FLOW — beats are already in reading order
+   - The beats are pre-sorted into the comic's reading order, so just narrate them
+     in sequence and the visuals will follow along page by page.
+   - Keep the throughline intact: don't introduce a person, place, or object the
+     viewer hasn't met without a half-clause that re-grounds them ("the symbiote
+     he had taken", "back at the lab"). No one and nothing should appear from
+     nowhere between consecutive scenes.
 
 9) CONTINUITY ANCHOR
    - For each scene from #2 onward, you will see a "prev_anchor" — the last 6-8 words of the previous scene. Continue from this thread; do not reset the subject without re-introducing them.
@@ -839,9 +1103,11 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
 11) VOICE & RHYTHM — channel-calibrated from 219 reference Shorts
 
-   11a. SENTENCE LENGTH VARIANCE — mix short + long
-        See rule 3 above. Target 2-3 punch sentences (5-12w), 6-8 medium (14-22w),
-        1-2 long (23-30w), 1 outro credit. Uniformity is the AI-tell.
+   11a. SENTENCE LENGTH VARIANCE — punchy, one event (+ optional why) each
+        See rule 3 above. ≥3 punch sentences (≤11w), most medium (12-17w), a few
+        causal (≤24w: one event + its grounded 'why'), 1 outro credit. ONE EVENT
+        per sentence (a cause/why clause is allowed; a second EVENT is not).
+        Uniformity is the AI-tell; cramming two events into one sentence is the bug.
 
    11b. STORYTELLER VOICE — not panel-reader
         After INTRODUCING a character by canonical name, switch to PRONOUNS
@@ -886,8 +1152,8 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
         Channel uses this in 100% of their videos. The outro scene MUST have:
           - text: "The comic is [actual comic title from COMIC CONTEXT]."
           - connective: null
-          - page_ref: same as the last narrative scene's page_ref
-          - panel_ref: any valid panel on that page
+          - beat_id: the last beat's id
+          (its page is assigned automatically — do NOT write page_ref/panel_ref.)
         Channel examples:
           "The comic is Spider-Man the Spider Shadow issue"
           "The comic is Cosmic Ghost"
@@ -915,32 +1181,59 @@ def write_scenes(
     lore_block = _lore_notes_block(comic_context, all_pages or [])
     few_shot = _load_few_shot_examples(n=2)  # v4: full scripts (2 × ~400w each)
 
+    # Give the WRITER the canonical wiki plot DIRECTLY (not just the outliner's
+    # distilled beats). The writer used to see only the short story_arc + the
+    # beat summaries — so when the outliner's distillation was lossy/wrong, the
+    # writer had no ground truth to write accurate, causally-connected prose from.
+    # Now it sees the full plot (trimmed) and must source every fact + 'why' here.
+    _plot = (comic_context.get("plot_summary") or "").strip()
+    _arc = (comic_context.get("summary", {}) or {}).get("story_arc", "").strip()
+    wiki_block = ""
+    if _plot or _arc:
+        wiki_block = ("CANONICAL WIKI PLOT (Marvel/DC Fandom — GROUND TRUTH; every "
+                      "fact AND every 'why'/motive in your narration MUST come from "
+                      "here, paraphrased):\n")
+        if _arc:
+            wiki_block += f"[arc] {_arc}\n\n"
+        if _plot:
+            wiki_block += f"[full plot] {_plot[:4800]}\n"
+
     user = (
         f"COMIC CONTEXT:\n{_ctx_block(comic_context)}\n\n"
+        + (f"{wiki_block}\n\n" if wiki_block else "")
         + (f"{lore_block}\n\n" if lore_block else "")
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + "\n"
-        f"BEATS (write one scene per beat, in order):\n{_beats_block(beats)}\n\n"
+        f"BEATS — write EXACTLY ONE scene for EACH beat, in this SAME order:\n{_beats_block(beats)}\n\n"
         f"GLOSSARY (use these exact names):\n{_glossary_block(glossary)}\n\n"
         + (f"{few_shot}\n\n" if few_shot else "")
-        + f"PAGE DETAIL (for picking the right panel_ref):\n{_pages_block_compact(story_pages)}\n\n"
+        + f"PAGE DETAIL (background grounding — what is actually on each page, so "
+        f"your prose stays factual):\n{_pages_block_compact(story_pages)}\n\n"
         f"WORD BUDGET: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} total words across all scenes.\n"
         f"CONNECTIVE WHITELIST (scene 2 onward MUST start with one): {', '.join(_CONNECTIVES)}.\n\n"
-        f"Write the script now. Return JSON in this exact shape:\n"
+        f"╔═══ STRICT 1-TO-1 OUTPUT (this is how scenes map to the video) ═══╗\n"
+        f"The \"scenes\" array MUST have EXACTLY {len(beats)} story scenes — ONE per beat,\n"
+        f"in the SAME ORDER as the beats above, PLUS the outro credit as the final\n"
+        f"element. scenes[0] narrates beat {beats[0].id}, scenes[1] narrates the next\n"
+        f"beat, and so on — POSITION IS BINDING. Do NOT merge two beats into one\n"
+        f"scene, do NOT split one beat into two scenes, do NOT reorder, do NOT skip a\n"
+        f"beat. Each scene tells ONLY its own beat's summary event (rule 6.6).\n"
+        f"╚════════════════════════════════════════════════════════════════╝\n"
+        f"DO NOT output page_ref or panel_ref — assigned from the beat (rule 8). "
+        f"Return JSON in this exact shape ({len(beats)} story scenes + 1 outro):\n"
         f"{{\n"
         f'  "title": "<short punchy title for this Short>",\n'
-        f'  "hook": "<scene 1 text, also stored in scenes[0].text>",\n'
+        f'  "hook": "<scenes[0] text — narrates the FIRST beat only>",\n'
         f'  "scenes": [\n'
-        f'    {{"text": "When ...", "page_ref": 3, "panel_ref": 0, "connective": null, "beat_id": 1}},\n'
-        f'    {{"text": "But ...", "page_ref": 3, "panel_ref": 2, "connective": "But", "beat_id": 2}},\n'
-        f"    ...,\n"
-        f'    {{"text": "[concrete final image scene]", "page_ref": <last>, "panel_ref": 0, "connective": "<conn>", "beat_id": <last>}},\n'
-        f'    {{"text": "The comic is <title>.", "page_ref": <last>, "panel_ref": 0, "connective": null, "beat_id": <last>}}\n'
+        f'    {{"text": "When ...", "connective": null, "beat_id": {beats[0].id}}},\n'
+        f'    {{"text": "But ...", "connective": "But", "beat_id": "<2nd beat id>"}},\n'
+        f"    ...  (one per beat, in order) ...,\n"
+        f'    {{"text": "The comic is <title>.", "connective": null, "beat_id": {beats[-1].id}}}\n'
         f"  ]\n"
         f"}}\n\n"
-        f"REMINDER: the FINAL scene MUST be the \"The comic is X.\" outro credit "
-        f"(5-8 words, connective=null). See rule 11g."
+        f"REMINDER: {len(beats)} story scenes (one per beat, in order) THEN the "
+        f"\"The comic is X.\" outro credit (5-8 words, connective=null). See rule 11g."
     )
 
     log(f"[stage4]   write prompt: {len(user)} chars, {len(beats)} beats")
@@ -987,6 +1280,7 @@ def _is_critical_error(msg: str) -> bool:
         "hallucination",             # LLM injected content not in source comic
         "wiki:",                     # phase E wiki cross-check found canonical mismatch
         "repeat the same content",   # two consecutive scenes restate the same beat/phrase
+        "narrates multiple events",  # single-event guard: >1 event in one sentence
     )
     return any(marker in m for marker in critical_markers)
 
@@ -1121,46 +1415,60 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         if not (floor <= wc <= _SCENE_MAX_WORDS):
             errors.append(f"scene {i} is {wc} words, want {floor}-{_SCENE_MAX_WORDS}")
 
-    if not (230 <= total_words <= 290):
-        errors.append(f"total words {total_words} not in 230..290")
+    # Total-words band — single source of truth, calibrated DOWN from the old
+    # 230..290 (which forced ~283-word, long, compound output). The body (this
+    # draft, pre-intro) targets _TARGET_WORDS_MIN.._TARGET_WORDS_MAX; allow a
+    # little slack on top so a 1-2 word overshoot doesn't churn the retry loop.
+    if not (_TARGET_WORDS_MIN <= total_words <= _TARGET_WORDS_MAX + 20):
+        errors.append(
+            f"total words {total_words} not in "
+            f"{_TARGET_WORDS_MIN}..{_TARGET_WORDS_MAX + 20}"
+        )
 
-    # Median sentence-length soft check (excluding hook).
+    # Median sentence-length soft check (excluding hook). Punchy target: most
+    # scenes 12-17w, so a median over _TARGET_SENT_LEN+3 (=16) means overstuffing.
     body_lens = [len(str(s.get("text", "")).split()) for s in scenes[1:]]
     if body_lens:
         med = statistics.median(body_lens)
-        if med > _TARGET_SENT_LEN + 3:  # 23+ median = overstuffing
+        if med > _TARGET_SENT_LEN + 3:
             errors.append(
                 f"median scene length {med:.0f}w > {_TARGET_SENT_LEN+3} "
-                f"(target {_TARGET_SENT_LEN}w; channel median 20w)"
+                f"(target {_TARGET_SENT_LEN}w; channel is punchy, one event/scene)"
             )
 
-    # MANDATORY: at least 1 long sentence (23-30 words) — channel signature
-    # (benchmark says ≥1 long sentence per script). Anti-uniformity guard.
-    all_lens = [len(str(s.get("text", "")).split()) for s in scenes]
-    long_count = sum(1 for l in all_lens if 23 <= l <= 30)
-    if long_count == 0:
+    # ANTI-UNIFORMITY toward SHORT: require >= _MIN_PUNCH_SCENES punch sentences
+    # (<= _PUNCH_MAX_WORDS). Replaces the old "must have >=1 long 23-30w sentence"
+    # rule, which actively caused multi-event cramming. Count body scenes only
+    # (exclude hook scene 1; the outro credit DOES count as a punch).
+    body_for_punch = [
+        len(str(s.get("text", "")).split())
+        for s in scenes[1:]
+        if not s.get("is_intro")
+    ]
+    punch_count = sum(1 for l in body_for_punch if l <= _PUNCH_MAX_WORDS)
+    if punch_count < _MIN_PUNCH_SCENES:
         errors.append(
-            "no long sentence (23-30 words) found — channel signature requires "
-            "at least 1 establishing/momentum sentence. Expand one medium scene."
+            f"only {punch_count} punch sentence(s) (≤{_PUNCH_MAX_WORDS}w); "
+            f"need ≥{_MIN_PUNCH_SCENES} — tighten the longest scenes into short, "
+            f"single-event lines (the channel signature). Do NOT pad to medium."
         )
 
     errors.extend(_detect_redundant_scenes(scenes))
+    errors.extend(_detect_multi_event(scenes))
 
-    # Defense-in-depth: scenes must not move backward in pages (Stage 5 is
-    # forward-only). Beats are page-sorted in outline_beats, so this should never
-    # fire — if it does, the writer reassigned page_ref out of order. Skip the
-    # intro (scene 1, cover) and outro (whole-page) which are bookends.
-    prev_pg = 0
-    for s in parsed.get("scenes") or []:
-        if s.get("is_intro") or s.get("is_outro"):
-            continue
-        pg = int(s.get("page_ref", 0) or 0)
-        if pg and pg < prev_pg:
+    # Structural order (replaces the old page-monotonic check). Narration now
+    # follows CAUSAL order, not page order, so page_ref may step backward (e.g. a
+    # LANDING splash on an earlier page than the CLIMAX kill panel) — that is fine.
+    # What must hold: the closing credit/outro is the LAST scene, and no outro
+    # appears mid-stream. (COLD_OPEN-first is guaranteed by _order_beats_canonical.)
+    all_scenes = parsed.get("scenes") or []
+    for i, s in enumerate(all_scenes):
+        is_last = (i == len(all_scenes) - 1)
+        if "comic is" in str(s.get("text", "")).lower() and not is_last:
             errors.append(
-                f"scene {s.get('scene_id','?')} page_ref={pg} goes backward "
-                f"(prev {prev_pg}) — non-monotonic page order"
+                f"scene {s.get('scene_id','?')} is the 'The comic is …' outro but "
+                f"is not the last scene — the credit must close the video"
             )
-        prev_pg = max(prev_pg, pg)
 
     return errors
 
@@ -1241,6 +1549,55 @@ def _detect_redundant_scenes(scenes: list[dict], threshold: int = 4) -> list[str
                     f"(shared: {', '.join(sorted(shared))}) — rewrite the later scene "
                     f"to advance the story instead of restating it"
                 )
+    return issues
+
+
+# Clause joiners that typically introduce a SECOND independent event (a new
+# subject doing a new action). Plain " and " is tracked separately because it
+# often just continues ONE subject ("crushed the gun and stormed out") and is
+# fine on its own — it only signals cramming when paired with one of these.
+_EVENT_JOINERS = (" while ", " as ", " before ", " after ", " then ", " and then ")
+
+
+def _detect_multi_event(scenes: list[dict]) -> list[str]:
+    """Single-event guard. Flags a body scene that narrates MORE THAN ONE event,
+    because each scene is one page held on screen for a few seconds and cannot
+    visually track two simultaneous actions (the "narration doesn't match the
+    scene" bug — e.g. Venom scene 7 narrated 3 events over one whole page).
+
+    Heuristic (deterministic, no LLM — runs every retry, can't throttle):
+    flag when the sentence is long (>16 words) AND it both subordinates a second
+    clause (while/as/then/before/after) AND coordinates another with 'and', OR it
+    stacks two+ subordinate joiners. Short single-event lines never trip it.
+    Errors flow into _retry_fix_with_wiki, which is told to split/trim to the
+    single most important action (never to add a scene — 1 beat → 1 scene)."""
+    issues: list[str] = []
+    for i, s in enumerate(scenes):
+        if i == 0 or s.get("is_intro") or s.get("is_outro"):
+            continue  # hook (scene 1) and bookends are exempt
+        text = str(s.get("text", "")).strip()
+        if "comic is" in text.lower():
+            continue  # outro credit (may not be flagged is_outro yet at validate time)
+        wc = len(text.split())
+        t = " " + text.lower() + " "
+        joins = sum(t.count(j) for j in _EVENT_JOINERS)
+        plain_and = t.count(" and ") - t.count(" and then ")  # don't double-count
+        # A CAUSAL scene is one event + one grounded 'why' clause (allowed, ≤24w);
+        # a CRAM is ≥2 independent events. Flag only a real cram: two+ subordinate
+        # event-joiners (while/as/then/before/after), or a long sentence (>18w) that
+        # stacks a joiner AND an 'and'. A single causal/relative clause ('whose…',
+        # 'for forgetting…', '— the host it wanted') adds no event-joiner, so it
+        # passes.
+        multi = joins >= 2 or (wc > 18 and (joins + plain_and) >= 2)
+        if multi:
+            sid = s.get("scene_id", i + 1)
+            issues.append(
+                f"scene {sid} narrates multiple EVENTS in one sentence "
+                f"({wc}w; clause-joiners={joins}, 'and'={plain_and}) — a single page "
+                f"can't show two actions. Keep ONE event (you MAY add one grounded "
+                f"'why' clause for its cause); drop the OTHER events (they belong to "
+                f"other beats). Do NOT add a scene — one beat maps to one scene."
+            )
     return issues
 
 
@@ -1450,11 +1807,14 @@ def _beats_block(beats: list[Beat]) -> str:
     for b in beats:
         kp = ", ".join(f"p{k.get('page')}.{k.get('panel')}" for k in b.key_panels) or "?"
         chars = ", ".join(b.characters_active) or "?"
-        out.append(
+        block = (
             f"beat {b.id} [{b.function}] {b.name}\n"
             f"  pages: {b.page_refs}  key_panels: {kp}  active: {chars}\n"
             f"  what happens: {b.summary}"
         )
+        if (b.cause or "").strip():
+            block += f"\n  WHY (cause/motive — weave in if this turn needs it): {b.cause}"
+        out.append(block)
     return "\n".join(out)
 
 
@@ -1695,6 +2055,18 @@ RULES:
     "the city watched in fear", "tongue extended mocking them" when no such
     detail appears in the plot. Grounded pronouns/connectives ("he", "then",
     "meanwhile") are FINE; invented events/feelings are NOT.
+  • STATE / POSSESSION TRACKING (flag as high severity): read the scenes IN ORDER
+    and track who holds the symbiote / who is transformed at each step. Flag a
+    scene that asserts a state BEFORE the wiki says it becomes true:
+      ✗ "Now fully rebonded, Ben…" while an earlier/later scene says the Lizard
+        still has the symbiote — the rebond only happens AFTER the villain's attack.
+      ✗ The opening hook saying a character did something they only do LATER
+        ("Ben set it free") before the scene where they discover it.
+  • DUPLICATE EVENT (flag): two scenes narrating the SAME story beat (e.g. both
+    say the symbiote rebonds with Ben). Keep one; the other must advance the story.
+  • INVENTED MECHANISM (flag): a device/object/location not in the wiki ("a machine
+    to rip the symbiote away", "a sewer lab") when the wiki states a simpler fact
+    ("bonded with the symbiote himself").
   • If everything is canonical and grounded: {"issues": [], "missing_beats": []}"""
 
 
@@ -1863,8 +2235,13 @@ def _retry_fix_with_wiki(
         f"HARD RULES (these don't change between retries):\n"
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
-        f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words. Last scene may dip to 8.\n"
-        f"- Total: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} words (HARD ceiling — calm 1.1 pace). 11-13 scenes.\n"
+        f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words (punch lines may be as short as {_SCENE_MIN_WORDS}; NO scene over {_SCENE_MAX_WORDS}).\n"
+        f"- Total: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} words (HARD ceiling — calm 1.1 pace). 12-14 scenes.\n"
+        f"- ONE EVENT PER SENTENCE. If a 'narrates multiple events' error is listed, "
+        f"keep ONLY that beat's single most important action as a punchy line and "
+        f"drop the other clauses — do NOT add a scene (one beat → one scene).\n"
+        f"- ≥{_MIN_PUNCH_SCENES} sentences must be ≤{_PUNCH_MAX_WORDS} words (punch). "
+        f"Tighten long scenes into short single-event lines; never pad short ones.\n"
         f"- ANCHOR every claim to the canonical wiki plot above. Do NOT invent.\n"
         f"- Include missing canonical beats (anniversary, Sue Storm, Lizard's machine, etc.) if flagged.\n"
         f"- CRITICAL — NO two consecutive scenes may restate the same beat. If a "

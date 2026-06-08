@@ -1,4 +1,5 @@
 """Shot list construction and per-shot ffmpeg Ken Burns rendering."""
+import json
 import os
 import re
 import shutil
@@ -192,6 +193,80 @@ def _build_shots_per_scene(
     return shots
 
 
+def _llm_assign_panels(narration: dict, pages_by_number: dict[int, dict],
+                       cluster_to_name: dict[int, str] | None = None) -> dict[int, tuple[int, int]]:
+    """ONE global LLM call: assign each narration scene → the (page, panel_index)
+    that DEPICTS it, by reading every story panel's description.
+
+    Embedding cosine can't disambiguate panels in an entity-homogeneous comic
+    (every panel says Ben/Reed/symbiote → similarity is dominated by shared
+    nouns, not the distinguishing ACTION). An LLM reading the now-detailed
+    descriptions reasons about the action ("raises the sonic gun" → the sonic-gun
+    panel). Returns {scene_id: (page, idx)}; empty on any failure → caller falls
+    back to the heuristic _select_panel_for_chunk."""
+    scenes = [s for s in (narration.get("scenes") or [])
+              if not s.get("is_intro") and not s.get("is_outro")]
+    if not scenes or not pages_by_number:
+        return {}
+    beats = {int(b.get("id", 0) or 0): b for b in (narration.get("beats") or [])}
+    cat: list[str] = []
+    valid: set[tuple[int, int]] = set()
+    for pn in sorted(pages_by_number):
+        page = pages_by_number[pn]
+        if _is_skip_page(page):
+            continue
+        for idx, panel in enumerate(page.get("panels") or []):
+            desc = str(panel.get("description", "") or "").strip()
+            if not desc:
+                continue
+            chars = ", ".join(panel.get("characters", []) or [])
+            cat.append(f"p{pn}#{idx} [{chars}]: {desc[:160]}")
+            valid.add((pn, idx))
+    if not cat:
+        return {}
+    sl = []
+    for s in scenes:
+        beat = beats.get(int(s.get("beat_id", 0) or 0), {})
+        sl.append(f"S{s.get('scene_id')}: {s.get('text','')}   (beat: {(beat.get('summary','') or '')[:120]})")
+    prompt = (
+        "Match each NARRATION scene to the comic PANEL that depicts it.\n\n"
+        "NARRATION SCENES (story order):\n" + "\n".join(sl) + "\n\n"
+        "PANELS (reading order — label [characters]: description):\n" + "\n".join(cat) + "\n\n"
+        "For EACH scene pick the ONE panel whose description best DEPICTS its ACTION "
+        "(match verb + object: 'raises the sonic gun' → the panel showing the sonic gun "
+        "raised; 'crushed the gun' → the gun being crushed). Rules:\n"
+        "- CONTENT MATCH WINS — choose the panel that truly depicts the line, even if its "
+        "page is earlier than the previous scene's.\n"
+        "- Reading order is only a tie-break between equally-good panels.\n"
+        "- Avoid giving two scenes the same panel unless nothing else fits.\n"
+        "Return ONLY JSON mapping every scene: {\"S2\":\"p3#3\", \"S3\":\"p6#2\", ...}."
+    )
+    try:
+        from stages.stage_3._llm import call_with_chain
+        raw, _ = call_with_chain(
+            system="You match narration lines to the comic panels that depict them. Return only JSON.",
+            user=prompt, max_tokens=900, label="panel-assign",
+        )
+    except Exception:
+        return {}
+    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    if not m:
+        return {}
+    try:
+        mp = json.loads(m.group(0))
+    except Exception:
+        return {}
+    out: dict[int, tuple[int, int]] = {}
+    for k, v in mp.items():
+        sid = int(re.sub(r"[^0-9]", "", str(k)) or 0)
+        mm = re.match(r"\s*p(\d+)#(\d+)", str(v))
+        if sid and mm:
+            pg, ix = int(mm.group(1)), int(mm.group(2))
+            if (pg, ix) in valid:
+                out[sid] = (pg, ix)
+    return out
+
+
 def _build_shots_per_chunk(
     narration: dict,
     caption_chunks: list[dict],
@@ -250,6 +325,21 @@ def _build_shots_per_chunk(
     prev_panel: dict | None = None
     shot_id = 0
 
+    # PRIMARY panel selection: one global LLM call assigns each scene → the panel
+    # that depicts it (reads detailed descriptions, reasons about the action — beats
+    # embedding cosine, which collapses to "magnet" panels in an entity-homogeneous
+    # comic). Heuristic _select_panel_for_chunk is the per-scene fallback.
+    llm_panels = _llm_assign_panels(narration, pages_by_number or {}, cluster_to_name or {})
+
+    def _resolve(pg_ix):
+        pg, ix = pg_ix
+        page = (pages_by_number or {}).get(pg) or {}
+        panels = page.get("panels") or []
+        if 0 <= ix < len(panels):
+            pnl = dict(panels[ix]); pnl["_page_number"] = pg; pnl["index"] = ix
+            return pnl, str(page.get("source_image") or "")
+        return None, ""
+
     for scene, members in groups:
         total_dur = sum(m[2] for m in members)
         # E: one held panel per scene; a long scene (≥ threshold and ≥2 chunks)
@@ -261,14 +351,19 @@ def _build_shots_per_chunk(
         for slice_members in _split_members(members, n_panels):
             slice_text = " ".join(m[0] for m in slice_members).strip()
             slice_dur = sum(m[2] for m in slice_members)
-            panel, source_image = _select_panel_for_chunk(
-                chunk_text=slice_text,
-                scene=scene,
-                pages_by_number=pages_by_number or {},
-                used_panel_keys=used_global,
-                prev_panel=prev_panel,
-                cluster_to_name=cluster_to_name or {},
-            )
+            _sid = int(scene.get("scene_id") or 0)
+            panel = source_image = None
+            if _sid in llm_panels:
+                panel, source_image = _resolve(llm_panels[_sid])
+            if panel is None:   # LLM had no usable pick → heuristic fallback
+                panel, source_image = _select_panel_for_chunk(
+                    chunk_text=slice_text,
+                    scene=scene,
+                    pages_by_number=pages_by_number or {},
+                    used_panel_keys=used_global,
+                    prev_panel=prev_panel,
+                    cluster_to_name=cluster_to_name or {},
+                )
             prev_panel = panel  # track for next slice's coherence score
             text_bboxes: list[dict] = []
             if panel is None:
@@ -1003,6 +1098,7 @@ def _prepare_panel_frame(panel_png: Path, out_path: Path) -> Path:
 
 _LAMA = None          # lazy SimpleLama singleton
 _LAMA_FAILED = False   # set once if LaMa is unavailable → caller falls back
+_CLEAN_PANEL_CACHE: dict[tuple, "Path"] = {}  # (src,bbox,text,mirror) → cleaned PNG
 
 
 def _lama_clean(img_bgr, text_bboxes, iw: int, ih: int):
@@ -1048,12 +1144,30 @@ def _lama_clean(img_bgr, text_bboxes, iw: int, ih: int):
 
 def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
                 text_bboxes: list[dict] | None = None) -> Path:
-    """Crop one panel from the source page, after (1) inpainting the comic's own
-    speech-bubble text out and (2) mirroring it horizontally. Uses OpenCV; falls
-    back to a plain PIL crop (no inpaint/mirror) if cv2 is unavailable."""
+    """Crop one panel from the source page, then (1) inpaint the comic's own
+    speech-bubble text out of the CROP and (2) mirror it horizontally. Uses
+    OpenCV; falls back to a plain PIL crop (no inpaint/mirror) if cv2 is missing.
+
+    PERF (A): inpaint runs on the small CROP, not the whole page — LaMa is the
+    dominant cost and a panel is a fraction of the page (~5× faster). PERF (B):
+    the cleaned result is cached by (source, bbox, text, mirror) so a panel shown
+    across several shots/scenes is inpainted ONCE, then copied."""
     src = Path(source_image)
     if not src.exists():
         raise FileNotFoundError(f"source image missing: {src}")
+
+    # (B) cache — same panel crop reused across shots → inpaint once, copy after.
+    cache_key = (
+        str(src), int(bbox.get("x", 0)), int(bbox.get("y", 0)),
+        int(bbox.get("w", 0)), int(bbox.get("h", 0)), bool(MIRROR_PANELS),
+        bool(INPAINT_BUBBLE_TEXT),
+        tuple((int(b.get("x", 0)), int(b.get("y", 0)), int(b.get("w", 0)), int(b.get("h", 0)))
+              for b in (text_bboxes or [])),
+    )
+    cached = _CLEAN_PANEL_CACHE.get(cache_key)
+    if cached is not None and Path(cached).exists():
+        shutil.copyfile(str(cached), str(out_path))
+        return out_path
 
     try:
         import cv2
@@ -1070,25 +1184,8 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
 
     if cv2 is not None:
         ih, iw = img.shape[:2]
-        # 1. Inpaint each text bbox → erase dialogue, keep the bubble/box.
-        if INPAINT_BUBBLE_TEXT and text_bboxes:
-            # Primary: LaMa deep inpainting (seamless). cv2 is only an emergency
-            # fallback for machines without the LaMa model.
-            cleaned = _lama_clean(img, text_bboxes, iw, ih)
-            if cleaned is not None:
-                img = cleaned
-            else:
-                mask = np.zeros((ih, iw), np.uint8)
-                for tb in text_bboxes:
-                    x, y = int(tb.get("x", 0)), int(tb.get("y", 0))
-                    w, h = int(tb.get("w", 0)), int(tb.get("h", 0))
-                    if w <= 0 or h <= 0:
-                        continue
-                    cv2.rectangle(mask, (max(0, x - 4), max(0, y - 4)),
-                                  (min(iw, x + w + 4), min(ih, y + h + 4)), 255, -1)
-                if mask.any():
-                    img = cv2.inpaint(img, mask, 6, cv2.INPAINT_NS)
-        # 2. Crop the panel region (with padding).
+        # 1. Crop the panel region (with padding) FIRST — so inpaint works on a
+        #    small image, not the whole page.
         x = int(bbox.get("x", 0)); y = int(bbox.get("y", 0))
         w = int(bbox.get("w", 0)); h = int(bbox.get("h", 0))
         if w <= 0 or h <= 0:
@@ -1097,12 +1194,39 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
         left = max(0, x - pad_x); top = max(0, y - pad_y)
         right = min(iw, x + w + pad_x); bottom = min(ih, y + h + pad_y)
         crop = img[top:bottom, left:right]
+        ch, cw = crop.shape[:2]
+        # 2. Inpaint text bboxes → erase dialogue. Page-coordinate text bboxes are
+        #    translated into CROP-LOCAL coords and clipped to the crop.
+        if INPAINT_BUBBLE_TEXT and text_bboxes and cw > 0 and ch > 0:
+            local: list[dict] = []
+            for tb in text_bboxes:
+                tx, ty = int(tb.get("x", 0)), int(tb.get("y", 0))
+                tw, th = int(tb.get("w", 0)), int(tb.get("h", 0))
+                ix0 = max(tx, left); iy0 = max(ty, top)
+                ix1 = min(tx + tw, right); iy1 = min(ty + th, bottom)
+                if ix1 > ix0 and iy1 > iy0:
+                    local.append({"x": ix0 - left, "y": iy0 - top,
+                                  "w": ix1 - ix0, "h": iy1 - iy0})
+            if local:
+                cleaned = _lama_clean(crop, local, cw, ch)
+                if cleaned is not None:
+                    crop = cleaned
+                else:
+                    mask = np.zeros((ch, cw), np.uint8)
+                    for tb in local:
+                        cx, cy = tb["x"], tb["y"]
+                        cv2.rectangle(mask, (max(0, cx - 4), max(0, cy - 4)),
+                                      (min(cw, cx + tb["w"] + 4), min(ch, cy + tb["h"] + 4)),
+                                      255, -1)
+                    if mask.any():
+                        crop = cv2.inpaint(crop, mask, 6, cv2.INPAINT_NS)
         # 3. Mirror horizontally.
         if MIRROR_PANELS:
             crop = cv2.flip(crop, 1)
         ok, buf = cv2.imencode(".png", crop)
         if ok:
             buf.tofile(str(out_path))
+            _CLEAN_PANEL_CACHE[cache_key] = out_path   # (B) remember for reuse
             return out_path
         # encode failed → fall through to PIL
 

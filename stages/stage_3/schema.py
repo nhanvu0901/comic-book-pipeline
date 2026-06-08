@@ -22,6 +22,7 @@ class Scene:
     connective: str | None = None  # required for scene_id >= 2 (But/However/As/...)
     beat_id: int = 0               # links back to Beat.id from Phase A
     is_intro: bool = False         # teaser opener ("Ever wonder...?") shown over the cover
+    is_outro: bool = False         # closing credit ("The comic is X.") over the final splash
 
 
 @dataclass
@@ -33,6 +34,8 @@ class Beat:
     key_panels: list[dict] = field(default_factory=list)  # [{"page": int, "panel": int}]
     summary: str = ""
     characters_active: list[str] = field(default_factory=list)
+    cause: str = ""                # wiki-grounded motive/reason this beat happens
+                                   # (the "why") — lets the writer connect cause→effect
 
 
 @dataclass

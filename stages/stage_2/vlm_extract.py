@@ -70,8 +70,14 @@ STEP 1 — Classify the page into ONE of three types:
 
 STEP 2 — For cover + story pages ONLY, do this:
 
-  2a. For EACH panel: write a one-sentence visual description, list characters present,
-      and name the dominant emotion.
+  2a. For EACH panel: write a SELF-CONTAINED 1-2 sentence visual description that
+      NAMES the character(s) (no bare pronouns), leads with the SPECIFIC ACTION (a
+      concrete verb — raises, opens, crushes, fires, bites, grabs — not a mood like
+      "expresses frustration"), and NAMES the defining OBJECT/PROP (sonic gun,
+      canister, specimen cage, the machine). Make it distinctive enough to tell this
+      panel apart from its neighbors. Then list characters present and dominant emotion.
+      Good: "Reed Richards raises a sonic gun at the symbiote-covered Thing."
+      Bad:  "He expresses frustration." / "The Venomized Thing looks menacing."
   2b. Extract EVERY visible text element (speech bubbles, narration/caption boxes,
       SFX text, cover title/subtitle/credits). For each: classify type, identify the
       speaker (null for narration/sfx/caption/title), and assign it to the panel whose
@@ -288,7 +294,27 @@ def extract_page(
 _BATCH_SYSTEM_PROMPT = """You are a comic book reader analyst. You receive N comic pages in reading order, plus per-page panel bounding boxes and optionally a STORY CONTEXT block, a PRIOR PAGE block, or a RUNNING NARRATIVE STATE from earlier pages.
 
 CRITICAL READING-FLOW RULE — this is why you are batched, not asked per-page:
-You are simulating how a human reader experiences these pages back-to-back. Each panel description must read as a continuation of the panel before it (within and across pages). Do NOT describe panels as isolated facts. Use pronouns, named characters, and connective phrasing exactly as a human narrator would — "He then…", "Across the room…", "The next page opens with…". When a character was introduced earlier, later panels should reference them by name or pronoun, not redescribe them.
+You are simulating how a human reader experiences these pages back-to-back. Carry
+the story thread across pages in the `page_summary` and `running_state` fields
+(those may use pronouns and "He then…" / "Across the room…" connective phrasing).
+
+BUT the per-panel `description` field is DIFFERENT — it is a SELF-CONTAINED,
+DISTINCTIVE caption used later to MATCH this exact panel against a narration line,
+so it must stand on its own:
+  • NAME the character(s) explicitly every time — never a bare pronoun ("Reed
+    Richards", not "He"). The description must be understandable without the panel
+    before it.
+  • Lead with the SPECIFIC ACTION of THIS panel — a concrete verb (raises, opens,
+    crushes, fires, bites, grabs, recoils, points, lunges, kneels), NOT a mood word
+    ("expresses frustration", "looks determined" are too vague and look identical
+    across panels).
+  • NAME the distinctive OBJECT / PROP in play — sonic gun, canister, specimen
+    cage, the machine, severed arm, sewer grate. These props are how a line is
+    matched to its panel, so always include the one that defines the moment.
+  • Make it TELL-APART-ABLE: if this panel resembles its neighbor, state what is
+    different (who reacts, what changed, the new action). Two adjacent panels must
+    never get near-identical descriptions.
+DO NOT invent — only describe what is visibly happening in THIS panel's image.
 
 PRIOR PAGE OVERLAP RULE — when a PRIOR PAGE block is present in the user message:
   • The first image in the batch is the prior page (already analyzed). It is included so you can see it visually for continuity, AND its structured data is provided as text.
@@ -311,8 +337,15 @@ PER-PAGE STEPS (apply to each page independently for classification, but write d
     (skip) unless it unmistakably continues the story with sequential panels.
 
   STEP 2 — For "cover" + "story" pages:
-    2a. Per panel: one-sentence description, character list, dominant emotion.
-        Descriptions chain — panel N+1 continues panel N's thread.
+    2a. Per panel: a SELF-CONTAINED 1-2 sentence description (see the READING-FLOW
+        rule above) — named character(s) + the specific ACTION + the defining
+        OBJECT/PROP, distinctive enough to tell this panel apart from its neighbors.
+        Then the character list and dominant emotion.
+        Examples (good): "Reed Richards raises a sonic gun at the symbiote-covered
+        Thing." / "Ben Grimm pulls the cloth off a glass specimen cage holding the
+        Venom symbiote." / "The Venomized Thing crushes the sonic gun in his fist."
+        Examples (BAD, too vague): "He expresses frustration." / "The Venomized
+        Thing looks menacing." / "Reed reacts with concern."
     2b. Extract every text element (speech, narration, sfx, caption, title) into text_blocks, assigned to panel_index.
     2c. A 2-3 sentence page_summary that recaps what happened on THIS page in plain prose.
 
@@ -328,7 +361,7 @@ _BATCH_RESPONSE_SCHEMA = """{
       "page_type": "cover" | "story" | "skip",
       "skip_reason": "" | "advertisement" | "recap" | "next_issue_preview" | "letter_column" | "solicit_credits" | "blank_filler",
       "panels": [
-        {"index": 0, "description": "...", "characters": ["..."], "dominant_emotion": "..."}
+        {"index": 0, "description": "<named character + specific action + defining object, self-contained>", "characters": ["..."], "dominant_emotion": "..."}
       ],
       "text_blocks": [
         {"panel_index": 0, "type": "speech", "speaker": "...", "text": "..."}
