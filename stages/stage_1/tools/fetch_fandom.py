@@ -66,8 +66,13 @@ def _http_get_json(url: str) -> dict | None:
     return None
 
 
-def _search_wiki(wiki: str, query: str) -> str | None:
-    """Search a Fandom wiki for the best matching article title."""
+def _search_wiki(wiki: str, query: str) -> list[str]:
+    """Search a Fandom wiki, returning ALL candidate article titles (best first).
+
+    Returns a list (not just the top hit): on Marvel the #1 hit is often the
+    VOLUME container page ("... Vol 1", no |Synopsis1=), while the real plot
+    lives on the ISSUE page ("... Vol 1 1") ranked #2. The caller iterates these
+    candidates until one yields a usable synopsis."""
     params = urllib.parse.urlencode({
         "action": "query",
         "list": "search",
@@ -79,13 +84,9 @@ def _search_wiki(wiki: str, query: str) -> str | None:
     url = f"https://{wiki}/api.php?{params}"
     payload = _http_get_json(url)
     if not payload:
-        return None
+        return []
     hits = payload.get("query", {}).get("search", [])
-    for hit in hits:
-        title = hit.get("title", "").strip()
-        if title:
-            return title
-    return None
+    return [t for hit in hits if (t := hit.get("title", "").strip())]
 
 
 def _parse_wikitext(wiki: str, title: str) -> str | None:
@@ -169,52 +170,60 @@ def fetch_fandom(query: str, publisher: str = "") -> dict:
 
     for wiki in order:
         sources_checked.append(f"search:{wiki}")
-        title = _search_wiki(wiki, query)
-        if not title:
-            print(f"  {Colors.DIM}📚 Fandom: {wiki} miss{Colors.END}")
-            continue
-        if not _title_matches(query, title):
-            print(f"  {Colors.DIM}📚 Fandom: {wiki} irrelevant hit {title!r} — skip{Colors.END}")
-            continue
-
-        sources_checked.append(f"parse:{title}")
-        wikitext = _parse_wikitext(wiki, title)
-        if not wikitext:
+        candidates = _search_wiki(wiki, query)
+        if not candidates:
             print(f"  {Colors.DIM}📚 Fandom: {wiki} miss{Colors.END}")
             continue
 
-        synopsis = _extract_synopsis1(wikitext)
-        source = "fandom_synopsis1"
-        if not synopsis or len(synopsis) < _MIN_PLOT_CHARS:
-            # Non-Marvel wikis (powerrangers, starwars, ...) use ==Plot==/==Synopsis==
-            # sections instead of the |Synopsis1= infobox field.
-            synopsis = _extract_section(wikitext)
-            source = "fandom_section"
-        # TPB fallback: a Marvel search often returns the COLLECTED edition page
-        # ("... TPB Vol 1 1") whose Synopsis1 is empty — the real plot lives on
-        # the single-issue page ("... Vol 1 1"). Retry without "TPB".
-        if (not synopsis or len(synopsis) < _MIN_PLOT_CHARS) and "TPB" in title:
-            alt = title.replace("TPB ", "").replace(" TPB", "").strip()
-            alt_wt = _parse_wikitext(wiki, alt)
-            if alt_wt:
-                alt_syn = _extract_synopsis1(alt_wt) or _extract_section(alt_wt)
-                if alt_syn and len(alt_syn) >= _MIN_PLOT_CHARS:
-                    synopsis, title, source = alt_syn, alt, "fandom_synopsis1_detpb"
-        if not synopsis or len(synopsis) < _MIN_PLOT_CHARS:
-            print(f"  {Colors.DIM}📚 Fandom: {wiki} miss{Colors.END}")
-            continue
+        # Try each candidate in rank order until one yields a usable synopsis.
+        # The #1 hit is often a VOLUME stub ("... Vol 1") with no |Synopsis1=;
+        # the real plot lives on the ISSUE page ("... Vol 1 1") ranked lower.
+        matched_any = False
+        for title in candidates:
+            if not _title_matches(query, title):
+                continue
+            matched_any = True
+            sources_checked.append(f"parse:{title}")
+            wikitext = _parse_wikitext(wiki, title)
+            if not wikitext:
+                continue
 
-        cleaned = _strip_wiki_links(synopsis).strip()
-        url = _page_url(wiki, title)
-        print(f"  {Colors.DIM}📚 Fandom: {wiki} ✓ ({len(cleaned)} chars, {source}){Colors.END}")
-        return {
-            "plot_text": cleaned,
-            "plot_length": len(cleaned),
-            "wiki_url": url,
-            "title": title,
-            "source": source,
-            "sources_checked": sources_checked,
-        }
+            synopsis = _extract_synopsis1(wikitext)
+            source = "fandom_synopsis1"
+            if not synopsis or len(synopsis) < _MIN_PLOT_CHARS:
+                # Non-Marvel wikis (powerrangers, starwars, ...) use ==Plot==/==Synopsis==
+                # sections instead of the |Synopsis1= infobox field.
+                synopsis = _extract_section(wikitext)
+                source = "fandom_section"
+            # TPB fallback: a Marvel search often returns the COLLECTED edition page
+            # ("... TPB Vol 1 1") whose Synopsis1 is empty — the real plot lives on
+            # the single-issue page ("... Vol 1 1"). Retry without "TPB".
+            if (not synopsis or len(synopsis) < _MIN_PLOT_CHARS) and "TPB" in title:
+                alt = title.replace("TPB ", "").replace(" TPB", "").strip()
+                alt_wt = _parse_wikitext(wiki, alt)
+                if alt_wt:
+                    alt_syn = _extract_synopsis1(alt_wt) or _extract_section(alt_wt)
+                    if alt_syn and len(alt_syn) >= _MIN_PLOT_CHARS:
+                        synopsis, title, source = alt_syn, alt, "fandom_synopsis1_detpb"
+            if not synopsis or len(synopsis) < _MIN_PLOT_CHARS:
+                continue  # this candidate had no plot — try the next hit
+
+            cleaned = _strip_wiki_links(synopsis).strip()
+            url = _page_url(wiki, title)
+            print(f"  {Colors.DIM}📚 Fandom: {wiki} ✓ ({len(cleaned)} chars, {source}){Colors.END}")
+            return {
+                "plot_text": cleaned,
+                "plot_length": len(cleaned),
+                "wiki_url": url,
+                "title": title,
+                "source": source,
+                "sources_checked": sources_checked,
+            }
+
+        if not matched_any:
+            print(f"  {Colors.DIM}📚 Fandom: {wiki} irrelevant hit {candidates[0]!r} — skip{Colors.END}")
+        else:
+            print(f"  {Colors.DIM}📚 Fandom: {wiki} miss{Colors.END}")
 
     return {
         "plot_text": "",
