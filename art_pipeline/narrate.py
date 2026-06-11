@@ -2,16 +2,19 @@
 so Stage 4 TTS + Stage 5 video consume it unchanged).
 
 Reused read-only from the comic pipeline: call_with_chain (LLM fallback chain),
-semantic_sim (embedding region grounding), Narration/Scene dataclasses.
-Prompts, validators, and word budgets are art-specific (spec §6 / risk table)."""
+Narration/Scene dataclasses.
+Prompts, validators, and word budgets are art-specific (spec §6 / risk table).
+
+v2 (2026-06-11): each scene declares a "visual" object; variety is validated;
+visual_plan.json sidecar is written; embedding grounding removed."""
 import json
 
 from config import CREATIVE_LLM_MODELS
-from stages._embedding import semantic_sim
 from stages.stage_3._llm import call_with_chain
 from stages.stage_3.schema import Narration, Scene
 
 from ._json import extract_json as _extract_json
+from .visual_plan import assign_motions, parse_visual, save_plan, validate_variety
 
 from .config import (
     ART_MIN_SCENES, ART_MODES_BY_KEY, ART_SCENE_MAX_WORDS, ART_TARGET_WORDS_MAX,
@@ -37,12 +40,29 @@ about artworks. Neutral, educational, precise — never sensational, never inven
 Hard rules:
 1. EVERY factual claim must come from the GROUNDED FACTS block. No outside facts,
    no speculation, no legends presented as fact.
-2. One idea per scene. Scene length 5-{scene_max} words. Total body {wmin}-{wmax} words.
-3. Each scene carries page_ref and panel_ref pointing at the REGION CATALOG entry
-   it should be shown over. Use panel_ref -1 if no specific region fits.
-4. Scene 1 is the hook (is_intro=true): a surprising verified fact, 10-26 words.
-5. Last scene (is_outro=true) names the artwork and that it is in The Met.
-6. Educational register: explain terms in-line, no hype words (insane, epic).
+2. Write 10-14 short scenes. One idea per scene, 8-18 words each (hard cap
+   {scene_max}). Total body {wmin}-{wmax} words. Short scenes = fast visual cuts.
+3. EVERY scene carries a "visual" object declaring what is on screen:
+   - {{"kind": "painting_region", "panel_ref": N}} — the scene talks about THAT
+     region of the painting (REGION CATALOG below). The video will ZOOM into it.
+   - {{"kind": "painting_full"}} — the whole artwork. ONLY for the intro, the
+     outro, and at most ONE mid-video scene.
+   - {{"kind": "related", "subject": "<specific image to find on the web>"}} —
+     the scene talks about the artist, the era, a place, a technique, an x-ray
+     finding. Subject must be a concrete searchable description, e.g.
+     "photograph portrait of Georges Seurat" or "Circus Sideshow x-ray analysis".
+4. VARIETY IS MANDATORY: no two consecutive scenes may show the same thing; each
+   painting region may be used at most once; related subjects must all differ.
+5. The painting is the star: use related images for genuine reveals (artist,
+   x-ray, historical context), not as filler. Let the content decide the mix.
+6. Scene 1 is the hook (is_intro=true), max 26 words: a pattern-interrupt — name
+   a concrete, surprising, verified detail of THIS painting ("This painting
+   hides X — here's where"), never a generic opener. The hook MUST mention the
+   artwork's title or the artist's name.
+7. Last scene (is_outro=true) names the artwork and that it is in The Met.
+8. Each scene also carries page_ref (the artwork's page) and, for
+   painting_region, panel_ref matching its visual. Use panel_ref -1 otherwise.
+9. Educational register: explain terms in-line, no hype words (insane, epic).
 Respond with ONLY valid JSON."""
 
 _MODE_BLOCKS = {
@@ -93,24 +113,22 @@ def _to_int(val, *, what: str, scene: int) -> int:
         raise ValueError(f"narration: scene {scene} non-integer {what}: {val!r}")
 
 
-def ground_panel_ref(scene_text: str, page: dict) -> int:
-    """Embedding-pick the best region for a scene the LLM left unassigned (-1)."""
-    panels = page.get("panels") or []
-    if not panels:
-        return -1
-    best_i, best_s = -1, 0.35  # below this similarity, keep whole-page (-1)
-    for pn in panels:
-        s = semantic_sim(scene_text, pn.get("description") or "")
-        if s > best_s:
-            best_i, best_s = int(pn["index"]), s
-    return best_i
+def _hook_is_concrete(hook: str, ctx: dict) -> bool:
+    """Pattern-interrupt gate: the hook must reference THIS artwork — an artist
+    name token or a title content word. Generic openers ('Ever wonder…') fail."""
+    low = " " + " ".join(hook.lower().split()) + " "
+    names = [c.get("name", "") for c in (ctx.get("summary") or {}).get("characters") or []]
+    tokens: set[str] = set()
+    for src in [ctx.get("title") or ""] + names:
+        tokens.update(w for w in src.lower().replace(",", " ").split() if len(w) >= 4)
+    return any(f" {t} " in low or f" {t}'" in low for t in tokens)
 
 
 def build_narration_from_raw(
     raw: str, pages: list[dict], ctx: dict, mode_key: str,
     project_name: str, model_used: str, *, log=print,
-) -> dict:
-    """Parse + validate LLM output, embed-ground -1 panel refs, emit Narration dict.
+) -> tuple[dict, list[dict]]:
+    """Parse + validate LLM output, build visual plan, emit (Narration dict, plan).
     Raises ValueError with a specific message on any contract violation."""
     data = _extract_json(raw)
     if data is None:
@@ -121,6 +139,7 @@ def build_narration_from_raw(
 
     by_number = {p["page_number"]: p for p in pages}
     scenes: list[Scene] = []
+    plan: list[dict] = []
     total_words = 0
     for i, s in enumerate(scenes_raw, start=1):
         text = str(s.get("text") or "").strip()
@@ -133,12 +152,24 @@ def build_narration_from_raw(
         if pref not in by_number:
             raise ValueError(f"narration: scene {i} bad page_ref {pref}")
         page = by_number[pref]
-        panel_ref = _to_int(s.get("panel_ref", -1), what="panel_ref", scene=i)
-        n_panels = len(page.get("panels") or [])
-        if panel_ref >= n_panels:
+
+        # Parse visual declaration (raises on unknown kind / missing required fields)
+        decl = parse_visual(s.get("visual") or {}, scene_id=i)
+
+        # Resolve panel_ref from visual declaration
+        if decl["kind"] == "painting_region":
+            n_panels = len(page.get("panels") or [])
+            if decl["panel_ref"] >= n_panels:
+                raise ValueError(
+                    f"narration: scene {i} visual panel_ref {decl['panel_ref']} out of range"
+                    f" (page {pref} has {n_panels} panels)"
+                )
+            panel_ref = decl["panel_ref"]
+        else:
+            # related and painting_full: no region grounding, keep -1
             panel_ref = -1
-        if panel_ref == -1:
-            panel_ref = ground_panel_ref(text, page)
+
+        plan.append(decl)
         total_words += wc
         scenes.append(Scene(
             scene_id=i, text=text, page_ref=pref, panel_ref=panel_ref,
@@ -146,6 +177,20 @@ def build_narration_from_raw(
             connective=_starts_with_connective(text),
             beat_id=i, is_intro=bool(s.get("is_intro")), is_outro=bool(s.get("is_outro")),
         ))
+
+    # Assign motions derived from kind + intro position
+    intro_id = next((sc.scene_id for sc in scenes if sc.is_intro), None)
+    assign_motions(plan, intro_scene_id=intro_id)
+
+    # Validate variety rules (consecutive, region-reuse, related-dedup, mid-full cap)
+    validate_variety([sc.__dict__ for sc in scenes], {d["scene_id"]: d for d in plan})
+
+    # Pattern-interrupt gate: hook must name THIS artwork or artist
+    if not _hook_is_concrete(scenes[0].text, ctx):
+        raise ValueError(
+            "narration: hook is generic — it must name a concrete detail of this artwork "
+            "(pattern-interrupt)"
+        )
 
     body = sum(sc.word_count for sc in scenes if not sc.is_intro)
     if not (ART_TARGET_WORDS_MIN * 0.7 <= body <= ART_TARGET_WORDS_MAX * 1.3):
@@ -163,7 +208,7 @@ def build_narration_from_raw(
         source_project=project_name,
         llm_model=model_used,
     )
-    return narration.to_dict()
+    return narration.to_dict(), plan
 
 
 def write_narration(project_name: str, mode_key: str | None = None, *, log=print) -> dict:
@@ -189,6 +234,7 @@ def write_narration(project_name: str, mode_key: str | None = None, *, log=print
         'Return STRICT JSON only:\n'
         '{"title": "<video title>", "hook": "<scene-1 text>",\n'
         ' "scenes": [{"text": "...", "page_ref": 1, "panel_ref": 0,\n'
+        '             "visual": {"kind": "painting_region", "panel_ref": 0},\n'
         '             "is_intro": false, "is_outro": false}]}'
     )
 
@@ -200,12 +246,15 @@ def write_narration(project_name: str, mode_key: str | None = None, *, log=print
             validator=lambda c: _extract_json(c) is not None,
         )
         try:
-            n = build_narration_from_raw(raw, pages, ctx, mode_key,
-                                         project_name, model_used, log=log)
+            n, plan = build_narration_from_raw(raw, pages, ctx, mode_key,
+                                               project_name, model_used, log=log)
             (root / "narration.json").write_text(
                 json.dumps(n, indent=2, ensure_ascii=False))
+            save_plan(root, plan)
+            n_related = sum(1 for d in plan if d["kind"] == "related")
             log(f"[narrate] ✓ {len(n['scenes'])} scenes, {n['total_word_count']} words "
-                f"(~{n['estimated_duration_seconds']}s) via {model_used}")
+                f"(~{n['estimated_duration_seconds']}s) via {model_used} "
+                f"[{n_related} related]")
             return n
         except ValueError as exc:
             last_err = exc
