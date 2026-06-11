@@ -1,9 +1,9 @@
-"""A6: comic Stage 5 with art-specific runtime overrides, plus the two
-authenticity artifacts (spec §6.4/§6.5):
+"""A6: art assembler wrapper, plus the two authenticity artifacts (spec §6.4/§6.5):
   youtube_description.txt — museum credit + objectURL + CC0 + sources
   art_projects/_variety_log.csv — anti-template structure fingerprints
-Overrides (never file edits): MIRROR_PANELS off (mirroring famous artworks is
-factually wrong), INPAINT_BUBBLE_TEXT off (could erase signatures)."""
+Runtime overrides (never file edits): MIRROR_PANELS off (mirroring famous artworks
+is factually wrong), INPAINT_BUBBLE_TEXT off (could erase signatures). These are
+passed to render_shot's crop path via the comic stage_5.shots globals."""
 import csv
 import datetime
 import json
@@ -70,16 +70,17 @@ def append_variety_log(project_name: str, narration: dict, *,
 
 
 def assemble_art(project_name: str, **kwargs):
-    import stages.stage_5.pipeline as s5
     import stages.stage_5.shots as shots
-    prev = (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT, s5.PROJECTS_ROOT)
+    from .assemble import assemble_art_video
+    # render_shot's crop path still honors these comic globals — never mirror
+    # or inpaint a real artwork.
+    prev = (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT)
     shots.MIRROR_PANELS = False
     shots.INPAINT_BUBBLE_TEXT = False
-    s5.PROJECTS_ROOT = ART_PROJECTS_ROOT
     try:
-        result = s5.assemble_project(project_name, **kwargs)
+        result = assemble_art_video(project_name, **kwargs)
     finally:
-        shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT, s5.PROJECTS_ROOT = prev
+        shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT = prev
 
     root = get_art_project_path(project_name)
     ctx = json.loads((root / "art_context.json").read_text())

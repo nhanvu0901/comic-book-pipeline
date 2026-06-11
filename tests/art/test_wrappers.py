@@ -41,35 +41,28 @@ def test_variety_log_appends_and_warns_on_repetition(tmp_path):
     assert "same structure" in w3  # 3rd identical fingerprint in a row → warn
 
 
-def test_video_wrapper_disables_mirror_and_inpaint(monkeypatch, tmp_path):
-    from art_pipeline import video
-    from art_pipeline.config import ART_PROJECTS_ROOT
-    import stages.stage_5.pipeline as s5
+def test_assemble_art_uses_art_assembler_and_restores_flags(monkeypatch, tmp_path):
     import stages.stage_5.shots as shots
-
-    proj = tmp_path / "wrap-test"
-    proj.mkdir(parents=True, exist_ok=True)
-    (proj / "art_context.json").write_text('{"title":"T","artworks":[],"sources":[]}')
-    (proj / "narration.json").write_text('{"mode":"painting_deep_dive","scenes":[{}]}')
-    monkeypatch.setattr(video, "get_art_project_path", lambda name: (tmp_path / name))
-    monkeypatch.setattr(video, "VARIETY_LOG", tmp_path / "_variety_log.csv")
+    import art_pipeline.video as video
 
     seen = {}
-
-    def fake_assemble(name, **kw):
-        seen.update(mirror=shots.MIRROR_PANELS, inpaint=shots.INPAINT_BUBBLE_TEXT,
-                    root=s5.PROJECTS_ROOT)
+    def fake_assemble(project, **kw):
+        seen["mirror"] = shots.MIRROR_PANELS
+        seen["inpaint"] = shots.INPAINT_BUBBLE_TEXT
         return "RESULT"
+    monkeypatch.setattr("art_pipeline.assemble.assemble_art_video", fake_assemble)
+    root = tmp_path / "proj"; root.mkdir()
+    monkeypatch.setattr(video, "get_art_project_path", lambda n: root)
+    monkeypatch.setattr(video, "VARIETY_LOG", tmp_path / "_variety_log.csv")
+    (root / "art_context.json").write_text('{"title": "T", "artworks": []}')
+    (root / "narration.json").write_text('{"mode": "painting_deep_dive", "scenes": []}')
 
-    monkeypatch.setattr(s5, "assemble_project", fake_assemble)
-
-    out = video.assemble_art("wrap-test")
+    before = (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT)
+    out = video.assemble_art("proj")
     assert out == "RESULT"
-    # flags must be False AT RENDER TIME (assemble_art restores them afterwards)
-    assert seen["mirror"] is False             # famous artworks must not be mirrored
-    assert seen["inpaint"] is False            # do not erase signatures
-    assert seen["root"] == ART_PROJECTS_ROOT
-    assert (tmp_path / "wrap-test" / "youtube_description.txt").exists()
+    assert seen == {"mirror": False, "inpaint": False}
+    assert (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT) == before
+    assert (root / "youtube_description.txt").exists()
 
 
 def test_description_includes_additional_image_credits():

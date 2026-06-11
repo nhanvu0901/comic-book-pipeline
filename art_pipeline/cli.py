@@ -4,11 +4,11 @@
   regions <project> [--force]
   ground  <project>
   narrate <project> [--mode KEY]
-  visuals <project> [--force]
+  hunt    <project> [--force]
   tts     <project> [--force]
   video   <project> [--force] [--no-music]
   all     <project> --ids 436535 [--mode KEY]
-          (chain order: fetch → regions → ground → narrate → visuals → tts → video)
+          (chain order: fetch → regions → ground → narrate → hunt → tts → video)
 """
 import argparse
 
@@ -29,7 +29,7 @@ def main(argv=None) -> int:
     p = add("regions"); p.add_argument("--force", action="store_true")
     add("ground")
     p = add("narrate"); p.add_argument("--mode", default=None)
-    p = add("visuals"); p.add_argument("--force", action="store_true")
+    p = add("hunt"); p.add_argument("--force", action="store_true")
     p = add("tts"); p.add_argument("--force", action="store_true")
     p = add("video"); p.add_argument("--force", action="store_true")
     p.add_argument("--no-music", action="store_true")
@@ -53,9 +53,9 @@ def main(argv=None) -> int:
     if a.cmd in ("narrate", "all"):
         from .narrate import write_narration
         write_narration(a.project, getattr(a, "mode", None))
-    if a.cmd in ("visuals", "all"):
-        from .visuals import enrich_visuals
-        enrich_visuals(a.project, force=getattr(a, "force", False))
+    if a.cmd in ("hunt", "all"):
+        from .hunt import hunt_visuals
+        hunt_visuals(a.project, force=getattr(a, "force", False))
     if a.cmd in ("tts", "all"):
         from .tts import synthesize_art
         synthesize_art(a.project, force=getattr(a, "force", False))
