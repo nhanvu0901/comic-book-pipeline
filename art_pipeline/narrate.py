@@ -5,12 +5,13 @@ Reused read-only from the comic pipeline: call_with_chain (LLM fallback chain),
 semantic_sim (embedding region grounding), Narration/Scene dataclasses.
 Prompts, validators, and word budgets are art-specific (spec §6 / risk table)."""
 import json
-import re
 
 from config import CREATIVE_LLM_MODELS
 from stages._embedding import semantic_sim
 from stages.stage_3._llm import call_with_chain
 from stages.stage_3.schema import Narration, Scene
+
+from ._json import extract_json as _extract_json
 
 from .config import (
     ART_MIN_SCENES, ART_MODES_BY_KEY, ART_SCENE_MAX_WORDS, ART_TARGET_WORDS_MAX,
@@ -81,18 +82,7 @@ def _starts_with_connective(text: str) -> str | None:
     return None
 
 
-def _extract_json(raw: str) -> dict | None:
-    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except json.JSONDecodeError:
-        return None
-
-
-def _to_int(val, *, what: str, scene: int, default: int = 0) -> int:
+def _to_int(val, *, what: str, scene: int) -> int:
     """Coerce an LLM-supplied ref field to int. A non-coercible value ("one",
     None, [...]) becomes a contextual ValueError so write_narration's retry
     loop catches it and feeds the message back to the model — instead of a
@@ -143,7 +133,7 @@ def build_narration_from_raw(
         if pref not in by_number:
             raise ValueError(f"narration: scene {i} bad page_ref {pref}")
         page = by_number[pref]
-        panel_ref = _to_int(s.get("panel_ref", -1), what="panel_ref", scene=i, default=-1)
+        panel_ref = _to_int(s.get("panel_ref", -1), what="panel_ref", scene=i)
         n_panels = len(page.get("panels") or [])
         if panel_ref >= n_panels:
             panel_ref = -1

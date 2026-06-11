@@ -12,7 +12,6 @@ which we convert. Validation guard + grid fallback are day-1 features
 import base64
 import io
 import json
-import re
 from pathlib import Path
 
 from PIL import Image
@@ -21,6 +20,8 @@ from PIL import Image
 from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, VLM_MODELS
 from stages.stage_2.cache import image_hash, load_cached, save_cached
 from stages.stage_2.schema import PanelInfo, PreprocessedPage
+
+from ._json import extract_json as _extract_json
 
 from .config import (
     REGION_IOU_DEDUP, REGION_MAX_AREA_PCT, REGION_MAX_COUNT,
@@ -178,17 +179,6 @@ def _encode_image_for_vlm(image_path: Path | str, max_dim: int = 2048) -> str:
         buf = io.BytesIO()
         im.save(buf, format="JPEG", quality=85)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-
-def _extract_json(raw: str) -> dict | None:
-    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except json.JSONDecodeError:
-        return None
 
 
 def propose_regions_vlm(image_path: Path, artwork_label: str, *, log=print) -> tuple[list[dict], str, str]:

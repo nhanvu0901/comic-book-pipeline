@@ -14,7 +14,7 @@ ART_CANDIDATES_CSV = _REPO_ROOT / "art_candidates.csv"
 # ── The Met Open Access (REST JSON, no auth, no scraping) ───────────────────
 MET_API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1"
 MET_USER_AGENT = "art-pipeline/0.1 (personal research project)"
-MET_MIN_IMAGE_SHORT_SIDE = 1200  # scout gate; fetch only warns below this
+MET_MIN_IMAGE_SHORT_SIDE = 1200  # documented for the art-scout agent; not imported by code
 
 # ── A3 region proposal ───────────────────────────────────────────────────────
 REGION_MIN_COUNT = 3      # fewer survivors than this → grid fallback
@@ -30,7 +30,6 @@ ART_SDK_MIN_STORY_CHARS = 200  # SDK result below this (or no source_url) = reje
 # ── A4b narration — art keeps its OWN copies of word budgets (spec §6) ──────
 ART_TARGET_WORDS_MIN = 165
 ART_TARGET_WORDS_MAX = 270
-ART_SCENE_MIN_WORDS = 5
 ART_SCENE_MAX_WORDS = 28   # educational register runs slightly longer than comic's 24
 ART_MIN_SCENES = 6
 ART_WORDS_PER_SEC = 2.88   # measured 1.1-atempo pace, same voice as comic

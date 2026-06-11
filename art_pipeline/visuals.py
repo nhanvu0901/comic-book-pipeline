@@ -214,7 +214,7 @@ def enrich_visuals(project_name: str, *, force: bool = False, log=print) -> dict
         used_urls.add(c["image_url"])
         s["page_ref"], s["panel_ref"] = next_page, 0
         log(f"[visuals] ✓ scene {s['scene_id']} → {c['title']!r} "
-            f"({c['license']}, sim {score:.2f} > region {sim_region:.2f})")
+            f"({c['license']}, match {score:.2f}; region was {sim_region:.2f})")
         next_page += 1
         swapped += 1
 
