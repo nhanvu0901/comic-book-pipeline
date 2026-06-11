@@ -62,7 +62,9 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
     used_regions: set = {(s.get("page_ref"), d["panel_ref"])
                          for s in scenes
                          for d in [plan_by_id.get(s["scene_id"], {})]
-                         if d.get("kind") == "painting_region"}
+                         if d.get("kind") == "painting_region"
+                         and isinstance(d.get("panel_ref"), int)
+                         and d["panel_ref"] >= 0}
 
     def _unused_region(page_ref: int):
         page = pages_by_number.get(page_ref)
@@ -188,8 +190,8 @@ def assemble_art_video(
     captions = root / "captions.ass"
     captions.write_text(build_ass(word_timestamps, audio_duration))
     mixed = root / "audio_mixed.wav"
-    mix_audio(root / "audio.wav", _resolve_bgm(bg_music_path, enable_music, log),
-              mixed, progress=log)
+    bgm = _resolve_bgm(bg_music_path, enable_music, log)
+    mix_audio(root / "audio.wav", bgm, mixed, progress=log)
     log(f"[assemble] final encode → {final_path.name}")
     _final_encode(silent, mixed, captions, final_path)
     duration = _probe_duration(final_path)
@@ -201,4 +203,5 @@ def assemble_art_video(
                           caption_path=str(captions),
                           silent_video_path=str(silent),
                           audio_mixed_path=str(mixed),
-                          shots_dir=str(shots_dir), shots=shots)
+                          shots_dir=str(shots_dir),
+                          bgm_used=str(bgm) if bgm else None, shots=shots)
