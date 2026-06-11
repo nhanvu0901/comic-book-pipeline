@@ -17,10 +17,17 @@ def test_region_constants_sane():
     assert c.REGION_MIN_COUNT >= 3
 
 
-def test_visuals_constants():
-    from art_pipeline import config as c
-    assert "by-sa" in c.VISUAL_LICENSE_WHITELIST and "pd" in c.VISUAL_LICENSE_WHITELIST
-    assert 0 < c.VISUAL_MATCH_MIN < c.VISUAL_KEEP_THRESHOLD <= 1
-    assert c.VISUAL_KEEP_THRESHOLD > 0 and c.VISUAL_MAX_PER_VIDEO >= 1
-    assert c.COMMONS_API.startswith("https://commons.wikimedia.org")
-    assert c.OPENVERSE_API.startswith("https://api.openverse.org")
+def test_pacing_constants():
+    from art_pipeline import config
+    assert config.ART_MIN_SCENES == 10
+    assert config.ART_SHOT_SPLIT_SEC == 5.0
+    assert config.ART_MAX_STATIC_SEC == 4.0
+    assert config.VISUAL_MIN_SHORT_SIDE == 600
+
+
+def test_embedding_visuals_constants_removed():
+    from art_pipeline import config
+    for name in ("VISUAL_KEEP_THRESHOLD", "VISUAL_MATCH_MIN",
+                 "VISUAL_LICENSE_WHITELIST", "VISUAL_MAX_PER_VIDEO",
+                 "COMMONS_API", "OPENVERSE_API"):
+        assert not hasattr(config, name), name

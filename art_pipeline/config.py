@@ -31,19 +31,14 @@ ART_SDK_MIN_STORY_CHARS = 200  # SDK result below this (or no source_url) = reje
 ART_TARGET_WORDS_MIN = 165
 ART_TARGET_WORDS_MAX = 270
 ART_SCENE_MAX_WORDS = 28   # educational register runs slightly longer than comic's 24
-ART_MIN_SCENES = 6
+ART_MIN_SCENES = 10
 ART_WORDS_PER_SEC = 2.88   # measured 1.1-atempo pace, same voice as comic
 
 
-# ── A4.5 visuals — scene-related web images (spec 2026-06-11) ────────────────
-# Whitelist is config so it can be tightened later (e.g. drop "by-sa").
-VISUAL_LICENSE_WHITELIST = ("pd", "cc0", "by", "by-sa")
-VISUAL_KEEP_THRESHOLD = 0.65   # measured (circus-sideshow): reveal scenes sim 0.73-0.96, context scenes 0.56-0.60 — MiniLM same-domain baseline is ~0.5, not ~0.2
-VISUAL_MATCH_MIN = 0.45        # web image must score at least this vs scene text
+# ── A4.5 visual hunt + A6 assembler (spec 2026-06-11 narration-driven visuals) ─
 VISUAL_MIN_SHORT_SIDE = 600    # px; smaller downloads are rejected
-VISUAL_MAX_PER_VIDEO = 6       # cap so the painting stays the star
-COMMONS_API = "https://commons.wikimedia.org/w/api.php"
-OPENVERSE_API = "https://api.openverse.org/v1/images/"
+ART_SHOT_SPLIT_SEC = 5.0       # scene ≥ this long → 2 shots (mirrors comic SCENE_SECOND_PANEL_MIN_DUR)
+ART_MAX_STATIC_SEC = 4.0       # no shot may hold a static frame longer than this
 
 
 @dataclass(frozen=True)
