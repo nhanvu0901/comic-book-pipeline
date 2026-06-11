@@ -102,6 +102,73 @@ def test_hunt_sdk_failure_falls_back_to_unused_region(tmp_path, monkeypatch):
     assert narration["scenes"][1]["panel_ref"] == plan[1]["panel_ref"] >= 0
 
 
+def _project_two_related(tmp_path, monkeypatch):
+    """4 scenes: full(intro), related A, related B, full(outro)."""
+    monkeypatch.setattr(hunt_mod, "get_art_project_path",
+                        lambda name: tmp_path / name)
+    root = tmp_path / "proj"
+    (root / "preprocessed").mkdir(parents=True)
+    (root / "preprocessed" / "page_001_abc.json").write_text(json.dumps(_page(1)))
+    narration = {"scenes": [
+        {"scene_id": 1, "text": "hook", "page_ref": 1, "panel_ref": -1, "is_intro": True},
+        {"scene_id": 2, "text": "artist bio", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 3, "text": "era photo", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 4, "text": "outro", "page_ref": 1, "panel_ref": -1, "is_outro": True}]}
+    plan = [{"scene_id": 1, "kind": "painting_full", "panel_ref": -1, "subject": "", "motion": "static", "fallback": ""},
+            {"scene_id": 2, "kind": "related", "panel_ref": -1,
+             "subject": "portrait of the artist", "motion": "pan_right", "fallback": ""},
+            {"scene_id": 3, "kind": "related", "panel_ref": -1,
+             "subject": "photo of the era", "motion": "pan_right", "fallback": ""},
+            {"scene_id": 4, "kind": "painting_full", "panel_ref": -1, "subject": "", "motion": "zoom_out", "fallback": ""}]
+    (root / "narration.json").write_text(json.dumps(narration))
+    (root / "visual_plan.json").write_text(json.dumps(plan))
+    (root / "art_context.json").write_text(json.dumps(
+        {"title": "T", "sources": [], "artworks": [{"object_id": 1}],
+         "summary": {"characters": [{"name": "Artist"}]}}))
+    return root
+
+
+def test_hunt_duplicate_image_falls_back(tmp_path, monkeypatch):
+    root = _project_two_related(tmp_path, monkeypatch)
+    same = {"image_url": "https://x/same.jpg", "title": "One photo",
+            "source_url": "https://x/p", "license": "PD"}
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda *a, **k: json.dumps(
+        {"images": {"2": same, "3": dict(same)}}))
+    monkeypatch.setattr(hunt_mod, "_download",
+                        lambda url, dest: (dest.write_bytes(b"x"), (1200, 900))[1])
+    out = hunt_visuals("proj", log=lambda m: None)
+    assert out["requested"] == 2 and out["resolved"] == 1
+    plan = json.loads((root / "visual_plan.json").read_text())
+    by_id = {d["scene_id"]: d for d in plan}
+    assert by_id[2]["kind"] == "related" and by_id[2]["page_ref"] == 2
+    assert by_id[3]["kind"] == "painting_region"
+    assert by_id[3]["fallback"] == "duplicate image"
+    narration = json.loads((root / "narration.json").read_text())
+    assert narration["scenes"][2]["panel_ref"] == by_id[3]["panel_ref"] >= 0
+
+
+def test_hunt_orphan_decl_skipped(tmp_path, monkeypatch):
+    root = _project(tmp_path, monkeypatch)
+    plan = json.loads((root / "visual_plan.json").read_text())
+    plan.append({"scene_id": 99, "kind": "related", "panel_ref": -1,
+                 "subject": "ghost subject", "motion": "pan_right", "fallback": ""})
+    (root / "visual_plan.json").write_text(json.dumps(plan))
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda *a, **k: json.dumps(
+        {"images": {"2": {"image_url": "https://x/a.jpg", "title": "t",
+                          "source_url": "https://x/p", "license": "PD"}}}))
+    monkeypatch.setattr(hunt_mod, "_download",
+                        lambda url, dest: (dest.write_bytes(b"x"), (1200, 900))[1])
+    out = hunt_visuals("proj", log=lambda m: None)   # must NOT raise
+    assert out["requested"] == 2 and out["resolved"] == 1
+    plan = json.loads((root / "visual_plan.json").read_text())
+    by_id = {d["scene_id"]: d for d in plan}
+    assert by_id[2].get("page_ref") == 2             # real scene handled normally
+    assert "page_ref" not in by_id[99]               # orphan untouched
+    assert by_id[99]["fallback"] == ""
+    narration = json.loads((root / "narration.json").read_text())
+    assert narration["scenes"][1]["page_ref"] == 2
+
+
 def test_hunt_force_restores_then_redoes(tmp_path, monkeypatch):
     root = _project(tmp_path, monkeypatch)
     monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda *a, **k: json.dumps(

@@ -150,6 +150,7 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
     scenes = narration.get("scenes") or []
     scenes_by_id = {s["scene_id"]: s for s in scenes}
     plan_by_id = {d["scene_id"]: d for d in plan}
+    rel_dir = root / "related_images"
 
     if manifest_path.exists():
         if not force:
@@ -159,17 +160,26 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
         for s in scenes:
             e = prev.get(s["scene_id"])
             if e:
-                s["page_ref"], s["panel_ref"] = e["original_page_ref"], e["original_panel_ref"]
+                # .get with current-value defaults: an odd/legacy manifest entry
+                # must never kill a force-restore (best-effort contract).
+                s["page_ref"] = e.get("original_page_ref", s["page_ref"])
+                s["panel_ref"] = e.get("original_panel_ref", s["panel_ref"])
                 d = plan_by_id.get(s["scene_id"])
                 if d:
                     d.pop("page_ref", None)
-                    d["kind"], d["fallback"] = e["original_kind"], ""
-                    d["panel_ref"] = e["original_panel_ref"]
+                    d["kind"] = e.get("original_kind", d["kind"])
+                    d["fallback"] = ""
+                    d["panel_ref"] = e.get("original_panel_ref", d["panel_ref"])
         for n, pd_ in list(pages.items()):
             if pd_.get("preprocessing_method") == "web-related":
                 for f in (root / "preprocessed").glob(f"page_{n:03d}_*.json"):
                     f.unlink()
                 pages.pop(n)
+        # stale downloads too — a re-hunt re-downloads what it needs, so old
+        # rel_* files are pure disk creep once their page JSONs are gone.
+        if rel_dir.exists():
+            for f in rel_dir.glob("rel_*"):
+                f.unlink(missing_ok=True)
         log("[hunt] force: restored original refs + removed stale related pages")
 
     decls = [d for d in plan if d["kind"] == "related"]
@@ -181,7 +191,6 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
         results = parse_hunt_response(raw)
         log(f"[hunt] SDK returned {len(results)}/{requested} candidate image(s)")
 
-    rel_dir = root / "related_images"
     rel_dir.mkdir(exist_ok=True)
     used_urls: set = set()
     manifest: list[dict] = []
@@ -189,13 +198,18 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
     next_page = max(pages) + 1 if pages else 1
     resolved = 0
 
-    # targets already on screen (rule 1/2 bookkeeping for fallbacks)
+    # targets already on screen (rule 1/2 bookkeeping for fallbacks);
+    # decls whose scene vanished from narration are ignored (drift tolerance)
     used_targets = {visual_target(scenes_by_id[d["scene_id"]], d)
-                    for d in plan if d["kind"] == "painting_region"}
+                    for d in plan if d["kind"] == "painting_region"
+                    and d["scene_id"] in scenes_by_id}
 
     ordered_ids = [s["scene_id"] for s in scenes]
     for d in decls:
-        s = scenes_by_id[d["scene_id"]]
+        s = scenes_by_id.get(d["scene_id"])
+        if s is None:
+            log(f"[hunt] scene {d['scene_id']}: not in narration — skipped")
+            continue
         original = {"scene_id": s["scene_id"], "original_page_ref": s["page_ref"],
                     "original_panel_ref": s["panel_ref"], "original_kind": "related"}
         c = results.get(d["scene_id"])
@@ -228,11 +242,19 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
                   "duplicate image" if c["image_url"] in used_urls else
                   "download/size reject")
         idx = ordered_ids.index(d["scene_id"])
+        # NOTE: a neighboring `related` decl that already resolved to a web page
+        # keeps its subject-based identity ("x", subject) here ON PURPOSE — the
+        # subject still names the image's content, and rule 1 compares what's ON
+        # SCREEN (content), not page numbers. A painting-region fallback can never
+        # collide with that identity, so no false positives either.
         neighbor_targets = set()
         for j in (idx - 1, idx + 1):
             if 0 <= j < len(ordered_ids):
-                nd = plan_by_id[ordered_ids[j]]
-                neighbor_targets.add(visual_target(scenes_by_id[ordered_ids[j]], nd))
+                nd = plan_by_id.get(ordered_ids[j])
+                ns = scenes_by_id.get(ordered_ids[j])
+                if nd is None or ns is None:
+                    continue
+                neighbor_targets.add(visual_target(ns, nd))
         pick = pick_fallback_region(s, pages, used_targets, neighbor_targets)
         if pick:
             pn, panel = pick
