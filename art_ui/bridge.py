@@ -48,9 +48,9 @@ def run_narrate(project: str, mode: str | None, log: Callable[[str], None]) -> d
     return write_narration(project, mode, log=log)
 
 
-def run_visuals(project: str, force: bool, log: Callable[[str], None]) -> dict:
-    from art_pipeline.visuals import enrich_visuals
-    return enrich_visuals(project, force=force, log=log)
+def run_hunt(project: str, force: bool, log: Callable[[str], None]) -> dict:
+    from art_pipeline.hunt import hunt_visuals
+    return hunt_visuals(project, force=force, log=log)
 
 
 def run_tts(project: str, log: Callable[[str], None]) -> dict:

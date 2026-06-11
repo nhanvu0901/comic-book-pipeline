@@ -25,3 +25,17 @@ def test_save_narration_edits_recomputes_word_count(tmp_path, monkeypatch):
     bridge.save_narration_edits("p", narration)
     saved = json.loads((tmp_path / "p" / "narration.json").read_text())
     assert saved["scenes"][0]["word_count"] == 4
+
+
+def test_run_hunt_delegates(monkeypatch):
+    from art_ui import bridge
+    calls = {}
+
+    def _mock_hunt(project, force=None, log=None):
+        calls["args"] = (project, force)
+        return {"resolved": 1}
+
+    monkeypatch.setattr("art_pipeline.hunt.hunt_visuals", _mock_hunt)
+    out = bridge.run_hunt("proj", True, lambda m: None)
+    assert out == {"resolved": 1}
+    assert calls["args"] == ("proj", True)

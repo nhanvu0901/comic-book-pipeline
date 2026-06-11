@@ -100,18 +100,18 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         on_state_change()
 
-    async def _visuals():
+    async def _hunt():
         if not bridge.load_art_narration(state.project_name):
             visuals_status.value = "Write narration first."
             visuals_status.color = DANGER
             page.update()
             return
         running.visible = True
-        visuals_status.value = "Searching license-safe related images…"
+        visuals_status.value = "Hunting related images on the web (Claude SDK)…"
         visuals_status.color = WARN
         page.update()
         try:
-            out = await run_blocking(bridge.run_visuals, state.project_name, True, push_log)
+            out = await run_blocking(bridge.run_hunt, state.project_name, True, push_log)
         except Exception as e:
             running.visible = False
             visuals_status.value = "Failed — see log."
@@ -120,7 +120,11 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
             return
         running.visible = False
-        visuals_status.value = f"{out.get('swapped', 0)} scene(s) now show related images."
+        if out.get("skipped"):
+            visuals_status.value = "Already hunted — use force to redo."
+        else:
+            visuals_status.value = (f"{out.get('resolved', 0)}/{out.get('requested', 0)} "
+                                    f"related scene(s) got web images.")
         visuals_status.color = SUCCESS
         _mount_scenes()
         state.mark_dirty(5)
@@ -170,7 +174,7 @@ def build(page: ft.Page, state: ArtAppState, *,
         primary_button("2 · Write Narration", lambda _e: page.run_task(_narrate),
                        icon=ft.Icons.EDIT_NOTE),
         ft.Container(height=8),
-        primary_button("3 · Enrich Visuals (web)", lambda _e: page.run_task(_visuals),
+        primary_button("3 · Hunt Visuals (SDK web)", lambda _e: page.run_task(_hunt),
                        icon=ft.Icons.IMAGE_SEARCH),
         ft.Container(height=8),
         secondary_button("Save scene edits", save_edits, icon=ft.Icons.SAVE),
