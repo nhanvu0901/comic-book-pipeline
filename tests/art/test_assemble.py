@@ -125,3 +125,30 @@ def test_scene_durations_key_mismatch_falls_back_even():
     assert len(shots) == 4
     for s in shots:
         assert abs(s.duration_seconds - 12.0 / 4) < 0.25   # even split fallback
+
+
+def test_consecutive_identical_fulls_get_distinct_frames():
+    # Hunt fallback exhaustion: scenes 3-5 all painting_full of the same page
+    # (seen on circus-sideshow scenes 11-13 → 3 identical frames ≈15.6s).
+    narration = {"scenes": [
+        {"scene_id": 1, "text": "hook", "page_ref": 1, "panel_ref": -1, "is_intro": True},
+        {"scene_id": 2, "text": "a", "page_ref": 1, "panel_ref": 0},
+        {"scene_id": 3, "text": "b", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 4, "text": "c", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 5, "text": "out", "page_ref": 1, "panel_ref": -1, "is_outro": True}]}
+    plan = [
+        {"scene_id": 1, "kind": "painting_full", "panel_ref": -1, "motion": "static", "subject": "", "fallback": ""},
+        {"scene_id": 2, "kind": "painting_region", "panel_ref": 0, "motion": "zoom_in", "subject": "", "fallback": ""},
+        {"scene_id": 3, "kind": "painting_full", "panel_ref": -1, "motion": "zoom_out", "subject": "", "fallback": ""},
+        {"scene_id": 4, "kind": "painting_full", "panel_ref": -1, "motion": "zoom_out", "subject": "", "fallback": ""},
+        {"scene_id": 5, "kind": "painting_full", "panel_ref": -1, "motion": "zoom_out", "subject": "", "fallback": ""}]
+    pages = {1: _page(1)}
+    timings = [{"scene_id": i, "start": 3.0 * (i - 1), "end": 3.0 * i}
+               for i in range(1, 6)]
+    shots = plan_shots(narration, plan, pages, timings, audio_duration=15.0)
+    # no consecutive pair may show the identical frame
+    for a, b in zip(shots, shots[1:]):
+        assert (a.source_image, a.panel_bbox) != (b.source_image, b.panel_bbox)
+    # the re-aimed shot opposes the motion of the shot before it
+    assert shots[3].panel_bbox != shots[2].panel_bbox
+    assert shots[3].motion != shots[2].motion

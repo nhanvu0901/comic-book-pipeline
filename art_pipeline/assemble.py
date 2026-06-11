@@ -135,6 +135,44 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
                               source_image=src, motion=m, text_bboxes=[]))
             shot_id += 1
 
+    # ── Anti-repeat pass — hunt fallback exhaustion can leave several
+    # consecutive scenes as painting_full of the SAME page (seen on
+    # circus-sideshow: scenes 11-13 → 3 identical full frames ≈15.6s). When a
+    # shot repeats the previous one's (source_image, bbox), re-aim it at a
+    # region of that page: unused regions first, then round-robin reuse — a
+    # repeated region still beats a frozen full frame. Also guards legacy
+    # derive_trivial_plan output. Runs BEFORE the audio pad below.
+    src_to_page: dict[str, tuple[int, dict]] = {}
+    for pn, p in sorted(pages_by_number.items()):
+        src_to_page.setdefault(str(p.get("source_image") or ""), (pn, p))
+    rr_counters: dict[int, int] = {}
+
+    def _replacement_region(page_ref: int, page: dict) -> dict | None:
+        panels = page.get("panels") or []
+        if not panels:
+            return None   # nothing to re-aim at — caller flips motion only
+        for pn in panels:
+            key = (page_ref, int(pn["index"]))
+            if key not in used_regions:
+                used_regions.add(key)
+                return pn.get("bbox") or {}
+        i = rr_counters.get(page_ref, 0)   # exhausted → round-robin reuse
+        rr_counters[page_ref] = i + 1
+        return panels[i % len(panels)].get("bbox") or {}
+
+    for prev, cur in zip(shots, shots[1:]):
+        if (cur.source_image, cur.panel_bbox) != (prev.source_image, prev.panel_bbox):
+            continue
+        entry = src_to_page.get(cur.source_image)
+        if entry:
+            rep_page_ref, rep_page = entry
+            b = _replacement_region(rep_page_ref, rep_page)
+            if b is not None:
+                cur.panel_bbox = {"x": int(b.get("x", 0)), "y": int(b.get("y", 0)),
+                                  "w": int(b.get("w", 0)), "h": int(b.get("h", 0))}
+        # Oppose the previous shot's motion (pan_right/static before → zoom_in).
+        cur.motion = "zoom_out" if prev.motion == "zoom_in" else "zoom_in"
+
     total = sum(sh.duration_seconds for sh in shots)
     if shots and total < audio_duration:
         shots[-1].duration_seconds += (audio_duration - total) + 0.20
