@@ -25,6 +25,9 @@ def parse_visual(raw: dict, *, scene_id: int) -> dict:
     if kind not in KINDS:
         raise ValueError(f"visual plan: scene {scene_id} unknown kind {kind!r} "
                          f"(allowed: {', '.join(KINDS)})")
+    # For painting_full any LLM-supplied panel_ref is IGNORED on purpose:
+    # a full kind is a whole-canvas shot, so a stray panel_ref is meaningless
+    # noise rather than an error (LLMs sometimes echo it anyway).
     panel_ref = -1
     subject = ""
     if kind == "painting_region":
@@ -65,6 +68,10 @@ def visual_target(scene: dict, decl: dict):
     if decl["kind"] == "painting_region":
         return ("r", scene.get("page_ref"), decl["panel_ref"])
     if decl["kind"] == "painting_full":
+        # page_ref is part of the identity ON PURPOSE: in themed_listicle /
+        # artist_journey modes two consecutive scenes may each show the full
+        # view of a DIFFERENT painting — that's valid variety, and page_ref
+        # is what tells those full-views apart.
         return ("f", scene.get("page_ref"))
     return ("x", " ".join(decl["subject"].lower().split()))
 
@@ -133,11 +140,14 @@ def derive_trivial_plan(narration: dict) -> list[dict]:
 
 
 def save_plan(root: Path, plan: list[dict]) -> None:
+    """Write the plan to <root>/visual_plan.json (sidecar next to narration.json)."""
     (root / "visual_plan.json").write_text(
         json.dumps(plan, indent=2, ensure_ascii=False))
 
 
 def load_plan(root: Path) -> list[dict] | None:
+    """Read <root>/visual_plan.json; None if absent (legacy project →
+    caller falls back to derive_trivial_plan)."""
     p = root / "visual_plan.json"
     if not p.exists():
         return None

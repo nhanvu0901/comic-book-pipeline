@@ -1,8 +1,8 @@
 import pytest
 
 from art_pipeline.visual_plan import (
-    KINDS, assign_motions, derive_trivial_plan, parse_visual,
-    validate_variety, visual_target,
+    KINDS, assign_motions, derive_trivial_plan, load_plan, parse_visual,
+    save_plan, validate_variety, visual_target,
 )
 
 
@@ -113,3 +113,13 @@ def test_derive_trivial_plan_for_legacy_projects():
     assert [d["kind"] for d in plan] == ["painting_region", "painting_full"]
     assert all(d["motion"] for d in plan)
     assert set(KINDS) == {"painting_region", "painting_full", "related"}
+
+
+# ── save_plan / load_plan ───────────────────────────────────────────────────
+
+def test_save_load_round_trip(tmp_path):
+    plan = [{"scene_id": 1, "kind": "painting_full", "panel_ref": -1,
+             "subject": "", "motion": "static", "fallback": ""}]
+    save_plan(tmp_path, plan)
+    assert load_plan(tmp_path) == plan
+    assert load_plan(tmp_path / "nope") is None
