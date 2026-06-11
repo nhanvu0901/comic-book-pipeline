@@ -47,7 +47,7 @@ def _scene_durations(scenes: list[dict], timings: list[dict],
                      audio_duration: float) -> dict[int, float]:
     by_id = {int(t["scene_id"]): max(0.4, float(t["end"]) - float(t["start"]))
              for t in timings or []}
-    if len(by_id) == len(scenes) and by_id:
+    if by_id and set(by_id) >= {s["scene_id"] for s in scenes}:
         return {s["scene_id"]: by_id[s["scene_id"]] for s in scenes}
     even = max(0.4, audio_duration / max(1, len(scenes)))
     return {s["scene_id"]: even for s in scenes}
@@ -55,6 +55,8 @@ def _scene_durations(scenes: list[dict], timings: list[dict],
 
 def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
                scene_timings: list[dict], *, audio_duration: float) -> list[Shot]:
+    if not pages_by_number:
+        raise RuntimeError("plan_shots: no preprocessed pages — run regions/hunt first")
     scenes = narration.get("scenes") or []
     plan_by_id = {d["scene_id"]: d for d in plan}
     durations = _scene_durations(scenes, scene_timings, audio_duration)
@@ -85,7 +87,6 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
 
     shots: list[Shot] = []
     shot_id = 0
-    zoom_alt = ("zoom_in", "zoom_out")
     for s in scenes:
         d = plan_by_id.get(s["scene_id"]) or {"kind": "painting_full",
                                                "panel_ref": -1, "motion": "zoom_out"}
@@ -105,7 +106,9 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
             second = _unused_region(page_ref)
             if second:
                 sec_page_ref, sec_bbox = second
-                sec_motion = zoom_alt[(shot_id + 1) % 2]
+                # Oppose the primary shot's motion so the cut reads as a
+                # deliberate counter-move, not a continuation.
+                sec_motion = "zoom_out" if motion == "zoom_in" else "zoom_in"
                 parts = [(bbox, motion, dur * 0.6, page_ref),
                          (sec_bbox, sec_motion, dur * 0.4, sec_page_ref)]
         if not parts:
@@ -132,6 +135,10 @@ def assemble_art_video(
     force: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> AssemblyResult:
+    """Assemble the final art video from narration + audio + visual plan.
+
+    Shot reuse with force=False assumes visual_plan.json has not changed
+    between runs; after editing the plan, rerun with force=True."""
     log = progress or print
     _require_ffmpeg()
     root = get_art_project_path(project_name)
@@ -167,7 +174,7 @@ def assemble_art_video(
     if not shots:
         raise RuntimeError("plan_shots produced 0 shots — check narration/visual_plan")
     zooms = sum(1 for s in shots if s.motion in ("zoom_in", "zoom_out"))
-    log(f"[assemble] {len(shots)} shots / {len(narration['scenes'])} scenes "
+    log(f"[assemble] {len(shots)} shots / {len(narration.get('scenes') or [])} scenes "
         f"({zooms} zoom, {len(shots) - zooms} drift/static)")
 
     shot_paths: list[Path] = []

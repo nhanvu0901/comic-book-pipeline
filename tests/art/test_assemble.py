@@ -70,3 +70,40 @@ def test_even_split_fallback_and_audio_pad():
     assert len(shots) == 4
     total = sum(s.duration_seconds for s in shots)
     assert total >= 10.0   # padded to cover audio (-shortest guard)
+
+
+def test_split_secondary_motion_opposes_primary():
+    narration, plan, pages, timings = _fixture()
+    plan[1]["motion"] = "zoom_out"                            # primary = zoom_out
+    timings[1] = {"scene_id": 2, "start": 3.0, "end": 9.5}    # 6.5s >= split
+    for t in timings[2:]:
+        t["start"] += 3.5; t["end"] += 3.5
+    shots = plan_shots(narration, plan, pages, timings, audio_duration=15.5)
+    scene2 = [s for s in shots if s.scene_id == 2]
+    assert len(scene2) == 2
+    assert scene2[0].motion == "zoom_out"
+    assert scene2[1].motion == "zoom_in"    # opposes primary, not shot_id parity
+
+
+def test_related_split_secondary_uses_painting_page():
+    narration, plan, pages, timings = _fixture()
+    timings[2] = {"scene_id": 3, "start": 6.0, "end": 12.0}   # related scene 6.0s >= split
+    for t in timings[3:]:
+        t["start"] += 3.0; t["end"] += 3.0
+    shots = plan_shots(narration, plan, pages, timings, audio_duration=15.0)
+    scene3 = [s for s in shots if s.scene_id == 3]
+    assert len(scene3) == 2
+    assert scene3[0].source_image == "/tmp/p2.jpg"            # web image, pan only
+    assert scene3[0].motion == "pan_right"
+    # secondary lives on the PAINTING page — the web image is never zoomed
+    assert scene3[1].source_image == "/tmp/p1.jpg"
+    assert scene3[1].motion in ("zoom_in", "zoom_out")
+
+
+def test_scene_durations_key_mismatch_falls_back_even():
+    narration, plan, pages, timings = _fixture()
+    timings[3]["scene_id"] = 99   # right count, wrong key — must not KeyError
+    shots = plan_shots(narration, plan, pages, timings, audio_duration=12.0)
+    assert len(shots) == 4
+    for s in shots:
+        assert abs(s.duration_seconds - 12.0 / 4) < 0.25   # even split fallback
