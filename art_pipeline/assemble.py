@@ -45,10 +45,24 @@ def _region_bbox(page: dict, panel_ref: int) -> dict:
 
 def _scene_durations(scenes: list[dict], timings: list[dict],
                      audio_duration: float) -> dict[int, float]:
-    by_id = {int(t["scene_id"]): max(0.4, float(t["end"]) - float(t["start"]))
+    """Visual duration per scene. A scene's shot stays on screen from its OWN
+    start until the NEXT scene's start — the inter-scene silence belongs to the
+    scene before it. Using end-start instead drops every gap, so each later
+    shot appears EARLIER than its audio (measured: 6.75s cumulative drift over
+    13 scenes). The last scene runs to the end of the audio."""
+    by_id = {int(t["scene_id"]): (float(t["start"]), float(t["end"]))
              for t in timings or []}
     if by_id and set(by_id) >= {s["scene_id"] for s in scenes}:
-        return {s["scene_id"]: by_id[s["scene_id"]] for s in scenes}
+        out: dict[int, float] = {}
+        for i, s in enumerate(scenes):
+            start, end = by_id[s["scene_id"]]
+            if i + 1 < len(scenes):
+                nxt_start = by_id[scenes[i + 1]["scene_id"]][0]
+                out[s["scene_id"]] = max(0.4, nxt_start - start)
+            else:
+                out[s["scene_id"]] = max(0.4, (audio_duration - start)
+                                         if audio_duration > start else end - start)
+        return out
     even = max(0.4, audio_duration / max(1, len(scenes)))
     return {s["scene_id"]: even for s in scenes}
 

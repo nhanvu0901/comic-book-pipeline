@@ -100,6 +100,24 @@ def test_related_split_secondary_uses_painting_page():
     assert scene3[1].motion in ("zoom_in", "zoom_out")
 
 
+def test_scene_durations_absorb_inter_scene_gaps():
+    narration, plan, pages, _ = _fixture()
+    # 0.5s silence after each scene — visual must hold until the NEXT scene
+    # starts (and the last scene runs to the end of the audio), otherwise every
+    # later shot appears earlier than its audio (progressive A/V drift).
+    timings = [{"scene_id": 1, "start": 0.0, "end": 2.5},
+               {"scene_id": 2, "start": 3.0, "end": 5.5},
+               {"scene_id": 3, "start": 6.0, "end": 8.5},
+               {"scene_id": 4, "start": 9.0, "end": 11.5}]
+    shots = plan_shots(narration, plan, pages, timings, audio_duration=12.0)
+    assert len(shots) == 4
+    for s in shots:
+        assert abs(s.duration_seconds - 3.0) < 0.25   # each scene absorbs its gap
+    total = sum(s.duration_seconds for s in shots)
+    assert total >= 12.0          # covers the whole audio
+    assert total <= 12.0 + 0.25   # no abnormal end-pad — drift is gone
+
+
 def test_scene_durations_key_mismatch_falls_back_even():
     narration, plan, pages, timings = _fixture()
     timings[3]["scene_id"] = 99   # right count, wrong key — must not KeyError
