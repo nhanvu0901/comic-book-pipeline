@@ -38,6 +38,15 @@ def test_parse_visual_region_requires_panel():
         parse_visual({"kind": "painting_region", "panel_ref": -1}, scene_id=5)
 
 
+def test_parse_visual_non_dict_raises_value_error():
+    """LLM emitting "visual": "painting_full" (string) or a list must become a
+    ValueError so the narrate retry loop catches it, never an AttributeError."""
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        parse_visual("painting_full", scene_id=1)
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        parse_visual(["x"], scene_id=1)
+
+
 # ── assign_motions ───────────────────────────────────────────────────────────
 
 def test_assign_motions_alternates_zoom_and_maps_kinds():

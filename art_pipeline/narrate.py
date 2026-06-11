@@ -142,6 +142,8 @@ def build_narration_from_raw(
     plan: list[dict] = []
     total_words = 0
     for i, s in enumerate(scenes_raw, start=1):
+        if not isinstance(s, dict):
+            raise ValueError(f"narration: scene {i} is not a JSON object")
         text = str(s.get("text") or "").strip()
         if not text:
             raise ValueError(f"narration: scene {i} empty text")

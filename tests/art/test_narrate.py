@@ -94,6 +94,26 @@ def test_build_v2_min_scenes(pages, ctx):
         narrate.build_narration_from_raw(raw, pages, ctx, "painting_deep_dive", "p", "m")
 
 
+def test_build_v2_string_scene_raises_value_error(pages, ctx):
+    """An LLM returning a bare string in "scenes" must become a ValueError
+    (caught by write_narration's retry loop), never an AttributeError."""
+    scenes = _raw_scenes_v2()
+    scenes[2] = "just a string"
+    raw = json.dumps({"title": "t", "hook": "h", "scenes": scenes})
+    with pytest.raises(ValueError, match="not a JSON object"):
+        narrate.build_narration_from_raw(raw, pages, ctx, "painting_deep_dive", "p", "m")
+
+
+def test_build_v2_string_visual_raises_value_error(pages, ctx):
+    """An LLM returning "visual": "painting_full" (string, not object) must
+    surface as a ValueError from parse_visual, never an AttributeError."""
+    scenes = _raw_scenes_v2()
+    scenes[2]["visual"] = "painting_full"
+    raw = json.dumps({"title": "t", "hook": "h", "scenes": scenes})
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        narrate.build_narration_from_raw(raw, pages, ctx, "painting_deep_dive", "p", "m")
+
+
 def test_hook_concreteness():
     ctx_local = {"title": "Circus Sideshow",
                  "summary": {"characters": [{"name": "Georges Seurat"}]}}

@@ -21,6 +21,9 @@ _RELATED_MOTION = "pan_right"     # light drift, never zoom
 def parse_visual(raw: dict, *, scene_id: int) -> dict:
     """Validate one LLM-supplied visual declaration. Raises ValueError with a
     scene-specific message so the narrate retry loop can feed it back."""
+    if raw is not None and not isinstance(raw, dict):
+        raise ValueError(f"visual plan: scene {scene_id} visual must be a JSON "
+                         f"object, got {type(raw).__name__}")
     kind = str((raw or {}).get("kind") or "").strip()
     if kind not in KINDS:
         raise ValueError(f"visual plan: scene {scene_id} unknown kind {kind!r} "
