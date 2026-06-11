@@ -1,0 +1,260 @@
+"""A4.5: resolve `related` visual-plan scenes onto web images found by ONE
+Claude SDK web-research session (spec 2026-06-11 §A4.5).
+
+The SDK does the smart part (read narration, decide what to search, pick the
+image); code does the mechanical part (download, size gate, register page,
+re-point refs, credits). User decision: free-range web — no license gate;
+source_url + license-if-found are RECORDED for traceability.
+
+Best-effort contract: SDK failure / no result / bad download → the scene falls
+back to an UNUSED painting region (keeps the variety rules), else painting_full.
+The pipeline never dies here."""
+import hashlib
+import json
+import urllib.request
+from pathlib import Path
+
+from PIL import Image
+
+from stages._claude_sdk import sdk_complete_web
+from stages.stage_2.cache import image_hash, save_cached
+from stages.stage_2.schema import PanelInfo, PreprocessedPage
+
+from ._json import extract_json
+from .config import VISUAL_MIN_SHORT_SIDE, get_art_project_path
+from .visual_plan import assign_motions, visual_target
+
+# Arbitrary websites 403 obvious bot UAs; a browser-ish UA is standard practice
+# for one-off fetches of publicly served images.
+_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+_HUNT_SYSTEM = """You are an image researcher for short educational art videos.
+You receive narration scenes that each need ONE related image. Use WebSearch and
+WebFetch to find the best DIRECT image URL (ends in .jpg/.jpeg/.png/.webp or is
+a direct image CDN link) for each subject.
+
+Priority order when relevant: (1) x-ray / infrared / underdrawing images of the
+painting itself, (2) portraits or photographs of the artist, (3) historical
+photographs, maps or documents of the era/place, (4) comparison artworks.
+Prefer larger images (at least 600px on the short side) from stable sources
+(Wikimedia, museum sites, archives). Record the page you found it on as
+source_url and the license if stated, else "unknown".
+
+Respond with ONLY valid JSON:
+{"images": {"<scene_id>": {"image_url": "...", "title": "...",
+            "source_url": "...", "license": "..."}}}
+Omit a scene's key entirely if you cannot find a good image for it."""
+
+
+def build_hunt_prompt(ctx: dict, scenes: list[dict], decls: list[dict]) -> str:
+    by_id = {s["scene_id"]: s for s in scenes}
+    lines = [f"Video: the story behind \"{ctx.get('title', '')}\".",
+             "Find one image per scene below. Try painting x-ray/infrared queries "
+             "first where the subject suggests technical analysis.", ""]
+    for d in decls:
+        s = by_id.get(d["scene_id"], {})
+        lines.append(f'scene "{d["scene_id"]}": subject: {d["subject"]}')
+        lines.append(f'  narration: {s.get("text", "")}')
+    return "\n".join(lines)
+
+
+def parse_hunt_response(raw: str | None) -> dict[int, dict]:
+    """SDK text → {scene_id: candidate}. Drops entries without an image_url.
+    Returns {} on any parse problem (caller falls back per scene)."""
+    data = extract_json(raw or "")
+    if not data or not isinstance(data.get("images"), dict):
+        return {}
+    out: dict[int, dict] = {}
+    for k, v in data["images"].items():
+        try:
+            sid = int(k)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(v, dict) or not str(v.get("image_url") or "").strip():
+            continue
+        out[sid] = {"image_url": str(v["image_url"]).strip(),
+                    "title": str(v.get("title") or "").strip(),
+                    "source_url": str(v.get("source_url") or "").strip(),
+                    "license": str(v.get("license") or "unknown").strip() or "unknown"}
+    return out
+
+
+def _download(url: str, dest: Path) -> tuple[int, int] | None:
+    """Download + size-gate. Returns (w, h) or None (file removed on reject)."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            dest.write_bytes(r.read())
+        with Image.open(dest) as im:
+            w, h = im.size
+        if min(w, h) < VISUAL_MIN_SHORT_SIDE:
+            dest.unlink(missing_ok=True)
+            return None
+        return (w, h)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        return None
+
+
+def build_related_page(*, page_number: int, image_path: str, width: int,
+                       height: int, title: str) -> dict:
+    return PreprocessedPage(
+        page_number=page_number,
+        source_image=image_path,
+        image_dimensions={"width": width, "height": height},
+        is_story_page=True,
+        page_type="story",
+        panels=[PanelInfo(index=0,
+                          bbox={"x": 0, "y": 0, "w": width, "h": height},
+                          description=title, characters=[],
+                          dominant_emotion="", cluster_ids=[])],
+        text_blocks=[],
+        page_summary=title,
+        issue_label=f"related: {title}",
+        vlm_model="", vlm_model_used="sdk-web",
+        content_hash="", preprocessing_method="web-related", skip_reason="",
+    ).to_dict()
+
+
+def pick_fallback_region(scene: dict, pages_by_number: dict, used: set,
+                         neighbor_targets: set) -> tuple[int, int] | None:
+    """First region on the scene's page (else any page) that is neither used
+    already (rule 2) nor equal to a neighboring scene's target (rule 1)."""
+    page_order = [scene.get("page_ref")] + [n for n in sorted(pages_by_number)
+                                            if n != scene.get("page_ref")]
+    for pn in page_order:
+        page = pages_by_number.get(pn)
+        if not page or page.get("preprocessing_method") == "web-related":
+            continue
+        for panel in page.get("panels") or []:
+            t = ("r", pn, int(panel["index"]))
+            if t in used or t in neighbor_targets:
+                continue
+            return (pn, int(panel["index"]))
+    return None
+
+
+def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
+    root = get_art_project_path(project_name)
+    manifest_path = root / "hunt_manifest.json"
+    narration = json.loads((root / "narration.json").read_text())
+    plan = json.loads((root / "visual_plan.json").read_text())
+    ctx = json.loads((root / "art_context.json").read_text())
+
+    pages: dict[int, dict] = {}
+    for p in sorted((root / "preprocessed").glob("page_*.json")):
+        d = json.loads(p.read_text())
+        pages[int(d["page_number"])] = d
+
+    scenes = narration.get("scenes") or []
+    scenes_by_id = {s["scene_id"]: s for s in scenes}
+    plan_by_id = {d["scene_id"]: d for d in plan}
+
+    if manifest_path.exists():
+        if not force:
+            log("[hunt] hunt_manifest.json exists — skipping (use force to redo)")
+            return {"requested": 0, "resolved": 0, "skipped": True}
+        prev = {e["scene_id"]: e for e in json.loads(manifest_path.read_text())}
+        for s in scenes:
+            e = prev.get(s["scene_id"])
+            if e:
+                s["page_ref"], s["panel_ref"] = e["original_page_ref"], e["original_panel_ref"]
+                d = plan_by_id.get(s["scene_id"])
+                if d:
+                    d.pop("page_ref", None)
+                    d["kind"], d["fallback"] = e["original_kind"], ""
+                    d["panel_ref"] = e["original_panel_ref"]
+        for n, pd_ in list(pages.items()):
+            if pd_.get("preprocessing_method") == "web-related":
+                for f in (root / "preprocessed").glob(f"page_{n:03d}_*.json"):
+                    f.unlink()
+                pages.pop(n)
+        log("[hunt] force: restored original refs + removed stale related pages")
+
+    decls = [d for d in plan if d["kind"] == "related"]
+    requested = len(decls)
+    results: dict[int, dict] = {}
+    if decls:
+        raw = sdk_complete_web(_HUNT_SYSTEM,
+                               build_hunt_prompt(ctx, scenes, decls), log=log)
+        results = parse_hunt_response(raw)
+        log(f"[hunt] SDK returned {len(results)}/{requested} candidate image(s)")
+
+    rel_dir = root / "related_images"
+    rel_dir.mkdir(exist_ok=True)
+    used_urls: set = set()
+    manifest: list[dict] = []
+    credits: list[dict] = []
+    next_page = max(pages) + 1 if pages else 1
+    resolved = 0
+
+    # targets already on screen (rule 1/2 bookkeeping for fallbacks)
+    used_targets = {visual_target(scenes_by_id[d["scene_id"]], d)
+                    for d in plan if d["kind"] == "painting_region"}
+
+    ordered_ids = [s["scene_id"] for s in scenes]
+    for d in decls:
+        s = scenes_by_id[d["scene_id"]]
+        original = {"scene_id": s["scene_id"], "original_page_ref": s["page_ref"],
+                    "original_panel_ref": s["panel_ref"], "original_kind": "related"}
+        c = results.get(d["scene_id"])
+        dims = None
+        dest = None
+        if c and c["image_url"] not in used_urls:
+            dest = rel_dir / (f"rel_{d['scene_id']:02d}_"
+                              f"{hashlib.sha256(c['image_url'].encode()).hexdigest()[:8]}.jpg")
+            dims = _download(c["image_url"], dest)
+        if dims:
+            w, h = dims
+            page = build_related_page(page_number=next_page,
+                                      image_path=str(dest.resolve()),
+                                      width=w, height=h,
+                                      title=c["title"] or d["subject"])
+            save_cached(root, next_page, image_hash(dest), page)
+            pages[next_page] = page
+            s["page_ref"], s["panel_ref"] = next_page, 0
+            d["page_ref"] = next_page
+            used_urls.add(c["image_url"])
+            credits.append({k: c.get(k, "") for k in ("title", "license", "source_url")})
+            manifest.append({**original, "page_number": next_page,
+                             "image": str(dest), **c})
+            log(f"[hunt] ✓ scene {d['scene_id']} → {c['title']!r} ({c['license']})")
+            next_page += 1
+            resolved += 1
+            continue
+        # ── fallback: unused painting region, else painting_full ────────────
+        reason = ("no SDK candidate" if not c else
+                  "duplicate image" if c["image_url"] in used_urls else
+                  "download/size reject")
+        idx = ordered_ids.index(d["scene_id"])
+        neighbor_targets = set()
+        for j in (idx - 1, idx + 1):
+            if 0 <= j < len(ordered_ids):
+                nd = plan_by_id[ordered_ids[j]]
+                neighbor_targets.add(visual_target(scenes_by_id[ordered_ids[j]], nd))
+        pick = pick_fallback_region(s, pages, used_targets, neighbor_targets)
+        if pick:
+            pn, panel = pick
+            d["kind"], d["panel_ref"], d["fallback"] = "painting_region", panel, reason
+            s["page_ref"], s["panel_ref"] = pn, panel
+            used_targets.add(("r", pn, panel))
+        else:
+            d["kind"], d["panel_ref"], d["fallback"] = "painting_full", -1, reason
+            s["panel_ref"] = -1
+        manifest.append({**original, "fallback": reason})
+        log(f"[hunt] scene {d['scene_id']}: {reason} → fallback {d['kind']}")
+
+    intro_id = next((s["scene_id"] for s in scenes if s.get("is_intro")), None)
+    assign_motions(plan, intro_scene_id=intro_id)
+
+    (root / "narration.json").write_text(json.dumps(narration, indent=2, ensure_ascii=False))
+    (root / "visual_plan.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False))
+    # NOTE: manifest written even when nothing resolved — reruns SKIP unless force
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+    ctx["extra_image_credits"] = credits
+    ctx["sources"] = list(dict.fromkeys(
+        (ctx.get("sources") or []) + [c["source_url"] for c in credits if c["source_url"]]))
+    (root / "art_context.json").write_text(json.dumps(ctx, indent=2, ensure_ascii=False))
+    log(f"[hunt] done — {resolved}/{requested} related scene(s) resolved")
+    return {"requested": requested, "resolved": resolved, "credits": credits}
