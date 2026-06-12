@@ -43,7 +43,11 @@ source_url and the license if stated, else "unknown".
 
 Respond with ONLY valid JSON:
 {"images": {"<scene_id>": {"image_url": "...", "title": "...",
-            "source_url": "...", "license": "..."}}}
+            "source_url": "...", "license": "...",
+            "alt_image_url": "..."}}}
+"alt_image_url" is optional: a second, DIFFERENT direct image URL for the same
+subject from another source, used if the first fails; omit it if you only found
+one. Both URLs should be at least 600px on the short side when you can tell.
 Omit a scene's key entirely if you cannot find a good image for it."""
 
 
@@ -74,6 +78,7 @@ def parse_hunt_response(raw: str | None) -> dict[int, dict]:
         if not isinstance(v, dict) or not str(v.get("image_url") or "").strip():
             continue
         out[sid] = {"image_url": str(v["image_url"]).strip(),
+                    "alt_image_url": str(v.get("alt_image_url") or "").strip(),
                     "title": str(v.get("title") or "").strip(),
                     "source_url": str(v.get("source_url") or "").strip(),
                     "license": str(v.get("license") or "unknown").strip() or "unknown"}
@@ -215,10 +220,23 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
         c = results.get(d["scene_id"])
         dims = None
         dest = None
-        if c and c["image_url"] not in used_urls:
-            dest = rel_dir / (f"rel_{d['scene_id']:02d}_"
-                              f"{hashlib.sha256(c['image_url'].encode()).hexdigest()[:8]}.jpg")
-            dims = _download(c["image_url"], dest)
+        chosen_url = ""
+        attempted = 0   # candidate URLs actually downloaded (used_urls dups don't count)
+        if c:
+            urls = [c["image_url"]]
+            alt = str(c.get("alt_image_url") or "").strip()
+            if alt and alt != c["image_url"]:
+                urls.append(alt)   # SDK backup: tried only if the primary fails
+            for url in urls:
+                if url in used_urls:
+                    continue
+                attempted += 1
+                dest = rel_dir / (f"rel_{d['scene_id']:02d}_"
+                                  f"{hashlib.sha256(url.encode()).hexdigest()[:8]}.jpg")
+                dims = _download(url, dest)
+                if dims:
+                    chosen_url = url
+                    break
         if dims:
             w, h = dims
             page = build_related_page(page_number=next_page,
@@ -229,17 +247,20 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
             pages[next_page] = page
             s["page_ref"], s["panel_ref"] = next_page, 0
             d["page_ref"] = next_page
-            used_urls.add(c["image_url"])
+            used_urls.add(chosen_url)
             credits.append({k: c.get(k, "") for k in ("title", "license", "source_url")})
+            # image_url in the manifest is the URL ACTUALLY downloaded — when the
+            # alt rescued a rejected primary, that's the alt, not the primary.
             manifest.append({**original, "page_number": next_page,
-                             "image": str(dest), **c})
+                             "image": str(dest), **c, "image_url": chosen_url})
             log(f"[hunt] ✓ scene {d['scene_id']} → {c['title']!r} ({c['license']})")
             next_page += 1
             resolved += 1
             continue
         # ── fallback: unused painting region, else painting_full ────────────
         reason = ("no SDK candidate" if not c else
-                  "duplicate image" if c["image_url"] in used_urls else
+                  "duplicate image" if attempted == 0 else
+                  "download/size reject (both candidates)" if attempted > 1 else
                   "download/size reject")
         idx = ordered_ids.index(d["scene_id"])
         # NOTE: a neighboring `related` decl that already resolved to a web page

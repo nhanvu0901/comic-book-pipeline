@@ -21,10 +21,22 @@ def test_parse_hunt_response_string_keys_and_skips():
     raw = ('{"images": {"3": {"image_url": "https://x/a.jpg", "title": "T",'
            ' "source_url": "https://x/page", "license": "unknown"}}}')
     out = parse_hunt_response(raw)
-    assert out == {3: {"image_url": "https://x/a.jpg", "title": "T",
-                       "source_url": "https://x/page", "license": "unknown"}}
+    assert out == {3: {"image_url": "https://x/a.jpg", "alt_image_url": "",
+                       "title": "T", "source_url": "https://x/page",
+                       "license": "unknown"}}
     assert parse_hunt_response("not json") == {}
     assert parse_hunt_response('{"images": {"3": {"title": "no url"}}}') == {}
+
+
+def test_parse_hunt_response_keeps_alt_url():
+    raw = ('{"images": {'
+           '"2": {"image_url": "https://x/a.jpg", "alt_image_url": " https://y/b.jpg ",'
+           '      "title": "T", "source_url": "https://x/p", "license": "PD"},'
+           '"3": {"image_url": "https://x/c.jpg", "title": "U",'
+           '      "source_url": "https://x/q", "license": "unknown"}}}')
+    out = parse_hunt_response(raw)
+    assert out[2]["alt_image_url"] == "https://y/b.jpg"   # kept + stripped
+    assert out[3]["alt_image_url"] == ""                  # absent → default ""
 
 
 def test_build_hunt_prompt_mentions_xray_priority_and_subjects():
@@ -89,6 +101,35 @@ def test_hunt_happy_path(tmp_path, monkeypatch):
     assert len(pages) == 1
     assert json.loads(pages[0].read_text())["preprocessing_method"] == "web-related"
     assert (root / "hunt_manifest.json").exists()
+
+
+def test_hunt_primary_reject_alt_succeeds(tmp_path, monkeypatch):
+    root = _project(tmp_path, monkeypatch)
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda *a, **k: json.dumps(
+        {"images": {"2": {"image_url": "https://x/bad.jpg",
+                          "alt_image_url": "https://y/good.jpg",
+                          "title": "Artist photo",
+                          "source_url": "https://x/page", "license": "PD"}}}))
+
+    def fake_download(url, dest):
+        if "bad" in url:
+            return None          # primary rejected (download/size)
+        dest.write_bytes(b"x")
+        return (1200, 900)
+
+    monkeypatch.setattr(hunt_mod, "_download", fake_download)
+    out = hunt_visuals("proj", log=lambda m: None)
+    assert out["resolved"] == 1 and out["requested"] == 1
+    plan = json.loads((root / "visual_plan.json").read_text())
+    assert plan[1]["kind"] == "related"                  # NOT region fallback
+    assert plan[1].get("page_ref") == 2
+    manifest = json.loads((root / "hunt_manifest.json").read_text())
+    assert manifest[0]["image_url"] == "https://y/good.jpg"   # the URL actually used
+    assert manifest[0].get("fallback") is None
+    ctx = json.loads((root / "art_context.json").read_text())
+    assert ctx["extra_image_credits"][0]["source_url"] == "https://x/page"
+    narration = json.loads((root / "narration.json").read_text())
+    assert narration["scenes"][1]["page_ref"] == 2
 
 
 def test_hunt_sdk_failure_falls_back_to_unused_region(tmp_path, monkeypatch):
