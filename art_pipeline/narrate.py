@@ -53,8 +53,10 @@ Hard rules:
      "photograph portrait of Georges Seurat" or "Circus Sideshow x-ray analysis".
 4. VARIETY IS MANDATORY: no two consecutive scenes may show the same thing; each
    painting region may be used at most once; related subjects must all differ.
-5. The painting is the star: use related images for genuine reveals (artist,
-   x-ray, historical context), not as filler. Let the content decide the mix.
+5. AIM FOR 4-6 "related" scenes out of your 10-14: whenever the story leaves
+   the canvas — the artist, the era, the technique, an x-ray finding, a
+   comparison work, the place — show it with a related image instead of
+   holding the painting. The painting still opens and closes the video.
 6. Scene 1 is the hook (is_intro=true), max 26 words: a pattern-interrupt — name
    a concrete, surprising, verified detail of THIS painting ("This painting
    hides X — here's where"), never a generic opener. The hook MUST mention the
