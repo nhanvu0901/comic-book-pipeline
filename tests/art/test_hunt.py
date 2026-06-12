@@ -85,6 +85,16 @@ def _http_429():
     return urllib.error.HTTPError("https://x", 429, "Too many requests", {}, None)
 
 
+def test_ua_for_picks_wikimedia_policy_ua():
+    assert hunt_mod._ua_for(
+        "https://upload.wikimedia.org/wikipedia/commons/a/ab/X.jpg") == hunt_mod._UA_WIKIMEDIA
+    assert hunt_mod._ua_for(
+        "https://en.wikipedia.org/static/x.png") == hunt_mod._UA_WIKIMEDIA
+    assert hunt_mod._ua_for("https://example.com/x.jpg") == hunt_mod._UA
+    # similar-looking but DIFFERENT domain must not match the suffix check
+    assert hunt_mod._ua_for("https://notwikipedia.org.evil.com/x.jpg") == hunt_mod._UA
+
+
 def test_download_retries_once_on_429(tmp_path, monkeypatch):
     calls = {"n": 0}
 

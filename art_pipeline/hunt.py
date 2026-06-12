@@ -13,6 +13,7 @@ import hashlib
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -30,6 +31,21 @@ from .visual_plan import assign_motions, visual_target
 # for one-off fetches of publicly served images.
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+# Wikimedia's UA policy is the OPPOSITE: they 429 anonymous browser-ish UAs and
+# ask for tool/version + contact (their 429 body literally says "please contact
+# noc@wikimedia", measured 2026-06-12). Identify honestly on their hosts.
+_UA_WIKIMEDIA = ("art-pipeline/0.1 (https://github.com/personal-project; "
+                 "contact: nhan.vutrong@8seneca.com) urllib")
+
+
+def _ua_for(url: str) -> str:
+    """Wikimedia/Wikipedia hosts get the policy-compliant tool UA; everything
+    else keeps the browser UA (arbitrary sites 403 obvious bots instead)."""
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if host.endswith("wikimedia.org") or host.endswith("wikipedia.org"):
+        return _UA_WIKIMEDIA
+    return _UA
 
 # Wikimedia rate-limits burst downloads (HTTP 429 measured 2026-06-12 on
 # circus-sideshow: 3/4 URLs rejected). Space out EVERY download and give one
@@ -95,7 +111,7 @@ def parse_hunt_response(raw: str | None) -> dict[int, dict]:
 
 
 def _fetch(url: str, dest: Path) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    req = urllib.request.Request(url, headers={"User-Agent": _ua_for(url)})
     with urllib.request.urlopen(req, timeout=60) as r:
         dest.write_bytes(r.read())
 
