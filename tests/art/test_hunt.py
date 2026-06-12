@@ -113,7 +113,7 @@ def test_hunt_primary_reject_alt_succeeds(tmp_path, monkeypatch):
 
     def fake_download(url, dest):
         if "bad" in url:
-            return None          # primary rejected (download/size)
+            return "http: HTTPError: HTTP Error 404: Not Found"   # primary rejected
         dest.write_bytes(b"x")
         return (1200, 900)
 
@@ -130,6 +130,31 @@ def test_hunt_primary_reject_alt_succeeds(tmp_path, monkeypatch):
     assert ctx["extra_image_credits"][0]["source_url"] == "https://x/page"
     narration = json.loads((root / "narration.json").read_text())
     assert narration["scenes"][1]["page_ref"] == 2
+
+
+def test_hunt_size_reject_reason_logged_and_in_manifest(tmp_path, monkeypatch):
+    root = _project(tmp_path, monkeypatch)
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda *a, **k: json.dumps(
+        {"images": {"2": {"image_url": "https://x/small.jpg",
+                          "alt_image_url": "https://y/big.jpg", "title": "t",
+                          "source_url": "https://x/p", "license": "PD"}}}))
+
+    def fake_download(url, dest):
+        if "small" in url:
+            return "too small: 300x200"
+        dest.write_bytes(b"x")
+        return (1200, 900)
+
+    monkeypatch.setattr(hunt_mod, "_download", fake_download)
+    logs = []
+    out = hunt_visuals("proj", log=logs.append)
+    assert out["resolved"] == 1                          # rescued by the alt URL
+    assert any("https://x/small.jpg" in m and "too small: 300x200" in m
+               for m in logs)                            # per-URL failure logged
+    manifest = json.loads((root / "hunt_manifest.json").read_text())
+    assert manifest[0]["attempted"] == [
+        {"url": "https://x/small.jpg", "reason": "too small: 300x200"}]
+    assert manifest[0]["image_url"] == "https://y/big.jpg"
 
 
 def test_hunt_sdk_failure_falls_back_to_unused_region(tmp_path, monkeypatch):

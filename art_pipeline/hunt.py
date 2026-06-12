@@ -85,21 +85,27 @@ def parse_hunt_response(raw: str | None) -> dict[int, dict]:
     return out
 
 
-def _download(url: str, dest: Path) -> tuple[int, int] | None:
-    """Download + size-gate. Returns (w, h) or None (file removed on reject)."""
+def _download(url: str, dest: Path) -> tuple[int, int] | str:
+    """Download + size-gate. Success → (w, h); reject → short REASON string
+    (file removed on reject). Caller distinguishes via isinstance(result, tuple);
+    the reason feeds the per-URL diagnostics log and manifest `attempted` list."""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
         with urllib.request.urlopen(req, timeout=60) as r:
             dest.write_bytes(r.read())
+    except Exception as exc:
+        dest.unlink(missing_ok=True)
+        return f"http: {type(exc).__name__}: {exc}"[:80]
+    try:
         with Image.open(dest) as im:
             w, h = im.size
-        if min(w, h) < VISUAL_MIN_SHORT_SIDE:
-            dest.unlink(missing_ok=True)
-            return None
-        return (w, h)
-    except Exception:
+    except Exception as exc:
         dest.unlink(missing_ok=True)
-        return None
+        return f"not an image: {type(exc).__name__}"
+    if min(w, h) < VISUAL_MIN_SHORT_SIDE:
+        dest.unlink(missing_ok=True)
+        return f"too small: {w}x{h}"
+    return (w, h)
 
 
 def build_related_page(*, page_number: int, image_path: str, width: int,
@@ -221,7 +227,8 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
         dims = None
         dest = None
         chosen_url = ""
-        attempted = 0   # candidate URLs actually downloaded (used_urls dups don't count)
+        # per-URL failure diagnostics (used_urls dups don't count as attempts)
+        attempted: list[dict] = []
         if c:
             urls = [c["image_url"]]
             alt = str(c.get("alt_image_url") or "").strip()
@@ -230,13 +237,15 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
             for url in urls:
                 if url in used_urls:
                     continue
-                attempted += 1
                 dest = rel_dir / (f"rel_{d['scene_id']:02d}_"
                                   f"{hashlib.sha256(url.encode()).hexdigest()[:8]}.jpg")
-                dims = _download(url, dest)
-                if dims:
+                got = _download(url, dest)
+                if isinstance(got, tuple):
+                    dims = got
                     chosen_url = url
                     break
+                attempted.append({"url": url, "reason": got})
+                log(f"[hunt]   scene {d['scene_id']}: {url[:90]} → {got}")
         if dims:
             w, h = dims
             page = build_related_page(page_number=next_page,
@@ -250,17 +259,19 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
             used_urls.add(chosen_url)
             credits.append({k: c.get(k, "") for k in ("title", "license", "source_url")})
             # image_url in the manifest is the URL ACTUALLY downloaded — when the
-            # alt rescued a rejected primary, that's the alt, not the primary.
+            # alt rescued a rejected primary, that's the alt, not the primary;
+            # `attempted` then records WHY the primary was rejected.
             manifest.append({**original, "page_number": next_page,
-                             "image": str(dest), **c, "image_url": chosen_url})
+                             "image": str(dest), **c, "image_url": chosen_url,
+                             "attempted": attempted})
             log(f"[hunt] ✓ scene {d['scene_id']} → {c['title']!r} ({c['license']})")
             next_page += 1
             resolved += 1
             continue
         # ── fallback: unused painting region, else painting_full ────────────
         reason = ("no SDK candidate" if not c else
-                  "duplicate image" if attempted == 0 else
-                  "download/size reject (both candidates)" if attempted > 1 else
+                  "duplicate image" if not attempted else
+                  "download/size reject (both candidates)" if len(attempted) > 1 else
                   "download/size reject")
         idx = ordered_ids.index(d["scene_id"])
         # NOTE: a neighboring `related` decl that already resolved to a web page
@@ -285,7 +296,7 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
         else:
             d["kind"], d["panel_ref"], d["fallback"] = "painting_full", -1, reason
             s["panel_ref"] = -1
-        manifest.append({**original, "fallback": reason})
+        manifest.append({**original, "fallback": reason, "attempted": attempted})
         log(f"[hunt] scene {d['scene_id']}: {reason} → fallback {d['kind']}")
 
     intro_id = next((s["scene_id"] for s in scenes if s.get("is_intro")), None)
