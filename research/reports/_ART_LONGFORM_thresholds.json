@@ -1,0 +1,19 @@
+{
+  "_comment": "Long-form QA gates (spec 2026-06-12). Checked manually/e2e; writer validators enforce the hard ones at generation time.",
+  "words_min": 1200,
+  "words_max": 1700,
+  "scenes_min": 60,
+  "scenes_max": 110,
+  "chapters_min": 4,
+  "chapters_max": 5,
+  "wpm_min": 130,
+  "wpm_max": 150,
+  "rehook_chapter_positions": [2, 3],
+  "max_static_sec": 4.0,
+  "max_av_drift_sec": 0.3,
+  "drift_checked_at": "video end AND every chapter boundary",
+  "zoom_on_web_images": 0,
+  "consecutive_identical_shots": 0,
+  "output": "1920x1080",
+  "bgm": "warn if missing"
+}

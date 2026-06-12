@@ -32,6 +32,18 @@ object IDs, commands in original form).
 existing dedicated Short, but do not reject over it. Record what you found in
 the `yt_coverage` column (e.g. "no dedicated short", "1 long-form doc exists").
 
+## Long-form story-strength (REQUIRED for longform candidates)
+
+Research 2026-06-12 (`research/reports/2026-06-12-longform-topic-patterns.md`):
+mystery/scandal > hidden-details/x-ray > tragic biography; avoid oversaturated
+icons. A long-form candidate MUST name its angle in one sentence — a concrete
+mystery, scandal, theft, forgery, x-ray finding, or fate twist that the video
+answers (the outline's through_line). No angle → not a long-form candidate
+(may still be a Shorts candidate).
+
+Append the angle to `art_candidates.csv` in the `longform_angle` column
+(empty for Shorts-only candidates).
+
 # WORKFLOW
 
 1. **Read state first**: `art_candidates.csv` (may not exist yet — then treat as
