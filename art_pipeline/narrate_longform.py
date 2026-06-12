@@ -20,7 +20,8 @@ from .visual_plan import (
 from .config import (
     ART_LF_CHAPTER_WORDS_BAND, ART_LF_REGION_REUSE_WINDOW, ART_LF_REHOOK_POSITIONS,
     ART_LF_SCENE_MAX_WORDS, ART_LF_SCENES_PER_CHAPTER_MAX,
-    ART_LF_SCENES_PER_CHAPTER_MIN, ART_WORDS_PER_SEC, get_art_project_path,
+    ART_LF_SCENES_PER_CHAPTER_MIN, ART_LF_TOTAL_WORDS_FLOOR, ART_WORDS_PER_SEC,
+    get_art_project_path,
 )
 
 # Forward-reference cues for chapter-ending re-hooks ("but here's where it
@@ -317,99 +318,113 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
     chapters = outline["chapters"]
     total = len(chapters)
     panels_by_page = {p["page_number"]: len(p.get("panels") or []) for p in pages}
-    all_scenes: list[Scene] = []
-    all_decls: list[dict] = []
-    chapters_meta: list[dict] = []
-    used_subjects: list[str] = []
-    recent_regions: list[int] = []   # panel_refs of the previous chapter's tail
-    prev_tail = ""
-    model_used = ""
 
-    for pos, ch in enumerate(chapters, start=1):
-        is_first, is_last = pos == 1, pos == total
-        rehook = pos in ART_LF_REHOOK_POSITIONS and not is_last
-        position_rule = (_POSITION_RULES["first"] if is_first else
-                         _POSITION_RULES["last"] if is_last else
-                         _POSITION_RULES["rehook"] if rehook else
-                         _POSITION_RULES["middle"])
-        system = _LF_SYSTEM.format(
-            pos=pos, total=total,
-            n_min=ART_LF_SCENES_PER_CHAPTER_MIN, n_max=ART_LF_SCENES_PER_CHAPTER_MAX,
-            scene_max=ART_LF_SCENE_MAX_WORDS,
-            target_words=ch["target_words"],
-            full_note=("the very first scene may be the full painting"
-                       if is_first else "use sparingly"),
-            window=ART_LF_REGION_REUSE_WINDOW,
-            recent_regions=recent_regions or "none",
-            blocked_subjects=sorted(set(used_subjects)) or "none",
-            position_rule=position_rule)
-        tw = int(ch["target_words"])
-        user = (
-            f"VIDEO THROUGH-LINE: {outline.get('through_line', '')}\n"
-            f"CHAPTER {pos}/{total}: {ch['title']} (role: {ch['role']}, "
-            f"target ~{tw} words)\n"
-            f"WORD BUDGET: ~{tw} words total. Write AT LEAST "
-            f"{min(22, max(14, -(-tw // 17)))} scenes averaging ~17 words — "
-            f"fewer scenes WILL be rejected.\n"
-            # the system-prompt block list alone was ignored twice in e2e
-            # round 7 — repeat it at the top of the user turn, where it sticks
-            f"FORBIDDEN related subjects (already shown, any variation will be "
-            f"rejected): {sorted(set(used_subjects)) or 'none'}\n\n"
-            f"PREVIOUS CHAPTER ENDED WITH: {prev_tail or '(video start)'}\n\n"
-            f"THIS CHAPTER'S FACTS (the ONLY allowed source of claims):\n"
-            + "\n".join(f"- {f}" for f in ch["facts"]) +
-            f"\n\nREGION CATALOG (page_ref/panel_ref targets):\n{region_catalog(pages)}\n\n"
-            'Return STRICT JSON only:\n'
-            '{"scenes": [{"text": "...", "page_ref": 1, "panel_ref": 0,\n'
-            '             "visual": {"kind": "painting_region", "panel_ref": 0},\n'
-            '             "is_intro": false, "is_outro": false}]}'
-        )
-        # visual targets of the last `window` scenes already written — keeps
-        # the repair pass honest across the chapter boundary
-        history = [visual_target(sc.__dict__, d) for sc, d in
-                   list(zip(all_scenes, all_decls))[-ART_LF_REGION_REUSE_WINDOW:]]
-        last_err: Exception | None = None
-        for attempt in (1, 2, 3):
-            raw, model_used = call_with_chain(
-                system=system, user=user, models=CREATIVE_LLM_MODELS,
-                max_tokens=4000, progress=log,
-                label=f"art-lf-ch{pos}#{attempt}",
-                validator=lambda c: extract_json(c) is not None)
-            try:
-                scenes, decls = build_chapter_scenes(
-                    raw, pages, ctx, ch, scene_id_offset=len(all_scenes),
-                    rehook_required=rehook, is_first=is_first, is_last=is_last,
-                    history=history, used_subjects=set(used_subjects), log=log)
-                break
-            except ValueError as exc:
-                last_err = exc
-                log(f"[narrate-lf] chapter {pos} attempt {attempt} rejected: {exc}")
-                user += (f"\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION: {exc}. "
-                         "Fix exactly that.")
-        else:
-            raise ValueError(f"chapter {pos} failed after 3 attempts: {last_err}")
+    # The 8-minute guarantee lives HERE, not in the per-chapter band: chapter
+    # floors near the model's natural pace (~13-17 w/scene) failed runs by a
+    # handful of words (e2e round 8: 267 vs 272). One cheap redraw of all
+    # chapters beats renders that come out at 7:43.
+    for draw in (1, 2):
+        all_scenes: list[Scene] = []
+        all_decls: list[dict] = []
+        chapters_meta: list[dict] = []
+        used_subjects: list[str] = []
+        recent_regions: list[int] = []   # panel_refs of the previous chapter's tail
+        prev_tail = ""
+        model_used = ""
+        for pos, ch in enumerate(chapters, start=1):
+            is_first, is_last = pos == 1, pos == total
+            rehook = pos in ART_LF_REHOOK_POSITIONS and not is_last
+            position_rule = (_POSITION_RULES["first"] if is_first else
+                             _POSITION_RULES["last"] if is_last else
+                             _POSITION_RULES["rehook"] if rehook else
+                             _POSITION_RULES["middle"])
+            system = _LF_SYSTEM.format(
+                pos=pos, total=total,
+                n_min=ART_LF_SCENES_PER_CHAPTER_MIN, n_max=ART_LF_SCENES_PER_CHAPTER_MAX,
+                scene_max=ART_LF_SCENE_MAX_WORDS,
+                target_words=ch["target_words"],
+                full_note=("the very first scene may be the full painting"
+                           if is_first else "use sparingly"),
+                window=ART_LF_REGION_REUSE_WINDOW,
+                recent_regions=recent_regions or "none",
+                blocked_subjects=sorted(set(used_subjects)) or "none",
+                position_rule=position_rule)
+            tw = int(ch["target_words"])
+            user = (
+                f"VIDEO THROUGH-LINE: {outline.get('through_line', '')}\n"
+                f"CHAPTER {pos}/{total}: {ch['title']} (role: {ch['role']}, "
+                f"target ~{tw} words)\n"
+                f"WORD BUDGET: ~{tw} words total. Write AT LEAST "
+                f"{min(22, max(14, -(-tw // 17)))} scenes averaging ~17 words — "
+                f"fewer scenes WILL be rejected.\n"
+                # the system-prompt block list alone was ignored twice in e2e
+                # round 7 — repeat it at the top of the user turn, where it sticks
+                f"FORBIDDEN related subjects (already shown, any variation will be "
+                f"rejected): {sorted(set(used_subjects)) or 'none'}\n\n"
+                f"PREVIOUS CHAPTER ENDED WITH: {prev_tail or '(video start)'}\n\n"
+                f"THIS CHAPTER'S FACTS (the ONLY allowed source of claims):\n"
+                + "\n".join(f"- {f}" for f in ch["facts"]) +
+                f"\n\nREGION CATALOG (page_ref/panel_ref targets):\n{region_catalog(pages)}\n\n"
+                'Return STRICT JSON only:\n'
+                '{"scenes": [{"text": "...", "page_ref": 1, "panel_ref": 0,\n'
+                '             "visual": {"kind": "painting_region", "panel_ref": 0},\n'
+                '             "is_intro": false, "is_outro": false}]}'
+            )
+            # visual targets of the last `window` scenes already written — keeps
+            # the repair pass honest across the chapter boundary
+            history = [visual_target(sc.__dict__, d) for sc, d in
+                       list(zip(all_scenes, all_decls))[-ART_LF_REGION_REUSE_WINDOW:]]
+            last_err: Exception | None = None
+            for attempt in (1, 2, 3):
+                raw, model_used = call_with_chain(
+                    system=system, user=user, models=CREATIVE_LLM_MODELS,
+                    max_tokens=4000, progress=log,
+                    label=f"art-lf-ch{pos}#{attempt}",
+                    validator=lambda c: extract_json(c) is not None)
+                try:
+                    scenes, decls = build_chapter_scenes(
+                        raw, pages, ctx, ch, scene_id_offset=len(all_scenes),
+                        rehook_required=rehook, is_first=is_first, is_last=is_last,
+                        history=history, used_subjects=set(used_subjects), log=log)
+                    break
+                except ValueError as exc:
+                    last_err = exc
+                    log(f"[narrate-lf] chapter {pos} attempt {attempt} rejected: {exc}")
+                    user += (f"\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION: {exc}. "
+                             "Fix exactly that.")
+            else:
+                raise ValueError(f"chapter {pos} failed after 3 attempts: {last_err}")
 
-        chapters_meta.append({"chapter_id": ch["chapter_id"], "title": ch["title"],
-                              "role": ch["role"], "rehook": rehook,
-                              "scene_ids": [sc.scene_id for sc in scenes],
-                              "start": None})
-        used_subjects += [" ".join(str(d.get("subject") or "").lower().split())
-                          for d in decls if d["kind"] == "related"]
-        # only the previous chapter's TAIL matters for the reuse window —
-        # blocking the whole chapter starved low-region artworks (e2e)
-        recent_regions = [d["panel_ref"] for d in decls[-5:]
-                          if d["kind"] == "painting_region"]
-        prev_tail = " ".join(sc.text for sc in scenes[-2:])
-        all_scenes += scenes
-        all_decls += decls
-        log(f"[narrate-lf] ✓ chapter {pos}/{total} — {len(scenes)} scenes, "
-            f"{sum(sc.word_count for sc in scenes)} words")
+            chapters_meta.append({"chapter_id": ch["chapter_id"], "title": ch["title"],
+                                  "role": ch["role"], "rehook": rehook,
+                                  "scene_ids": [sc.scene_id for sc in scenes],
+                                  "start": None})
+            used_subjects += [" ".join(str(d.get("subject") or "").lower().split())
+                              for d in decls if d["kind"] == "related"]
+            # only the previous chapter's TAIL matters for the reuse window —
+            # blocking the whole chapter starved low-region artworks (e2e)
+            recent_regions = [d["panel_ref"] for d in decls[-5:]
+                              if d["kind"] == "painting_region"]
+            prev_tail = " ".join(sc.text for sc in scenes[-2:])
+            all_scenes += scenes
+            all_decls += decls
+            log(f"[narrate-lf] ✓ chapter {pos}/{total} — {len(scenes)} scenes, "
+                f"{sum(sc.word_count for sc in scenes)} words")
+
+        total_words = sum(sc.word_count for sc in all_scenes)
+        if total_words >= ART_LF_TOTAL_WORDS_FLOOR:
+            break
+        log(f"[narrate-lf] draw {draw}: {total_words} words < floor "
+            f"{ART_LF_TOTAL_WORDS_FLOOR} (≈ 8 min) — redrawing all chapters")
+    else:
+        raise ValueError(
+            f"long-form narration too short after 2 draws: {total_words} words "
+            f"(need >= {ART_LF_TOTAL_WORDS_FLOOR} for an 8-minute video)")
 
     validate_cross_chapter([sc.__dict__ for sc in all_scenes], all_decls,
                            panels_by_page=panels_by_page)
     assign_motions(all_decls, intro_scene_id=all_scenes[0].scene_id)
 
-    total_words = sum(sc.word_count for sc in all_scenes)
     narration = Narration(
         mode=outline["mode"], title=str(ctx.get("title") or ""),
         hook=all_scenes[0].text, scenes=all_scenes,

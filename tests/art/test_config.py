@@ -44,7 +44,8 @@ def test_longform_constants():
     assert c.ART_LF_TARGET_WORDS_MAX == 1700
     assert c.ART_LF_CHAPTER_WORDS_MIN == 150
     assert c.ART_LF_CHAPTER_WORDS_MAX == 340
-    assert c.ART_LF_CHAPTER_WORDS_BAND == (0.85, 1.5)
+    assert c.ART_LF_CHAPTER_WORDS_BAND == (0.75, 1.5)
+    assert c.ART_LF_TOTAL_WORDS_FLOOR == 1360
     assert c.ART_LF_SCENES_PER_CHAPTER_MIN == 14
     assert c.ART_LF_SCENES_PER_CHAPTER_MAX == 22
     assert c.ART_LF_SCENE_MAX_WORDS == 32

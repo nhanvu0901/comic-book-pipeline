@@ -50,7 +50,8 @@ ART_LF_TARGET_WORDS_MIN = 1600      # measured 2026-06-12: words×0.36s ≈ dura
 ART_LF_TARGET_WORDS_MAX = 1700      # 5 chapters x 340 ceiling; ~1700x0.36s ≈ 10:12 max
 ART_LF_CHAPTER_WORDS_MIN = 150      # per-chapter target_words sanity band
 ART_LF_CHAPTER_WORDS_MAX = 340      # measured pace ≈15 w/scene → 22-scene ceiling ≈330; 340 keeps 2-scene slack at floor ceil(340/17)=20 (e2e round 7)
-ART_LF_CHAPTER_WORDS_BAND = (0.85, 1.5)  # chapter actual vs target; 0.6 floor measured too loose (ch ratios 0.62-0.78 → 7:43 video)
+ART_LF_CHAPTER_WORDS_BAND = (0.75, 1.5)  # per-chapter sanity only — 0.85 failed chapters 5 words short (e2e r8); the 8-min guarantee moved to ART_LF_TOTAL_WORDS_FLOOR
+ART_LF_TOTAL_WORDS_FLOOR = 1360     # hard end-of-narrate gate: 1360 words x 0.36 s/word ≈ 8:10; one auto re-loop, then error
 ART_LF_SCENES_PER_CHAPTER_MIN = 14
 ART_LF_SCENES_PER_CHAPTER_MAX = 22
 ART_LF_SCENE_MAX_WORDS = 32         # hard validator cap (prompt asks 8-22)
