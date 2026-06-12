@@ -251,7 +251,7 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
                                log=log)
         got = parse_hunt_response(raw)
         results.update(got)
-        tag = f"chapter {ch_id}: " if len(by_chapter) > 1 else ""
+        tag = f"chapter {ch_id}: " if (len(by_chapter) > 1 and ch_id) else ""
         log(f"[hunt] {tag}SDK returned {len(got)}/{len(group)} candidate image(s)")
 
     rel_dir.mkdir(exist_ok=True)
@@ -279,10 +279,11 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
         # Same subject already resolved (writer validator forbids dups, this is
         # the safety net for legacy plans): reuse the downloaded page.
         subj_key = " ".join(str(d.get("subject") or "").lower().split())
-        prev_page = resolved_by_subject.get(subj_key)
+        prev_page = resolved_by_subject.get(subj_key) if subj_key else None
         if prev_page is not None:
             s["page_ref"], s["panel_ref"] = prev_page, 0
             d["page_ref"] = prev_page
+            d["fallback"] = ""
             manifest.append({**original, "page_number": prev_page,
                              "reused_subject": subj_key})
             log(f"[hunt] ✓ scene {d['scene_id']} reuses page {prev_page} "
@@ -336,7 +337,8 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
             log(f"[hunt] ✓ scene {d['scene_id']} → {c['title']!r} ({c['license']})")
             next_page += 1
             resolved += 1
-            resolved_by_subject[subj_key] = s["page_ref"]
+            if subj_key:
+                resolved_by_subject[subj_key] = s["page_ref"]
             continue
         # ── fallback: unused painting region, else painting_full ────────────
         reason = ("no SDK candidate" if not c else

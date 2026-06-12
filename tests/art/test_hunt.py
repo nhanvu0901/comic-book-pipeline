@@ -444,6 +444,11 @@ def test_hunt_duplicate_subject_reuses_page(tmp_path, monkeypatch):
     assert s2["page_ref"] == s3["page_ref"], (
         f"expected same page_ref; scene2={s2['page_ref']}, scene3={s3['page_ref']}")
 
+    manifest = json.loads((root / "hunt_manifest.json").read_text())
+    reuse_entries = [e for e in manifest if "reused_subject" in e]
+    assert len(reuse_entries) == 1
+    assert reuse_entries[0]["reused_subject"] == "portrait of el greco"
+
 
 def test_hunt_force_restores_then_redoes(tmp_path, monkeypatch):
     root = _project(tmp_path, monkeypatch)
