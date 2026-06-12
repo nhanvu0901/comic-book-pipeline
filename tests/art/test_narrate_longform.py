@@ -74,6 +74,29 @@ def test_rehook_missing_rejected():
                              CHAPTER, scene_id_offset=0, rehook_required=True)
 
 
+def test_cta_in_outro_rejected():
+    raw = _raw_chapter(rehook_last=False)
+    import json as _json
+    data = _json.loads(raw)
+    data["scenes"][0]["is_intro"] = False
+    data["scenes"][-1]["is_outro"] = True
+    data["scenes"][-1]["text"] = "Subscribe for more stories about View of Toledo art."
+    with pytest.raises(ValueError, match="call-to-action"):
+        build_chapter_scenes(_json.dumps(data), PAGES, CTX, CHAPTER,
+                             scene_id_offset=0, rehook_required=False, is_last=True)
+
+
+def test_generic_hook_in_first_chapter_rejected():
+    raw = _raw_chapter(rehook_last=False)
+    import json as _json
+    data = _json.loads(raw)
+    data["scenes"][0]["is_intro"] = True
+    data["scenes"][0]["text"] = "Ever wonder how a famous painting gets made over years?"
+    with pytest.raises(ValueError, match="generic"):
+        build_chapter_scenes(_json.dumps(data), PAGES, CTX, CHAPTER,
+                             scene_id_offset=0, rehook_required=False, is_first=True)
+
+
 def _mk(scene_id, chapter_id, kind, *, page=1, panel=-1, subject=""):
     scene = {"scene_id": scene_id, "page_ref": page, "panel_ref": panel,
              "is_intro": False, "is_outro": False}

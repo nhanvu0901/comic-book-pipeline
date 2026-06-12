@@ -23,7 +23,7 @@ from .config import (
 # Forward-reference cues for chapter-ending re-hooks ("but here's where it
 # gets stranger"). Lexicon, not a model call — cheap, deterministic, tunable.
 _FORWARD_CUES = (
-    "what happened next", "stranger", "wasn't the end", "was not the end",
+    "what happened next", "stranger ", "wasn't the end", "was not the end",
     "not the whole story", "no one expected", "about to change",
     "would change everything", "the real story", "until ", "that was only",
     "only the beginning", "what the x-ray", "what came next", "hides one more",
@@ -247,7 +247,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             full_note=("the very first scene may be the full painting"
                        if is_first else "use sparingly"),
             blocked_regions=prev_regions or "none",
-            blocked_subjects=used_subjects or "none",
+            blocked_subjects=sorted(set(used_subjects)) or "none",
             position_rule=position_rule)
         user = (
             f"VIDEO THROUGH-LINE: {outline.get('through_line', '')}\n"
@@ -294,7 +294,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
         prev_tail = " ".join(sc.text for sc in scenes[-2:])
         all_scenes += scenes
         all_decls += decls
-        log(f"[narrate-lf] chapter {pos}/{total} — {len(scenes)} scenes, "
+        log(f"[narrate-lf] ✓ chapter {pos}/{total} — {len(scenes)} scenes, "
             f"{sum(sc.word_count for sc in scenes)} words")
 
     validate_cross_chapter([sc.__dict__ for sc in all_scenes], all_decls)
@@ -317,7 +317,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
     (root / "chapters.json").write_text(
         json.dumps(chapters_meta, indent=2, ensure_ascii=False))
     n_rel = sum(1 for d in all_decls if d["kind"] == "related")
-    log(f"[narrate-lf] {len(all_scenes)} scenes / {total} chapters, "
+    log(f"[narrate-lf] ✓ {len(all_scenes)} scenes / {total} chapters, "
         f"{total_words} words (~{narration['estimated_duration_seconds']}s) "
         f"[{n_rel} related]")
     return narration
