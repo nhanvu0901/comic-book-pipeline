@@ -165,6 +165,7 @@ def build_art_context(project_name: str, *, log=print) -> dict:
         "artworks": [met.parse_candidate(m) for m in metas],
         "sources": sources,
         "mode": selection.get("mode", "painting_deep_dive"),
+        "length": selection.get("length", "short"),
     }
     (root / "art_context.json").write_text(json.dumps(ctx, indent=2, ensure_ascii=False))
     log(f"[ground] art_context.json written ({len(combined)} grounded chars, {plot_source})")

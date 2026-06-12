@@ -4,11 +4,11 @@ Layout written (mirrors the comic project shape so downstream reuse is free):
   art_projects/<slug>/raw_art/art_NNN_<objectID>.jpg
   art_projects/<slug>/raw_art/manifest.json      [{label, pages:[abs paths]}]
   art_projects/<slug>/met_meta_<objectID>.json
-  art_projects/<slug>/selection.json             {mode, object_ids, theme}
+  art_projects/<slug>/selection.json             {mode, object_ids, theme, length}
 """
 import json
 
-from .config import get_art_project_path
+from .config import ART_LF_MODES, get_art_project_path
 from .sources import met
 
 
@@ -23,8 +23,17 @@ def fetch_artworks(
     *,
     mode: str = "painting_deep_dive",
     theme: str = "",
+    length: str = "short",
     log=print,
 ) -> dict:
+    if length not in ("short", "longform"):
+        raise ValueError(f"length must be 'short' or 'longform', got {length!r}")
+    if length == "longform" and mode not in ART_LF_MODES:
+        raise ValueError(
+            f"length='longform' requires mode in {ART_LF_MODES}, got {mode!r}. "
+            "Use --mode painting_story or --mode artist_journey."
+        )
+
     root = get_art_project_path(project_name)
     raw = root / "raw_art"
     raw.mkdir(parents=True, exist_ok=True)
@@ -49,7 +58,7 @@ def fetch_artworks(
     manifest = build_manifest(entries)
     (raw / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
     (root / "selection.json").write_text(json.dumps(
-        {"mode": mode, "object_ids": list(object_ids), "theme": theme},
+        {"mode": mode, "object_ids": list(object_ids), "theme": theme, "length": length},
         indent=2, ensure_ascii=False))
     log(f"[fetch] {len(entries)} artwork(s) ready in {raw}")
     return {"manifest": manifest, "count": len(entries)}
