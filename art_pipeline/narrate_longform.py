@@ -438,6 +438,11 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
     (root / "narration.json").write_text(
         json.dumps(narration, indent=2, ensure_ascii=False))
     save_plan(root, all_decls)
+    # A hunt manifest describes scene ids of a narration that no longer
+    # exists — force-restoring it onto THIS narration flips fresh
+    # painting_region scenes back to "related" (measured e2e round 9:
+    # 23 related became 41). Stale manifests die with the old narration.
+    (root / "hunt_manifest.json").unlink(missing_ok=True)
     (root / "chapters.json").write_text(
         json.dumps(chapters_meta, indent=2, ensure_ascii=False))
     n_rel = sum(1 for d in all_decls if d["kind"] == "related")

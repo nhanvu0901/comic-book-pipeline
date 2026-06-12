@@ -253,3 +253,31 @@ def test_scene_floor_scales_with_word_target():
     with pytest.raises(ValueError, match="needs 19-22 scenes"):
         build_chapter_scenes(_raw_chapter(rehook_last=False), PAGES, CTX,
                              big_chapter, scene_id_offset=0, rehook_required=False)
+
+
+def test_new_narration_deletes_stale_hunt_manifest(tmp_path, monkeypatch):
+    import json as _json
+    from art_pipeline import narrate_longform as nl
+    root = tmp_path / "proj"; (root / "preprocessed").mkdir(parents=True)
+    monkeypatch.setattr(nl, "get_art_project_path", lambda name: root)
+    (root / "outline.json").write_text(_json.dumps({
+        "mode": "painting_story", "through_line": "Why?",
+        "chapters": [{"chapter_id": 1, "title": "C", "role": "cold_open",
+                      "facts": ["f"], "target_words": 170, "artwork_ids": [1]}]}))
+    (root / "art_context.json").write_text(_json.dumps(
+        {"title": "View of Toledo",
+         "summary": {"characters": [{"name": "El Greco"}]}}))
+    (root / "preprocessed" / "page_001.json").write_text(_json.dumps(PAGES[0]))
+    (root / "hunt_manifest.json").write_text("[]")
+
+    raw = _raw_chapter(rehook_last=False)
+    data = _json.loads(raw)
+    data["scenes"][0]["is_intro"] = True
+    data["scenes"][0]["text"] = "View of Toledo hides a deliberate lie about the city skyline."
+    data["scenes"][-1]["is_outro"] = True
+    data["scenes"][-1]["text"] = "View of Toledo still hangs in The Met, storm intact."
+    monkeypatch.setattr(nl, "call_with_chain",
+                        lambda **k: (_json.dumps(data), "test-model"))
+    monkeypatch.setattr(nl, "ART_LF_TOTAL_WORDS_FLOOR", 1)
+    nl.write_longform_narration("proj", log=lambda *_: None)
+    assert not (root / "hunt_manifest.json").exists()
