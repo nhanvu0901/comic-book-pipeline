@@ -54,6 +54,12 @@ _DOWNLOAD_GAP_S = 1.0     # pause between any two downloads
 _RETRY_429_WAIT_S = 5.0   # wait before the single 429 retry
 _sleep = time.sleep       # module-level indirection so tests run at zero cost
 
+# The SDK default max_turns=12 starves multi-subject hunts: aristotle-homer
+# (6 subjects) died at "Reached maximum number of turns (12)" → 0/6 resolved
+# (measured 2026-06-12). Each subject needs ~2-3 search/fetch turns plus the
+# final JSON write, so the turn budget scales with subject count (floor 12).
+_HUNT_TURNS_PER_SUBJECT = 4
+
 _HUNT_SYSTEM = """You are an image researcher for short educational art videos.
 You receive narration scenes that each need ONE related image. Use WebSearch and
 WebFetch to find the best DIRECT image URL (ends in .jpg/.jpeg/.png/.webp or is
@@ -73,7 +79,9 @@ Respond with ONLY valid JSON:
 "alt_image_url" is optional: a second, DIFFERENT direct image URL for the same
 subject from another source, used if the first fails; omit it if you only found
 one. Both URLs should be at least 600px on the short side when you can tell.
-Omit a scene's key entirely if you cannot find a good image for it."""
+Omit a scene's key entirely if you cannot find a good image for it.
+Budget your searches: at most 2 web searches per scene, then write the JSON.
+A partial result with some scenes resolved is better than running out of turns."""
 
 
 def build_hunt_prompt(ctx: dict, scenes: list[dict], decls: list[dict]) -> str:
@@ -234,7 +242,9 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
     results: dict[int, dict] = {}
     if decls:
         raw = sdk_complete_web(_HUNT_SYSTEM,
-                               build_hunt_prompt(ctx, scenes, decls), log=log)
+                               build_hunt_prompt(ctx, scenes, decls),
+                               max_turns=max(12, _HUNT_TURNS_PER_SUBJECT * len(decls) + 4),
+                               log=log)
         results = parse_hunt_response(raw)
         log(f"[hunt] SDK returned {len(results)}/{requested} candidate image(s)")
 

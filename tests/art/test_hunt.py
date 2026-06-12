@@ -154,7 +154,8 @@ def _project(tmp_path, monkeypatch):
 
 def test_hunt_happy_path(tmp_path, monkeypatch):
     root = _project(tmp_path, monkeypatch)
-    monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda system, user, log=None: json.dumps(
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web",
+                        lambda system, user, max_turns=None, log=None: json.dumps(
         {"images": {"2": {"image_url": "https://x/a.jpg", "title": "Artist photo",
                           "source_url": "https://x/page", "license": "PD"}}}))
     monkeypatch.setattr(hunt_mod, "_download",
@@ -172,6 +173,40 @@ def test_hunt_happy_path(tmp_path, monkeypatch):
     assert len(pages) == 1
     assert json.loads(pages[0].read_text())["preprocessing_method"] == "web-related"
     assert (root / "hunt_manifest.json").exists()
+
+
+def test_hunt_scales_sdk_max_turns_with_subject_count(tmp_path, monkeypatch):
+    root = _project(tmp_path, monkeypatch)            # 1 related decl
+    seen = {}
+
+    def fake_sdk(system, user, *, max_turns=None, log=None):
+        seen["max_turns"] = max_turns
+        return None
+
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web", fake_sdk)
+    hunt_visuals("proj", log=lambda m: None)
+    assert seen["max_turns"] == 12                    # floor: max(12, 4*1+4)
+
+    # 6 related decls → 4*6+4 = 28
+    root6 = tmp_path / "proj6"
+    (root6 / "preprocessed").mkdir(parents=True)
+    (root6 / "preprocessed" / "page_001_abc.json").write_text(json.dumps(_page(1)))
+    scenes = [{"scene_id": 1, "text": "hook", "page_ref": 1, "panel_ref": -1, "is_intro": True}]
+    plan = [{"scene_id": 1, "kind": "painting_full", "panel_ref": -1,
+             "subject": "", "motion": "static", "fallback": ""}]
+    for i in range(2, 8):
+        scenes.append({"scene_id": i, "text": f"s{i}", "page_ref": 1, "panel_ref": -1})
+        plan.append({"scene_id": i, "kind": "related", "panel_ref": -1,
+                     "subject": f"subject {i}", "motion": "pan_right", "fallback": ""})
+    scenes.append({"scene_id": 8, "text": "outro", "page_ref": 1, "panel_ref": -1, "is_outro": True})
+    plan.append({"scene_id": 8, "kind": "painting_full", "panel_ref": -1,
+                 "subject": "", "motion": "zoom_out", "fallback": ""})
+    (root6 / "narration.json").write_text(json.dumps({"scenes": scenes}))
+    (root6 / "visual_plan.json").write_text(json.dumps(plan))
+    (root6 / "art_context.json").write_text(json.dumps(
+        {"title": "T", "sources": [], "artworks": [], "summary": {}}))
+    hunt_visuals("proj6", log=lambda m: None)
+    assert seen["max_turns"] == 28
 
 
 def test_hunt_primary_reject_alt_succeeds(tmp_path, monkeypatch):
