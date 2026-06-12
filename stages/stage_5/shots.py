@@ -1035,34 +1035,28 @@ def _zoompan_expr(motion: str, frames: int) -> str:
 _BLUR_FALLBACK_SCALE = 2.5
 # Don't upscale the sharp foreground panel beyond this in the blur-bg path.
 _FG_MAX_SCALE = 2.0
-# Panels wider than this aspect keep cover-scale (their cropped center stays a
-# recognizable cinematic strip, e.g. a monster's snarling mouth at aspect ~4).
-# At or below it, a heavily-upscaled wide panel loses too much side content when
-# cropped — e.g. a "walking down a street" or "I understand + skyline" panel
-# becomes an unreadable fragment — so we fall back to contain+blur to show the
-# whole thing. Tuned to 3.5: catches the borderline ~3.0 panels (0:13, 0:28)
-# while leaving true ultra-wide cinematic strips (>3.5) on cover.
-_BLUR_MAX_ASPECT = 3.5
 
 
 def _prepare_panel_frame(panel_png: Path, out_path: Path) -> Path:
     """Fit the panel into 1080×1920.
 
     Default = cover-scale (fill frame, crop overflow). Reference channels favor
-    this; wide panels keep their recognizable center.
+    this when the panel is large enough to fill the frame without much upscale.
 
-    BUG 1 fix: when a SMALL, non-wide panel would need >2.5× cover-scale, that
-    cover-crop produces a blurry giant where you can't tell what the scene is.
-    Instead, show the WHOLE panel sharp (capped at 2× upscale) centered over a
-    blurred, zoomed copy of itself filling the frame. Wide panels (aspect >2)
-    keep cover-scale — their cropped center stays recognizable."""
+    BUG 1 fix (+ extreme-wide fix): when a panel would need >2.5× cover-scale, the
+    cover-crop is bad in TWO ways — a small frame-shaped panel becomes a blurry
+    giant, and a wide/tall panel gets cropped down to a meaningless center sliver
+    (e.g. a 3.8:1 establishing strip at 6× cover shows only ~15% of its width).
+    BOTH are fixed by contain+blur: show the WHOLE panel sharp (capped at 2×
+    upscale) centered over a blurred copy of itself filling the frame. We no longer
+    gate on aspect ratio — high cover-scale alone is the trigger, because that is
+    exactly when cover-crop loses too much regardless of shape."""
     with Image.open(panel_png) as im:
         im = im.convert("RGB")
         iw, ih = im.size
         cover = max(OUTPUT_W / iw, OUTPUT_H / ih)
-        aspect = iw / ih if ih else 1.0
 
-        use_blur_bg = cover > _BLUR_FALLBACK_SCALE and aspect <= _BLUR_MAX_ASPECT
+        use_blur_bg = cover > _BLUR_FALLBACK_SCALE
         if not use_blur_bg:
             # ── Cover-scale (original behavior) ──
             new_w = max(OUTPUT_W, int(round(iw * cover)))

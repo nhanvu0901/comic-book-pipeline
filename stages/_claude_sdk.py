@@ -56,9 +56,16 @@ def sdk_available() -> bool:
     return _SDK_IMPORTABLE and _logged_in()
 
 
-def _collect(system: str, user: str, model: str) -> str:
+def _collect(
+    system: str, user: str, model: str,
+    *, allowed_tools: list[str] | None = None, max_turns: int = 2,
+) -> str:
     """Async query → concatenated assistant text. Runs inside a worker thread's
-    own event loop (via anyio.run), so it never collides with a caller loop."""
+    own event loop (via anyio.run), so it never collides with a caller loop.
+
+    allowed_tools=[] (default) → pure text generation. Pass e.g.
+    ["WebSearch","WebFetch"] (with a higher max_turns) to let the agent research
+    the web across several tool-call turns before answering."""
     import anyio
     from claude_agent_sdk import query, ClaudeAgentOptions
     from claude_agent_sdk.types import AssistantMessage, TextBlock, StreamEvent
@@ -71,11 +78,12 @@ def _collect(system: str, user: str, model: str) -> str:
             # on complex creative prompts the model silently reasons for MINUTES
             # before the first text token (measured: 85-330s+), which looked like
             # a hang and blew every timeout. Disabling thinking → first token ~7s,
-            # full narration ~31s. thinking-disabled needs max_turns=2 (the engine
+            # full narration ~31s. thinking-disabled needs max_turns>=2 (the engine
             # finalizes in a second message round; =1 errors "max turns reached").
+            # Tool-using research needs more turns (search→fetch→...→write).
             thinking={"type": "disabled"},
-            max_turns=2,
-            allowed_tools=[],       # pure text generation — no tools
+            max_turns=max_turns,
+            allowed_tools=allowed_tools if allowed_tools is not None else [],
             include_partial_messages=True,  # stream deltas (avoids buffered hang)
         )
         raw = ""
@@ -96,23 +104,13 @@ def _collect(system: str, user: str, model: str) -> str:
     return anyio.run(_run)
 
 
-def sdk_complete(
-    system: str,
-    user: str,
-    *,
-    model: str = CLAUDE_SDK_MODEL,
-    timeout: int = _SDK_TIMEOUT_S,
-    log=None,
+def _run_threaded(
+    system: str, user: str, model: str, timeout: int, _log,
+    *, allowed_tools: list[str] | None = None, max_turns: int = 2,
 ) -> str | None:
-    """Single-shot completion via the Claude Agent SDK. Returns the model's text,
-    or None on any failure (missing SDK, not logged in, error, timeout, usage
-    limit). Never raises — the caller falls back to its OpenRouter path on None.
-
-    The async streaming query runs in a daemon thread with its own event loop;
-    `join(timeout)` is the hard wall-clock deadline. On timeout the thread is
-    abandoned (dies with the process) and we fall back immediately.
-    """
-    _log = log or (lambda _m: None)
+    """Run `_collect` in a daemon thread with a hard wall-clock deadline. Returns
+    the text, or None on any failure (timeout / error / empty / usage limit).
+    On timeout the thread is abandoned (dies with the process) and we fall back."""
     if not sdk_available():
         return None
 
@@ -120,7 +118,8 @@ def sdk_complete(
 
     def _runner():
         try:
-            box["out"] = _collect(system, user, model)
+            box["out"] = _collect(system, user, model,
+                                  allowed_tools=allowed_tools, max_turns=max_turns)
         except BaseException as exc:  # never raise across threads
             box["err"] = exc
 
@@ -143,3 +142,40 @@ def sdk_complete(
         _log("[claude-sdk] usage/rate limit signalled — falling back")
         return None
     return out
+
+
+def sdk_complete(
+    system: str,
+    user: str,
+    *,
+    model: str = CLAUDE_SDK_MODEL,
+    timeout: int = _SDK_TIMEOUT_S,
+    log=None,
+) -> str | None:
+    """Single-shot text completion via the Claude Agent SDK (no tools). Returns the
+    model's text, or None on any failure. Never raises — caller falls back."""
+    return _run_threaded(system, user, model, timeout, log or (lambda _m: None))
+
+
+# Web research can need several minutes (search → fetch → ... → write).
+_SDK_WEB_TIMEOUT_S = 420
+_SDK_WEB_MAX_TURNS = 12
+
+
+def sdk_complete_web(
+    system: str,
+    user: str,
+    *,
+    model: str = CLAUDE_SDK_MODEL,
+    max_turns: int = _SDK_WEB_MAX_TURNS,
+    timeout: int = _SDK_WEB_TIMEOUT_S,
+    log=None,
+) -> str | None:
+    """Like `sdk_complete` but the agent may use WebSearch/WebFetch to research
+    the web before answering (allowed_tools enabled, higher max_turns, longer
+    deadline). Returns the model's final text, or None on any failure. Never
+    raises. Run standalone — the SDK throttles when another agent runs concurrently."""
+    return _run_threaded(
+        system, user, model, timeout, log or (lambda _m: None),
+        allowed_tools=["WebSearch", "WebFetch"], max_turns=max_turns,
+    )

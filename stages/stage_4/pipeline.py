@@ -19,12 +19,95 @@ from .chunker import align_scenes_to_words, build_caption_chunks, words_from_dic
 from .schema import TTSResult
 
 
+# ── Emotional delivery (sonic-3 SSML) ──────────────────────────────────────
+# A flat single emotion ("confident") makes the narrator sound like an even-paced
+# documentary. Instead we pick a warmer BASE emotion per narration mode, then add
+# a dynamic per-scene arc via inline <emotion> SSML tags. PROBE-VERIFIED: SSML
+# tags do NOT leak into Cartesia word_timestamps and the spoken words are
+# unchanged, so scene_timings / caption_chunks alignment stays identical.
+# All values below are members of cartesia_tts.VALID_EMOTIONS.
+_MODE_BASE_EMOTION = {
+    "tragedy": "melancholic",
+    "twist_reveal": "mysterious",
+    "fun_fact": "curious",
+    "feat": "confident",
+    "power_ranking": "confident",
+    "hot_take": "confident",
+}
+_DEFAULT_BASE_EMOTION = "contemplative"  # warm storyteller rest-tone (vs flat "confident")
+
+# keyword (lowercased, punctuation-stripped) → Cartesia emotion. A scene whose
+# text hits a cue gets that dramatic emotion; a scene with no hit inherits the
+# base "rest" emotion, giving a natural rise/fall instead of a monotone.
+_SCENE_EMOTION_CUES = {
+    "sad": ("grief", "grieving", "mourned", "mourning", "wept", "weeping", "tears",
+            "tearful", "sorrow", "heartbreak", "heartbroken", "broken", "loss", "mourns"),
+    "scared": ("fear", "feared", "terror", "terrified", "horror", "horrified", "panic",
+               "panicked", "fled", "flees", "fleeing", "trapped", "haunted", "nightmare",
+               "nightmares", "dread", "monstrous", "monster"),
+    "angry": ("rage", "raging", "fury", "furious", "wrath", "wrathful", "snarl", "snarled",
+              "screams", "screamed", "outraged", "vengeance"),
+    "triumphant": ("triumph", "triumphant", "victory", "victorious", "wins", "won", "prevailed"),
+    "determined": ("vow", "vowed", "vows", "swore", "swears", "resolved", "determined",
+                   "refuses", "refused", "fought", "unleashed", "drove"),
+    "surprised": ("shocked", "stunned", "reveals", "revealed", "realizes", "realized",
+                  "twist", "gasped", "astonished"),
+}
+
+
+def _base_emotion_for(narration: dict) -> str:
+    mode = str(narration.get("mode", "")).strip().lower()
+    return _MODE_BASE_EMOTION.get(mode, _DEFAULT_BASE_EMOTION)
+
+
+def _scene_emotion(scene: dict, base: str) -> str:
+    """Cartesia emotion for one scene: intro hook → curious; thematic outro →
+    wistful (factual 'comic is' credit → base); dramatic keyword cue → that
+    emotion; otherwise the base rest-tone."""
+    text = str(scene.get("text", "")).lower()
+    if scene.get("is_intro"):
+        return "curious"
+    if scene.get("is_outro"):
+        return base if "comic is" in text else "wistful"
+    words = {w.strip(",.!?:;\"'—-").lower() for w in text.split()}
+    for emo, cues in _SCENE_EMOTION_CUES.items():
+        if words & set(cues):
+            return emo
+    return base
+
+
+def _build_emotional_transcript(scenes: list[dict], base_emotion: str, log) -> str:
+    """Assemble the TTS transcript with per-scene <emotion> SSML tags + a short
+    <break> before the outro. Each scene's text is normalized FIRST so tags are
+    never mangled. A tag is emitted only when the emotion CHANGES (limits the
+    experimental mid-generation shifts)."""
+    parts: list[str] = []
+    active: str | None = None
+    shifts = 0
+    for s in scenes:
+        txt = _normalize_for_tts(str(s.get("text", "")).strip())
+        if not txt:
+            continue
+        emo = _scene_emotion(s, base_emotion)
+        seg = ""
+        if s.get("is_outro"):
+            seg += '<break time="300ms"/> '  # a beat of silence before the closing line
+        if emo != active:
+            seg += f'<emotion value="{emo}"/> '
+            active = emo
+            shifts += 1
+        parts.append(seg + txt)
+    log(f"[stage4] emotional transcript: base={base_emotion}, {shifts} emotion shift(s)")
+    return " ".join(parts)
+
+
 def synthesize_project(
     project_name: str,
     *,
     speed: float = 1.0,  # Cartesia speed param caps near 1.2; let atempo post-process do the tempo work
     volume: float = 1.0,
-    emotion: str = "confident",  # even-paced documentary narrator (vs contemplative's dramatic pauses)
+    emotion: str | None = None,  # BASE emotion; None → derived from narration mode (see _base_emotion_for)
+    flat: bool = False,          # True → old single-emotion behavior, no per-scene SSML tags
     voice_id: str | None = None,
     model: str | None = None,
     post_atempo: float = 1.1,  # ffmpeg atempo — pitch-preserving tempo boost.
@@ -55,16 +138,17 @@ def synthesize_project(
         words = json.loads(words_path.read_text())
         duration = _wav_duration(audio_path)
     else:
-        raw_text = " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text"))
-        full_text = _normalize_for_tts(raw_text)
-        if full_text != raw_text:
-            print(f"[stage4] normalized {len(raw_text) - len(full_text)} char(s) for TTS "
-                  f"(em-dashes etc. → commas to avoid dramatic pauses)")
+        base_emotion = (emotion or _base_emotion_for(narration)).strip().lower()
+        if flat:
+            full_text = _normalize_for_tts(
+                " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text")))
+        else:
+            full_text = _build_emotional_transcript(scenes, base_emotion, print)
         print(f"[stage4] synthesizing {len(full_text)} chars via Cartesia "
               f"({model or CARTESIA_MODEL}, voice={voice_id or CARTESIA_VOICE_ID}, "
-              f"speed={speed}, volume={volume}, emotion={emotion})")
+              f"speed={speed}, volume={volume}, base_emotion={base_emotion}, flat={flat})")
         result = synthesize(full_text, voice_id=voice_id, model=model,
-                            speed=speed, volume=volume, emotion=emotion)
+                            speed=speed, volume=volume, emotion=base_emotion)
         audio_path.write_bytes(result.wav_bytes)
         words = result.word_timestamps
         duration = _wav_duration(audio_path)

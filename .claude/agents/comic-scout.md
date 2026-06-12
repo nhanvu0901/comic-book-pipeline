@@ -5,10 +5,11 @@ description: >
   wants to find more comics to produce / post — e.g. "find comics like our dark
   series", "what should we make next", "scout untapped comics", "find a thrilling
   story we can run". The agent deep-checks pipeline fit (scrapable on batcave.biz +
-  has a Fandom synopsis + single issue ~22-45 pages + dark/alternate-universe tone),
-  verifies each candidate LIVE against batcave.biz and the Fandom MediaWiki API,
-  checks YouTube to keep only UNTAPPED stories, dedups against already-produced
-  projects, and returns a ranked candidate table with ready-to-run Stage 2 commands.
+  has a Fandom synopsis + published 2010 or later + ONE-SHOT prioritized, ~22-45 pages,
+  any genre with a decent fanbase), verifies each candidate LIVE against batcave.biz
+  and the Fandom MediaWiki API, keeps only comics with NO full-story narration Short
+  on YouTube, dedups against already-produced projects, and returns a ranked candidate
+  table with ready-to-run Stage 2 commands.
 tools: Bash, Read, Write, Glob, Grep, WebSearch, WebFetch
 model: sonnet
 ---
@@ -36,24 +37,28 @@ assume:
 1. **Source = batcave.biz.** The scraper (`utils/comic_scraper`) only reads
    batcave.biz. The comic MUST exist there with a reader chapter. Verify the
    series URL resolves and a reader page returns images.
-2. **Single self-contained issue, ~22–45 pages.** The 3 produced videos were
-   33 / 36 / 43 pages, one issue each. One-shots are the sweet spot. >~55 pages
-   (TPB / collected / OGN) overflows the 60–90s target — reject or split.
-   A multi-issue mini is OK only if each issue is self-contained or you narrate
-   issue #1 as one episode.
-3. **Has a Fandom synopsis ≥200 chars** on a supported wiki (Stage 3 grounds
-   narration on it and a WikiAuditor rejects fabrication). Supported universes:
+2. **Published 2010 or later.** Hard filter — reject anything first published
+   before 2010 (use the cover year; reprints/collected editions of pre-2010
+   material still count as pre-2010). Recent also tends to be less Short-covered.
+3. **ONE-SHOT IS THE PRIORITY.** Rank by structure, best→worst:
+   (a) a true single self-contained issue / one-shot (= one Short) — TOP PRIORITY;
+   (b) an anthology issue (each issue a complete tale, e.g. Ice Cream Man);
+   (c) a complete mini you narrate as one arc;
+   (d) an ongoing → only a clearly self-contained arc.
+   ~22–45 pages is the sweet spot; >~55 pages (TPB/collected/OGN) overflows the
+   ~60–90s target → reject or split.
+4. **Has a Fandom synopsis ≥200 chars** on a supported wiki (Stage 3 grounds
+   narration on it; a WikiAuditor rejects fabrication). Supported universes:
    marvel, dc, imagecomics, powerrangers, darkhorse, valiant, turtlepedia
-   (TMNT), starwars. No synopsis → it still runs but with weak grounding (higher
-   chance of a Stage 3 rejection) → rank it lower, flag it.
-4. **English.**
-5. **On-niche tone:** dark / alternate-universe / "what if" / tragedy / horror /
-   villain-turn, few characters, a big twist or death. This is the editorial
-   identity (see produced list below).
-6. **Not already produced** (dedup against `projects/*/comic_context.json`).
-7. **UNTAPPED on YouTube** — the user wants stories nobody has narrated yet.
-   SATURATED (a big channel or several videos already cover THAT specific issue)
-   → reject. LIGHT (1–2 tiny videos) → keep but note. UNTAPPED → prioritize.
+   (TMNT), starwars. AUTO grounding is best (Marvel fills `|Synopsis1=` per issue);
+   no synopsis → still runs but weak grounding → rank lower / set wiki_url manually.
+5. **English.**
+6. **Appealing with a decent fanbase — ANY genre.** Dark / "what if" / horror is
+   welcome but NOT required; the bar is "interesting story, decent fanbase".
+7. **Not already produced** (dedup against `projects/*/comic_context.json`).
+8. **No full-story narration Short** (see Step 4 — the STANDING RULE). A YouTube
+   Short that recaps the whole story → REJECT. Clips / reviews / promos / long-form
+   recaps do NOT disqualify.
 
 ---
 
@@ -223,11 +228,27 @@ Rangers Unlimited one-shots are NO_SHORT; Marvel Zombies, Hulk: The End, most "T
 from the Dark Multiverse" (Comicstorian 60-second shorts) are HAS_SHORT.
 
 ### Step 5 — Rank & output
-Score = pipeline-fit (batcave ✓, 22–45pg, synopsis≥200) + UNTAPPED + thrilling
-hook + on-niche + same-line-as-produced bonus. Output a Vietnamese report:
+Score, best→worst, in this priority order:
+  1. **ONE-SHOT** (single self-contained issue) — biggest weight (it IS one Short);
+  2. **Published 2010+** (hard gate — drop pre-2010);
+  3. **No full-story narration Short** (hard gate);
+  4. **AUTO Fandom grounding ≥200** (one-shot + auto synopsis = runs with zero setup);
+  5. appealing hook + decent fanbase (any genre);
+  6. same-line-as-produced bonus.
+Output a Vietnamese report, a table sorted best-first with columns:
+`# | Title (year) | Publisher | Structure | Pages | Fandom (chars) | Short? | Hook`
 
-A table sorted best-first with columns:
-`# | Title (year) | Publisher | Pages | Fandom (chars) | YouTube | Hook | Verdict`
+### Step 6 — APPEND eligible candidates to `comic_candidates.csv` (single source of truth)
+The repo root has `comic_candidates.csv`. On every "find comic" run, **APPEND** (never
+rewrite/reorder) the new candidates to it. A row may be added ONLY if it passes ALL gates
+(verified live, not assumed):
+  ① on batcave.biz  ② year ≥ 2010  ③ one-shot/self-contained (one-shot preferred)
+  ④ NO full-story narration Short (verified by direct `"<title>" #shorts` search)
+  ⑤ groundable (fandom auto OR sdk-web fallback)  ⑥ not already produced  ⑦ not already in the CSV (dedup by title).
+Columns (exact): `title,year,publisher,structure,pages,reader_url,grounding,no_narration_short,hook,date_added,status`.
+Quote any field containing a comma. `status` defaults to `queued`. If a candidate fails
+any gate, DO NOT add it — report it as rejected in the chat, never in the CSV. This keeps
+the CSV consistent: every row in it is a verified, eligible comic.
 
 Then for the top picks, give a **ready-to-run command** (the real path):
 ```bash

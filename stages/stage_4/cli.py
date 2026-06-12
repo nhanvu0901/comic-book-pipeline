@@ -35,6 +35,11 @@ def main():
                              "~3.2 wps, a calmer/more intelligible pace (user-chosen). 1.0 disables.")
     parser.add_argument("--voice", default=None, help="Cartesia voice UUID (overrides default)")
     parser.add_argument("--model", default=None, help="Cartesia model id (overrides default sonic-2)")
+    parser.add_argument("--emotion", default=None,
+                        help="Base Cartesia emotion (e.g. melancholic, contemplative, confident). "
+                             "Default: derived from narration mode. Per-scene <emotion> tags add the arc.")
+    parser.add_argument("--flat", action="store_true",
+                        help="Disable per-scene emotion SSML — single base emotion for the whole video.")
     parser.add_argument("--force", action="store_true", help="Regenerate even if audio.wav exists")
     args = parser.parse_args()
 
@@ -46,6 +51,8 @@ def main():
             args.project,
             speed=args.speed,
             post_atempo=args.atempo,
+            emotion=args.emotion,
+            flat=args.flat,
             voice_id=args.voice,
             model=args.model,
             force=args.force,

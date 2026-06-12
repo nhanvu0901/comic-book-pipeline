@@ -255,15 +255,14 @@ def _enrich_context_silent(
     ctx: dict, *, project_root: Path, log: Callable[[str], None]
 ) -> dict:
     """Call Stage 1's wiki + summarize tools silently to fill in `plot_summary` + `summary`."""
-    # Stage 1 tools require the LLM client initialized for paraphrase_query (used inside
-    # fetch_wiki). Initialize once.
+    # enrich_with_summary needs the OpenRouter client initialized once.
     try:
         from stages.stage_1.llm import create_client
         from stages.stage_1.tools import init as init_tools
         from stages.stage_1.tools.fetch_fandom import fetch_fandom
-        from stages.stage_1.tools.fetch_wiki import fetch_wiki
         from stages.stage_1.tools.summarize_context import enrich_with_summary
-        from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, LLM_MODELS
+        from config import (OPENROUTER_API_KEY, OPENROUTER_BASE_URL, LLM_MODELS,
+                            ENABLE_SDK_PLOT_FALLBACK, SDK_PLOT_FALLBACK_MIN_CHARS)
     except ImportError as exc:
         log(f"[url-mode] enrichment skipped — Stage 1 modules unavailable: {exc}")
         return ctx
@@ -304,15 +303,21 @@ def _enrich_context_silent(
     except Exception as exc:
         log(f"[url-mode] fandom fetch failed: {exc}")
 
-    if not plot:
+    # Fallback: fandom (MediaWiki) gave nothing or only a stub → spawn a web-enabled
+    # Claude SDK agent to research the plot from a real source. No source → no plot.
+    # (The old Tavily review-site search via fetch_wiki was removed — SDK is the sole fallback.)
+    if ENABLE_SDK_PLOT_FALLBACK and len(plot or "") < SDK_PLOT_FALLBACK_MIN_CHARS:
         try:
-            wiki = fetch_wiki(query, publisher=publisher)
-            if isinstance(wiki, dict):
-                plot = (wiki.get("text") or "").strip()
-                if plot:
-                    log(f"[url-mode] wiki hit: {len(plot)} chars")
+            from stages.stage_1.tools.gather_plot_sdk import gather_plot_sdk
+            res = gather_plot_sdk(title, issues_q, publisher, log=log)
+            # don't downgrade: only adopt the SDK plot if it beats the existing weak one
+            if res and res.get("plot_summary") and len(res["plot_summary"]) > len(plot or ""):
+                plot = res["plot_summary"]
+                ctx["wiki_url"] = res.get("source_url") or ctx.get("wiki_url", "")
+                ctx["plot_source"] = "claude-sdk-web"
+                log(f"[url-mode] SDK web-research grounded {len(plot)} chars ← {res.get('source_url')}")
         except Exception as exc:
-            log(f"[url-mode] wiki fetch failed: {exc}")
+            log(f"[url-mode] SDK plot fallback failed: {exc}")
 
     if plot:
         ctx["plot_summary"] = plot

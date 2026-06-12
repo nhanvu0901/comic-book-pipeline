@@ -40,6 +40,17 @@ LLM_MODELS: list[str] = [
 ]
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", LLM_MODELS[0])
 
+# Global LLM routing switch.
+#   FREE_MODEL = False (default)  → route ALL text-LLM phases (intro, outline,
+#       glossary, write, wiki-check, fidelity, retry, outro, propose, panel-assign,
+#       panel-judge) through the Claude Agent SDK (CLAUDE_SDK_MODEL) for best
+#       quality. The OpenRouter chains below are kept ONLY as a per-call fallback
+#       when the SDK is unavailable / rate-limited / fails validation.
+#   FREE_MODEL = True             → skip the SDK; use the free/cheap OpenRouter
+#       chains (LLM_MODELS / CREATIVE_LLM_MODELS / FIDELITY_LLM_MODELS) directly.
+# VLM (Stage 2 panel vision) is NOT affected by this — it always uses VLM_MODELS.
+FREE_MODEL = os.getenv("FREE_MODEL", "false").lower() in ("true", "1", "yes")
+
 # Creative writing chain — separate from LLM_MODELS, used only by Stage 3 phase C
 # (write_scenes + retry_fix). Other phases keep LLM_MODELS.
 #
@@ -113,6 +124,14 @@ _DEFAULT_FANDOM_CHAIN = (
 FANDOM_DOMAINS: list[str] = [
     d.strip() for d in os.getenv("FANDOM_DOMAINS", _DEFAULT_FANDOM_CHAIN).split(",") if d.strip()
 ]
+
+# ─── SDK web-research plot fallback ──────────────────────────────────────────
+# When fandom + wiki return no/weak plot, a web-enabled Claude SDK agent researches
+# the issue's plot from a real source (see stages/stage_1/tools/gather_plot_sdk.py).
+ENABLE_SDK_PLOT_FALLBACK = os.getenv("ENABLE_SDK_PLOT_FALLBACK", "true").lower() in ("true", "1", "yes")
+# Trigger the fallback when the found plot is shorter than this (catches stubs like
+# DCeased: A Good Day to Die ≈475 chars). The SDK result is adopted only if it's longer.
+SDK_PLOT_FALLBACK_MIN_CHARS = int(os.getenv("SDK_PLOT_FALLBACK_MIN_CHARS", "600"))
 
 # ─── TTS (Cartesia) ─────────────────────────────────────────────────────────
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")

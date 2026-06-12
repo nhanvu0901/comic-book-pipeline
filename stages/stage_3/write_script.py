@@ -25,7 +25,7 @@ from .._embedding import semantic_sim as _semantic_sim
 # words of long, compound, multi-event sentences. All three now read these
 # constants / the validator band below.
 _TARGET_WORDS_MIN = 165
-_TARGET_WORDS_MAX = 230   # body ceiling (~70s at 2.88 wps). Raised from 195 to let
+_TARGET_WORDS_MAX = 270   # body ceiling (~94s at 2.88 wps). Raised to fit MORE beats/scenes (16-20) → more panels. Was 230. Raised from 195 to let
                           # each TURN carry its grounded cause/why clause (causal
                           # narration) — connected story beats one-event-per-scene
                           # over a flat events list. Still trim flourish, not canon.
@@ -69,39 +69,108 @@ def _starts_with_connective(text: str) -> str | None:
     return None
 
 
-_INTRO_SYSTEM = """You are HookWriter. BEFORE the main narration is written, you produce ONE short teaser intro sentence for a YouTube Short about a comic.
+# Hook archetypes the benchmark accepts (research/reports/_BENCHMARK_thresholds.json
+# → qualifying.hook_archetype_allowed). The intro MUST classify into one of these.
+_ALLOWED_HOOK_ARCHETYPES = ("interrogative", "temporal-when", "temporal-other", "scenic")
 
-STEP 1 — classify the comic's STORY TYPE from its title + premise:
-  • "what_if"   — an alternate-reality / "What If...?" premise (a canonical event went the other way)
-  • "alternate" — an alternate-universe / Elseworld / dark-mirror timeline story
-  • "explainer" — a story that explains a character's origin, a power, a death, or a piece of lore
-  • "standard"  — a straightforward in-continuity story
 
-STEP 2 — write the intro line:
-  • If story_type is what_if / alternate / explainer → you MUST use the "Ever wonder ...?" structure:
-      what_if / alternate →  "Ever wonder what if <premise>?"
-      explainer           →  "Ever wonder how <X>?"  or  "Ever wonder why <X>?"
-  • If story_type is standard → a short scenic OR interrogative teaser (no fixed template).
+def _classify_hook(line: str) -> str:
+    """Mirror research/scripts/benchmark_builder.classify_hook EXACTLY so the intro
+    we emit is guaranteed to land in an allowed archetype (benchmark gate). Keep
+    this in sync with that function if the channel's hook taxonomy changes."""
+    first12 = " ".join(line.split()[:12])
+    s = first12.lower().strip()
+    if re.match(r"^(ever wonder|ever wondered|have you ever|what if|what would|"
+                r"why|how|where|can|could|would|did|do|does)\b", s):
+        return "interrogative"
+    if "?" in first12:
+        return "interrogative"
+    if re.match(r"^when\b", s):
+        return "temporal-when"
+    if re.match(r"^(after|while|during|once)\b", s):
+        return "temporal-other"
+    if re.match(r"^(in an? \w+ (universe|reality|world|year|future|past|version)|in [\d]{4})", s):
+        return "scenic"
+    if re.match(r"^[A-Z][\w-]+\s+(?:was|were|is|are|had|broke|entered|woke|fell|found|wakes|stands)", first12):
+        return "character_action"
+    return "other_character"
+
+
+_HOOK_STOPWORDS = frozenset(
+    "a an the and or but of to in on at by for with from into as is are was were be been "
+    "her his its their she he they it him them who that this then so when after while during "
+    "once had has have did do does no not".split()
+)
+
+
+def _intro_overlaps(intro_line: str, body_first_line: str) -> bool:
+    """True if the intro echoes the opening body line — either shares the same
+    first 4+ words, or its content words (minus stopwords) overlap heavily
+    (Jaccard > 0.5). Used to force an intro regenerate so the video does not say
+    the same thing twice."""
+    def _toks(s: str) -> list[str]:
+        return [w.strip(",.!?:;\"'—-").lower() for w in s.split() if w.strip(",.!?:;\"'—-")]
+
+    a, b = _toks(intro_line), _toks(body_first_line)
+    if not a or not b:
+        return False
+    if a[:4] == b[:4]:                      # identical opening clause
+        return True
+    ca = {w for w in a if w not in _HOOK_STOPWORDS}
+    cb = {w for w in b if w not in _HOOK_STOPWORDS}
+    if not ca or not cb:
+        return False
+    jac = len(ca & cb) / len(ca | cb)
+    return jac > 0.5
+
+
+_INTRO_SYSTEM = """You are HookWriter. You produce ONE short teaser intro sentence for a YouTube Short about a comic. It is the first thing the viewer hears — it must grab attention and tease the premise WITHOUT spoiling the ending.
+
+Pick the ONE hook archetype that makes THIS story most intriguing, then write the line. You MUST begin with the exact opener words shown for your chosen archetype, or the hook is rejected:
+
+  • interrogative  — a QUESTION. Begin with one of: "Ever wonder", "What if", "What would", "Why", "How", "Can", "Could", "Would". Ends with "?".
+        e.g. "What if Magik refused to be a hero and trained under Doctor Strange?"
+        e.g. "Could a girl who clawed out of hell ever feel safe again?"
+  • temporal-when  — a STATEMENT beginning with "When ". Ends with ".".
+        e.g. "When Illyana returned from Limbo seven years older, she wanted nothing to do with the X-Men."
+  • temporal-other — a STATEMENT beginning with "After", "While", "During", or "Once". Ends with ".".
+        e.g. "After Limbo broke her, Magik swore she would never be a weapon again."
+  • scenic         — a STATEMENT beginning with "In a <adjective> universe/reality/world" (or "In <year>"). Ends with ".".
+        e.g. "In a broken reality, Magik turned her back on the X-Men for good."
+
+VARIETY RULE (important): do NOT default to "Ever wonder" — it is only ONE of several interrogative options, and across many comics these openers must VARY. Prefer a different archetype/opener unless an "Ever wonder" question is clearly the strongest fit.
 
 HARD RULES for the intro line:
-  - 8-16 words, exactly ONE sentence, ends with "?".
+  - 8-16 words, exactly ONE sentence.
   - Name the hero AND the premise so a viewer instantly grasps the stakes.
   - It is a TEASER, not a summary — do NOT reveal the ending/twist.
   - No meta talk ("in this video", "today", "let's see"). No spoilers.
+  - Begin with the EXACT opener words for your chosen archetype (above).
+  - TEASE THE WHOLE STORY'S HOOK — the central premise, conflict, irony, or price
+    paid — NOT the literal opening scene. The FIRST narration line already
+    describes the opening event, so if your intro just restates that event the
+    video says the same thing twice. Frame the broader stakes instead.
+    ✗ (restates opening beat) "When Illyana returned from Limbo, she rejected the X-Men."
+    ✓ (teases the whole hook)  "What if surviving hell meant becoming the very monster you fled?"
 
-Return ONLY JSON, no markdown: {"story_type": "what_if|alternate|explainer|standard", "intro_line": "Ever wonder what if ...?"}"""
+Return ONLY JSON, no markdown: {"archetype": "interrogative|temporal-when|temporal-other|scenic", "intro_line": "..."}"""
 
 
 def generate_intro(
     comic_context: dict,
     *,
+    avoid_text: str = "",
     model: str | None = None,
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
 ) -> dict:
     """Dedicated pre-write LLM call: classify story type + craft the teaser intro
     line shown over the cover. Returns {"story_type", "intro_line"}; falls back to
-    a deterministic "Ever wonder...?" line if the LLM output is unusable."""
+    a deterministic "Ever wonder...?" line if the LLM output is unusable.
+
+    `avoid_text` = the first body narration line; when given, the prompt forbids
+    restating it AND the validator rejects an intro that overlaps it too much (so
+    a regenerate is forced) — prevents the intro echoing the opening beat."""
     log = progress or (lambda _msg: None)
     dump = debug_dump if debug_dump is not None else {}
 
@@ -111,21 +180,36 @@ def generate_intro(
         plot = str((comic_context.get("summary") or {}).get("story_arc", "")).strip()
     chars = ", ".join(comic_context.get("characters", []) or [])
 
+    avoid_block = ""
+    if avoid_text.strip():
+        avoid_block = (
+            f"\nDO NOT restate, narrate, or paraphrase this OPENING narration line — the "
+            f"video already says it, so your intro must tease the broader premise instead, "
+            f"with DIFFERENT wording and a different angle:\n  \"{avoid_text.strip()}\"\n"
+        )
+
     user = (
         f"COMIC TITLE: {title}\n"
         f"PUBLISHER: {comic_context.get('publisher','?')}\n"
         f"KEY CHARACTERS: {chars or '?'}\n\n"
-        f"PREMISE / PLOT (ground truth):\n{plot[:1800]}\n\n"
+        f"PREMISE / PLOT (ground truth):\n{plot[:1800]}\n"
+        f"{avoid_block}\n"
         f"Write the intro JSON now."
     )
 
     def _valid(out: str) -> bool:
         try:
             d = _json_loads_loose(out)
-            line = str(d.get("intro_line", "")).strip()
+            line = " ".join(str(d.get("intro_line", "")).split()).strip()
         except Exception:
             return False
-        return 6 <= len(line.split()) <= 20 and line.endswith("?")
+        # Guarantee benchmark pass: must classify into an allowed hook archetype.
+        if not (7 <= len(line.split()) <= 18 and _classify_hook(line) in _ALLOWED_HOOK_ARCHETYPES):
+            return False
+        # Reject an intro that echoes the opening beat (forces the LLM to retry).
+        if avoid_text.strip() and _intro_overlaps(line, avoid_text):
+            return False
+        return True
 
     try:
         content, used = call_with_chain(
@@ -134,17 +218,92 @@ def generate_intro(
             max_tokens=300, progress=progress, label="intro", validator=_valid,
         )
         data = _json_loads_loose(content)
-        story_type = str(data.get("story_type", "")).strip().lower() or "standard"
         intro_line = " ".join(str(data.get("intro_line", "")).split()).strip()
-        dump["intro"] = {"story_type": story_type, "intro_line": intro_line, "model": used}
-        log(f"[stage4] intro ({story_type}): {intro_line!r}")
-        return {"story_type": story_type, "intro_line": intro_line}
+        archetype = _classify_hook(intro_line)  # trust the classifier, not the LLM's self-label
+        dump["intro"] = {"archetype": archetype, "intro_line": intro_line, "model": used}
+        log(f"[stage4] intro ({archetype}): {intro_line!r}")
+        return {"story_type": archetype, "intro_line": intro_line}
     except Exception as exc:
         # Deterministic fallback so the pipeline never blocks on the intro.
         hero = (comic_context.get("characters") or ["this hero"])[0]
         fallback = f"Ever wonder what if {hero} took a darker path?"
         log(f"[stage4] intro LLM failed ({type(exc).__name__}); using fallback: {fallback!r}")
         return {"story_type": "what_if", "intro_line": fallback}
+
+
+_OUTRO_SYSTEM = """You are OutroWriter. You write ONE short THEMATIC closing line for a YouTube Short retelling of a comic — the final sentence the viewer hears.
+
+It must capture the EMOTIONAL / THEMATIC core of the story — what it was REALLY about — in a punchy, resonant line. Think of the lesson, the irony, or the cost the hero paid.
+
+HARD RULES:
+  - 5-12 words, exactly ONE sentence, ends with ".".
+  - NO plot summary, NO "the comic is", NO comic title, NO character names required.
+  - It is NOT a question. No meta talk ("in this video"). No hashtags.
+  - Grounded in THIS story's actual theme (below) — never a generic platitude.
+  - Punchy and shareable — the kind of line a viewer would quote or screenshot.
+
+Examples (for OTHER comics — match the TONE, not the words):
+  - "Sometimes the only monster you fear is the one you could become."
+  - "Power means nothing if it costs you everything you love."
+  - "Even a god can be undone by what he refuses to let go."
+
+Return ONLY JSON, no markdown: {"outro_line": "..."}"""
+
+
+def generate_outro(
+    comic_context: dict,
+    body_scenes: list[dict],
+    *,
+    model: str | None = None,
+    progress: Callable[[str], None] | None = None,
+    debug_dump: dict | None = None,
+) -> str:
+    """Dedicated LLM call: craft a punchy THEMATIC closing line — the alternative
+    to the factual 'The comic is X.' credit. Returns "" if unusable, so the caller
+    falls back to the factual credit (never blocks the pipeline)."""
+    log = progress or (lambda _msg: None)
+    dump = debug_dump if debug_dump is not None else {}
+
+    title = str(comic_context.get("title", "")).strip()
+    plot = str(comic_context.get("plot_summary", "")).strip()
+    if not plot:
+        plot = str((comic_context.get("summary") or {}).get("story_arc", "")).strip()
+    body_text = " ".join(
+        str(s.get("text", "")).strip()
+        for s in (body_scenes or [])
+        if not s.get("is_intro") and not s.get("is_outro")
+    )
+
+    user = (
+        f"COMIC TITLE: {title}\n"
+        f"THEME / PLOT (ground truth):\n{plot[:1500]}\n\n"
+        f"THE NARRATION (for tone + what the story covered):\n{body_text[:1200]}\n\n"
+        f"Write the thematic outro JSON now."
+    )
+
+    def _valid(out: str) -> bool:
+        try:
+            d = _json_loads_loose(out)
+            line = " ".join(str(d.get("outro_line", "")).split()).strip()
+        except Exception:
+            return False
+        n = len(line.split())
+        return (4 <= n <= 14 and line.endswith(".")
+                and "?" not in line and "comic is" not in line.lower())
+
+    try:
+        content, used = call_with_chain(
+            system=_OUTRO_SYSTEM, user=user,
+            models=list(CREATIVE_LLM_MODELS) or None,
+            max_tokens=200, progress=progress, label="outro", validator=_valid,
+        )
+        data = _json_loads_loose(content)
+        line = " ".join(str(data.get("outro_line", "")).split()).strip()
+        dump["outro_thematic"] = {"outro_line": line, "model": used}
+        return line
+    except Exception as exc:
+        log(f"[stage4] thematic outro LLM failed ({type(exc).__name__}); keeping factual credit")
+        return ""
 
 
 def _find_cover_page(all_pages: list[dict] | None, story_pages: list[dict]) -> int:
@@ -253,7 +412,7 @@ def write_script(
         #   4. fewest total issues, then shorter.
         _scenes = parsed.get("scenes") or []
         _words = sum(len(str(s.get("text", "")).split()) for s in _scenes)
-        complete = 1 if (9 <= len(_scenes) <= 17 and _words >= 130) else 0
+        complete = 1 if (9 <= len(_scenes) <= 22 and _words >= 130) else 0
         words_ok = 1 if _TARGET_WORDS_MIN <= _words <= _TARGET_WORDS_MAX + 20 else 0
         n_critical = sum(1 for e in errors if _is_critical_error(e))
         key = (complete, -n_critical, words_ok, -len(errors), -_words)
@@ -302,7 +461,27 @@ def write_script(
             last["is_outro"] = True
             last["panel_ref"] = -1
 
+    # Anti-repeat: the teaser intro is generated BEFORE the body exists, so a
+    # statement-style hook (temporal/scenic) can accidentally restate beat 1
+    # ("When Illyana returned from Limbo…") — the same event as the first body
+    # scene, making the video say it twice. Now that the body is written, if the
+    # intro echoes the opening line, regenerate it with that line as avoid_text.
     intro_line = (intro.get("intro_line") or "").strip()
+    first_body_line = str(body0[0].get("text", "")).strip() if body0 else ""
+    if intro_line and first_body_line and _intro_overlaps(intro_line, first_body_line):
+        log("[stage4]   ⚠ intro echoes the opening narration — regenerating (avoid_text)")
+        intro = generate_intro(comic_context, avoid_text=first_body_line,
+                               model=model, progress=progress, debug_dump=dump)
+        intro_line = (intro.get("intro_line") or "").strip()
+        if not intro_line or _intro_overlaps(intro_line, first_body_line):
+            # last-resort: a question hook never narrates a beat, so it can't echo
+            hero = (comic_context.get("characters") or ["this hero"])[0]
+            intro_line = f"What if {hero}'s greatest enemy was the person they became?"
+            intro["intro_line"] = intro_line
+            log(f"[stage4]   ⚠ still echoed; using fallback question hook: {intro_line!r}")
+        else:
+            log(f"[stage4]   ✓ intro regenerated: {intro_line!r}")
+
     if intro_line:
         body = parsed.get("scenes") or []
         for s in body:
@@ -321,11 +500,29 @@ def write_script(
         parsed["scenes"] = [intro_scene] + body
         parsed["hook"] = intro_line  # thumbnail / opening line is now the teaser
 
+    # Outro variety: 50/50 coin-flip between the factual "The comic is X." credit
+    # (channel identity) and a punchy THEMATIC takeaway. The writer ALWAYS emits the
+    # factual credit, so beat-anchoring + wiki/validation stay stable on a known
+    # phrasing; we only swap the outro scene's TEXT here, after the loop, keeping
+    # its is_outro flag + panel_ref=-1 (Stage 5 resolves it to the final splash).
+    scenes_now = parsed.get("scenes") or []
+    outro_idx = next((i for i, s in enumerate(scenes_now) if s.get("is_outro")), -1)
+    if outro_idx >= 0 and random.random() < 0.5:
+        thematic = generate_outro(comic_context, scenes_now,
+                                  model=model, progress=progress, debug_dump=dump)
+        if thematic:
+            scenes_now[outro_idx]["text"] = thematic
+            log(f"[stage4] outro: thematic → {thematic!r}")
+        else:
+            log("[stage4] outro: factual credit (thematic gen failed)")
+    elif outro_idx >= 0:
+        log("[stage4] outro: factual credit (coin-flip)")
+
     final_model = write_model or gloss_model or beats_model or (model or OPENROUTER_MODEL)
     return _to_narration(parsed, beats, glossary, mode, final_model)
 
 
-_OUTLINE_SYSTEM = """You are PanelOutliner. Your job is to extract the FULL dramatic skeleton of a comic story into 12-15 canonical beats — MUST cover the entire story arc including the climax, not just the opening.
+_OUTLINE_SYSTEM = """You are PanelOutliner. Your job is to extract the FULL dramatic skeleton of a comic story into 16-20 canonical beats — MUST cover the entire story arc including the climax, not just the opening.
 
 You DO NOT write narration prose yet. You produce structured beats only.
 
@@ -371,8 +568,9 @@ Beats are in dramatic order (which is usually but not always chronological). The
 ╚════════════════════════════════════════════════════════════════════════════╝
 
 Constraints:
-- **12-15 beats** total. Beats map 1:1 to scenes — need 12+ scenes to fit the
-  full canonical arc into 60s narration.
+- **16-20 beats** total. Beats map 1:1 to scenes (one panel shown per scene), so
+  MORE beats = MORE distinct panels on screen. Cover the FULL canonical arc, incl.
+  resolution/aftermath — every major wiki event gets its own beat.
 - Each beat covers 1-4 input pages. Don't spread one beat across the whole comic.
 - COLD_OPEN beat must contain a concrete visual action, not exposition.
 - LANDING must be a payoff, twist, or final image — never a CTA or question.
@@ -431,7 +629,7 @@ def outline_beats(
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + page_range_hint + "\n\n"
-        + f"TASK: Extract 12-15 beats that COVER THE ENTIRE canonical story arc. "
+        + f"TASK: Extract 16-20 beats that COVER THE ENTIRE canonical story arc. "
         + f"USE THE CANONICAL WIKI PLOT ABOVE as the spine — each major event in "
         + f"the wiki MUST get its own beat. Then map each beat to the most fitting "
         + f"page_ref + panel from the STORY PAGES. Do NOT skip the climax. Do NOT "
@@ -482,8 +680,8 @@ def outline_beats(
             cause=str(b.get("cause", "")).strip(),
             characters_active=[str(c).strip() for c in (b.get("characters_active") or []) if str(c).strip()],
         ))
-    if not (8 <= len(beats) <= 12):
-        log(f"[stage4]   warning: outline returned {len(beats)} beats (want 10-12)")
+    if not (12 <= len(beats) <= 20):
+        log(f"[stage4]   warning: outline returned {len(beats)} beats (want 16-20)")
 
     # Canonical (wiki/causal) order — NOT page order. The outliner emits beats in
     # story order; we only force COLD_OPEN first + LANDING last. Page is no longer
@@ -711,8 +909,8 @@ def _anchor_scenes_to_beats(
 def _validate_outline(beats: list[Beat], max_gap: int = 5) -> list[str]:
     """Soft validation of outline. Returns issue strings; empty = OK."""
     issues: list[str] = []
-    if len(beats) < 8:
-        issues.append(f"only {len(beats)} beats (target 10-12)")
+    if len(beats) < 12:
+        issues.append(f"only {len(beats)} beats (target 16-20)")
 
     sorted_beats = sorted(
         [b for b in beats if b.page_refs],
@@ -1062,16 +1260,16 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    The user has rejected past drafts that twisted the story. Accuracy beats flourish.
 
 7) LENGTH BUDGET — CHANNEL-CALIBRATED, CONNECTED-BUT-SNAPPY
-   - **12-15 scenes** total (one per beat; channel average 12, we allow more for
-     canonical coverage + causal setup beats).
-   - **165-230 words total.** A calm 1.1 pace (~2.9 wps) → ~63-78s. The extra room
-     over the old 195 ceiling is for CAUSAL clauses (the 'why' of each turn), NOT
-     for flourish. If draft > 230 → trim flourish. If < 165 → ADD a missing
+   - **16-20 scenes** total (one per beat — more beats = more panels on screen;
+     cover the full arc incl. resolution).
+   - **165-270 words total.** A calm 1.1 pace (~2.9 wps) → ~63-94s. The extra room
+     is for the added beats + CAUSAL clauses (the 'why' of each turn), NOT for
+     flourish. If draft > 270 → trim flourish. If < 165 → ADD a missing
      canonical/causal beat (never pad with empty adjectives).
-   - Before returning JSON, COUNT your total words. If > 230, tighten by cutting
+   - Before returning JSON, COUNT your total words. If > 270, tighten by cutting
      adjectives and any clause that is NOT a grounded cause; keep ONE event (+ its
      why) per sentence. Keep ALL canonical beats.
-   - Sentence-by-sentence target distribution (12-15 scenes, 165-230 words):
+   - Sentence-by-sentence target distribution (16-20 scenes, 165-270 words):
      • ≥3 PUNCH (≤11w)   ← REQUIRED, will be rejected if fewer
      • most MEDIUM (12-17w)
      • a few CAUSAL (≤24w: one event + its grounded 'why'); the hook may be ≤26w
@@ -1359,8 +1557,8 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
     scenes = parsed.get("scenes") or []
     if not scenes:
         return ["no scenes in output"]
-    if not (9 <= len(scenes) <= 17):
-        errors.append(f"scene count {len(scenes)} not in 9..17")
+    if not (9 <= len(scenes) <= 22):
+        errors.append(f"scene count {len(scenes)} not in 9..22")
 
     total_words = 0
     for i, s in enumerate(scenes, start=1):

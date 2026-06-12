@@ -5,7 +5,7 @@ from typing import Callable
 
 from openai import OpenAI, RateLimitError, APITimeoutError
 
-from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, LLM_MODELS
+from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, LLM_MODELS, FREE_MODEL
 from stages.stage_2.vlm_extract import _is_rate_limited, _detect_inline_rate_limit
 from stages._claude_sdk import sdk_available, sdk_complete, CLAUDE_SDK_MODEL
 
@@ -102,17 +102,16 @@ def call_with_chain(
         raise RuntimeError(f"[{label}] no models configured")
     log = progress or (lambda _msg: None)
 
-    # Fix A: route ONLY the writer (phase C `write` + the wiki-retry rewrite)
-    # through the Claude Agent SDK; outline/glossary/fidelity/wiki-check stay on
-    # the OpenRouter chain. This cuts claude calls from ~13 to ~1/pass so the
-    # subscription rate window isn't exhausted mid-run (which made later SDK
-    # calls queue → time out → fall back). The OpenRouter `chain` is still the
-    # fallback for the writer when the SDK is unavailable. VLM is never routed here.
-    # Writer phases + the Stage-5 panel-judge route through the Claude SDK (Opus);
-    # outline/glossary/fidelity/wiki-check stay on the OpenRouter chain. (Judge
-    # prompts are tiny, so the SDK answers fast even under concurrent load.)
-    _use_sdk = (label == "write" or label.startswith("retry") or label == "panel-judge"
-                or label == "intro")
+    # Routing is governed by the global config.FREE_MODEL switch:
+    #   FREE_MODEL == False (default) → route EVERY text-LLM phase through the
+    #     Claude Agent SDK for quality; the OpenRouter `chain` is the fallback when
+    #     the SDK is unavailable / rate-limited / fails validation.
+    #   FREE_MODEL == True            → skip the SDK, use the OpenRouter chain.
+    # VLM (Stage 2) never routes through here, so it's unaffected either way.
+    # NOTE: with FREE_MODEL=False every call hits the Claude subscription window,
+    # so a long run can rate-limit mid-way → individual calls fall back to
+    # OpenRouter (graceful, never blocks).
+    _use_sdk = (not FREE_MODEL)
     if _use_sdk and sdk_available():
         log(f"[{label}] via claude SDK ({CLAUDE_SDK_MODEL})")
         sdk_out = sdk_complete(system, user, log=log)
