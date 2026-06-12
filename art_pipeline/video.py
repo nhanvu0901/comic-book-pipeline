@@ -101,8 +101,7 @@ def assemble_art(project_name: str, **kwargs):
         if bgm:
             kwargs["bg_music_path"] = str(bgm)
         else:
-            print("[video] WARNING: long-form without BGM — drop a bgm.mp3 "
-                  "into the project folder for a non-cheap mix")
+            print("[assemble] WARNING: long-form without BGM — drop bgm.mp3 into the project")
 
     # render_shot's crop path still honors these comic globals — never mirror
     # or inpaint a real artwork; long-form additionally renders 16:9.

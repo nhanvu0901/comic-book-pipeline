@@ -68,6 +68,36 @@ def test_assemble_art_uses_art_assembler_and_restores_flags(monkeypatch, tmp_pat
     assert (root / "youtube_description.txt").exists()
 
 
+def test_assemble_art_longform_overrides_16x9_and_restores(monkeypatch, tmp_path):
+    import stages.stage_5.shots as shots
+    import art_pipeline.video as video
+
+    captured = []
+    def fake_assemble(project, **kw):
+        captured.append((shots.OUTPUT_W, shots.OUTPUT_H, shots.TARGET_ASPECT))
+        return "RESULT"
+    monkeypatch.setattr("art_pipeline.assemble.assemble_art_video", fake_assemble)
+    root = tmp_path / "proj"; root.mkdir()
+    monkeypatch.setattr(video, "get_art_project_path", lambda n: root)
+    monkeypatch.setattr(video, "VARIETY_LOG", tmp_path / "_variety_log.csv")
+    (root / "chapters.json").write_text(
+        '[{"chapter_id": 1, "title": "Ch 1", "start": 0.0, "scene_ids": [1]}]')
+    (root / "art_context.json").write_text('{"title": "T", "artworks": []}')
+    (root / "narration.json").write_text(
+        '{"mode": "painting_story", "scenes": [{"scene_id": 1, "chapter_id": 1}]}')
+
+    before = (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT,
+              shots.OUTPUT_W, shots.OUTPUT_H, shots.TARGET_ASPECT)
+    out = video.assemble_art("proj")
+    assert out == "RESULT"
+    # override was live INSIDE the assemble call (16:9 long-form)
+    assert captured == [(1920, 1080, 1920 / 1080)]
+    # all 5 attrs restored after return
+    assert (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT,
+            shots.OUTPUT_W, shots.OUTPUT_H, shots.TARGET_ASPECT) == before
+    assert (root / "youtube_chapters.txt").read_text() == "00:00 Ch 1\n"
+
+
 def test_description_includes_additional_image_credits():
     from art_pipeline.video import build_youtube_description
     ctx = {"title": "T", "artworks": [], "sources": [],
