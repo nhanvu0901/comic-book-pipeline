@@ -43,6 +43,45 @@ def _region_bbox(page: dict, panel_ref: int) -> dict:
     return _full_bbox(page)
 
 
+_REGION_MAX_ASPECT = 2.5   # wider/taller than this renders as a sliver in 9:16
+_REGION_MIN_ASPECT = 0.4
+
+
+def _expand_extreme_bbox(bbox: dict, page: dict) -> dict:
+    """A region far wider/taller than the 9:16 frame renders as a thin sliver
+    over blur (measured: 3920x262 'gas lamp string' intro). Grow the short side
+    around the region's center until aspect is within bounds, clamped to the
+    image — the zoom still lands on the region, with readable surroundings."""
+    x, y = int(bbox.get("x", 0)), int(bbox.get("y", 0))
+    w, h = int(bbox.get("w", 0)), int(bbox.get("h", 0))
+    if w <= 0 or h <= 0:
+        return bbox
+    aspect = w / h
+    if _REGION_MIN_ASPECT <= aspect <= _REGION_MAX_ASPECT:
+        return bbox
+    dims = page.get("image_dimensions") or {}
+    pw, ph = int(dims.get("width", 0)), int(dims.get("height", 0))
+    if aspect > _REGION_MAX_ASPECT:
+        # too wide → grow height symmetrically around the center y
+        new_h = int(round(w / _REGION_MAX_ASPECT))
+        y = int(round(y + h / 2 - new_h / 2))
+        h = new_h
+        if ph > 0:
+            y = max(0, min(y, ph - h))
+            if h > ph:
+                y, h = 0, ph   # hit both edges — best we can do
+    else:
+        # too tall → grow width symmetrically around the center x
+        new_w = int(round(h * _REGION_MIN_ASPECT))
+        x = int(round(x + w / 2 - new_w / 2))
+        w = new_w
+        if pw > 0:
+            x = max(0, min(x, pw - w))
+            if w > pw:
+                x, w = 0, pw
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
 def _scene_durations(scenes: list[dict], timings: list[dict],
                      audio_duration: float) -> dict[int, float]:
     """Visual duration per scene. A scene's shot stays on screen from its OWN
@@ -95,8 +134,9 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
             key = (page_ref, int(pn["index"]))
             if key not in used_regions:
                 used_regions.add(key)
-                return page_ref, {"x": int(pn["bbox"]["x"]), "y": int(pn["bbox"]["y"]),
-                                  "w": int(pn["bbox"]["w"]), "h": int(pn["bbox"]["h"])}
+                raw = {"x": int(pn["bbox"]["x"]), "y": int(pn["bbox"]["y"]),
+                       "w": int(pn["bbox"]["w"]), "h": int(pn["bbox"]["h"])}
+                return page_ref, _expand_extreme_bbox(raw, page)
         return None
 
     shots: list[Shot] = []
@@ -109,7 +149,7 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
         dur = durations[s["scene_id"]]
         motion = d.get("motion") or "zoom_out"
         if d["kind"] == "painting_region":
-            bbox = _region_bbox(page, int(d["panel_ref"]))
+            bbox = _expand_extreme_bbox(_region_bbox(page, int(d["panel_ref"])), page)
         else:
             bbox = _full_bbox(page)
         if motion == "static" and dur > ART_MAX_STATIC_SEC:
@@ -168,8 +208,9 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
             rep_page_ref, rep_page = entry
             b = _replacement_region(rep_page_ref, rep_page)
             if b is not None:
-                cur.panel_bbox = {"x": int(b.get("x", 0)), "y": int(b.get("y", 0)),
-                                  "w": int(b.get("w", 0)), "h": int(b.get("h", 0))}
+                raw = {"x": int(b.get("x", 0)), "y": int(b.get("y", 0)),
+                       "w": int(b.get("w", 0)), "h": int(b.get("h", 0))}
+                cur.panel_bbox = _expand_extreme_bbox(raw, rep_page)
         # Oppose the previous shot's motion (pan_right/static before → zoom_in).
         cur.motion = "zoom_out" if prev.motion == "zoom_in" else "zoom_in"
 

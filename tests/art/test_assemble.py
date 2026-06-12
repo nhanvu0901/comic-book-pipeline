@@ -1,6 +1,6 @@
 import pytest
 
-from art_pipeline.assemble import plan_shots
+from art_pipeline.assemble import _expand_extreme_bbox, plan_shots
 
 
 def _page(n, w=2000, h=1500, n_panels=4, related=False):
@@ -152,3 +152,36 @@ def test_consecutive_identical_fulls_get_distinct_frames():
     # the re-aimed shot opposes the motion of the shot before it
     assert shots[3].panel_bbox != shots[2].panel_bbox
     assert shots[3].motion != shots[2].motion
+
+
+def test_extreme_wide_region_expanded():
+    # Real case: intro region "gas lamp string" 3920x262 (aspect 15:1) →
+    # cover-scale 7.3x triggered Stage 5's blur-bg contain → a thin sharp
+    # sliver over blur, "not clear". Height must grow around the center.
+    page = {"page_number": 1, "source_image": "/tmp/p1.jpg",
+            "image_dimensions": {"width": 2000, "height": 1500},
+            "preprocessing_method": "vlm-regions",
+            "panels": [{"index": 0, "bbox": {"x": 0, "y": 600, "w": 2000, "h": 130}}]}
+    narration = {"scenes": [{"scene_id": 1, "text": "a", "page_ref": 1, "panel_ref": 0}]}
+    plan = [{"scene_id": 1, "kind": "painting_region", "panel_ref": 0,
+             "motion": "zoom_in", "subject": "", "fallback": ""}]
+    shots = plan_shots(narration, plan, {1: page}, [], audio_duration=3.0)
+    b = shots[0].panel_bbox
+    assert b["h"] >= 2000 / 2.5                          # grown to w / MAX_ASPECT
+    assert abs((b["y"] + b["h"] / 2) - 665) <= 1         # center y preserved
+    assert b["y"] >= 0 and b["y"] + b["h"] <= 1500       # clamped inside image
+    assert b["w"] / b["h"] <= 2.5 + 0.01                 # aspect within bounds
+
+
+def test_normal_region_bbox_unchanged():
+    page = _page(1)
+    bbox = {"x": 100, "y": 200, "w": 400, "h": 300}      # aspect 1.33 — fine
+    assert _expand_extreme_bbox(bbox, page) == bbox
+
+
+def test_extreme_tall_region_expanded():
+    page = _page(1)   # 2000x1500
+    out = _expand_extreme_bbox({"x": 900, "y": 0, "w": 100, "h": 1500}, page)
+    assert out["w"] >= 1500 * 0.4                        # grown to h * MIN_ASPECT
+    assert out["x"] >= 0 and out["x"] + out["w"] <= 2000  # clamped inside image
+    assert out["h"] == 1500
