@@ -9,7 +9,7 @@ import datetime
 import json
 from pathlib import Path
 
-from .config import ART_PROJECTS_ROOT, get_art_project_path
+from .config import ART_PROJECTS_ROOT, get_art_project_path, ART_LF_OUTPUT_W, ART_LF_OUTPUT_H
 
 VARIETY_LOG = ART_PROJECTS_ROOT / "_variety_log.csv"
 _VARIETY_WINDOW = 3  # warn when the last N fingerprints are identical
@@ -39,11 +39,32 @@ def build_youtube_description(ctx: dict) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def build_youtube_chapters(chapters: list[dict]) -> str:
+    lines = []
+    for ch in chapters:
+        start = float(ch.get("start") or 0.0)
+        m, s = divmod(int(start), 60)
+        lines.append(f"{m:02d}:{s:02d} {ch.get('title', '')}")
+    return "\n".join(lines) + "\n"
+
+
+def discover_bgm(root: Path) -> Path | None:
+    """User-supplied music: first bgm.* in the project folder (user decision:
+    manual per-video pick, no auto library)."""
+    for ext in ("mp3", "m4a", "wav", "ogg", "flac"):
+        p = root / f"bgm.{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def structure_fingerprint(narration: dict) -> str:
     scenes = narration.get("scenes") or []
+    longform = any(s.get("chapter_id") for s in scenes)
     return "|".join([
         str(narration.get("mode", "")),
         str(len(scenes)),
+        "longform" if longform else "short",
         "intro" if any(s.get("is_intro") for s in scenes) else "cold",
         "outro" if any(s.get("is_outro") for s in scenes) else "hard-end",
     ])
@@ -72,19 +93,42 @@ def append_variety_log(project_name: str, narration: dict, *,
 def assemble_art(project_name: str, **kwargs):
     import stages.stage_5.shots as shots
     from .assemble import assemble_art_video
+
+    root = get_art_project_path(project_name)
+    longform = (root / "chapters.json").exists()
+    if longform and not kwargs.get("bg_music_path"):
+        bgm = discover_bgm(root)
+        if bgm:
+            kwargs["bg_music_path"] = str(bgm)
+        else:
+            print("[video] WARNING: long-form without BGM — drop a bgm.mp3 "
+                  "into the project folder for a non-cheap mix")
+
     # render_shot's crop path still honors these comic globals — never mirror
-    # or inpaint a real artwork.
-    prev = (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT)
+    # or inpaint a real artwork; long-form additionally renders 16:9.
+    prev = (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT,
+            shots.OUTPUT_W, shots.OUTPUT_H, shots.TARGET_ASPECT)
     shots.MIRROR_PANELS = False
     shots.INPAINT_BUBBLE_TEXT = False
+    if longform:
+        shots.OUTPUT_W = ART_LF_OUTPUT_W
+        shots.OUTPUT_H = ART_LF_OUTPUT_H
+        shots.TARGET_ASPECT = ART_LF_OUTPUT_W / ART_LF_OUTPUT_H
     try:
         result = assemble_art_video(project_name, **kwargs)
     finally:
-        shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT = prev
+        (shots.MIRROR_PANELS, shots.INPAINT_BUBBLE_TEXT,
+         shots.OUTPUT_W, shots.OUTPUT_H, shots.TARGET_ASPECT) = prev
 
-    root = get_art_project_path(project_name)
     ctx = json.loads((root / "art_context.json").read_text())
-    (root / "youtube_description.txt").write_text(build_youtube_description(ctx))
+    description = build_youtube_description(ctx)
+    if longform:
+        chapters = json.loads((root / "chapters.json").read_text())
+        chapters_txt = build_youtube_chapters(chapters)
+        (root / "youtube_chapters.txt").write_text(chapters_txt)
+        description += ("\nChapters:\n" + chapters_txt +
+                        "\nSubtitles available — turn on CC.\n")
+    (root / "youtube_description.txt").write_text(description)
     narration = json.loads((root / "narration.json").read_text())
     warning = append_variety_log(project_name, narration, path=VARIETY_LOG)
     if warning:

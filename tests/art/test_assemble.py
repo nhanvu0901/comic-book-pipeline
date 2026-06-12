@@ -185,3 +185,34 @@ def test_extreme_tall_region_expanded():
     assert out["w"] >= 1500 * 0.4                        # grown to h * MIN_ASPECT
     assert out["x"] >= 0 and out["x"] + out["w"] <= 2000  # clamped inside image
     assert out["h"] == 1500
+
+
+def test_aspect_bounds_follow_output_frame(monkeypatch):
+    import stages.stage_5.shots as shots
+    from art_pipeline.assemble import _aspect_bounds
+    lo, hi = _aspect_bounds()                       # default 9:16
+    assert lo == pytest.approx(0.4, abs=0.01)
+    assert hi == pytest.approx(2.5, abs=0.01)
+    monkeypatch.setattr(shots, "OUTPUT_W", 1920)
+    monkeypatch.setattr(shots, "OUTPUT_H", 1080)
+    lo2, hi2 = _aspect_bounds()                     # 16:9 → scaled bounds
+    assert lo2 == pytest.approx(0.7111 * (16 / 9), abs=0.02)
+    assert hi2 == pytest.approx(4.4444 * (16 / 9), abs=0.05)
+
+
+def test_build_srt_chunks_and_format():
+    from art_pipeline.assemble import build_srt
+    words = [{"word": f"w{i}", "start": i * 0.5, "end": i * 0.5 + 0.4}
+             for i in range(10)]
+    srt = build_srt(words, max_words=7)
+    blocks = srt.strip().split("\n\n")
+    assert len(blocks) == 2                          # 7 + 3 words
+    assert blocks[0].splitlines()[0] == "1"
+    assert "-->" in blocks[0].splitlines()[1]
+    assert blocks[0].splitlines()[1].startswith("00:00:00,000")
+    assert blocks[1].splitlines()[0] == "2"
+
+
+def test_build_srt_empty():
+    from art_pipeline.assemble import build_srt
+    assert build_srt([]) == ""

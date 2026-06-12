@@ -43,27 +43,40 @@ def _region_bbox(page: dict, panel_ref: int) -> dict:
     return _full_bbox(page)
 
 
-_REGION_MAX_ASPECT = 2.5   # wider/taller than this renders as a sliver in 9:16
-_REGION_MIN_ASPECT = 0.4
+# Aspect bounds are RELATIVE to the output frame: tuned on 9:16 as [0.4, 2.5],
+# i.e. [0.711x, 4.444x] the frame aspect (0.5625). Computing from the live
+# frame keeps the same perceived geometry when video.py overrides the output
+# to 16:9 for long-form.
+_REL_MIN_ASPECT = 0.4 / (1080 / 1920)   # 0.7111…
+_REL_MAX_ASPECT = 2.5 / (1080 / 1920)   # 4.4444…
+
+
+def _aspect_bounds() -> tuple[float, float]:
+    import stages.stage_5.shots as shots
+    frame = shots.OUTPUT_W / shots.OUTPUT_H
+    return _REL_MIN_ASPECT * frame, _REL_MAX_ASPECT * frame
 
 
 def _expand_extreme_bbox(bbox: dict, page: dict) -> dict:
-    """A region far wider/taller than the 9:16 frame renders as a thin sliver
+    """A region far wider/taller than the output frame renders as a thin sliver
     over blur (measured: 3920x262 'gas lamp string' intro). Grow the short side
     around the region's center until aspect is within bounds, clamped to the
-    image — the zoom still lands on the region, with readable surroundings."""
+    image — the zoom still lands on the region, with readable surroundings.
+    Bounds scale with the live OUTPUT_W/OUTPUT_H so 16:9 long-form uses the
+    correct geometry instead of the 9:16 Shorts constants."""
     x, y = int(bbox.get("x", 0)), int(bbox.get("y", 0))
     w, h = int(bbox.get("w", 0)), int(bbox.get("h", 0))
     if w <= 0 or h <= 0:
         return bbox
+    min_aspect, max_aspect = _aspect_bounds()
     aspect = w / h
-    if _REGION_MIN_ASPECT <= aspect <= _REGION_MAX_ASPECT:
+    if min_aspect <= aspect <= max_aspect:
         return bbox
     dims = page.get("image_dimensions") or {}
     pw, ph = int(dims.get("width", 0)), int(dims.get("height", 0))
-    if aspect > _REGION_MAX_ASPECT:
+    if aspect > max_aspect:
         # too wide → grow height symmetrically around the center y
-        new_h = int(round(w / _REGION_MAX_ASPECT))
+        new_h = int(round(w / max_aspect))
         y = int(round(y + h / 2 - new_h / 2))
         h = new_h
         if ph > 0:
@@ -72,7 +85,7 @@ def _expand_extreme_bbox(bbox: dict, page: dict) -> dict:
                 y, h = 0, ph   # hit both edges — best we can do
     else:
         # too tall → grow width symmetrically around the center x
-        new_w = int(round(h * _REGION_MIN_ASPECT))
+        new_w = int(round(h * min_aspect))
         x = int(round(x + w / 2 - new_w / 2))
         w = new_w
         if pw > 0:
@@ -80,6 +93,32 @@ def _expand_extreme_bbox(bbox: dict, page: dict) -> dict:
             if w > pw:
                 x, w = 0, pw
     return {"x": x, "y": y, "w": w, "h": h}
+
+
+def _fmt_srt_time(t: float) -> str:
+    ms = int(round(t * 1000))
+    h, ms = divmod(ms, 3_600_000)
+    m, ms = divmod(ms, 60_000)
+    s, ms = divmod(ms, 1_000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def build_srt(word_timestamps: list[dict], *, max_words: int = 7) -> str:
+    """Plain .srt from word timestamps (~7-word cues). Long-form videos ship
+    subtitles as CC instead of burned-in karaoke (genre + 16:9 decision,
+    spec 2026-06-12 §A6).
+
+    Raw word timestamps on disk use key ``"word"`` (confirmed from art_projects/).
+    The fallback to ``"text"`` is kept for forward-compatibility."""
+    if not word_timestamps:
+        return ""
+    blocks: list[str] = []
+    for n, i in enumerate(range(0, len(word_timestamps), max_words), start=1):
+        chunk = word_timestamps[i:i + max_words]
+        text = " ".join(str(w.get("word", w.get("text", ""))) for w in chunk).strip()
+        start = float(chunk[0]["start"]); end = float(chunk[-1]["end"])
+        blocks.append(f"{n}\n{_fmt_srt_time(start)} --> {_fmt_srt_time(end)}\n{text}")
+    return "\n\n".join(blocks) + "\n"
 
 
 def _scene_durations(scenes: list[dict], timings: list[dict],
@@ -288,7 +327,16 @@ def assemble_art_video(
     log(f"[assemble] concatenating {len(shot_paths)} shots")
     _concat(shot_paths, silent)
     captions = root / "captions.ass"
-    captions.write_text(build_ass(word_timestamps, audio_duration))
+    longform = (root / "chapters.json").exists()
+    if longform:
+        # Long-form ships CC subtitles, not burned-in karaoke: write a
+        # header-only .ass (renders nothing) + subtitles.srt for upload.
+        from stages.stage_5.captions import ASS_HEADER
+        captions.write_text(ASS_HEADER)
+        (root / "subtitles.srt").write_text(build_srt(word_timestamps))
+        log("[assemble] long-form: wrote subtitles.srt (no burned-in captions)")
+    else:
+        captions.write_text(build_ass(word_timestamps, audio_duration))
     mixed = root / "audio_mixed.wav"
     bgm = _resolve_bgm(bg_music_path, enable_music, log)
     mix_audio(root / "audio.wav", bgm, mixed, progress=log)
