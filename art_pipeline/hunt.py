@@ -239,17 +239,24 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
 
     decls = [d for d in plan if d["kind"] == "related"]
     requested = len(decls)
+    by_chapter: dict[int, list[dict]] = {}
+    for d in decls:
+        by_chapter.setdefault(int(d.get("chapter_id") or 0), []).append(d)
     results: dict[int, dict] = {}
-    if decls:
+    for ch_id in sorted(by_chapter):
+        group = by_chapter[ch_id]
         raw = sdk_complete_web(_HUNT_SYSTEM,
-                               build_hunt_prompt(ctx, scenes, decls),
-                               max_turns=max(12, _HUNT_TURNS_PER_SUBJECT * len(decls) + 4),
+                               build_hunt_prompt(ctx, scenes, group),
+                               max_turns=max(12, _HUNT_TURNS_PER_SUBJECT * len(group) + 4),
                                log=log)
-        results = parse_hunt_response(raw)
-        log(f"[hunt] SDK returned {len(results)}/{requested} candidate image(s)")
+        got = parse_hunt_response(raw)
+        results.update(got)
+        tag = f"chapter {ch_id}: " if len(by_chapter) > 1 else ""
+        log(f"[hunt] {tag}SDK returned {len(got)}/{len(group)} candidate image(s)")
 
     rel_dir.mkdir(exist_ok=True)
     used_urls: set = set()
+    resolved_by_subject: dict[str, int] = {}
     manifest: list[dict] = []
     credits: list[dict] = []
     next_page = max(pages) + 1 if pages else 1
@@ -269,6 +276,19 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
             continue
         original = {"scene_id": s["scene_id"], "original_page_ref": s["page_ref"],
                     "original_panel_ref": s["panel_ref"], "original_kind": "related"}
+        # Same subject already resolved (writer validator forbids dups, this is
+        # the safety net for legacy plans): reuse the downloaded page.
+        subj_key = " ".join(str(d.get("subject") or "").lower().split())
+        prev_page = resolved_by_subject.get(subj_key)
+        if prev_page is not None:
+            s["page_ref"], s["panel_ref"] = prev_page, 0
+            d["page_ref"] = prev_page
+            manifest.append({**original, "page_number": prev_page,
+                             "reused_subject": subj_key})
+            log(f"[hunt] ✓ scene {d['scene_id']} reuses page {prev_page} "
+                f"({subj_key!r})")
+            resolved += 1
+            continue
         c = results.get(d["scene_id"])
         dims = None
         dest = None
@@ -316,6 +336,7 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
             log(f"[hunt] ✓ scene {d['scene_id']} → {c['title']!r} ({c['license']})")
             next_page += 1
             resolved += 1
+            resolved_by_subject[subj_key] = s["page_ref"]
             continue
         # ── fallback: unused painting region, else painting_full ────────────
         reason = ("no SDK candidate" if not c else

@@ -342,6 +342,109 @@ def test_hunt_orphan_decl_skipped(tmp_path, monkeypatch):
     assert narration["scenes"][1]["page_ref"] == 2
 
 
+def test_hunt_one_sdk_session_per_chapter(tmp_path, monkeypatch):
+    """chapters.json tồn tại + decls có chapter_id 1,1,2 → đúng 2 lần gọi sdk_complete_web;
+    max_turns lần 1 = max(12, 4*2+4)=12, lần 2 = max(12, 4*1+4)=12. (floor 12 cho cả hai)"""
+    monkeypatch.setattr(hunt_mod, "get_art_project_path",
+                        lambda name: tmp_path / name)
+    monkeypatch.setattr(hunt_mod, "_sleep", lambda s: None)
+    root = tmp_path / "proj_ch"
+    (root / "preprocessed").mkdir(parents=True)
+    (root / "preprocessed" / "page_001_abc.json").write_text(json.dumps(_page(1)))
+    # chapters.json simulates a long-form project (logic reads chapter_id from decl, not file)
+    (root / "chapters.json").write_text(json.dumps(
+        [{"chapter_id": 1, "title": "Ch1"}, {"chapter_id": 2, "title": "Ch2"}]))
+    narration = {"scenes": [
+        {"scene_id": 1, "text": "hook", "page_ref": 1, "panel_ref": -1, "is_intro": True},
+        {"scene_id": 2, "text": "scene2", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 3, "text": "scene3", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 4, "text": "outro", "page_ref": 1, "panel_ref": -1, "is_outro": True}]}
+    plan = [
+        {"scene_id": 1, "kind": "painting_full", "panel_ref": -1, "subject": "", "motion": "static", "fallback": ""},
+        {"scene_id": 2, "kind": "related", "panel_ref": -1, "chapter_id": 1,
+         "subject": "subject A", "motion": "pan_right", "fallback": ""},
+        {"scene_id": 3, "kind": "related", "panel_ref": -1, "chapter_id": 1,
+         "subject": "subject B", "motion": "pan_left", "fallback": ""},
+        {"scene_id": 4, "kind": "related", "panel_ref": -1, "chapter_id": 2,
+         "subject": "subject C", "motion": "pan_right", "fallback": ""},
+    ]
+    (root / "narration.json").write_text(json.dumps(narration))
+    (root / "visual_plan.json").write_text(json.dumps(plan))
+    (root / "art_context.json").write_text(json.dumps(
+        {"title": "T", "sources": [], "artworks": [], "summary": {}}))
+
+    sdk_calls: list[int] = []
+
+    def fake_sdk(system, user, *, max_turns=None, log=None):
+        sdk_calls.append(max_turns)
+        return '{"images": {}}'
+
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web", fake_sdk)
+    hunt_visuals("proj_ch", log=lambda m: None)
+
+    assert len(sdk_calls) == 2, f"expected 2 SDK calls, got {sdk_calls}"
+    # chapter 1: 2 subjects → max(12, 4*2+4) = 12 (floor wins)
+    assert sdk_calls[0] == max(12, 4 * 2 + 4)
+    # chapter 2: 1 subject → max(12, 4*1+4) = 12 (floor wins)
+    assert sdk_calls[1] == max(12, 4 * 1 + 4)
+
+
+def test_hunt_duplicate_subject_reuses_page(tmp_path, monkeypatch):
+    """2 decls related với cùng subject (case/space khác nhau vẫn normalize);
+    SDK trả image cho cả 2; chỉ 1 download xảy ra; resolved==2; cả 2 scene trỏ cùng page_ref."""
+    monkeypatch.setattr(hunt_mod, "get_art_project_path",
+                        lambda name: tmp_path / name)
+    monkeypatch.setattr(hunt_mod, "_sleep", lambda s: None)
+    root = tmp_path / "proj_dup"
+    (root / "preprocessed").mkdir(parents=True)
+    (root / "preprocessed" / "page_001_abc.json").write_text(json.dumps(_page(1)))
+    narration = {"scenes": [
+        {"scene_id": 1, "text": "hook", "page_ref": 1, "panel_ref": -1, "is_intro": True},
+        {"scene_id": 2, "text": "first mention", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 3, "text": "second mention", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 4, "text": "outro", "page_ref": 1, "panel_ref": -1, "is_outro": True}]}
+    # subject khác case/space nhưng normalize ra giống nhau
+    plan = [
+        {"scene_id": 1, "kind": "painting_full", "panel_ref": -1, "subject": "", "motion": "static", "fallback": ""},
+        {"scene_id": 2, "kind": "related", "panel_ref": -1,
+         "subject": "Portrait of El Greco", "motion": "pan_right", "fallback": ""},
+        {"scene_id": 3, "kind": "related", "panel_ref": -1,
+         "subject": "  portrait  of  El  Greco  ", "motion": "pan_left", "fallback": ""},
+        {"scene_id": 4, "kind": "painting_full", "panel_ref": -1, "subject": "", "motion": "zoom_out", "fallback": ""},
+    ]
+    (root / "narration.json").write_text(json.dumps(narration))
+    (root / "visual_plan.json").write_text(json.dumps(plan))
+    (root / "art_context.json").write_text(json.dumps(
+        {"title": "T", "sources": [], "artworks": [], "summary": {}}))
+
+    monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda *a, **k: json.dumps(
+        {"images": {
+            "2": {"image_url": "https://x/portrait.jpg", "title": "El Greco portrait",
+                  "source_url": "https://x/page", "license": "PD"},
+            "3": {"image_url": "https://x/portrait2.jpg", "title": "El Greco portrait alt",
+                  "source_url": "https://x/page2", "license": "PD"},
+        }}))
+
+    download_calls: list[str] = []
+
+    def fake_download(url, dest):
+        download_calls.append(url)
+        dest.write_bytes(b"x")
+        return (1200, 900)
+
+    monkeypatch.setattr(hunt_mod, "_download", fake_download)
+    out = hunt_visuals("proj_dup", log=lambda m: None)
+
+    assert out["resolved"] == 2, f"expected resolved==2, got {out}"
+    assert len(download_calls) == 1, f"expected 1 download, got {download_calls}"
+
+    narration = json.loads((root / "narration.json").read_text())
+    s2 = narration["scenes"][1]
+    s3 = narration["scenes"][2]
+    assert s2["page_ref"] == s3["page_ref"], (
+        f"expected same page_ref; scene2={s2['page_ref']}, scene3={s3['page_ref']}")
+
+
 def test_hunt_force_restores_then_redoes(tmp_path, monkeypatch):
     root = _project(tmp_path, monkeypatch)
     monkeypatch.setattr(hunt_mod, "sdk_complete_web", lambda *a, **k: json.dumps(
