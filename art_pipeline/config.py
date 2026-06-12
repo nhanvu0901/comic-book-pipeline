@@ -57,6 +57,7 @@ ART_LF_CHAPTER_GAP_S = 1.0          # stitched silence between chapters (micro-p
 ART_LF_OUTPUT_W = 1920              # 16:9 landscape (runtime override of stage_5 shots)
 ART_LF_OUTPUT_H = 1080
 ART_LF_REHOOK_POSITIONS = (2, 3)    # 1-based chapter positions that must END with a re-hook
+ART_LF_REGION_REUSE_WINDOW = 6      # same region may not appear twice within any 6 consecutive scenes (long-form)
 
 
 @dataclass(frozen=True)

@@ -123,6 +123,50 @@ def validate_variety(scenes: list[dict], plan_by_id: dict[int, dict]) -> None:
             seen_regions.add(t)
 
 
+def validate_variety_longform(scenes: list[dict], plan_by_id: dict[int, dict], *,
+                              window: int) -> None:
+    """Long-form variety: (1) no two consecutive scenes share a target;
+    (2) the same painting-region/full target may not recur within `window`
+    consecutive scenes (a 10-min video on one painting MUST revisit regions —
+    what reads as cheap is repeats CLOSE together, measured e2e 2026-06-12:
+    6-region artwork cannot satisfy once-per-chapter at 14-22 scenes/chapter);
+    (3) related subjects pairwise distinct (checked globally by caller too)."""
+    targets = []
+    for s in scenes:
+        d = plan_by_id.get(s["scene_id"])
+        if d is None:
+            raise ValueError(f"visual plan: scene {s['scene_id']} has no visual declaration")
+        targets.append((s, d, visual_target(s, d)))
+
+    # 3. related subjects pairwise distinct (before consecutive, so a duplicated
+    #    subject is named as the offending rule even when also adjacent)
+    seen_subjects: set = set()
+    for s, d, t in targets:
+        if d["kind"] == "related":
+            if t in seen_subjects:
+                raise ValueError(f"visual plan: scene {s['scene_id']} repeats related "
+                                 f"subject {d['subject']!r} — subjects must differ")
+            seen_subjects.add(t)
+    # 1. no two consecutive scenes share a target
+    for (s1, _, t1), (s2, _, t2) in zip(targets, targets[1:]):
+        if t1 == t2:
+            raise ValueError(f"visual plan: scenes {s1['scene_id']} and "
+                             f"{s2['scene_id']} show the same thing consecutive — vary them")
+    # 2. painting targets (region or full view) may RETURN, but never within
+    #    `window` consecutive scenes of their last appearance
+    last_seen: dict[tuple, tuple[int, int]] = {}  # target -> (position, scene_id)
+    for idx, (s, d, t) in enumerate(targets):
+        if t[0] in ("r", "f"):
+            prev = last_seen.get(t)
+            if prev is not None and idx - prev[0] < window:
+                what = (f"region (page {t[1]}, panel {t[2]})" if t[0] == "r"
+                        else f"full view (page {t[1]})")
+                raise ValueError(
+                    f"visual plan: scene {s['scene_id']} reuses {what} seen at "
+                    f"scene {prev[1]} — keep >= {window} scenes apart")
+            last_seen[t] = (idx, s["scene_id"])
+
+
 def derive_trivial_plan(narration: dict) -> list[dict]:
     """All-painting plan for legacy projects with no visual_plan.json: scenes
     with a grounded panel_ref become painting_region, the rest painting_full."""

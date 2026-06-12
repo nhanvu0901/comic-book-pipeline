@@ -113,19 +113,38 @@ def test_cross_chapter_duplicate_subject_rejected():
         validate_cross_chapter(scenes, decls)
 
 
-def test_cross_chapter_adjacent_region_reuse_rejected():
-    pairs = [_mk(1, 1, "painting_region", panel=3),
-             _mk(2, 2, "painting_region", panel=3)]
-    scenes = [p[0] for p in pairs]; decls = [p[1] for p in pairs]
-    with pytest.raises(ValueError, match="adjacent"):
+def _region_video(n, reuse_at=None, reuse_of=None):
+    """n ordered region scenes, each its own panel; scene at 0-based position
+    `reuse_at` optionally reuses the panel of the scene at `reuse_of`."""
+    pairs = []
+    for i in range(n):
+        panel = reuse_of if reuse_at is not None and i == reuse_at else i
+        pairs.append(_mk(i + 1, 1 + i // 7, "painting_region", panel=panel))
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
+def test_cross_chapter_region_reuse_within_window_rejected():
+    # scenes 5 and 8 share a region — only 3 apart (< ART_LF_REGION_REUSE_WINDOW=6)
+    scenes, decls = _region_video(10, reuse_at=7, reuse_of=4)
+    with pytest.raises(ValueError, match="scenes apart"):
         validate_cross_chapter(scenes, decls)
 
 
-def test_cross_chapter_nonadjacent_region_reuse_ok():
-    pairs = [_mk(1, 1, "painting_region", panel=3),
-             _mk(2, 3, "painting_region", panel=3)]
-    scenes = [p[0] for p in pairs]; decls = [p[1] for p in pairs]
+def test_cross_chapter_region_reuse_outside_window_ok():
+    # scenes 1 and 9 share a region — 8 apart (>= window 6); spans chapters too
+    scenes, decls = _region_video(10, reuse_at=8, reuse_of=0)
     validate_cross_chapter(scenes, decls)  # must not raise
+
+
+def test_mid_chapter_double_painting_full_rejected():
+    import json as _json
+    data = _json.loads(_raw_chapter(rehook_last=False))
+    for idx in (1, 10):  # 9 scenes apart — clears the reuse window, so the
+        data["scenes"][idx]["visual"] = {"kind": "painting_full"}  # full-cap rule
+        data["scenes"][idx]["panel_ref"] = -1                      # is what fires
+    with pytest.raises(ValueError, match="painting_full"):
+        build_chapter_scenes(_json.dumps(data), PAGES, CTX, CHAPTER,
+                             scene_id_offset=0, rehook_required=False)
 
 
 def test_inject_chapter_flags_marks_rehook_chapter_tails():

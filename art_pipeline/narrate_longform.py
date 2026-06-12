@@ -13,9 +13,9 @@ from stages.stage_3.schema import Narration, Scene
 
 from ._json import extract_json
 from .narrate import _hook_is_concrete, _starts_with_connective, cap_facts, region_catalog
-from .visual_plan import assign_motions, parse_visual, save_plan, validate_variety
+from .visual_plan import assign_motions, parse_visual, save_plan, validate_variety_longform
 from .config import (
-    ART_LF_REHOOK_POSITIONS, ART_LF_SCENE_MAX_WORDS,
+    ART_LF_REGION_REUSE_WINDOW, ART_LF_REHOOK_POSITIONS, ART_LF_SCENE_MAX_WORDS,
     ART_LF_SCENES_PER_CHAPTER_MAX, ART_LF_SCENES_PER_CHAPTER_MIN,
     ART_WORDS_PER_SEC, get_art_project_path,
 )
@@ -60,9 +60,10 @@ Hard rules:
      ({full_note}).
    - {{"kind": "related", "subject": "<concrete searchable image>"}} — artist,
      era, place, technique, x-ray. Aim for roughly 30% related scenes.
-4. VARIETY: no two consecutive scenes show the same thing; each region at most
-   once IN THIS CHAPTER; related subjects all differ. Do NOT use these region
-   panel_refs (used by the previous chapter): {blocked_regions}.
+4. VARIETY: no two consecutive scenes show the same thing; a region may
+   RETURN later, but never within {window} scenes of its last use; related
+   subjects all differ. The previous chapter ended on these region
+   panel_refs: {recent_regions} — do not reopen with them.
    Do NOT use these related subjects (already used): {blocked_subjects}.
 5. {position_rule}
 6. Educational register, explain terms in-line, no hype words, never say
@@ -140,10 +141,21 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
             is_outro=bool(s.get("is_outro")) and is_last and j == len(scenes_raw) - 1,
         ))
 
-    # Per-chapter variety scope (rule: consecutive / region-once / related-dedup /
-    # at most one mid-chapter painting_full — validate_variety's existing rules).
-    validate_variety([sc.__dict__ for sc in scenes],
-                     {d["scene_id"]: d for d in decls})
+    # painting_full ≤1 mid-chapter (intro/outro fulls excluded) — kept from the
+    # original per-chapter rule set; the window check below does not cover it.
+    mid_fulls = [sc.scene_id for sc, d in zip(scenes, decls)
+                 if d["kind"] == "painting_full"
+                 and not sc.is_intro and not sc.is_outro]
+    if len(mid_fulls) > 1:
+        raise ValueError(
+            f"chapter {chapter['chapter_id']}: painting_full used mid-chapter in "
+            f"scenes {mid_fulls} — at most ONE mid-chapter full view")
+    # Per-chapter variety: consecutive-distinct / region-reuse window /
+    # related-dedup. (The once-per-chapter region rule was unsatisfiable for
+    # low-region artworks — e2e 2026-06-12.)
+    validate_variety_longform([sc.__dict__ for sc in scenes],
+                              {d["scene_id"]: d for d in decls},
+                              window=ART_LF_REGION_REUSE_WINDOW)
 
     if rehook_required and not _is_forward_hook(scenes[-1].text):
         raise ValueError(
@@ -172,31 +184,13 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
 
 
 def validate_cross_chapter(scenes: list[dict], decls: list[dict]) -> None:
-    """Whole-video rules: related subjects globally distinct; a painting region
-    must not appear in two ADJACENT chapters."""
-    seen_subjects: dict[str, int] = {}
-    region_chapters: dict[tuple, set[int]] = {}
-    by_id = {s["scene_id"]: s for s in scenes}
-    for d in decls:
-        ch = int(d.get("chapter_id") or 0)
-        if d["kind"] == "related":
-            key = " ".join(str(d.get("subject") or "").lower().split())
-            if key in seen_subjects and seen_subjects[key] != d["scene_id"]:
-                raise ValueError(
-                    f"cross-chapter: related subject reused: {key!r} "
-                    f"(scenes {seen_subjects[key]} and {d['scene_id']})")
-            seen_subjects[key] = d["scene_id"]
-        elif d["kind"] == "painting_region":
-            s = by_id.get(d["scene_id"]) or {}
-            rk = (s.get("page_ref"), d.get("panel_ref"))
-            region_chapters.setdefault(rk, set()).add(ch)
-    for rk, chs in region_chapters.items():
-        ordered = sorted(chs)
-        for a, b in zip(ordered, ordered[1:]):
-            if b - a == 1:
-                raise ValueError(
-                    f"cross-chapter: region page {rk[0]} panel {rk[1]} used in "
-                    f"adjacent chapters {a} and {b}")
+    """Whole-video rules, run on the FULL ordered scene list: related subjects
+    globally distinct, and the region-reuse window also holds ACROSS chapter
+    boundaries (per-chapter checks cannot see a repeat that straddles two
+    chapters). Replaces the old adjacent-chapter region ban, which was
+    unsatisfiable for low-region artworks (e2e 2026-06-12)."""
+    validate_variety_longform(scenes, {d["scene_id"]: d for d in decls},
+                              window=ART_LF_REGION_REUSE_WINDOW)
 
 
 def _inject_chapter_flags(narration: dict, chapters_meta: list[dict]) -> None:
@@ -229,7 +223,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
     all_decls: list[dict] = []
     chapters_meta: list[dict] = []
     used_subjects: list[str] = []
-    prev_regions: list[int] = []
+    recent_regions: list[int] = []   # panel_refs of the previous chapter's tail
     prev_tail = ""
     model_used = ""
 
@@ -246,7 +240,8 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             scene_max=ART_LF_SCENE_MAX_WORDS,
             full_note=("the very first scene may be the full painting"
                        if is_first else "use sparingly"),
-            blocked_regions=prev_regions or "none",
+            window=ART_LF_REGION_REUSE_WINDOW,
+            recent_regions=recent_regions or "none",
             blocked_subjects=sorted(set(used_subjects)) or "none",
             position_rule=position_rule)
         user = (
@@ -289,8 +284,10 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
                               "start": None})
         used_subjects += [" ".join(str(d.get("subject") or "").lower().split())
                           for d in decls if d["kind"] == "related"]
-        prev_regions = [d["panel_ref"] for d in decls
-                        if d["kind"] == "painting_region"]
+        # only the previous chapter's TAIL matters for the reuse window —
+        # blocking the whole chapter starved low-region artworks (e2e)
+        recent_regions = [d["panel_ref"] for d in decls[-5:]
+                          if d["kind"] == "painting_region"]
         prev_tail = " ".join(sc.text for sc in scenes[-2:])
         all_scenes += scenes
         all_decls += decls

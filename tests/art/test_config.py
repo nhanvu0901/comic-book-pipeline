@@ -50,3 +50,4 @@ def test_longform_constants():
     assert c.ART_LF_CHAPTER_GAP_S == 1.0
     assert (c.ART_LF_OUTPUT_W, c.ART_LF_OUTPUT_H) == (1920, 1080)
     assert c.ART_LF_REHOOK_POSITIONS == (2, 3)
+    assert c.ART_LF_REGION_REUSE_WINDOW == 6
