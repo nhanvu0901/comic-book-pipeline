@@ -52,6 +52,8 @@ _REL_MAX_ASPECT = 2.5 / (1080 / 1920)   # 4.4444…
 
 
 def _aspect_bounds() -> tuple[float, float]:
+    # intentional lazy import — must read OUTPUT_W/H live AFTER video.py's
+    # runtime override, not module-load-time values
     import stages.stage_5.shots as shots
     frame = shots.OUTPUT_W / shots.OUTPUT_H
     return _REL_MIN_ASPECT * frame, _REL_MAX_ASPECT * frame
@@ -113,11 +115,17 @@ def build_srt(word_timestamps: list[dict], *, max_words: int = 7) -> str:
     if not word_timestamps:
         return ""
     blocks: list[str] = []
-    for n, i in enumerate(range(0, len(word_timestamps), max_words), start=1):
+    n = 0   # manual counter — skipped empty cues must not leave numbering gaps
+    for i in range(0, len(word_timestamps), max_words):
         chunk = word_timestamps[i:i + max_words]
         text = " ".join(str(w.get("word", w.get("text", ""))) for w in chunk).strip()
+        if not text:
+            continue   # all-empty chunk → no blank cue
+        n += 1
         start = float(chunk[0]["start"]); end = float(chunk[-1]["end"])
         blocks.append(f"{n}\n{_fmt_srt_time(start)} --> {_fmt_srt_time(end)}\n{text}")
+    if not blocks:
+        return ""
     return "\n\n".join(blocks) + "\n"
 
 

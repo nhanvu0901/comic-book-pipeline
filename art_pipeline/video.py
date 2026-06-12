@@ -59,6 +59,9 @@ def discover_bgm(root: Path) -> Path | None:
 
 
 def structure_fingerprint(narration: dict) -> str:
+    # Format v2 (2026-06-12): mode|count|short/longform|intro/cold|outro/hard-end.
+    # Rows logged before this date are 4-field v1; v1 never matches v2 —
+    # intentional clean migration break for the anti-template window.
     scenes = narration.get("scenes") or []
     longform = any(s.get("chapter_id") for s in scenes)
     return "|".join([

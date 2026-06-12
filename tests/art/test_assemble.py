@@ -216,3 +216,23 @@ def test_build_srt_chunks_and_format():
 def test_build_srt_empty():
     from art_pipeline.assemble import build_srt
     assert build_srt([]) == ""
+
+
+def test_build_srt_skips_empty_cues():
+    from art_pipeline.assemble import build_srt
+    # middle chunk is all empty-word entries → no blank cue, numbering continuous
+    words = ([{"word": f"a{i}", "start": i * 0.5, "end": i * 0.5 + 0.4}
+              for i in range(3)]
+             + [{"word": "", "start": 1.5 + i * 0.5, "end": 1.9 + i * 0.5}
+                for i in range(3)]
+             + [{"word": f"b{i}", "start": 3.0 + i * 0.5, "end": 3.4 + i * 0.5}
+                for i in range(3)])
+    srt = build_srt(words, max_words=3)
+    blocks = srt.strip().split("\n\n")
+    assert len(blocks) == 2                       # all-empty chunk dropped
+    assert blocks[0].splitlines()[0] == "1"
+    assert blocks[1].splitlines()[0] == "2"       # numbering stays 1,2,... no gap
+    assert blocks[0].splitlines()[2] == "a0 a1 a2"
+    assert blocks[1].splitlines()[2] == "b0 b1 b2"
+    # all-empty input → empty string, not a stray newline
+    assert build_srt([{"word": "", "start": 0.0, "end": 0.4}]) == ""
