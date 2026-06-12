@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Callable
 
 from art_pipeline.config import ART_PROJECTS_ROOT
-from ui.bridge import format_exception, run_blocking  # read-only reuse
 
 ART_ROOT: Path = ART_PROJECTS_ROOT
 

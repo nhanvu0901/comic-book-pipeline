@@ -18,7 +18,7 @@ from typing import Callable
 from stages.stage_5.audio import mix_audio
 from stages.stage_5.captions import build_ass
 from stages.stage_5.pipeline import (
-    FPS, _concat, _final_encode, _load_preprocessed_pages, _probe_duration,
+    _concat, _final_encode, _load_preprocessed_pages, _probe_duration,
     _require_ffmpeg, _resolve_bgm, _wav_duration,
 )
 from stages.stage_5.schema import AssemblyResult, Shot

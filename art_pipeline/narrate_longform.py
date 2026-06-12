@@ -12,7 +12,7 @@ from stages.stage_3._llm import call_with_chain
 from stages.stage_3.schema import Narration, Scene
 
 from ._json import extract_json
-from .narrate import _hook_is_concrete, _starts_with_connective, cap_facts, region_catalog
+from .narrate import _hook_is_concrete, _starts_with_connective, region_catalog
 from .visual_plan import (
     assign_motions, parse_visual, save_plan, validate_variety_longform,
     visual_target,

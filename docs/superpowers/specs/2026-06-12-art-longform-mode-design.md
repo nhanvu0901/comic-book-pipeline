@@ -19,7 +19,7 @@ the max_turns incident).
 - **Both modes from day one:** `painting_story` (1 artwork deep dive) and
   `artist_journey` (5-8 artworks, one artist) — shared chapter engine.
 - **16:9 landscape 1920x1080** for long-form output.
-- **Target length 8-12 minutes** (~1,600-1,900 words, 4-5 chapters,
+- **Target length 8-12 minutes** (~1,600-1,700 words, 4-5 chapters,
   ~60-110 scenes; raised from 1,200-1,700 after e2e round 4 measured
   0.36 s/word — 1,285 words rendered only 7:43, so the floor must put the
   85% worst case above 1,360 words ≈ 8:10).
@@ -115,7 +115,7 @@ One LLM call **per chapter**: long-form system prompt + that chapter's facts
   — chapter ceiling `ART_LF_CHAPTER_WORDS_MAX` = 420 (22 × ~19, a ceiling
   the writer can actually hit; e2e round 3: "short scenes" framing yielded
   ~190-word chapters vs 350 targets). Chapter actual-vs-target band
-  `ART_LF_CHAPTER_WORDS_BAND` = 85-150% (e2e round 4: the 60% floor let
+  `ART_LF_CHAPTER_WORDS_BAND` = 75-150% (sanity; the 8-min guarantee is the 1,360-word total floor) (e2e round 4: the 60% floor let
   middle chapters land at 0.62-0.78 of target → 7:43 video). Same visual
   declaration schema (`painting_region`/`painting_full`/`related`) and the
   same `parse_visual` / `assign_motions` machinery from `visual_plan.py`.
@@ -201,7 +201,7 @@ One LLM call **per chapter**: long-form system prompt + that chapter's facts
   candidate must name its mystery/scandal/x-ray angle; new
   `longform_angle` column in `art_candidates.csv` (existing rows stay valid;
   column appended).
-- **Benchmark:** new long-form thresholds file (words 1,350-1,900, scenes
+- **Benchmark:** new long-form thresholds file (words 1,360-1,900, scenes
   60-110 — consistent with 14-22 scenes × 4-5 chapters, chapters 4-5,
   re-hook present, hook gate, WPM 130-150 measured on final audio). Shorts
   benchmark untouched.
