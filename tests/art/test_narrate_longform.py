@@ -232,3 +232,15 @@ def test_inject_chapter_flags_marks_rehook_chapter_tails():
     # non-rehook scenes do not carry the key at all
     assert "is_rehook" not in by_id[2] and "is_rehook" not in by_id[3]
     assert "is_rehook" not in by_id[8]
+
+
+def test_subject_used_in_earlier_chapter_rejected():
+    import json as _json
+    data = _json.loads(_raw_chapter(rehook_last=False))
+    # make scene index 2 (a related scene in the fixture) reuse an earlier
+    # chapter's subject, with different case/whitespace
+    data["scenes"][2]["visual"]["subject"] = "Portrait of  EL GRECO"
+    with pytest.raises(ValueError, match="already used"):
+        build_chapter_scenes(_json.dumps(data), PAGES, CTX, CHAPTER,
+                             scene_id_offset=0, rehook_required=False,
+                             used_subjects={"portrait of el greco"})

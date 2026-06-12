@@ -151,6 +151,7 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
                          *, scene_id_offset: int, rehook_required: bool,
                          is_first: bool = False, is_last: bool = False,
                          history: list | None = None,
+                         used_subjects: set[str] | None = None,
                          log=print) -> tuple[list[Scene], list[dict]]:
     """Parse + validate ONE chapter's LLM output. Scene ids continue from
     scene_id_offset. Raises ValueError with a feed-back-able message."""
@@ -204,6 +205,21 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
             is_intro=bool(s.get("is_intro")) and is_first and j == 0,
             is_outro=bool(s.get("is_outro")) and is_last and j == len(scenes_raw) - 1,
         ))
+
+    # Cross-chapter related-subject dedup must fail INSIDE this chapter's retry
+    # loop — caught only at the end-of-video gate it throws away every already-
+    # written chapter (e2e round 5 2026-06-12: scene 36 reused a chapter-2
+    # subject after all 5 chapters had been paid for).
+    if used_subjects:
+        for d in decls:
+            if d["kind"] != "related":
+                continue
+            subj = " ".join(str(d.get("subject") or "").lower().split())
+            if subj in used_subjects:
+                raise ValueError(
+                    f"chapter {chapter['chapter_id']}: related subject {subj!r} "
+                    f"already used in an earlier chapter — pick a DIFFERENT image "
+                    f"(do not reuse: {sorted(used_subjects)[:8]})")
 
     # painting_full ≤1 mid-chapter (intro/outro fulls excluded) — kept from the
     # original per-chapter rule set; the window check below does not cover it.
@@ -351,7 +367,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
                 scenes, decls = build_chapter_scenes(
                     raw, pages, ctx, ch, scene_id_offset=len(all_scenes),
                     rehook_required=rehook, is_first=is_first, is_last=is_last,
-                    history=history, log=log)
+                    history=history, used_subjects=set(used_subjects), log=log)
                 break
             except ValueError as exc:
                 last_err = exc
