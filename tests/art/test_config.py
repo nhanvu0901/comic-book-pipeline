@@ -31,3 +31,18 @@ def test_embedding_visuals_constants_removed():
                  "VISUAL_LICENSE_WHITELIST", "VISUAL_MAX_PER_VIDEO",
                  "COMMONS_API", "OPENVERSE_API"):
         assert not hasattr(config, name), name
+
+
+def test_longform_constants():
+    from art_pipeline import config as c
+    assert c.ART_LF_MODES == ("painting_story", "artist_journey")
+    assert c.ART_LF_CHAPTER_ROLES_5 == (
+        "cold_open", "backfill", "evidence", "twist", "resolution")
+    assert c.ART_LF_CHAPTER_ROLES_4 == (
+        "cold_open", "backfill_evidence", "twist", "resolution")
+    assert c.ART_LF_TARGET_WORDS_MIN == 1200
+    assert c.ART_LF_TARGET_WORDS_MAX == 1700
+    assert 0 < c.ART_LF_SCENES_PER_CHAPTER_MIN < c.ART_LF_SCENES_PER_CHAPTER_MAX
+    assert c.ART_LF_CHAPTER_GAP_S == 1.0
+    assert (c.ART_LF_OUTPUT_W, c.ART_LF_OUTPUT_H) == (1920, 1080)
+    assert c.ART_LF_REHOOK_POSITIONS == (2, 3)

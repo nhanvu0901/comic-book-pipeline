@@ -41,6 +41,24 @@ ART_SHOT_SPLIT_SEC = 5.0       # scene ≥ this long → 2 shots (mirrors comic 
 ART_MAX_STATIC_SEC = 4.0       # no shot may hold a static frame longer than this
 
 
+# ── Long-form mode (v3, spec 2026-06-12) ─────────────────────────────────────
+# 8-12 min chaptered videos. Shorts constants above are untouched.
+ART_LF_MODES = ("painting_story", "artist_journey")
+ART_LF_CHAPTER_ROLES_5 = ("cold_open", "backfill", "evidence", "twist", "resolution")
+ART_LF_CHAPTER_ROLES_4 = ("cold_open", "backfill_evidence", "twist", "resolution")
+ART_LF_TARGET_WORDS_MIN = 1200
+ART_LF_TARGET_WORDS_MAX = 1700
+ART_LF_CHAPTER_WORDS_MIN = 150      # per-chapter target_words sanity band
+ART_LF_CHAPTER_WORDS_MAX = 500
+ART_LF_SCENES_PER_CHAPTER_MIN = 14
+ART_LF_SCENES_PER_CHAPTER_MAX = 22
+ART_LF_SCENE_MAX_WORDS = 32         # hard validator cap (prompt asks 8-22)
+ART_LF_CHAPTER_GAP_S = 1.0          # stitched silence between chapters (micro-pause)
+ART_LF_OUTPUT_W = 1920              # 16:9 landscape (runtime override of stage_5 shots)
+ART_LF_OUTPUT_H = 1080
+ART_LF_REHOOK_POSITIONS = (2, 3)    # 1-based chapter positions that must END with a re-hook
+
+
 @dataclass(frozen=True)
 class ArtMode:
     key: str
