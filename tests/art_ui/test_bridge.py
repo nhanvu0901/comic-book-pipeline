@@ -61,17 +61,36 @@ def test_project_length_defaults_short_when_missing(tmp_path, monkeypatch):
 # ── run_narrate dispatch ────────────────────────────────────────────────────
 
 def test_bridge_narrate_longform_dispatch(monkeypatch, tmp_path):
+    import builtins
     from art_ui import bridge
     monkeypatch.setattr(bridge, "ART_ROOT", tmp_path)
     proj = tmp_path / "p"; proj.mkdir()
     (proj / "selection.json").write_text('{"length": "longform"}')
     calls = []
-    monkeypatch.setattr("art_pipeline.outline.write_outline",
-                        lambda *a, **k: calls.append("outline") or {})
-    monkeypatch.setattr("art_pipeline.narrate_longform.write_longform_narration",
-                        lambda *a, **k: calls.append("lf") or {})
-    bridge.run_narrate("p", None, lambda *_: None)
+    log_kwargs = []
+
+    def _fake_outline(*a, **k):
+        calls.append("outline")
+        log_kwargs.append(k.get("log"))
+        return {}
+
+    def _fake_lf(*a, **k):
+        calls.append("lf")
+        log_kwargs.append(k.get("log"))
+        # simulate a chapter-level progress line through the forwarded log
+        k["log"]("[lf] chapter 1/5")
+        return {}
+
+    monkeypatch.setattr("art_pipeline.outline.write_outline", _fake_outline)
+    monkeypatch.setattr("art_pipeline.narrate_longform.write_longform_narration", _fake_lf)
+    messages = []
+    bridge.run_narrate("p", None, messages.append)
     assert calls == ["outline", "lf"]
+    # log must be passed explicitly — a def-time log=print default would dodge
+    # the _print_to builtins.print patch and leak chapter lines to stdout
+    for lg in log_kwargs:
+        assert lg is not None and lg is not builtins.print
+    assert "[lf] chapter 1/5" in messages
 
 
 def test_bridge_narrate_legacy_dispatch(monkeypatch, tmp_path):
@@ -89,15 +108,26 @@ def test_bridge_narrate_legacy_dispatch(monkeypatch, tmp_path):
 # ── run_tts dispatch ────────────────────────────────────────────────────────
 
 def test_bridge_tts_longform_dispatch(monkeypatch, tmp_path):
+    import builtins
     from art_ui import bridge
     monkeypatch.setattr(bridge, "ART_ROOT", tmp_path)
     proj = tmp_path / "p"; proj.mkdir()
     (proj / "selection.json").write_text('{"length": "longform"}')
     calls = []
-    monkeypatch.setattr("art_pipeline.longform_tts.synthesize_longform",
-                        lambda *a, **k: calls.append("lf_tts") or {})
-    bridge.run_tts("p", lambda *_: None)
+    log_kwargs = []
+
+    def _fake_lf_tts(*a, **k):
+        calls.append("lf_tts")
+        log_kwargs.append(k.get("log"))
+        k["log"]("[tts-lf] chapter 1/5 synthesized")
+        return {}
+
+    monkeypatch.setattr("art_pipeline.longform_tts.synthesize_longform", _fake_lf_tts)
+    messages = []
+    bridge.run_tts("p", messages.append)
     assert calls == ["lf_tts"]
+    assert log_kwargs[0] is not None and log_kwargs[0] is not builtins.print
+    assert "[tts-lf] chapter 1/5 synthesized" in messages
 
 
 def test_bridge_tts_legacy_dispatch(monkeypatch, tmp_path):

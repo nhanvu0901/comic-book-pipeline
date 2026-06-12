@@ -54,9 +54,11 @@ def run_narrate(project: str, mode: str | None, log: Callable[[str], None]) -> d
     if _project_length(project) == "longform":
         from art_pipeline.outline import write_outline
         from art_pipeline.narrate_longform import write_longform_narration
+        # log=log explicitly: these fns default log=print bound at def-time,
+        # so _print_to's builtins.print patch would NOT reach them.
         with _print_to(log):
-            write_outline(project, mode)
-            return write_longform_narration(project)
+            write_outline(project, mode, log=log)
+            return write_longform_narration(project, log=log)
     from art_pipeline.narrate import write_narration
     return write_narration(project, mode, log=log)
 
@@ -69,8 +71,10 @@ def run_hunt(project: str, force: bool, log: Callable[[str], None]) -> dict:
 def run_tts(project: str, log: Callable[[str], None]) -> dict:
     if _project_length(project) == "longform":
         from art_pipeline.longform_tts import synthesize_longform
+        # log=log explicitly (def-time print bind); _print_to still wraps to
+        # catch raw print() from the reused comic stage_4 inside synthesize.
         with _print_to(log):
-            return synthesize_longform(project)
+            return synthesize_longform(project, log=log)
     from art_pipeline.tts import synthesize_art
     with _print_to(log):
         return synthesize_art(project, force=True).to_dict()
