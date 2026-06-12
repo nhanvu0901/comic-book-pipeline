@@ -27,12 +27,10 @@ REGION_IOU_DEDUP = 0.65
 ART_GROUNDING_MIN_CHARS = int(os.getenv("ART_GROUNDING_MIN_CHARS", "600"))
 ART_SDK_MIN_STORY_CHARS = 200  # SDK result below this (or no source_url) = rejected
 
-# ── Text-LLM backend (user 2026-06-12) ──────────────────────────────────────
-# False (default) → all art TEXT generation (outline, narrate, chapter writer)
-# runs on the Claude Agent SDK; True → OpenRouter free chain. The two are
-# SEPARATE — no cross-fallback (see art_pipeline/_llm.py). VLM region proposal
-# always stays on OpenRouter (VLM_MODELS), unaffected by this flag.
-ART_FREE_MODEL = os.getenv("ART_FREE_MODEL", "false").lower() in ("true", "1", "yes")
+# Text-LLM backend is the single repo-wide switch `config.FREE_MODEL` (comic
+# root config): False → Claude SDK only (raise on failure), True → OpenRouter
+# chain. Art text calls `stages.stage_3._llm.call_with_chain` directly; there
+# is no art-specific flag. VLM region proposal always stays on OpenRouter.
 
 # ── A4b narration — art keeps its OWN copies of word budgets (spec §6) ──────
 ART_TARGET_WORDS_MIN = 165

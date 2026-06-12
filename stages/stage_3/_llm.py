@@ -102,17 +102,22 @@ def call_with_chain(
         raise RuntimeError(f"[{label}] no models configured")
     log = progress or (lambda _msg: None)
 
-    # Routing is governed by the global config.FREE_MODEL switch:
-    #   FREE_MODEL == False (default) → route EVERY text-LLM phase through the
-    #     Claude Agent SDK for quality; the OpenRouter `chain` is the fallback when
-    #     the SDK is unavailable / rate-limited / fails validation.
+    # Backend is governed by the single config.FREE_MODEL switch (shared by the
+    # comic and art pipelines):
+    #   FREE_MODEL == False (default) → Claude Agent SDK ONLY. Any SDK failure
+    #     (unavailable / empty / rate-limited / validator-rejected) RAISES —
+    #     there is NO OpenRouter fallback, so SDK problems surface instead of
+    #     being silently masked (unified policy, 2026-06-12). A long run can
+    #     therefore fail mid-way if the SDK rate-limits; escape hatch is
+    #     FREE_MODEL=true.
     #   FREE_MODEL == True            → skip the SDK, use the OpenRouter chain.
     # VLM (Stage 2) never routes through here, so it's unaffected either way.
-    # NOTE: with FREE_MODEL=False every call hits the Claude subscription window,
-    # so a long run can rate-limit mid-way → individual calls fall back to
-    # OpenRouter (graceful, never blocks).
-    _use_sdk = (not FREE_MODEL)
-    if _use_sdk and sdk_available():
+    if not FREE_MODEL:
+        if not sdk_available():
+            raise RuntimeError(
+                f"[{label}] FREE_MODEL=False requires the Claude SDK, but it is "
+                f"unavailable (not installed / not authenticated). Authenticate "
+                f"the SDK, or set FREE_MODEL=true to use the OpenRouter chain.")
         log(f"[{label}] via claude SDK ({CLAUDE_SDK_MODEL})")
         sdk_out = sdk_complete(system, user, log=log)
         ok = bool(sdk_out) and not _detect_inline_rate_limit(sdk_out or "")
@@ -124,7 +129,10 @@ def call_with_chain(
         if ok:
             log(f"[{label}] claude SDK returned {len(sdk_out)} chars")
             return sdk_out, f"claude-sdk:{CLAUDE_SDK_MODEL}"
-        log(f"[{label}] claude SDK unusable — falling back to OpenRouter chain")
+        raise RuntimeError(
+            f"[{label}] Claude SDK failed (empty / rate-limited / validator "
+            f"rejected); NO OpenRouter fallback (FREE_MODEL=False). Fix the SDK "
+            f"issue or set FREE_MODEL=true.")
 
     client = _client()
     total = len(chain)

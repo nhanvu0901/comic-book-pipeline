@@ -276,7 +276,7 @@ def test_new_narration_deletes_stale_hunt_manifest(tmp_path, monkeypatch):
     data["scenes"][0]["text"] = "View of Toledo hides a deliberate lie about the city skyline."
     data["scenes"][-1]["is_outro"] = True
     data["scenes"][-1]["text"] = "View of Toledo still hangs in The Met, storm intact."
-    monkeypatch.setattr(nl, "art_complete",
+    monkeypatch.setattr(nl, "call_with_chain",
                         lambda **k: (_json.dumps(data), "test-model"))
     monkeypatch.setattr(nl, "ART_LF_TOTAL_WORDS_FLOOR", 1)
     nl.write_longform_narration("proj", log=lambda *_: None)
