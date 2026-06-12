@@ -147,6 +147,63 @@ def test_mid_chapter_double_painting_full_rejected():
                              scene_id_offset=0, rehook_required=False)
 
 
+def test_repair_reaims_repeated_regions():
+    # LLM aims EVERY region scene at panel 0 — the deterministic repair pass
+    # must spread them (LRU on the same page) so validation passes
+    import json as _json
+    data = _json.loads(_raw_chapter(rehook_last=False))
+    for s in data["scenes"]:
+        if s["visual"]["kind"] == "painting_region":
+            s["visual"]["panel_ref"] = 0
+            s["panel_ref"] = 0
+    scenes, decls = build_chapter_scenes(
+        _json.dumps(data), PAGES, CTX, CHAPTER,
+        scene_id_offset=0, rehook_required=False, log=lambda m: None)
+    region = [(sc, d) for sc, d in zip(scenes, decls)
+              if d["kind"] == "painting_region"]
+    # every repeat of a panel keeps >= window(6) scenes between appearances
+    # (a reuse exactly 6 apart is legal — repair only fixes violations)
+    positions: dict[int, list[int]] = {}
+    for idx, (sc, d) in enumerate(zip(scenes, decls)):
+        if d["kind"] == "painting_region":
+            positions.setdefault(d["panel_ref"], []).append(idx)
+    for panel, idxs in positions.items():
+        for a, b in zip(idxs, idxs[1:]):
+            assert b - a >= 6, (panel, idxs)
+    # repair actually spread the all-panel-0 input across many regions
+    assert len(positions) >= 6
+    # Scene objects stay in sync with the repaired decls
+    assert all(sc.panel_ref == d["panel_ref"] for sc, d in region)
+
+
+def test_repair_respects_history():
+    # the previous chapter just showed panel 3 — a chapter opening on panel 3
+    # must be re-aimed away from it
+    import json as _json
+    data = _json.loads(_raw_chapter(rehook_last=False))
+    data["scenes"][0]["visual"]["panel_ref"] = 3
+    data["scenes"][0]["panel_ref"] = 3
+    scenes, decls = build_chapter_scenes(
+        _json.dumps(data), PAGES, CTX, CHAPTER,
+        scene_id_offset=0, rehook_required=False,
+        history=[("r", 1, 3)], log=lambda m: None)
+    assert decls[0]["panel_ref"] != 3
+    assert scenes[0].panel_ref == decls[0]["panel_ref"]
+
+
+def test_consecutive_duplicate_related_not_repaired():
+    # two adjacent related scenes with the SAME subject must still be rejected
+    # (repair only touches painting_region — subjects belong to the writer)
+    import json as _json
+    data = _json.loads(_raw_chapter(rehook_last=False))
+    data["scenes"][3]["visual"] = {"kind": "related", "subject": "subject 2"}
+    data["scenes"][3]["panel_ref"] = -1  # scene index 2 is already related "subject 2"
+    with pytest.raises(ValueError, match="subject"):
+        build_chapter_scenes(_json.dumps(data), PAGES, CTX, CHAPTER,
+                             scene_id_offset=0, rehook_required=False,
+                             log=lambda m: None)
+
+
 def test_inject_chapter_flags_marks_rehook_chapter_tails():
     # 4 chapters x 2 scenes; chapters 2 and 3 are re-hook chapters
     narration = {"scenes": [{"scene_id": i} for i in range(1, 9)]}

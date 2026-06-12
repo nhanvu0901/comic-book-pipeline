@@ -13,7 +13,10 @@ from stages.stage_3.schema import Narration, Scene
 
 from ._json import extract_json
 from .narrate import _hook_is_concrete, _starts_with_connective, cap_facts, region_catalog
-from .visual_plan import assign_motions, parse_visual, save_plan, validate_variety_longform
+from .visual_plan import (
+    assign_motions, parse_visual, save_plan, validate_variety_longform,
+    visual_target,
+)
 from .config import (
     ART_LF_REGION_REUSE_WINDOW, ART_LF_REHOOK_POSITIONS, ART_LF_SCENE_MAX_WORDS,
     ART_LF_SCENES_PER_CHAPTER_MAX, ART_LF_SCENES_PER_CHAPTER_MIN,
@@ -84,9 +87,68 @@ _POSITION_RULES = {
 }
 
 
+def _repair_region_spacing(scenes: list[Scene], decls: list[dict],
+                           pages_by_number: dict[int, dict], *, window: int,
+                           history: list | None = None, log=print) -> int:
+    """Deterministically re-aim painting_region decls that violate the variety
+    rules (consecutive-same target, or same region within `window` scenes) to
+    the least-recently-used region on the same page. The writer's intent is the
+    KIND of shot; which exact region carries a near-miss repeat is mechanical —
+    same lesson as the comic pipeline's deterministic beat anchoring. Returns
+    the number of repairs (logged per repair).
+
+    `history` = visual targets of the previous chapter's tail scenes, so the
+    spacing also holds across the chapter boundary. painting_full and related
+    are never repaired: full has its own cap, related is bound to the text
+    (a duplicated subject must go back to the writer, not be re-aimed)."""
+    history = list(history or [])
+    last_seen: dict[tuple, int] = {}
+    prev_target: tuple | None = None
+    for idx, t in enumerate(history):
+        last_seen[t] = idx
+        prev_target = t
+    base = len(history)
+    repairs = 0
+    for i, (sc, d) in enumerate(zip(scenes, decls)):
+        idx = base + i
+        target = visual_target(sc.__dict__, d)
+        if d["kind"] == "painting_region":
+            page = sc.page_ref
+            n_panels = len((pages_by_number.get(page) or {}).get("panels") or [])
+            # effective window: with fewer regions than the raw window, LRU
+            # rotation can only guarantee a gap of n_panels — shrink to match
+            eff = min(window, n_panels)
+            seen = last_seen.get(target)
+            violates = target == prev_target or (seen is not None and idx - seen < eff)
+            if violates and n_panels:
+                ranked = []
+                for p in range(n_panels):
+                    cand = ("r", page, p)
+                    if cand == prev_target:
+                        continue
+                    cand_seen = last_seen.get(cand)
+                    fits = cand_seen is None or idx - cand_seen >= eff
+                    ranked.append((0 if fits else 1,
+                                   cand_seen if cand_seen is not None else -1, p))
+                if ranked:
+                    ranked.sort()
+                    new_p = ranked[0][2]
+                    if new_p != d["panel_ref"]:
+                        log(f"[narrate-lf] repaired scene {sc.scene_id}: region "
+                            f"p{page}/r{d['panel_ref']} → r{new_p} (spacing)")
+                        d["panel_ref"] = new_p
+                        sc.panel_ref = new_p
+                        target = ("r", page, new_p)
+                        repairs += 1
+        last_seen[target] = idx
+        prev_target = target
+    return repairs
+
+
 def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
                          *, scene_id_offset: int, rehook_required: bool,
                          is_first: bool = False, is_last: bool = False,
+                         history: list | None = None,
                          log=print) -> tuple[list[Scene], list[dict]]:
     """Parse + validate ONE chapter's LLM output. Scene ids continue from
     scene_id_offset. Raises ValueError with a feed-back-able message."""
@@ -150,12 +212,18 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
         raise ValueError(
             f"chapter {chapter['chapter_id']}: painting_full used mid-chapter in "
             f"scenes {mid_fulls} — at most ONE mid-chapter full view")
+    # Deterministic repair BEFORE validation: re-aim near-miss region repeats
+    # (window-6-on-6-regions has no combinatorial slack for LLM retries —
+    # e2e round 2 2026-06-12). The writer keeps kind/subject/text authority.
+    _repair_region_spacing(scenes, decls, by_number,
+                           window=ART_LF_REGION_REUSE_WINDOW,
+                           history=history, log=log)
     # Per-chapter variety: consecutive-distinct / region-reuse window /
-    # related-dedup. (The once-per-chapter region rule was unsatisfiable for
-    # low-region artworks — e2e 2026-06-12.)
-    validate_variety_longform([sc.__dict__ for sc in scenes],
-                              {d["scene_id"]: d for d in decls},
-                              window=ART_LF_REGION_REUSE_WINDOW)
+    # related-dedup. After repair this only fires on related/full violations.
+    validate_variety_longform(
+        [sc.__dict__ for sc in scenes], {d["scene_id"]: d for d in decls},
+        window=ART_LF_REGION_REUSE_WINDOW,
+        panels_by_page={pn: len(p.get("panels") or []) for pn, p in by_number.items()})
 
     if rehook_required and not _is_forward_hook(scenes[-1].text):
         raise ValueError(
@@ -183,14 +251,16 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
     return scenes, decls
 
 
-def validate_cross_chapter(scenes: list[dict], decls: list[dict]) -> None:
+def validate_cross_chapter(scenes: list[dict], decls: list[dict],
+                           panels_by_page: dict[int, int] | None = None) -> None:
     """Whole-video rules, run on the FULL ordered scene list: related subjects
     globally distinct, and the region-reuse window also holds ACROSS chapter
     boundaries (per-chapter checks cannot see a repeat that straddles two
     chapters). Replaces the old adjacent-chapter region ban, which was
     unsatisfiable for low-region artworks (e2e 2026-06-12)."""
     validate_variety_longform(scenes, {d["scene_id"]: d for d in decls},
-                              window=ART_LF_REGION_REUSE_WINDOW)
+                              window=ART_LF_REGION_REUSE_WINDOW,
+                              panels_by_page=panels_by_page)
 
 
 def _inject_chapter_flags(narration: dict, chapters_meta: list[dict]) -> None:
@@ -219,6 +289,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
 
     chapters = outline["chapters"]
     total = len(chapters)
+    panels_by_page = {p["page_number"]: len(p.get("panels") or []) for p in pages}
     all_scenes: list[Scene] = []
     all_decls: list[dict] = []
     chapters_meta: list[dict] = []
@@ -257,6 +328,10 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             '             "visual": {"kind": "painting_region", "panel_ref": 0},\n'
             '             "is_intro": false, "is_outro": false}]}'
         )
+        # visual targets of the last `window` scenes already written — keeps
+        # the repair pass honest across the chapter boundary
+        history = [visual_target(sc.__dict__, d) for sc, d in
+                   list(zip(all_scenes, all_decls))[-ART_LF_REGION_REUSE_WINDOW:]]
         last_err: Exception | None = None
         for attempt in (1, 2, 3):
             raw, model_used = call_with_chain(
@@ -268,7 +343,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
                 scenes, decls = build_chapter_scenes(
                     raw, pages, ctx, ch, scene_id_offset=len(all_scenes),
                     rehook_required=rehook, is_first=is_first, is_last=is_last,
-                    log=log)
+                    history=history, log=log)
                 break
             except ValueError as exc:
                 last_err = exc
@@ -294,7 +369,8 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
         log(f"[narrate-lf] ✓ chapter {pos}/{total} — {len(scenes)} scenes, "
             f"{sum(sc.word_count for sc in scenes)} words")
 
-    validate_cross_chapter([sc.__dict__ for sc in all_scenes], all_decls)
+    validate_cross_chapter([sc.__dict__ for sc in all_scenes], all_decls,
+                           panels_by_page=panels_by_page)
     assign_motions(all_decls, intro_scene_id=all_scenes[0].scene_id)
 
     total_words = sum(sc.word_count for sc in all_scenes)

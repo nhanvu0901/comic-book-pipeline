@@ -124,13 +124,19 @@ def validate_variety(scenes: list[dict], plan_by_id: dict[int, dict]) -> None:
 
 
 def validate_variety_longform(scenes: list[dict], plan_by_id: dict[int, dict], *,
-                              window: int) -> None:
+                              window: int,
+                              panels_by_page: dict[int, int] | None = None) -> None:
     """Long-form variety: (1) no two consecutive scenes share a target;
     (2) the same painting-region/full target may not recur within `window`
     consecutive scenes (a 10-min video on one painting MUST revisit regions —
     what reads as cheap is repeats CLOSE together, measured e2e 2026-06-12:
     6-region artwork cannot satisfy once-per-chapter at 14-22 scenes/chapter);
-    (3) related subjects pairwise distinct (checked globally by caller too)."""
+    (3) related subjects pairwise distinct (checked globally by caller too).
+
+    `panels_by_page` (page_number → panel count) shrinks the effective window
+    for regions on low-region pages to min(window, n_panels) — with exactly
+    `window` regions the raw constraint has zero combinatorial slack (e2e
+    round 2). None → raw window (Shorts-style callers / direct tests)."""
     targets = []
     for s in scenes:
         d = plan_by_id.get(s["scene_id"])
@@ -157,13 +163,16 @@ def validate_variety_longform(scenes: list[dict], plan_by_id: dict[int, dict], *
     last_seen: dict[tuple, tuple[int, int]] = {}  # target -> (position, scene_id)
     for idx, (s, d, t) in enumerate(targets):
         if t[0] in ("r", "f"):
+            eff = window
+            if panels_by_page is not None and t[0] == "r":
+                eff = min(window, panels_by_page.get(t[1], window))
             prev = last_seen.get(t)
-            if prev is not None and idx - prev[0] < window:
+            if prev is not None and idx - prev[0] < eff:
                 what = (f"region (page {t[1]}, panel {t[2]})" if t[0] == "r"
                         else f"full view (page {t[1]})")
                 raise ValueError(
                     f"visual plan: scene {s['scene_id']} reuses {what} seen at "
-                    f"scene {prev[1]} — keep >= {window} scenes apart")
+                    f"scene {prev[1]} — keep >= {eff} scenes apart")
             last_seen[t] = (idx, s["scene_id"])
 
 

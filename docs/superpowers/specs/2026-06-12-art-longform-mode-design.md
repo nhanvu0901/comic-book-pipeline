@@ -125,6 +125,13 @@ One LLM call **per chapter**: long-form system prompt + that chapter's facts
   (Window replaced the original once-per-chapter + adjacent-chapter region
   bans: e2e pilot 2026-06-12 showed a 6-region artwork mathematically cannot
   satisfy them at 14-22 scenes/chapter — chapter 1 failed 3/3 attempts.)
+  Region spacing is then ENFORCED by a deterministic LRU repair pass
+  (`_repair_region_spacing`) that re-aims near-miss `painting_region` repeats
+  before validation — the writer owns kind/subject/text, exact region
+  spacing is mechanical (same lesson as comic deterministic beat anchoring;
+  e2e round 2 same day: window-6 on exactly 6 regions has no combinatorial
+  slack, LLM retries kept failing). Effective window per page =
+  min(window, n_panels); validators take `panels_by_page` to match.
 - Hook gate (chapter 1 scene 1) reuses `_hook_is_concrete`; resolution
   chapter ends thematic (no CTA wording — validator lexicon check).
 - Retry 3 per chapter with specific validator messages.
