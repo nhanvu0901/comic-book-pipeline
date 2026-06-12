@@ -8,6 +8,7 @@ from .config import ART_CANDIDATES_CSV
 COLUMNS = [
     "title", "artist", "year", "object_id", "department", "image_url",
     "wiki_grounding", "story_hook", "yt_coverage", "date_added", "status",
+    "longform_angle",
 ]
 
 

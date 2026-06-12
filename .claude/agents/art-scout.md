@@ -92,6 +92,7 @@ rows = [{
   'department': '...', 'image_url': '...',
   'wiki_grounding': 'wiki:<chars>' , 'story_hook': '<one-line documented story>',
   'yt_coverage': '<what you found>', 'date_added': 'YYYY-MM-DD', 'status': 'queued',
+  'longform_angle': '<one-sentence angle or empty>',
 }]
 print('appended:', append_candidates(rows))"
 ```
