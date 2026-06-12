@@ -11,6 +11,8 @@ back to an UNUSED painting region (keeps the variety rules), else painting_full.
 The pipeline never dies here."""
 import hashlib
 import json
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -28,6 +30,13 @@ from .visual_plan import assign_motions, visual_target
 # for one-off fetches of publicly served images.
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+# Wikimedia rate-limits burst downloads (HTTP 429 measured 2026-06-12 on
+# circus-sideshow: 3/4 URLs rejected). Space out EVERY download and give one
+# rate-limited fetch a second chance after a polite wait.
+_DOWNLOAD_GAP_S = 1.0     # pause between any two downloads
+_RETRY_429_WAIT_S = 5.0   # wait before the single 429 retry
+_sleep = time.sleep       # module-level indirection so tests run at zero cost
 
 _HUNT_SYSTEM = """You are an image researcher for short educational art videos.
 You receive narration scenes that each need ONE related image. Use WebSearch and
@@ -85,14 +94,25 @@ def parse_hunt_response(raw: str | None) -> dict[int, dict]:
     return out
 
 
+def _fetch(url: str, dest: Path) -> None:
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        dest.write_bytes(r.read())
+
+
 def _download(url: str, dest: Path) -> tuple[int, int] | str:
     """Download + size-gate. Success → (w, h); reject → short REASON string
     (file removed on reject). Caller distinguishes via isinstance(result, tuple);
-    the reason feeds the per-URL diagnostics log and manifest `attempted` list."""
+    the reason feeds the per-URL diagnostics log and manifest `attempted` list.
+    A 429 (rate limit) gets exactly ONE retry after _RETRY_429_WAIT_S."""
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": _UA})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            dest.write_bytes(r.read())
+        try:
+            _fetch(url, dest)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429:
+                raise
+            _sleep(_RETRY_429_WAIT_S)
+            _fetch(url, dest)   # second 429/any failure falls through to reason
     except Exception as exc:
         dest.unlink(missing_ok=True)
         return f"http: {type(exc).__name__}: {exc}"[:80]
@@ -240,6 +260,9 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
                 dest = rel_dir / (f"rel_{d['scene_id']:02d}_"
                                   f"{hashlib.sha256(url.encode()).hexdigest()[:8]}.jpg")
                 got = _download(url, dest)
+                # Wikimedia rate-limits burst fetches (HTTP 429 measured
+                # 2026-06-12) — space out every download, success or fail.
+                _sleep(_DOWNLOAD_GAP_S)
                 if isinstance(got, tuple):
                     dims = got
                     chosen_url = url

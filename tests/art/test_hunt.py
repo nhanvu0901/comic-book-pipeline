@@ -1,7 +1,10 @@
+import io
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from art_pipeline import hunt as hunt_mod
 from art_pipeline.hunt import (
@@ -58,9 +61,67 @@ def test_pick_fallback_region_skips_used_and_neighbors():
     assert pick_fallback_region(scene, pages, used, neighbors) is None
 
 
+def _png_bytes(w=800, h=700):
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), "white").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _FakeResp:
+    def __init__(self, data):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _http_429():
+    return urllib.error.HTTPError("https://x", 429, "Too many requests", {}, None)
+
+
+def test_download_retries_once_on_429(tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=0):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _http_429()
+        return _FakeResp(_png_bytes())
+
+    monkeypatch.setattr(hunt_mod.urllib.request, "urlopen", fake_urlopen)
+    slept = []
+    monkeypatch.setattr(hunt_mod, "_sleep", slept.append)
+    out = hunt_mod._download("https://x/a.png", tmp_path / "a.png")
+    assert out == (800, 700)                      # retry succeeded → dims tuple
+    assert calls["n"] == 2
+    assert slept == [hunt_mod._RETRY_429_WAIT_S]  # exactly one polite wait
+
+
+def test_download_gives_up_after_second_429(tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=0):
+        calls["n"] += 1
+        raise _http_429()
+
+    monkeypatch.setattr(hunt_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(hunt_mod, "_sleep", lambda s: None)
+    out = hunt_mod._download("https://x/a.png", tmp_path / "a.png")
+    assert isinstance(out, str) and out.startswith("http: HTTPError") and "429" in out
+    assert calls["n"] == 2                        # ONE retry, no more
+    assert not (tmp_path / "a.png").exists()
+
+
 def _project(tmp_path, monkeypatch):
     monkeypatch.setattr(hunt_mod, "get_art_project_path",
                         lambda name: tmp_path / name)
+    monkeypatch.setattr(hunt_mod, "_sleep", lambda s: None)   # no real throttling
     root = tmp_path / "proj"
     (root / "preprocessed").mkdir(parents=True)
     page = _page(1)
@@ -172,6 +233,7 @@ def _project_two_related(tmp_path, monkeypatch):
     """4 scenes: full(intro), related A, related B, full(outro)."""
     monkeypatch.setattr(hunt_mod, "get_art_project_path",
                         lambda name: tmp_path / name)
+    monkeypatch.setattr(hunt_mod, "_sleep", lambda s: None)   # no real throttling
     root = tmp_path / "proj"
     (root / "preprocessed").mkdir(parents=True)
     (root / "preprocessed" / "page_001_abc.json").write_text(json.dumps(_page(1)))
