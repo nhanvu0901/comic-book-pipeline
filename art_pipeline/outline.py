@@ -6,6 +6,7 @@ Anti-hallucination lives HERE: every fact a chapter claims must be traceable
 into the grounded context (substring or >=80% content-token overlap), so the
 chapter writer downstream only ever sees verified material."""
 import json
+import re
 
 from config import CREATIVE_LLM_MODELS
 from stages.stage_3._llm import call_with_chain
@@ -67,7 +68,11 @@ def _norm(s: str) -> str:
 def fact_is_grounded(fact: str, context: str) -> bool:
     """A fact is grounded when it is a normalized substring of the context, or
     >=80% of its content tokens (len>=4) appear in the context. The token path
-    tolerates the LLM trimming/reordering a quote without letting it invent."""
+    tolerates the LLM trimming/reordering a quote without letting it invent.
+
+    NOTE: a long negated sentence ("...NOT painted by El Greco...") can pass
+    when >=80% tokens match — intentional: this gate screens invented
+    names/dates/events, not meaning; the chapter writer rewrites prose anyway."""
     nf, nc = _norm(fact), _norm(context)
     if not nf:
         return False
@@ -77,7 +82,7 @@ def fact_is_grounded(fact: str, context: str) -> bool:
     toks = [w for w in toks if len(w) >= 4]
     if len(toks) < 3:
         return False
-    ctx_words = set(nc.replace(",", " ").replace(".", " ").split())
+    ctx_words = set(re.sub(r"[.,;:!?\"'()]", " ", nc).split())
     hit = sum(1 for t in toks if t in ctx_words)
     return hit / len(toks) >= 0.8
 
