@@ -36,6 +36,7 @@ class ArtAppState:
     object_ids: list[int] = field(default_factory=list)
     mode: str = "painting_deep_dive"
     theme: str = ""
+    length: str = "short"
 
     def is_approved(self, stage: int) -> bool:
         return bool(self.approved.get(str(stage), False))

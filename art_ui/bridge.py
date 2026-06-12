@@ -27,10 +27,17 @@ def _print_to(log: Callable[[str], None]):
 
 # ── Stage runners (called inside run_blocking worker threads) ───────────────
 
+def _project_length(project: str) -> str:
+    sel = ART_ROOT / project / "selection.json"
+    if sel.exists():
+        return json.loads(sel.read_text()).get("length", "short")
+    return "short"
+
+
 def run_fetch(project: str, ids: list[int], mode: str, theme: str,
-              log: Callable[[str], None]) -> dict:
+              log: Callable[[str], None], *, length: str = "short") -> dict:
     from art_pipeline.fetch import fetch_artworks
-    return fetch_artworks(project, ids, mode=mode, theme=theme, log=log)
+    return fetch_artworks(project, ids, mode=mode, theme=theme, length=length, log=log)
 
 
 def run_regions(project: str, force: bool, log: Callable[[str], None]) -> list[dict]:
@@ -44,6 +51,12 @@ def run_ground(project: str, log: Callable[[str], None]) -> dict:
 
 
 def run_narrate(project: str, mode: str | None, log: Callable[[str], None]) -> dict:
+    if _project_length(project) == "longform":
+        from art_pipeline.outline import write_outline
+        from art_pipeline.narrate_longform import write_longform_narration
+        with _print_to(log):
+            write_outline(project, mode)
+            return write_longform_narration(project)
     from art_pipeline.narrate import write_narration
     return write_narration(project, mode, log=log)
 
@@ -54,6 +67,10 @@ def run_hunt(project: str, force: bool, log: Callable[[str], None]) -> dict:
 
 
 def run_tts(project: str, log: Callable[[str], None]) -> dict:
+    if _project_length(project) == "longform":
+        from art_pipeline.longform_tts import synthesize_longform
+        with _print_to(log):
+            return synthesize_longform(project)
     from art_pipeline.tts import synthesize_art
     with _print_to(log):
         return synthesize_art(project, force=True).to_dict()

@@ -40,7 +40,8 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         try:
             await run_blocking(bridge.run_fetch, state.project_name, state.object_ids,
-                               state.mode, state.theme, push_log)
+                               state.mode, state.theme, push_log,
+                               length=getattr(state, "length", "short"))
         except Exception as e:
             running.visible = False
             status.value = "Failed — see log (non-CC0 artworks are refused)."
