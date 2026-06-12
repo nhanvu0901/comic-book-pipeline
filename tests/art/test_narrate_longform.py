@@ -105,6 +105,15 @@ def _mk(scene_id, chapter_id, kind, *, page=1, panel=-1, subject=""):
     return scene, decl
 
 
+def test_chapter_words_far_off_target_rejected():
+    # 14 scenes × 7 words = 98 < 60% of a 350-word target (210) → reject
+    big_chapter = dict(CHAPTER, target_words=350)
+    with pytest.raises(ValueError, match="words vs target"):
+        build_chapter_scenes(_raw_chapter(rehook_last=False), PAGES, CTX,
+                             big_chapter, scene_id_offset=0,
+                             rehook_required=False, log=lambda m: None)
+
+
 def test_cross_chapter_duplicate_subject_rejected():
     pairs = [_mk(1, 1, "related", subject="portrait of El Greco"),
              _mk(2, 2, "related", subject="Portrait of  el greco")]

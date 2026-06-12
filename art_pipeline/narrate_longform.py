@@ -54,9 +54,11 @@ educational art video. Neutral, intimate second-person where natural
 Hard rules:
 1. EVERY factual claim must come from THIS CHAPTER'S FACTS below. No outside
    facts, no speculation.
-2. Write {n_min}-{n_max} short scenes. One idea per scene, 8-22 words each
-   (hard cap {scene_max}). Causal chaining: each scene follows from the
-   previous with "therefore" or "but" logic — never disconnected observations.
+2. Write {n_min}-{n_max} scenes totalling ABOUT {target_words} words (the
+   validator rejects chapters far off target). MOST scenes should be 14-22
+   words (hard cap {scene_max}); scenes under 12 words are rare accents.
+   Causal chaining: each scene follows from the previous with "therefore"
+   or "but" logic — never disconnected observations.
 3. EVERY scene carries a "visual" object (same schema as the region catalog):
    - {{"kind": "painting_region", "panel_ref": N}} — zooms into that region.
    - {{"kind": "painting_full"}} — whole artwork, AT MOST once in this chapter
@@ -309,16 +311,21 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             pos=pos, total=total,
             n_min=ART_LF_SCENES_PER_CHAPTER_MIN, n_max=ART_LF_SCENES_PER_CHAPTER_MAX,
             scene_max=ART_LF_SCENE_MAX_WORDS,
+            target_words=ch["target_words"],
             full_note=("the very first scene may be the full painting"
                        if is_first else "use sparingly"),
             window=ART_LF_REGION_REUSE_WINDOW,
             recent_regions=recent_regions or "none",
             blocked_subjects=sorted(set(used_subjects)) or "none",
             position_rule=position_rule)
+        tw = int(ch["target_words"])
         user = (
             f"VIDEO THROUGH-LINE: {outline.get('through_line', '')}\n"
             f"CHAPTER {pos}/{total}: {ch['title']} (role: {ch['role']}, "
-            f"target ~{ch['target_words']} words)\n\n"
+            f"target ~{tw} words)\n"
+            f"WORD BUDGET: ~{tw} words total across your scenes ≈ "
+            f"{max(14, round(tw / 20))}-{min(22, max(15, round(tw / 14)))} "
+            f"scenes of 14-22 words.\n\n"
             f"PREVIOUS CHAPTER ENDED WITH: {prev_tail or '(video start)'}\n\n"
             f"THIS CHAPTER'S FACTS (the ONLY allowed source of claims):\n"
             + "\n".join(f"- {f}" for f in ch["facts"]) +

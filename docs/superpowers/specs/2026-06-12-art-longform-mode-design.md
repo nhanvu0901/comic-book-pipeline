@@ -108,9 +108,14 @@ One LLM call **per chapter**: long-form system prompt + that chapter's facts
 + role + target_words + the final 2 scene texts of the previous chapter
 (for therefore/but continuity) + the artwork's region list.
 
-- 14-22 scenes/chapter, 8-22 words/scene; same visual declaration schema
+- 14-22 scenes/chapter; MOST scenes 14-22 words (short ones are rare
+  accents) and the prompt spells out the per-chapter word-budget arithmetic
+  — chapter ceiling `ART_LF_CHAPTER_WORDS_MAX` = 420 (22 × ~19, a ceiling
+  the writer can actually hit; e2e round 3: "short scenes" framing yielded
+  ~190-word chapters vs 350 targets). Same visual declaration schema
   (`painting_region`/`painting_full`/`related`) and the same `parse_visual` /
-  `assign_motions` machinery from `visual_plan.py`.
+  `assign_motions` machinery from `visual_plan.py`. Long scenes don't slow
+  the cut rate: assemble already splits scenes ≥ 5s into two shots.
 - Scene dict gains `"chapter_id"`; chapters 2 and 3 last scene gains
   `"is_rehook": true` and must read as a forward reference (validator:
   flag present + scene matches a forward-hook heuristic — future-tense /
