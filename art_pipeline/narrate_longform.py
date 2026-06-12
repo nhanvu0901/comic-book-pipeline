@@ -159,10 +159,18 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
     if data is None:
         raise ValueError(f"chapter {chapter['chapter_id']}: unparseable JSON")
     scenes_raw = data.get("scenes") or []
-    if not ART_LF_SCENES_PER_CHAPTER_MIN <= len(scenes_raw) <= ART_LF_SCENES_PER_CHAPTER_MAX:
+    # The floor scales with the chapter's word target: the model reliably
+    # follows a SCENE COUNT but lands ~15-18 words/scene regardless of word
+    # instructions (e2e rounds 4-6: every word-band failure was a chapter that
+    # used few scenes — 14 scenes can never reach a 320-word target).
+    scenes_min_eff = min(ART_LF_SCENES_PER_CHAPTER_MAX,
+                         max(ART_LF_SCENES_PER_CHAPTER_MIN,
+                             -(-int(chapter["target_words"]) // 17)))
+    if not scenes_min_eff <= len(scenes_raw) <= ART_LF_SCENES_PER_CHAPTER_MAX:
         raise ValueError(
-            f"chapter {chapter['chapter_id']}: {len(scenes_raw)} scenes "
-            f"(need {ART_LF_SCENES_PER_CHAPTER_MIN}-{ART_LF_SCENES_PER_CHAPTER_MAX})")
+            f"chapter {chapter['chapter_id']}: {len(scenes_raw)} scenes — "
+            f"~{chapter['target_words']} words needs {scenes_min_eff}-"
+            f"{ART_LF_SCENES_PER_CHAPTER_MAX} scenes (≈17 words each)")
 
     by_number = {p["page_number"]: p for p in pages}
     scenes: list[Scene] = []
@@ -340,9 +348,9 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             f"VIDEO THROUGH-LINE: {outline.get('through_line', '')}\n"
             f"CHAPTER {pos}/{total}: {ch['title']} (role: {ch['role']}, "
             f"target ~{tw} words)\n"
-            f"WORD BUDGET: ~{tw} words total across your scenes ≈ "
-            f"{max(14, round(tw / 20))}-{min(22, max(15, round(tw / 14)))} "
-            f"scenes of 14-22 words.\n\n"
+            f"WORD BUDGET: ~{tw} words total. Write AT LEAST "
+            f"{min(22, max(14, -(-tw // 17)))} scenes averaging ~17 words — "
+            f"fewer scenes WILL be rejected.\n\n"
             f"PREVIOUS CHAPTER ENDED WITH: {prev_tail or '(video start)'}\n\n"
             f"THIS CHAPTER'S FACTS (the ONLY allowed source of claims):\n"
             + "\n".join(f"- {f}" for f in ch["facts"]) +

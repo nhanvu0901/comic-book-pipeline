@@ -106,8 +106,9 @@ def _mk(scene_id, chapter_id, kind, *, page=1, panel=-1, subject=""):
 
 
 def test_chapter_words_far_off_target_rejected():
-    # 14 scenes × 10 words = 140 < 85% of a 350-word target (297) → reject
-    big_chapter = dict(CHAPTER, target_words=350)
+    # 14 scenes × 10 words = 140 < 85% of a 230-word target (195.5) → reject;
+    # 230/17 ≈ 13.5 so 14 scenes pass the scene-count floor and the WORD band fires
+    big_chapter = dict(CHAPTER, target_words=230)
     with pytest.raises(ValueError, match="words vs target"):
         build_chapter_scenes(_raw_chapter(rehook_last=False), PAGES, CTX,
                              big_chapter, scene_id_offset=0,
@@ -244,3 +245,11 @@ def test_subject_used_in_earlier_chapter_rejected():
         build_chapter_scenes(_json.dumps(data), PAGES, CTX, CHAPTER,
                              scene_id_offset=0, rehook_required=False,
                              used_subjects={"portrait of el greco"})
+
+
+def test_scene_floor_scales_with_word_target():
+    # 320-word target needs ceil(320/17) = 19 scenes; the 14-scene fixture is rejected
+    big_chapter = dict(CHAPTER, target_words=320)
+    with pytest.raises(ValueError, match="needs 19-22 scenes"):
+        build_chapter_scenes(_raw_chapter(rehook_last=False), PAGES, CTX,
+                             big_chapter, scene_id_offset=0, rehook_required=False)

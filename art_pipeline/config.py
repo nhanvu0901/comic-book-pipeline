@@ -49,7 +49,7 @@ ART_LF_CHAPTER_ROLES_4 = ("cold_open", "backfill_evidence", "twist", "resolution
 ART_LF_TARGET_WORDS_MIN = 1600      # measured 2026-06-12: words×0.36s ≈ duration; 0.85 band floor × 1600 = 1360 words ≈ 8:10 worst case
 ART_LF_TARGET_WORDS_MAX = 1900      # 1900×0.95 ≈ 1805 words ≈ 10:50 — still < 12 min; room for 5-chapter outlines
 ART_LF_CHAPTER_WORDS_MIN = 150      # per-chapter target_words sanity band
-ART_LF_CHAPTER_WORDS_MAX = 420      # 22 scenes × ~19 words — ceiling the writer can actually hit
+ART_LF_CHAPTER_WORDS_MAX = 380      # 22 scenes × ~17 words — measured writer pace (e2e round 6)
 ART_LF_CHAPTER_WORDS_BAND = (0.85, 1.5)  # chapter actual vs target; 0.6 floor measured too loose (ch ratios 0.62-0.78 → 7:43 video)
 ART_LF_SCENES_PER_CHAPTER_MIN = 14
 ART_LF_SCENES_PER_CHAPTER_MAX = 22
