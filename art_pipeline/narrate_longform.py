@@ -350,7 +350,11 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             f"target ~{tw} words)\n"
             f"WORD BUDGET: ~{tw} words total. Write AT LEAST "
             f"{min(22, max(14, -(-tw // 17)))} scenes averaging ~17 words — "
-            f"fewer scenes WILL be rejected.\n\n"
+            f"fewer scenes WILL be rejected.\n"
+            # the system-prompt block list alone was ignored twice in e2e
+            # round 7 — repeat it at the top of the user turn, where it sticks
+            f"FORBIDDEN related subjects (already shown, any variation will be "
+            f"rejected): {sorted(set(used_subjects)) or 'none'}\n\n"
             f"PREVIOUS CHAPTER ENDED WITH: {prev_tail or '(video start)'}\n\n"
             f"THIS CHAPTER'S FACTS (the ONLY allowed source of claims):\n"
             + "\n".join(f"- {f}" for f in ch["facts"]) +

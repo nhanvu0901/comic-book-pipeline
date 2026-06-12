@@ -35,9 +35,9 @@ def _good_outline():
             "chapters": [
                 _chapter(1, "cold_open", [f[0], f[1]]),
                 _chapter(2, "backfill", [f[3], f[0] + "."], words=320),
-                _chapter(3, "evidence", [f[2], f[1] + " over the city"], words=350),
-                _chapter(4, "twist", [f[3] + " known", f[2] + "!"], words=380),
-                _chapter(5, "resolution", [f[4], f[0] + " circa"], words=330),
+                _chapter(3, "evidence", [f[2], f[1] + " over the city"], words=340),
+                _chapter(4, "twist", [f[3] + " known", f[2] + "!"], words=330),
+                _chapter(5, "resolution", [f[4], f[0] + " circa"], words=340),
             ]}  # 300+320+350+380+330 = 1680 ∈ [1600, 1900]
 
 
