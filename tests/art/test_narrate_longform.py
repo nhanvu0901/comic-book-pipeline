@@ -1,7 +1,8 @@
 import pytest
 
 from art_pipeline.narrate_longform import (
-    _is_forward_hook, _has_cta, build_chapter_scenes, validate_cross_chapter,
+    _inject_chapter_flags, _is_forward_hook, _has_cta, build_chapter_scenes,
+    validate_cross_chapter,
 )
 
 PAGES = [{
@@ -102,3 +103,24 @@ def test_cross_chapter_nonadjacent_region_reuse_ok():
              _mk(2, 3, "painting_region", panel=3)]
     scenes = [p[0] for p in pairs]; decls = [p[1] for p in pairs]
     validate_cross_chapter(scenes, decls)  # must not raise
+
+
+def test_inject_chapter_flags_marks_rehook_chapter_tails():
+    # 4 chapters x 2 scenes; chapters 2 and 3 are re-hook chapters
+    narration = {"scenes": [{"scene_id": i} for i in range(1, 9)]}
+    chapters_meta = [
+        {"chapter_id": 1, "rehook": False, "scene_ids": [1, 2]},
+        {"chapter_id": 2, "rehook": True, "scene_ids": [3, 4]},
+        {"chapter_id": 3, "rehook": True, "scene_ids": [5, 6]},
+        {"chapter_id": 4, "rehook": False, "scene_ids": [7, 8]},
+    ]
+    _inject_chapter_flags(narration, chapters_meta)
+    by_id = {s["scene_id"]: s for s in narration["scenes"]}
+    # every scene tagged with its chapter
+    assert [by_id[i]["chapter_id"] for i in range(1, 9)] == [1, 1, 2, 2, 3, 3, 4, 4]
+    # ONLY the LAST scene of each rehook chapter carries is_rehook=True
+    rehook_ids = [s["scene_id"] for s in narration["scenes"] if s.get("is_rehook")]
+    assert rehook_ids == [4, 6]
+    # non-rehook scenes do not carry the key at all
+    assert "is_rehook" not in by_id[2] and "is_rehook" not in by_id[3]
+    assert "is_rehook" not in by_id[8]

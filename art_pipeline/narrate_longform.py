@@ -199,6 +199,21 @@ def validate_cross_chapter(scenes: list[dict], decls: list[dict]) -> None:
                     f"adjacent chapters {a} and {b}")
 
 
+def _inject_chapter_flags(narration: dict, chapters_meta: list[dict]) -> None:
+    """In-place on the SERIALIZED narration dict (comic Scene dataclass is
+    read-only; Stage 4 reads narration.json as plain dicts and ignores unknown
+    keys): tag every scene with its chapter_id, and mark the LAST scene of each
+    re-hook chapter (positions in ART_LF_REHOOK_POSITIONS) with is_rehook=true."""
+    sid_to_ch = {sid: cm["chapter_id"] for cm in chapters_meta
+                 for sid in cm["scene_ids"]}
+    rehook_sids = {cm["scene_ids"][-1] for cm in chapters_meta
+                   if cm.get("rehook") and cm["scene_ids"]}
+    for s in narration["scenes"]:
+        s["chapter_id"] = sid_to_ch.get(s["scene_id"], 0)
+        if s["scene_id"] in rehook_sids:
+            s["is_rehook"] = True
+
+
 def write_longform_narration(project_name: str, *, log=print) -> dict:
     root = get_art_project_path(project_name)
     outline = json.loads((root / "outline.json").read_text())
@@ -269,7 +284,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             raise ValueError(f"chapter {pos} failed after 3 attempts: {last_err}")
 
         chapters_meta.append({"chapter_id": ch["chapter_id"], "title": ch["title"],
-                              "role": ch["role"],
+                              "role": ch["role"], "rehook": rehook,
                               "scene_ids": [sc.scene_id for sc in scenes],
                               "start": None})
         used_subjects += [" ".join(str(d.get("subject") or "").lower().split())
@@ -294,13 +309,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
         words_per_second=ART_WORDS_PER_SEC,
         source_project=project_name, llm_model=model_used,
     ).to_dict()
-    # chapter_id rides on the SERIALIZED dict (comic Scene dataclass is
-    # read-only; Stage 4 reads narration.json as plain dicts and ignores
-    # unknown keys).
-    sid_to_ch = {sid: cm["chapter_id"] for cm in chapters_meta
-                 for sid in cm["scene_ids"]}
-    for s in narration["scenes"]:
-        s["chapter_id"] = sid_to_ch.get(s["scene_id"], 0)
+    _inject_chapter_flags(narration, chapters_meta)
 
     (root / "narration.json").write_text(
         json.dumps(narration, indent=2, ensure_ascii=False))
