@@ -10,10 +10,10 @@ from art_pipeline.config import ART_LF_CHAPTER_GAP_S
 SR = 44100
 
 
-def _write_wav(path: Path, seconds: float):
+def _write_wav(path: Path, seconds: float, framerate: int = SR):
     with wave.open(str(path), "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
-        w.writeframes(b"\x01\x00" * int(SR * seconds))
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(framerate)
+        w.writeframes(b"\x01\x00" * int(framerate * seconds))
 
 
 def _make_longform_project(tmp_path, monkeypatch, chapter_secs=(2.0, 3.0)):
@@ -53,8 +53,8 @@ def _make_longform_project(tmp_path, monkeypatch, chapter_secs=(2.0, 3.0)):
               "start": k * secs / 2, "end": (k + 1) * secs / 2}
              for k, s in enumerate(ch_scenes)]))
         (ch_dir / "word_timestamps.json").write_text(json.dumps(
-            [{"text": "w", "start": 0.1, "end": 0.2},
-             {"text": "x", "start": secs - 0.2, "end": secs - 0.1}]))
+            [{"word": "w", "start": 0.1, "end": 0.2},
+             {"word": "x", "start": secs - 0.2, "end": secs - 0.1}]))
     monkeypatch.setattr("stages.stage_4.pipeline.synthesize_project",
                         fake_synthesize)
     return root
@@ -91,3 +91,22 @@ def test_missing_chapters_json_errors(tmp_path, monkeypatch):
     (root / "chapters.json").unlink()
     with pytest.raises(FileNotFoundError):
         longform_tts.synthesize_longform("proj", log=lambda *_: None)
+
+
+def test_param_mismatch_errors_and_no_partial_wav(tmp_path, monkeypatch):
+    root = _make_longform_project(tmp_path, monkeypatch, (2.0, 3.0))
+
+    import stages.stage_4.pipeline as s4
+    base_fake = s4.synthesize_project  # the fake installed by the fixture
+
+    def mismatched(project_name, **kwargs):
+        base_fake(project_name, **kwargs)
+        if project_name == "ch_02":  # rewrite ch2 wav at a different framerate
+            _write_wav(Path(s4.PROJECTS_ROOT) / project_name / "audio.wav",
+                       3.0, framerate=22050)
+    monkeypatch.setattr("stages.stage_4.pipeline.synthesize_project", mismatched)
+
+    with pytest.raises(RuntimeError, match="params differ"):
+        longform_tts.synthesize_longform("proj", log=lambda *_: None)
+    # atomic write: a failure mid-stitch must not leave a corrupt audio.wav
+    assert not (root / "audio.wav").exists()

@@ -14,6 +14,8 @@ from .config import ART_LF_CHAPTER_GAP_S, get_art_project_path
 
 
 def _chapter_dir(root: Path, chapter_id: int) -> Path:
+    # _chapters/ is kept on purpose: per-chapter WAVs make force-retrying a single
+    # chapter cheap. Disk cost ~5-8 MB/chapter.
     d = root / "_chapters" / f"ch_{chapter_id:02d}"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -27,6 +29,8 @@ def synthesize_longform(project_name: str, *, force: bool = False,
         raise FileNotFoundError(
             f"{chapters_path} missing — run long-form narrate first")
     chapters = json.loads(chapters_path.read_text())
+    if not chapters:
+        raise RuntimeError(f"{chapters_path} has no chapters")
     narration = json.loads((root / "narration.json").read_text())
     scenes_by_id = {s["scene_id"]: s for s in narration["scenes"]}
 
@@ -48,6 +52,9 @@ def synthesize_longform(project_name: str, *, force: bool = False,
             log(f"[tts-lf] chapter {ch['chapter_id']}/{len(chapters)} "
                 f"({len(ch['scene_ids'])} scenes)…")
             s4.synthesize_project(ch_dir.name, force=force)
+            # caption_chunks.json per-chapter is intentionally discarded: long-form ships
+            # subtitles.srt derived from the stitched word timestamps (Task 6); root-level
+            # caption_chunks.json is never written and Stage 5 falls back gracefully.
             per_chapter.append({
                 "wav": ch_dir / "audio.wav",
                 "timings": json.loads((ch_dir / "scene_timings.json").read_text()),
@@ -55,6 +62,10 @@ def synthesize_longform(project_name: str, *, force: bool = False,
             })
     finally:
         s4.PROJECTS_ROOT = prev_root
+
+    if len(per_chapter) != len(chapters):
+        raise RuntimeError(
+            f"only {len(per_chapter)}/{len(chapters)} chapters synthesized — aborting stitch")
 
     # ── stitch WAVs + offset every timing from REAL frame counts ────────────
     out_wav = root / "audio.wav"
@@ -66,8 +77,11 @@ def synthesize_longform(project_name: str, *, force: bool = False,
     gap_frames = int(round(ART_LF_CHAPTER_GAP_S * framerate))
     silence = b"\x00" * (gap_frames * params.sampwidth * params.nchannels)
 
+    # Atomic write: stitch into a temp file and rename at the end, so a failure
+    # mid-stitch can never leave a corrupt audio.wav that the skip-flow would reuse.
+    tmp_wav = out_wav.with_suffix(".tmp.wav")
     frames_written = 0
-    with wave.open(str(out_wav), "wb") as out:
+    with wave.open(str(tmp_wav), "wb") as out:
         out.setparams(params)
         for k, (ch, data) in enumerate(zip(chapters, per_chapter)):
             offset = frames_written / framerate
@@ -89,6 +103,7 @@ def synthesize_longform(project_name: str, *, force: bool = False,
             if k < len(per_chapter) - 1:
                 out.writeframes(silence)
                 frames_written += gap_frames
+    tmp_wav.replace(out_wav)
 
     (root / "scene_timings.json").write_text(
         json.dumps(all_timings, indent=2, ensure_ascii=False))
