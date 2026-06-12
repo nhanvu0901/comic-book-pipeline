@@ -10,10 +10,10 @@ visual_plan.json sidecar is written; embedding grounding removed."""
 import json
 
 from config import CREATIVE_LLM_MODELS
-from stages.stage_3._llm import call_with_chain
 from stages.stage_3.schema import Narration, Scene
 
 from ._json import extract_json as _extract_json
+from ._llm import art_complete
 from .visual_plan import assign_motions, parse_visual, save_plan, validate_variety
 
 from .config import (
@@ -244,7 +244,7 @@ def write_narration(project_name: str, mode_key: str | None = None, *, log=print
 
     last_err: Exception | None = None
     for attempt in (1, 2):
-        raw, model_used = call_with_chain(
+        raw, model_used = art_complete(
             system=system, user=user, models=CREATIVE_LLM_MODELS,
             max_tokens=3000, progress=log, label=f"art-narrate#{attempt}",
             validator=lambda c: _extract_json(c) is not None,

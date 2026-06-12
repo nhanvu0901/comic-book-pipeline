@@ -8,10 +8,10 @@ cross-chapter rules (spec 2026-06-12 §A4b)."""
 import json
 
 from config import CREATIVE_LLM_MODELS
-from stages.stage_3._llm import call_with_chain
 from stages.stage_3.schema import Narration, Scene
 
 from ._json import extract_json
+from ._llm import art_complete
 from .narrate import _hook_is_concrete, _starts_with_connective, region_catalog
 from .visual_plan import (
     assign_motions, parse_visual, save_plan, validate_variety_longform,
@@ -376,7 +376,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
                        list(zip(all_scenes, all_decls))[-ART_LF_REGION_REUSE_WINDOW:]]
             last_err: Exception | None = None
             for attempt in (1, 2, 3):
-                raw, model_used = call_with_chain(
+                raw, model_used = art_complete(
                     system=system, user=user, models=CREATIVE_LLM_MODELS,
                     max_tokens=4000, progress=log,
                     label=f"art-lf-ch{pos}#{attempt}",

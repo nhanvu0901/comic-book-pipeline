@@ -9,9 +9,9 @@ import json
 import re
 
 from config import CREATIVE_LLM_MODELS
-from stages.stage_3._llm import call_with_chain
 
 from ._json import extract_json
+from ._llm import art_complete
 from .narrate import cap_facts
 from .config import (
     ART_LF_CHAPTER_ROLES_4, ART_LF_CHAPTER_ROLES_5, ART_LF_CHAPTER_WORDS_MAX,
@@ -184,7 +184,7 @@ def write_outline(project_name: str, mode_key: str | None = None, *,
 
     last_err: Exception | None = None
     for attempt in (1, 2, 3):
-        raw, model_used = call_with_chain(
+        raw, model_used = art_complete(
             system=system, user=user, models=CREATIVE_LLM_MODELS,
             max_tokens=3500, progress=log, label=f"art-outline#{attempt}",
             validator=lambda c: extract_json(c) is not None)
