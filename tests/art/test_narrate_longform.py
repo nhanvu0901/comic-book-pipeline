@@ -13,7 +13,7 @@ PAGES = [{
                 "description": f"region {i}"} for i in range(16)],
 }]
 CTX = {"title": "View of Toledo", "summary": {"characters": [{"name": "El Greco"}]}}
-# target 150 → 60-150% band = 90-225 words; the 14×7-word fixture (98) fits
+# target 150 → 85-150% band = 127-225 words; the 14×10-word fixture (~140) fits
 CHAPTER = {"chapter_id": 2, "title": "The Painter", "role": "backfill",
            "facts": ["El Greco moved to Toledo"], "target_words": 150,
            "artwork_ids": [436575]}
@@ -33,7 +33,7 @@ def _raw_chapter(n=14, rehook_last=True):
     scenes = []
     for i in range(n):
         kind = "related" if i % 3 == 2 else "painting_region"
-        scenes.append(_scene(i, f"Scene number {i} says something concrete here.",
+        scenes.append(_scene(i, f"Scene number {i} says something concrete here about the painting.",
                              kind=kind, panel=i, subject=f"subject {i}"))
     if rehook_last:
         scenes[-1]["text"] = "But what the x-ray revealed next was stranger still."
@@ -106,7 +106,7 @@ def _mk(scene_id, chapter_id, kind, *, page=1, panel=-1, subject=""):
 
 
 def test_chapter_words_far_off_target_rejected():
-    # 14 scenes × 7 words = 98 < 60% of a 350-word target (210) → reject
+    # 14 scenes × 10 words = 140 < 85% of a 350-word target (297) → reject
     big_chapter = dict(CHAPTER, target_words=350)
     with pytest.raises(ValueError, match="words vs target"):
         build_chapter_scenes(_raw_chapter(rehook_last=False), PAGES, CTX,

@@ -40,10 +40,11 @@ def test_longform_constants():
         "cold_open", "backfill", "evidence", "twist", "resolution")
     assert c.ART_LF_CHAPTER_ROLES_4 == (
         "cold_open", "backfill_evidence", "twist", "resolution")
-    assert c.ART_LF_TARGET_WORDS_MIN == 1200
-    assert c.ART_LF_TARGET_WORDS_MAX == 1700
+    assert c.ART_LF_TARGET_WORDS_MIN == 1600
+    assert c.ART_LF_TARGET_WORDS_MAX == 1900
     assert c.ART_LF_CHAPTER_WORDS_MIN == 150
     assert c.ART_LF_CHAPTER_WORDS_MAX == 420
+    assert c.ART_LF_CHAPTER_WORDS_BAND == (0.85, 1.5)
     assert c.ART_LF_SCENES_PER_CHAPTER_MIN == 14
     assert c.ART_LF_SCENES_PER_CHAPTER_MAX == 22
     assert c.ART_LF_SCENE_MAX_WORDS == 32

@@ -18,9 +18,9 @@ from .visual_plan import (
     visual_target,
 )
 from .config import (
-    ART_LF_REGION_REUSE_WINDOW, ART_LF_REHOOK_POSITIONS, ART_LF_SCENE_MAX_WORDS,
-    ART_LF_SCENES_PER_CHAPTER_MAX, ART_LF_SCENES_PER_CHAPTER_MIN,
-    ART_WORDS_PER_SEC, get_art_project_path,
+    ART_LF_CHAPTER_WORDS_BAND, ART_LF_REGION_REUSE_WINDOW, ART_LF_REHOOK_POSITIONS,
+    ART_LF_SCENE_MAX_WORDS, ART_LF_SCENES_PER_CHAPTER_MAX,
+    ART_LF_SCENES_PER_CHAPTER_MIN, ART_WORDS_PER_SEC, get_art_project_path,
 )
 
 # Forward-reference cues for chapter-ending re-hooks ("but here's where it
@@ -246,10 +246,11 @@ def build_chapter_scenes(raw: str, pages: list[dict], ctx: dict, chapter: dict,
                              "close thematic instead")
     chapter_words = sum(sc.word_count for sc in scenes)
     target = int(chapter["target_words"])
-    if not target * 0.6 <= chapter_words <= target * 1.5:
+    lo, hi = ART_LF_CHAPTER_WORDS_BAND
+    if not target * lo <= chapter_words <= target * hi:
         raise ValueError(
             f"chapter {chapter['chapter_id']}: {chapter_words} words vs target "
-            f"{target} (stay within 60-150%)")
+            f"{target} (stay within {round(lo * 100)}-{round(hi * 100)}%)")
     return scenes, decls
 
 

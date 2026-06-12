@@ -9,7 +9,7 @@ Shorts — high-quality 8+ minute videos first.** Research (2026-06-12, two
 reports in `research/reports/`) shows the winning genre formula is a
 story-led deep dive opened by a mystery/scandal, told in chapters, at
 ~140 WPM, 16:9, with ~70% time on the painting and ~30% on related imagery.
-A single LLM call cannot write 1,200-1,700 grounded words at quality (proven
+A single LLM call cannot write 1,600-1,900 grounded words at quality (proven
 by current 2-attempt failures at far smaller sizes), and a single Cartesia
 request / single SDK hunt session cannot serve a 10-minute video (proven by
 the max_turns incident).
@@ -19,8 +19,10 @@ the max_turns incident).
 - **Both modes from day one:** `painting_story` (1 artwork deep dive) and
   `artist_journey` (5-8 artworks, one artist) — shared chapter engine.
 - **16:9 landscape 1920x1080** for long-form output.
-- **Target length 8-12 minutes** (~1,200-1,700 words, 4-5 chapters,
-  ~60-110 scenes).
+- **Target length 8-12 minutes** (~1,600-1,900 words, 4-5 chapters,
+  ~60-110 scenes; raised from 1,200-1,700 after e2e round 4 measured
+  0.36 s/word — 1,285 words rendered only 7:43, so the floor must put the
+  85% worst case above 1,360 words ≈ 8:10).
 - **BGM: user drops a music file into the project folder per video**
   (no auto music library). Missing file → loud warning, render continues.
 - **Architecture A:** chaptered writer on the existing scene engine
@@ -99,7 +101,7 @@ used by ≥1 chapter.
 **Validator (retry 3, errors fed back):** 4-5 chapters; roles follow the
 template order; every `facts` entry is a (≥80%-overlap) substring of the
 grounded context — anti-hallucination at the outline level; no fact assigned
-twice; total target_words within 1,200-1,700; journey: through_line is a
+twice; total target_words within 1,600-1,900; journey: through_line is a
 question + artwork coverage complete.
 
 ## A4b — Chapter writer (extend `art_pipeline/narrate.py`)
@@ -112,10 +114,13 @@ One LLM call **per chapter**: long-form system prompt + that chapter's facts
   accents) and the prompt spells out the per-chapter word-budget arithmetic
   — chapter ceiling `ART_LF_CHAPTER_WORDS_MAX` = 420 (22 × ~19, a ceiling
   the writer can actually hit; e2e round 3: "short scenes" framing yielded
-  ~190-word chapters vs 350 targets). Same visual declaration schema
-  (`painting_region`/`painting_full`/`related`) and the same `parse_visual` /
-  `assign_motions` machinery from `visual_plan.py`. Long scenes don't slow
-  the cut rate: assemble already splits scenes ≥ 5s into two shots.
+  ~190-word chapters vs 350 targets). Chapter actual-vs-target band
+  `ART_LF_CHAPTER_WORDS_BAND` = 85-150% (e2e round 4: the 60% floor let
+  middle chapters land at 0.62-0.78 of target → 7:43 video). Same visual
+  declaration schema (`painting_region`/`painting_full`/`related`) and the
+  same `parse_visual` / `assign_motions` machinery from `visual_plan.py`.
+  Long scenes don't slow the cut rate: assemble already splits scenes ≥ 5s
+  into two shots.
 - Scene dict gains `"chapter_id"`; chapters 2 and 3 last scene gains
   `"is_rehook": true` and must read as a forward reference (validator:
   flag present + scene matches a forward-hook heuristic — future-tense /
@@ -196,7 +201,7 @@ One LLM call **per chapter**: long-form system prompt + that chapter's facts
   candidate must name its mystery/scandal/x-ray angle; new
   `longform_angle` column in `art_candidates.csv` (existing rows stay valid;
   column appended).
-- **Benchmark:** new long-form thresholds file (words 1,200-1,700, scenes
+- **Benchmark:** new long-form thresholds file (words 1,350-1,900, scenes
   60-110 — consistent with 14-22 scenes × 4-5 chapters, chapters 4-5,
   re-hook present, hook gate, WPM 130-150 measured on final audio). Shorts
   benchmark untouched.

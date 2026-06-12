@@ -1,7 +1,7 @@
 {
   "_comment": "Long-form QA gates (spec 2026-06-12). Checked manually/e2e; writer validators enforce the hard ones at generation time.",
-  "words_min": 1200,
-  "words_max": 1700,
+  "words_min": 1350,
+  "words_max": 1900,
   "scenes_min": 60,
   "scenes_max": 110,
   "chapters_min": 4,
