@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from config import get_project_dirs, PROJECTS_ROOT
 from utils.comic_scraper import discover_issues, scrape_issue_pages
-from .issue_resolver import parse_issue_range
+from .issue_resolver import parse_issue_range, resolve_chapters
 
 try:
     from stages.stage_1.tools.fetch_fandom import fetch_fandom
@@ -205,6 +205,47 @@ def download_from_readers(
         ctx = _enrich_context_silent(ctx, project_root=project_root, log=log)
 
     return _do_reader_download(project_name, urls, log=log)
+
+
+# ─── Crossover-saga ingest ──────────────────────────────────────────────────
+
+
+def download_saga(
+    project_name: str,
+    series_url: str,
+    *,
+    max_issues: int = 5,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
+    """Crossover-saga ingest: resolve a series' chapters, keep the first
+    min(len, max_issues), download them, and build a per-issue arc context.
+    N==1 collapses to the single-comic shape (see _enrich_issues)."""
+    log = progress or print
+    series_url = series_url.strip()
+    if classify_url(series_url) != "series":
+        raise ValueError(f"Expected a batcave.biz series URL, got: {series_url}")
+
+    _news_id, slug = parse_series_slug(series_url)
+    title_hint = slug_to_title(slug)
+    project_root = _ensure_project_root(project_name)
+
+    all_chapters = resolve_chapters(series_url, "")
+    if not all_chapters:
+        raise RuntimeError(f"No chapters resolved at {series_url}")
+    chapters = all_chapters[: max(1, int(max_issues))]
+    # normalize chapter_index to 1..N so page prefixes / issue mapping line up
+    for i, ch in enumerate(chapters, start=1):
+        ch["chapter_index"] = i
+    log(f"[saga] '{title_hint}': {len(all_chapters)} chapter(s) available, ingesting {len(chapters)}")
+
+    ctx = _write_minimal_context(
+        project_root=project_root, title_hint=title_hint, slug=slug,
+        batcave_url=series_url, issues="", log=log,
+    )
+    ctx = _enrich_issues(ctx, chapters, project_root=project_root, log=log)
+
+    dl = _run_downloads(project_name, get_project_dirs(project_name)["root"], chapters, log)
+    return {**dl, "issue_count": ctx.get("issue_count", 1)}
 
 
 # ─── Internals ──────────────────────────────────────────────────────────────

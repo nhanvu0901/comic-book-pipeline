@@ -53,3 +53,22 @@ def test_enrich_issues_n1_emits_single_comic_shape(tmp_path, monkeypatch):
     assert "is_arc" not in out
     assert "issues" not in out
     assert out["plot_summary"].startswith("Issue 1")
+
+
+def test_download_saga_caps_issues_and_enriches(tmp_path, monkeypatch):
+    monkeypatch.setattr(um, "fetch_fandom", _fake_fandom, raising=False)
+    # 7 chapters available; max_issues=5 → only 5 ingested
+    monkeypatch.setattr(um, "resolve_chapters",
+        lambda url, issues: [{"label": f"#{i}", "reader_url": f"u{i}", "chapter_index": i}
+                             for i in range(1, 8)], raising=False)
+    monkeypatch.setattr(um, "_run_downloads",
+        lambda proj, root, chapters, log: {"chapters": len(chapters), "total_pages": 22 * len(chapters)},
+        raising=False)
+    monkeypatch.setattr(um, "_ensure_project_root", lambda name: tmp_path, raising=False)
+    monkeypatch.setattr(um, "get_project_dirs", lambda name: {"root": tmp_path}, raising=False)
+
+    res = um.download_saga("saga_proj", "https://batcave.biz/123-saga.html", max_issues=5,
+                           progress=lambda m: None)
+    ctx = json.loads((tmp_path / "comic_context.json").read_text())
+    assert ctx["issue_count"] == 5
+    assert res["chapters"] == 5
