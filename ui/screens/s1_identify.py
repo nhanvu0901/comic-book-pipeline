@@ -29,6 +29,7 @@ MODE_LABELS = {
     PipelineMode.WHAT_IF: "What If…? (coming soon)",
     PipelineMode.ORIGIN_STORY: "Origin Story (coming soon)",
     PipelineMode.TOP_MOMENTS: "Top Moments (coming soon)",
+    PipelineMode.CROSSOVER_SAGA: "Crossover Saga (CLI only)",
 }
 
 IMPLEMENTED_MODES = {PipelineMode.NARRATE_1_COMIC}
