@@ -2320,9 +2320,17 @@ def _wiki_cross_check(
         text = str(s.get("text", "")).strip()
         nar_lines.append(f"S{sid}: {text}")
 
-    # Cap wiki to 6000 chars to stay within prompt budget but keep most of plot
-    wiki_text = (arc + "\n\n" + plot) if arc else plot
-    wiki_text = wiki_text[:6000]
+    # Cap wiki to stay within prompt budget. For a multi-issue saga, LABEL each
+    # issue's canon plot so a beat is checked against ITS issue (per-issue grounding).
+    if comic_context.get("is_arc") and comic_context.get("issues"):
+        parts = []
+        for it in comic_context["issues"]:
+            p = (it.get("plot_summary") or "").strip()
+            if p:
+                parts.append(f"=== {it['label']} (canon) ===\n{p}")
+        wiki_text = "\n\n".join(parts)[:8000] if parts else (((arc + "\n\n" + plot) if arc else plot)[:6000])
+    else:
+        wiki_text = ((arc + "\n\n" + plot) if arc else plot)[:6000]
 
     user = (
         "CANONICAL WIKI PLOT (ground truth):\n"
