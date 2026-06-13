@@ -27,6 +27,11 @@ from config import get_project_dirs, PROJECTS_ROOT
 from utils.comic_scraper import discover_issues, scrape_issue_pages
 from .issue_resolver import parse_issue_range
 
+try:
+    from stages.stage_1.tools.fetch_fandom import fetch_fandom
+except Exception:  # pragma: no cover - keeps module importable if stage_1 deps missing
+    fetch_fandom = None
+
 
 _BATCAVE_HOST = "batcave.biz"
 _SERIES_URL_RE = re.compile(r"^https?://(?:www\.)?batcave\.biz/(\d+)-([a-z0-9-]+?)\.html")
@@ -329,6 +334,81 @@ def _enrich_context_silent(
         log("[url-mode] no plot found — narration will run with weaker context")
 
     (project_root / "comic_context.json").write_text(
+        json.dumps(ctx, indent=2, ensure_ascii=False)
+    )
+    return ctx
+
+
+def _enrich_issues(
+    ctx: dict, chapters: list[dict], *, project_root, log
+) -> dict:
+    """Fetch a SEPARATE canonical context for EACH issue and merge them in arc
+    order into ctx. For N==1 this reduces to the existing single-comic shape
+    (no is_arc / issues[]). Reuses fetch_fandom + the SDK web fallback per issue.
+
+    Writes comic_context.json and returns the updated ctx."""
+    from pathlib import Path as _Path
+    publisher = ctx.get("publisher", "")
+    base_title = ctx.get("title", "")
+
+    def _one_issue_plot(label: str) -> dict:
+        q = f"{base_title} {label}".strip()
+        plot, wiki_url, src = "", "", ""
+        try:
+            fd = fetch_fandom(q, publisher=publisher) if fetch_fandom else None
+            if isinstance(fd, dict):
+                plot = (fd.get("plot_text") or "").strip()
+                wiki_url = fd.get("wiki_url") or ""
+        except Exception as exc:
+            log(f"[saga] fandom miss {label}: {exc}")
+        from config import ENABLE_SDK_PLOT_FALLBACK, SDK_PLOT_FALLBACK_MIN_CHARS
+        if ENABLE_SDK_PLOT_FALLBACK and len(plot) < SDK_PLOT_FALLBACK_MIN_CHARS:
+            try:
+                from stages.stage_1.tools.gather_plot_sdk import gather_plot_sdk
+                res = gather_plot_sdk(base_title, label, publisher, log=log)
+                if res and len(res.get("plot_summary", "")) > len(plot):
+                    plot = res["plot_summary"]
+                    wiki_url = res.get("source_url") or wiki_url
+                    src = "claude-sdk-web"
+            except Exception as exc:
+                log(f"[saga] SDK fallback {label}: {exc}")
+        return {"plot_summary": plot, "wiki_url": wiki_url, "plot_source": src}
+
+    issues_meta: list[dict] = []
+    for ch in chapters:
+        label = ch.get("label", f"#{ch.get('chapter_index','?')}")
+        log(f"[saga] enriching issue {label} …")
+        info = _one_issue_plot(label)
+        issues_meta.append({
+            "label": label,
+            "chapter_index": int(ch.get("chapter_index", len(issues_meta) + 1)),
+            "plot_summary": info["plot_summary"],
+            "wiki_url": info["wiki_url"],
+            "plot_source": info["plot_source"],
+        })
+
+    if len(issues_meta) <= 1:
+        only = issues_meta[0] if issues_meta else {"plot_summary": ""}
+        ctx["plot_summary"] = only.get("plot_summary", "")
+        if only.get("wiki_url"):
+            ctx["wiki_url"] = only["wiki_url"]
+    else:
+        ctx["is_arc"] = True
+        ctx["issue_count"] = len(issues_meta)
+        ctx["issues"] = issues_meta
+        ctx["plot_summary"] = "\n\n".join(
+            f"[{it['label']}] {it['plot_summary']}".strip()
+            for it in issues_meta if it["plot_summary"]
+        )
+
+    try:
+        from stages.stage_1.tools.summarize_context import enrich_with_summary
+        if ctx.get("plot_summary"):
+            enrich_with_summary(ctx, progress=log)
+    except Exception as exc:
+        log(f"[saga] summarize failed: {exc}")
+
+    (_Path(project_root) / "comic_context.json").write_text(
         json.dumps(ctx, indent=2, ensure_ascii=False)
     )
     return ctx
