@@ -610,6 +610,31 @@ def outline_beats(
     if plot:
         canonical_block += f"╔══ CANONICAL FULL PLOT (wiki) ══╗\n{plot[:5000]}\n\n"
 
+    # ── Crossover-saga: spread beats across issues, anchor to each issue's pages ──
+    if comic_context.get("is_arc") and comic_context.get("issues"):
+        from stages._arc import issue_index_of_page, allocate_beats_across_issues
+        issues = comic_context["issues"]
+        n_iss = len(issues)
+        by_issue: dict[int, list[int]] = {}
+        for p in story_pages:
+            by_issue.setdefault(issue_index_of_page(p), []).append(int(p.get("page_number", 0) or 0))
+        page_counts = [len(by_issue.get(it["chapter_index"], [])) for it in issues]
+        alloc = allocate_beats_across_issues(total=20, n_issues=n_iss, page_counts=page_counts)
+        arc_lines = []
+        for it in issues:
+            k = it["chapter_index"]
+            pgs = sorted(by_issue.get(k, []))
+            rng = f"pages {pgs[0]}-{pgs[-1]}" if pgs else "(no pages)"
+            arc_lines.append(
+                f"  • {it['label']} ({rng}): write ~{alloc.get(k, 2)} beat(s). "
+                f"Plot: {(it.get('plot_summary') or '')[:600]}")
+        canonical_block += (
+            "\n╔══ MULTI-ISSUE SAGA — COVER EVERY ISSUE IN ORDER ══╗\n"
+            "This is a crossover of sequential issues. Allocate beats so EACH issue is\n"
+            "represented and every beat's page_refs fall INSIDE that issue's page range:\n"
+            + "\n".join(arc_lines) + "\n\n"
+        )
+
     # Determine page range so outliner can spread beats across the full arc.
     page_nums = sorted({int(p.get("page_number", 0) or 0) for p in story_pages})
     page_range_hint = ""
