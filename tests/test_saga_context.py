@@ -72,3 +72,14 @@ def test_download_saga_caps_issues_and_enriches(tmp_path, monkeypatch):
     ctx = json.loads((tmp_path / "comic_context.json").read_text())
     assert ctx["issue_count"] == 5
     assert res["chapters"] == 5
+
+
+def test_saga_n1_matches_single_comic_keys(tmp_path, monkeypatch):
+    monkeypatch.setattr(um, "fetch_fandom", _fake_fandom, raising=False)
+    ctx = {"title": "Solo", "publisher": "DC"}
+    out = um._enrich_issues(ctx, [{"label": "#1", "reader_url": "u", "chapter_index": 1}],
+                            project_root=tmp_path, log=lambda m: None)
+    # Must look like a single-comic context: has plot_summary, NO arc keys.
+    for k in ("is_arc", "issues", "issue_count"):
+        assert k not in out
+    assert isinstance(out.get("plot_summary"), str) and out["plot_summary"]

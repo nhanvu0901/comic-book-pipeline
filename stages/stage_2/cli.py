@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from .pipeline import preprocess_project
-from .url_mode import download_from_readers, download_from_series
+from .url_mode import download_from_readers, download_from_series, download_saga
 
 
 def main():
@@ -71,21 +71,31 @@ def main():
                            help="batcave.biz series URL — pairs with --issues")
     url_group.add_argument("--reader-urls", nargs="+", metavar="URL",
                            help="One or more batcave.biz reader URLs (each = 1 issue)")
+    url_group.add_argument("--saga", metavar="SERIES_URL",
+                           help="batcave.biz SERIES url → crossover-saga mode "
+                                "(≤--max-issues sequential issues woven into one Short)")
 
     parser.add_argument("--issues", default="",
                         help="Issues range/list when --url is given (e.g. '#1-3', '#1,#3,#5')")
+    parser.add_argument("--max-issues", type=int, default=5,
+                        help="Cap issues ingested in --saga mode (default 5)")
     parser.add_argument("--no-enrich", action="store_true",
                         help="Skip silent wiki/fandom enrichment after URL-direct download")
     parser.add_argument("--download-only", action="store_true",
                         help="Stop after download (skip Magi panel detect + VLM preprocessing)")
 
     args = parser.parse_args()
-    using_url_mode = bool(args.url or args.reader_urls)
+    using_url_mode = bool(args.url or args.reader_urls or args.saga)
 
     try:
         if using_url_mode:
             enrich = not args.no_enrich
-            if args.url:
+            if args.saga:
+                summary = download_saga(
+                    args.project, args.saga, max_issues=args.max_issues, progress=print,
+                )
+                print(f"  saga: {summary.get('issue_count', '?')} issue(s) ingested")
+            elif args.url:
                 summary = download_from_series(
                     args.project, args.url, args.issues, enrich=enrich,
                 )
