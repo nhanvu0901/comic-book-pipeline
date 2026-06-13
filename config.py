@@ -14,11 +14,7 @@ load_dotenv()
 class PipelineMode(str, Enum):
     NARRATE_1_COMIC = "narrate_1_comic"
     STORY_ARC = "story_arc"
-    CHARACTER_FEAT = "character_feat"
-    VERSUS = "versus"
-    WHAT_IF = "what_if"
-    ORIGIN_STORY = "origin_story"
-    TOP_MOMENTS = "top_moments"
+    CROSSOVER_SAGA = "crossover_saga"  # ≤5 sequential issues of one series → one Short
 
 PIPELINE_MODE = PipelineMode(os.getenv("PIPELINE_MODE", "narrate_1_comic"))
 
@@ -40,14 +36,19 @@ LLM_MODELS: list[str] = [
 ]
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", LLM_MODELS[0])
 
-# Global LLM routing switch.
-#   FREE_MODEL = False (default)  → route ALL text-LLM phases (intro, outline,
-#       glossary, write, wiki-check, fidelity, retry, outro, propose, panel-assign,
-#       panel-judge) through the Claude Agent SDK (CLAUDE_SDK_MODEL) for best
-#       quality. The OpenRouter chains below are kept ONLY as a per-call fallback
-#       when the SDK is unavailable / rate-limited / fails validation.
-#   FREE_MODEL = True             → skip the SDK; use the free/cheap OpenRouter
-#       chains (LLM_MODELS / CREATIVE_LLM_MODELS / FIDELITY_LLM_MODELS) directly.
+# Global LLM routing switch — the single repo-wide backend flag for comic + art
+# text-LLM calls (everything that goes through stages.stage_3._llm.call_with_chain).
+#   FREE_MODEL = False (default)  → Claude Agent SDK ONLY (CLAUDE_SDK_MODEL), for
+#       every text phase unconditionally. There is NO OpenRouter fallback: if the
+#       SDK is unavailable / rate-limited / returns empty / fails the validator,
+#       call_with_chain RAISES so the problem surfaces instead of being masked
+#       (unified policy, 2026-06-12). A long run can therefore hard-fail mid-way
+#       if the SDK rate-limits — the escape hatch is FREE_MODEL=true. NOTE: under
+#       this mode the per-phase chains below (CREATIVE/FIDELITY) and the `models=`
+#       / `max_tokens` args are unused — every phase uses the one SDK model.
+#   FREE_MODEL = True             → skip the SDK; use the OpenRouter chains
+#       (LLM_MODELS / CREATIVE_LLM_MODELS / FIDELITY_LLM_MODELS) with multi-model
+#       fallback as before.
 # VLM (Stage 2 panel vision) is NOT affected by this — it always uses VLM_MODELS.
 FREE_MODEL = os.getenv("FREE_MODEL", "false").lower() in ("true", "1", "yes")
 
