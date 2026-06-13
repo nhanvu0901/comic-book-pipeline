@@ -14,6 +14,11 @@ load_dotenv()
 class PipelineMode(str, Enum):
     NARRATE_1_COMIC = "narrate_1_comic"
     STORY_ARC = "story_arc"
+    CHARACTER_FEAT = "character_feat"
+    VERSUS = "versus"
+    WHAT_IF = "what_if"
+    ORIGIN_STORY = "origin_story"
+    TOP_MOMENTS = "top_moments"
     CROSSOVER_SAGA = "crossover_saga"  # ≤5 sequential issues of one series → one Short
 
 PIPELINE_MODE = PipelineMode(os.getenv("PIPELINE_MODE", "narrate_1_comic"))
