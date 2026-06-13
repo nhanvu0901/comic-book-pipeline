@@ -13,7 +13,7 @@ import flet as ft
 
 from ..bridge import (
     format_exception, load_raw_pages, run_blocking,
-    run_stage_download, run_stage_download_from_url,
+    run_stage_download, run_stage_download_from_url, run_stage_download_saga,
 )
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
@@ -138,6 +138,15 @@ def build(
         label="Enrich context from wiki (slower, better narration)",
         value=True, active_color=ACCENT,
     )
+    saga_switch = ft.Switch(
+        label="Crossover saga — weave issues into ONE story (per-issue context)",
+        value=False, active_color=ACCENT,
+    )
+    max_issues_field = ft.TextField(
+        label="Max issues (saga + series URL)",
+        value="5", width=200,
+        border_color=BORDER, focused_border_color=ACCENT, text_size=12,
+    )
     url_project_field = ft.TextField(
         label="Project name (created if new)",
         hint_text="e.g. dark_venom_2023",
@@ -162,16 +171,27 @@ def build(
         save_state(state)
 
         running.visible = True
-        status_text.value = "URL-direct download — bootstrapping context…"
+        status_text.value = ("Crossover-saga download — per-issue context…"
+                             if saga_switch.value else
+                             "URL-direct download — bootstrapping context…")
         status_text.color = WARN
         page.update()
 
         try:
-            manifest = await run_blocking(
-                run_stage_download_from_url,
-                proj, raw, (issues_field.value or "").strip(),
-                bool(enrich_switch.value), push_log,
-            )
+            if saga_switch.value:
+                try:
+                    max_iss = max(1, int((max_issues_field.value or "5").strip()))
+                except ValueError:
+                    max_iss = 5
+                manifest = await run_blocking(
+                    run_stage_download_saga, proj, raw, max_iss, push_log,
+                )
+            else:
+                manifest = await run_blocking(
+                    run_stage_download_from_url,
+                    proj, raw, (issues_field.value or "").strip(),
+                    bool(enrich_switch.value), push_log,
+                )
         except Exception as e:
             running.visible = False
             status_text.value = "Failed — see log."
@@ -262,7 +282,8 @@ def build(
                 color=TEXT_MUTED, weight=ft.FontWeight.BOLD),
         ft.Text(
             "Paste a series URL with --issues, or multiple reader URLs (one per issue). "
-            "Context is fetched silently from wiki/fandom.",
+            "Context is fetched silently from wiki/fandom. Turn on Crossover saga to "
+            "fetch a SEPARATE context per issue and weave them into one story.",
             size=11, color=TEXT_MUTED,
         ),
         ft.Container(height=6),
@@ -270,6 +291,8 @@ def build(
         url_field,
         issues_field,
         enrich_switch,
+        saga_switch,
+        max_issues_field,
         ft.Container(height=4),
         primary_button("Download from URL(s)", run_url_click, icon=ft.Icons.LINK),
 

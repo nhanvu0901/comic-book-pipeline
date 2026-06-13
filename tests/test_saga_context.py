@@ -83,3 +83,35 @@ def test_saga_n1_matches_single_comic_keys(tmp_path, monkeypatch):
     for k in ("is_arc", "issues", "issue_count"):
         assert k not in out
     assert isinstance(out.get("plot_summary"), str) and out["plot_summary"]
+
+
+def test_download_saga_from_readers_builds_arc(tmp_path, monkeypatch):
+    monkeypatch.setattr(um, "fetch_fandom", _fake_fandom, raising=False)
+    monkeypatch.setattr(um, "_chapter_meta_from_reader",
+        lambda url, log: {"title": "Mega Saga", "issues": "", "year": "", "source_title": ""},
+        raising=False)
+    monkeypatch.setattr(um, "_run_downloads",
+        lambda proj, root, chapters, log: {"chapters": len(chapters), "total_pages": 22 * len(chapters)},
+        raising=False)
+    monkeypatch.setattr(um, "_ensure_project_root", lambda name: tmp_path, raising=False)
+    monkeypatch.setattr(um, "get_project_dirs", lambda name: {"root": tmp_path}, raising=False)
+    readers = ["https://batcave.biz/reader/100/1", "https://batcave.biz/reader/100/2",
+               "https://batcave.biz/reader/100/3"]
+    res = um.download_saga_from_readers("mega", readers, progress=lambda m: None)
+    ctx = json.loads((tmp_path / "comic_context.json").read_text())
+    assert ctx["is_arc"] is True and ctx["issue_count"] == 3
+    assert res["chapters"] == 3
+
+
+def test_chapter_meta_strips_trailing_issue(monkeypatch):
+    # batcave lists this series as "Ghost Racers Issue #1" → title must drop "Issue"
+    import utils.comic_scraper.readcomiconline as rc
+    monkeypatch.setattr(
+        rc, "_fetch_data",
+        lambda url: {"chapters": [{"id": 106900, "title": "Ghost Racers Issue #1"}]},
+        raising=False,
+    )
+    meta = um._chapter_meta_from_reader(
+        "https://batcave.biz/reader/15793/106900", lambda m: None)
+    assert meta["title"] == "Ghost Racers"
+    assert meta["issues"] == "#1"

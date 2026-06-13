@@ -140,6 +140,9 @@ def _chapter_meta_from_reader(reader_url: str, log: Callable[[str], None]) -> di
         if im:
             title = title[: title.rfind(im.group(1))]
         title = title.strip(" -–")
+        # batcave often appends a bare "Issue" token (e.g. "Ghost Racers Issue #1");
+        # drop a trailing standalone Issue/Issues so the title reads cleanly.
+        title = re.sub(r"\s+[Ii]ssues?\s*$", "", title).strip(" -–")
         return {
             "title": title,
             "issues": im.group(1) if im else "",
@@ -241,6 +244,49 @@ def download_saga(
     ctx = _write_minimal_context(
         project_root=project_root, title_hint=title_hint, slug=slug,
         batcave_url=series_url, issues="", log=log,
+    )
+    ctx = _enrich_issues(ctx, chapters, project_root=project_root, log=log)
+
+    dl = _run_downloads(project_name, get_project_dirs(project_name)["root"], chapters, log)
+    return {**dl, "issue_count": ctx.get("issue_count", 1)}
+
+
+def download_saga_from_readers(
+    project_name: str,
+    reader_urls: list[str],
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
+    """Crossover-saga from explicit reader URLs (one issue each): fetch a
+    SEPARATE per-issue context for each URL + weave into one arc context, then
+    download. N==1 collapses to today's single-comic shape (see _enrich_issues).
+    This is the reader-URL twin of download_saga (which takes a series URL)."""
+    log = progress or print
+    urls = [u.strip() for u in reader_urls if u and u.strip()]
+    if not urls:
+        raise ValueError("download_saga_from_readers: empty URL list")
+    if any(classify_url(u) != "reader" for u in urls):
+        raise ValueError("download_saga_from_readers expects batcave.biz reader URLs (one per issue)")
+
+    project_root = _ensure_project_root(project_name)
+    # Derive a series title from the first reader's batcave metadata (best wiki query).
+    meta = _chapter_meta_from_reader(urls[0], log)
+    title_hint = (meta.get("title") or "").strip() or project_name.replace("_", " ").title()
+
+    chapters = []
+    for i, url in enumerate(urls, start=1):
+        m = _READER_URL_RE.match(url)
+        chap_id = int(m.group(2)) if m else i
+        chapters.append({
+            "label": f"#{i}", "number": float(i),
+            "reader_url": url, "chapter_id": chap_id, "chapter_index": i,
+        })
+    log(f"[saga] '{title_hint}': {len(chapters)} reader URL(s) → per-issue arc")
+
+    ctx = _write_minimal_context(
+        project_root=project_root, title_hint=title_hint,
+        slug=slug_to_project_name(title_hint.lower().replace(" ", "-")),
+        batcave_url=urls[0], issues="", log=log,
     )
     ctx = _enrich_issues(ctx, chapters, project_root=project_root, log=log)
 

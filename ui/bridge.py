@@ -213,6 +213,35 @@ def run_stage_download_from_url(
     return load_manifest(project_name)
 
 
+def run_stage_download_saga(
+    project_name: str,
+    raw_input: str,
+    max_issues: int,
+    log: Callable[[str], None],
+) -> list[dict]:
+    """Crossover-saga download: builds a PER-ISSUE arc context (is_arc/issues[])
+    then downloads. raw_input is either ONE series URL (→ download_saga, auto
+    ≤max_issues) or N reader URLs (→ download_saga_from_readers, one issue each).
+    N==1 collapses to today's single-comic shape."""
+    from stages.stage_2.url_mode import (
+        classify_url, download_saga, download_saga_from_readers,
+    )
+    from stages.stage_2.download import load_manifest
+
+    tokens = [t.strip() for t in raw_input.replace(",", "\n").split() if t.strip()]
+    if not tokens:
+        raise ValueError("No URL provided")
+    kinds = {classify_url(t) for t in tokens}
+    if len(tokens) == 1 and "series" in kinds:
+        download_saga(project_name, tokens[0], max_issues=max_issues, progress=log)
+    elif kinds == {"reader"}:
+        download_saga_from_readers(project_name, tokens, progress=log)
+    else:
+        raise ValueError(
+            f"Saga mode needs ONE series URL or N reader URLs, got: {tokens!r}")
+    return load_manifest(project_name)
+
+
 def load_raw_pages(project_name: str) -> list[dict]:
     """Load the download manifest for thumbnail display."""
     from stages.stage_2.download import load_manifest

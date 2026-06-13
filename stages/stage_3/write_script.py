@@ -650,7 +650,11 @@ def outline_beats(
     user = (
         canonical_block
         + f"COMIC METADATA:\n{_ctx_block(comic_context)}\n\n"
-        + f"STORY PAGES (per-panel detail for grounding beats to visuals):\n{_pages_block_full(story_pages)}\n\n"
+        # Multi-issue sagas have ~100 pages; the full per-panel block balloons the
+        # prompt to ~175K chars and the SDK rejects/rate-limits it. Use the compact
+        # block for arcs (enough to anchor beats to pages); single comics keep full.
+        + f"STORY PAGES (per-panel detail for grounding beats to visuals):\n"
+        + f"{(_pages_block_compact if comic_context.get('is_arc') else _pages_block_full)(story_pages)}\n\n"
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + page_range_hint + "\n\n"
