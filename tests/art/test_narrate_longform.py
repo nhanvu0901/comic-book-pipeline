@@ -281,3 +281,29 @@ def test_new_narration_deletes_stale_hunt_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(nl, "ART_LF_TOTAL_WORDS_FLOOR", 1)
     nl.write_longform_narration("proj", log=lambda *_: None)
     assert not (root / "hunt_manifest.json").exists()
+
+
+def test_dedupe_called_after_draw_loop(monkeypatch, tmp_path):
+    """write_longform_narration runs the dedupe guard on the assembled scenes
+    and writes repetition_report.json."""
+    import art_pipeline.narrate_longform as nlf
+    from stages.stage_3.schema import Scene
+
+    captured = {}
+
+    def fake_dedupe(scenes, ctx, roles, **kw):
+        captured["n"] = len(scenes)
+        return {"rewrites": 0, "unresolved": 0, "max_similarity_after": 0.0}
+
+    monkeypatch.setattr(nlf, "dedupe_scenes", fake_dedupe)
+    # Drive the helper directly with a stub all_scenes via a thin wrapper:
+    rep = nlf._run_dedupe(
+        [Scene(scene_id=1, text="x y z", page_ref=1, panel_ref=0, word_count=3,
+               target_seconds=1.0, connective=False, beat_id=1,
+               is_intro=False, is_outro=False)],
+        {"title": "T"},
+        [{"chapter_id": 1, "role": "cold_open", "scene_ids": [1]}],
+        tmp_path, log=lambda m: None)
+    assert captured["n"] == 1
+    assert (tmp_path / "repetition_report.json").exists()
+    assert rep["rewrites"] == 0

@@ -13,6 +13,7 @@ from stages.stage_3.schema import Narration, Scene
 
 from ._json import extract_json
 from .narrate import _hook_is_concrete, _starts_with_connective, region_catalog
+from .dedupe import dedupe_scenes
 from .visual_plan import (
     assign_motions, parse_visual, save_plan, validate_variety_longform,
     visual_target,
@@ -306,6 +307,19 @@ def _inject_chapter_flags(narration: dict, chapters_meta: list[dict]) -> None:
             s["is_rehook"] = True
 
 
+def _run_dedupe(all_scenes, ctx, chapters_meta, root, *, log=print) -> dict:
+    """Run the cross-scene anti-repetition guard on the full ordered scene list
+    and persist a per-project report. Kept as a seam so it is unit-testable
+    without driving the whole writer."""
+    roles_by_sid = {sid: cm["role"] for cm in chapters_meta for sid in cm["scene_ids"]}
+    report = dedupe_scenes(all_scenes, ctx, roles_by_sid, log=log)
+    (root / "repetition_report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False))
+    log(f"[narrate-lf] dedupe: {report['rewrites']} rewrite(s), "
+        f"max cross-scene sim now {report['max_similarity_after']}")
+    return report
+
+
 def write_longform_narration(project_name: str, *, log=print) -> dict:
     root = get_art_project_path(project_name)
     outline = json.loads((root / "outline.json").read_text())
@@ -421,6 +435,8 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             f"long-form narration too short after 2 draws: {total_words} words "
             f"(need >= {ART_LF_TOTAL_WORDS_FLOOR} for an 8-minute video)")
 
+    _run_dedupe(all_scenes, ctx, chapters_meta, root, log=log)
+    total_words = sum(sc.word_count for sc in all_scenes)  # rewrites may shift it
     validate_cross_chapter([sc.__dict__ for sc in all_scenes], all_decls,
                            panels_by_page=panels_by_page)
     assign_motions(all_decls, intro_scene_id=all_scenes[0].scene_id)
