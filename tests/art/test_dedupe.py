@@ -70,3 +70,15 @@ def test_dedupe_scenes_keeps_best_when_rewrite_keeps_duplicating(monkeypatch):
     assert len(scenes) == 2          # never drops a scene, never raises
     assert report["unresolved"] == 1
     assert any("still duplicated" in w for w in warnings)
+    assert report["rewrites"] == 0
+
+
+def test_dedupe_scenes_empty_rewrite_keeps_original(monkeypatch):
+    monkeypatch.setattr(dedupe, "semantic_sim", _fake_sim)
+    monkeypatch.setattr(dedupe, "_rewrite_scene",
+                        lambda scene, ban, role, ctx, log: "   ")  # whitespace only
+    scenes = [_scene(1, "The cathedral dominates the skyline."),
+              _scene(2, "The cathedral dominates the skyline.")]
+    report = dedupe.dedupe_scenes(scenes, {}, {1: "cold_open", 2: "twist"}, log=lambda m: None)
+    assert scenes[1].text == "The cathedral dominates the skyline."  # unchanged
+    assert report["rewrites"] == 0

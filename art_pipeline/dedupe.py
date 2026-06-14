@@ -26,6 +26,8 @@ _REWRITE_SYSTEM = (
     "NEW. Neutral, precise, second-person where natural. No hype, no CTA. "
     "Respond with STRICT JSON only: {\"text\": \"...\"}")
 
+_DEDUP_BAN_MAX = 40   # cap the ban-list fed to the rewrite prompt (avoid an overlong prompt)
+
 
 def _text(scene) -> str:
     return scene["text"] if isinstance(scene, dict) else scene.text
@@ -62,7 +64,7 @@ def _rewrite_scene(scene, ban: list[str], role: str, ctx: dict, log) -> str:
         f"  \"{original}\"\n"
         f"Write a replacement of {lo}-{hi} words that fits this chapter (role: "
         f"{role}); {role_hint}. It MUST NOT restate any of these already-said "
-        f"lines:\n" + "\n".join(f"- {b}" for b in ban[:40]) +
+        f"lines:\n" + "\n".join(f"- {b}" for b in ban[:_DEDUP_BAN_MAX]) +
         f"\n\nArtwork title: {ctx.get('title', '')}. "
         'Return JSON: {"text": "..."}')
     try:
@@ -72,7 +74,9 @@ def _rewrite_scene(scene, ban: list[str], role: str, ctx: dict, log) -> str:
                                  validator=lambda c: extract_json(c) is not None)
         data = extract_json(raw) or {}
         new = str(data.get("text") or "").strip()
-        return new or original
+        if not new or len(new.split()) > ART_LF_SCENE_MAX_WORDS:
+            return original
+        return new
     except Exception as exc:                       # never let one rewrite kill the run
         log(f"[dedupe] rewrite failed ({exc}) — keeping original")
         return original
@@ -97,7 +101,9 @@ def dedupe_scenes(scenes, ctx: dict, roles_by_sid: dict, *,
                   max_passes: int = ART_LF_DEDUP_MAX_PASSES, log=print) -> dict:
     """Detect near-duplicate scenes and surgically rewrite each later occurrence.
     Mutates `scenes` in place. Never drops a scene, never raises. Returns a report
-    {rewrites, unresolved, max_similarity_after}."""
+    {rewrites, unresolved, max_similarity_after}. Each rewrite is re-checked at the
+    start of the next pass (bounded by max_passes); a stubborn duplicate is kept,
+    never dropped."""
     rewrites = 0
     for _pass in range(max_passes):
         dups = find_near_duplicates(scenes, threshold)
@@ -108,7 +114,8 @@ def dedupe_scenes(scenes, ctx: dict, roles_by_sid: dict, *,
             sid = sc["scene_id"] if isinstance(sc, dict) else sc.scene_id
             ban = [_text(s) for k, s in enumerate(scenes) if k != later]
             new = _rewrite_scene(sc, ban, roles_by_sid.get(sid, "middle"), ctx, log)
-            if " ".join(new.lower().split()) != " ".join(_text(sc).lower().split()):
+            norm_new = " ".join(new.lower().split())
+            if norm_new and norm_new != " ".join(_text(sc).lower().split()):
                 _apply_text(sc, new)
                 rewrites += 1
                 log(f"[dedupe] rewrote scene {sid} (was a near-duplicate)")
