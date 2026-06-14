@@ -1443,7 +1443,29 @@ def _saga_clarity_block(comic_context: dict) -> str:
         "  5. CONNECT EVERY TURN — each scene says WHY it follows from the previous one\n"
         "     (cause → effect), so jumps between issues read as ONE continuous story.\n"
         "  6. PLAIN WORDS — simple, concrete language a 12-year-old grasps on first listen.\n"
+        "  7. SUPER-SUMMARIZE — this is a WHOLE multi-issue saga in ~90 seconds. Stay\n"
+        "     HIGH-LEVEL: tell the big arc (setup → key turn → climax → ending), NOT\n"
+        "     every plot beat. Collapse minor steps; keep ONLY the turns that change the\n"
+        "     hero's situation. Covering the WHOLE story lightly beats half of it in detail.\n"
         "╚════════════════════════════════════════════════════════════════╝\n\n"
+    )
+
+
+def _orientation_block() -> str:
+    """Opening-orientation rule for EVERY mode: the viewer knows nothing about this
+    comic, so the narration must establish who + where + premise BEFORE the plot's
+    first event (fixes 'who is Thorlief? what story is this?')."""
+    return (
+        "╔═══ ORIENT THE VIEWER FIRST (all modes) ═══╗\n"
+        "The viewer has NOT read this comic and knows NOTHING going in. BEFORE the\n"
+        "story's first event, the OPENING narration scene must ORIENT them in plain\n"
+        "words: WHO the main character is (name + a short who/what tag) AND the WORLD/\n"
+        "PREMISE in one clear phrase. Only AFTER that does the plot start. e.g. don't\n"
+        "open on 'When Thorlief found a body…' — first ground it: 'Thorlief is a\n"
+        "detective in the Thor Corps, a police force of Thor variants on Battleworld —\n"
+        "and when he found a body…'. Never open on a bare name or event the viewer\n"
+        "cannot place.\n"
+        "╚════════════════════════════════════════════╝\n\n"
     )
 
 
@@ -1490,6 +1512,7 @@ def write_scenes(
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + "\n"
+        + _orientation_block()
         + _saga_clarity_block(comic_context)
         + f"BEATS — write EXACTLY ONE scene for EACH beat, in this SAME order:\n{_beats_block(beats)}\n\n"
         f"GLOSSARY (use these exact names):\n{_glossary_block(glossary)}\n\n"
@@ -2526,6 +2549,7 @@ def _retry_fix_with_wiki(
         + (f"CANONICAL STORY ARC:\n{arc}\n\n" if arc else "")
         + f"CANONICAL FULL PLOT (use this as your primary source of truth):\n{plot}\n\n"
         f"VALIDATION ERRORS (fix every one):\n{err_block}\n\n"
+        + _orientation_block()
         + _saga_clarity_block(comic_context)
         + f"HARD RULES (these don't change between retries):\n"
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
