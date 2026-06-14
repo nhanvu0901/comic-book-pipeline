@@ -1389,6 +1389,38 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 Return ONLY JSON. No prose, no markdown fences."""
 
 
+def _saga_clarity_block(comic_context: dict) -> str:
+    """Extra writer rules for a multi-issue saga (comic_context.is_arc). The viewer
+    has NOT read any of the issues, so for a saga clarity beats punchiness. Returns
+    "" for single-comic mode → that path is unchanged."""
+    if not comic_context.get("is_arc"):
+        return ""
+    n = comic_context.get("issue_count", 0)
+    return (
+        f"╔═══ MULTI-ISSUE SAGA ({n} issues) — WRITE FOR MAXIMUM CLARITY ═══╗\n"
+        "This compresses a saga the viewer has NEVER read. CLARITY is the #1 goal — a\n"
+        "first-time listener must follow the WHOLE story easily. This overrides the\n"
+        "usual punchy style where they conflict. Obey:\n"
+        "  1. ONE THROUGHLINE — follow the single main hero start to finish; frame\n"
+        "     every event around what it means for THEM. Don't scatter across side names.\n"
+        "  2. GLOSS ON FIRST MENTION — the first time ANY person/place/power/object is\n"
+        "     named, add a 3-6 word plain tag of who/what it is (e.g. 'Zadkiel, the\n"
+        "     fallen angel running the games'). Never drop a bare name the viewer can't place.\n"
+        "  3. ONE NEW NAME PER SCENE — NO NAME LISTS. Introduce AT MOST one new proper\n"
+        "     name per scene and gloss it (rule 2). NEVER list several names in a sentence\n"
+        "     ('Blaze, Ketch, Jones and Slade…' is BANNED) — refer to a group collectively\n"
+        "     ('the other riders', 'his rivals'). Omit minor proper nouns that don't move\n"
+        "     the main story (background bots, gadget/object names like a machine's title) —\n"
+        "     describe them in plain words instead ('the device powering the games').\n"
+        "  4. TELL IT FORWARD — keep clear time order. If the comic flashes back, fold it\n"
+        "     into forward order ('Years earlier…') so the listener never gets lost.\n"
+        "  5. CONNECT EVERY TURN — each scene says WHY it follows from the previous one\n"
+        "     (cause → effect), so jumps between issues read as ONE continuous story.\n"
+        "  6. PLAIN WORDS — simple, concrete language a 12-year-old grasps on first listen.\n"
+        "╚════════════════════════════════════════════════════════════════╝\n\n"
+    )
+
+
 def write_scenes(
     beats: list[Beat],
     glossary: Glossary,
@@ -1432,7 +1464,8 @@ def write_scenes(
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + "\n"
-        f"BEATS — write EXACTLY ONE scene for EACH beat, in this SAME order:\n{_beats_block(beats)}\n\n"
+        + _saga_clarity_block(comic_context)
+        + f"BEATS — write EXACTLY ONE scene for EACH beat, in this SAME order:\n{_beats_block(beats)}\n\n"
         f"GLOSSARY (use these exact names):\n{_glossary_block(glossary)}\n\n"
         + (f"{few_shot}\n\n" if few_shot else "")
         + f"PAGE DETAIL (background grounding — what is actually on each page, so "
@@ -2467,7 +2500,8 @@ def _retry_fix_with_wiki(
         + (f"CANONICAL STORY ARC:\n{arc}\n\n" if arc else "")
         + f"CANONICAL FULL PLOT (use this as your primary source of truth):\n{plot}\n\n"
         f"VALIDATION ERRORS (fix every one):\n{err_block}\n\n"
-        f"HARD RULES (these don't change between retries):\n"
+        + _saga_clarity_block(comic_context)
+        + f"HARD RULES (these don't change between retries):\n"
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
         f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words (punch lines may be as short as {_SCENE_MIN_WORDS}; NO scene over {_SCENE_MAX_WORDS}).\n"
