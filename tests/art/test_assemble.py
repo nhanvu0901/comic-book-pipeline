@@ -343,3 +343,36 @@ def test_render_chapter_card(tmp_path):
              "-show_entries", "stream=width,height", "-of", "csv=p=0", str(out)],
             capture_output=True, text=True).stdout.strip()
         assert dims == "640,360"
+
+
+def test_card_windows_skip_chapter_one():
+    import art_pipeline.assemble as A
+    chapters = [
+        {"chapter_id": 1, "title": "One", "scene_ids": [1, 2, 3]},
+        {"chapter_id": 2, "title": "Two", "scene_ids": [4, 5]},
+        {"chapter_id": 3, "title": "Three", "scene_ids": [6, 7]},
+    ]
+    timings = [
+        {"scene_id": 1, "start": 0.0, "end": 5.0},
+        {"scene_id": 2, "start": 5.0, "end": 9.0},
+        {"scene_id": 3, "start": 9.0, "end": 12.0},
+        {"scene_id": 4, "start": 14.6, "end": 18.0},   # 2.6s gap after scene 3
+        {"scene_id": 5, "start": 18.0, "end": 21.0},
+        {"scene_id": 6, "start": 23.6, "end": 27.0},
+        {"scene_id": 7, "start": 27.0, "end": 30.0},
+    ]
+    wins = A._card_windows(chapters, timings)
+    assert [w["chapter_id"] for w in wins] == [2, 3]   # no card before ch1
+    assert wins[0]["t0"] == 12.0 and wins[0]["t1"] == 14.6
+    assert wins[1]["title"] == "Three"
+
+
+def test_build_card_filtergraph_chains_overlays():
+    import art_pipeline.assemble as A
+    wins = [{"chapter_id": 2, "title": "Two", "t0": 12.0, "t1": 14.6},
+            {"chapter_id": 3, "title": "Three", "t0": 23.6, "t1": 26.2}]
+    fg, final_label = A._build_card_filtergraph(wins, fade=0.5)
+    assert final_label == "[v2]"             # one label per overlaid card
+    assert fg.count("overlay=") == 2
+    assert "between(t,12.000,14.600)" in fg
+    assert "alpha=1" in fg                    # cards fade via alpha

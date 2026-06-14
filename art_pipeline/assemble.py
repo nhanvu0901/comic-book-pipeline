@@ -417,6 +417,48 @@ def _render_chapter_card(chapter_id: int, title: str, out_png: Path, *,
         raise RuntimeError(f"chapter-card render failed: {res.stderr[-600:]}")
 
 
+def _card_windows(chapters: list[dict], scene_timings: list[dict]) -> list[dict]:
+    """The silent window before each chapter 2..N: [prev chapter's last-scene
+    end, this chapter's first-scene start]. Chapter 1 gets no card (the hook
+    opens immediately). Skips a boundary whose window is non-positive."""
+    by_id = {int(t["scene_id"]): t for t in scene_timings or []}
+    wins: list[dict] = []
+    for prev, cur in zip(chapters, chapters[1:]):
+        if not prev.get("scene_ids") or not cur.get("scene_ids"):
+            continue
+        last, first = prev["scene_ids"][-1], cur["scene_ids"][0]
+        if last not in by_id or first not in by_id:
+            continue
+        t0, t1 = float(by_id[last]["end"]), float(by_id[first]["start"])
+        if t1 > t0:
+            wins.append({"chapter_id": cur["chapter_id"], "title": cur["title"],
+                         "t0": round(t0, 3), "t1": round(t1, 3)})
+    return wins
+
+
+def _build_card_filtergraph(windows: list[dict], *, fade: float) -> tuple[str, str]:
+    """Build the filter_complex that overlays each card (inputs [1:v], [2:v], …)
+    onto the base video [0:v], each gated to its window with an alpha fade
+    0→1→0. Returns (filtergraph, final_video_label). Card input k corresponds to
+    windows[k-1]."""
+    parts: list[str] = []
+    base = "[0:v]"
+    for k, win in enumerate(windows, start=1):
+        t0, t1 = win["t0"], win["t1"]
+        dur = max(0.0, t1 - t0)
+        f = min(fade, dur / 2) if dur else 0.0
+        # card input k: fade alpha in/out, shift its PTS to start at t0
+        parts.append(
+            f"[{k}:v]format=yuva420p,"
+            f"fade=t=in:st=0:d={f:.3f}:alpha=1,"
+            f"fade=t=out:st={max(0.0, dur - f):.3f}:d={f:.3f}:alpha=1,"
+            f"setpts=PTS-STARTPTS+{t0:.3f}/TB[c{k}]")
+        out_lab = f"[v{k}]"
+        parts.append(f"{base}[c{k}]overlay=enable='between(t,{t0:.3f},{t1:.3f})'{out_lab}")
+        base = out_lab
+    return ";".join(parts), base
+
+
 def assemble_art_video(
     project_name: str,
     *,
