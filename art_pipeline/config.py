@@ -107,6 +107,28 @@ ART_LF_REHOOK_POSITIONS = (2, 3)    # 1-based chapter positions that must END wi
 ART_LF_REGION_REUSE_WINDOW = 6      # same region may not appear twice within any 6 consecutive scenes (long-form)
 
 
+# ── Anti-repetition (long-form, 2026-06-14) ──────────────────────────────────
+# Long-form writes one chapter at a time; each chapter re-describes the same
+# painting → near-verbatim repeats (Toledo: the brushstroke line appeared 3x).
+# Layer 1: feed prior chapters' sentences into the prompt (truncated). Layer 2:
+# embedding near-dup guard + surgical rewrite (dedupe.py).
+ART_LF_SAID_LINES_MAX = int(os.getenv("ART_LF_SAID_LINES_MAX", "60"))
+ART_LF_DEDUP_THRESHOLD = float(os.getenv("ART_LF_DEDUP_THRESHOLD", "0.86"))
+ART_LF_DEDUP_MAX_PASSES = int(os.getenv("ART_LF_DEDUP_MAX_PASSES", "2"))
+
+# ── Chapter title cards (long-form, 2026-06-14) ──────────────────────────────
+# Full-screen card (fade-to-black) before chapters 2..N so viewers know which
+# section they are in. The card sits inside the inter-chapter silence — to make
+# room, that silence is widened from ART_LF_CHAPTER_GAP_S to CARD_SEC. Because
+# longform_tts folds the silence into every later scene's offset, scene_timings
+# stays consistent → zero A/V drift.
+ART_LF_CHAPTER_CARDS = os.getenv("ART_LF_CHAPTER_CARDS", "true").lower() in ("true", "1", "yes")
+ART_LF_CHAPTER_CARD_SEC = float(os.getenv("ART_LF_CHAPTER_CARD_SEC", "2.6"))
+ART_CARD_BG = os.getenv("ART_CARD_BG", "#0d1b2a")        # midnight blue
+ART_CARD_ACCENT = os.getenv("ART_CARD_ACCENT", "#c9a44a")  # muted gold
+ART_CARD_FONT = os.getenv("ART_CARD_FONT", str(_REPO_ROOT / "fonts" / "Anton-Regular.ttf"))
+
+
 @dataclass(frozen=True)
 class ArtMode:
     key: str

@@ -53,3 +53,15 @@ def test_longform_constants():
     assert (c.ART_LF_OUTPUT_W, c.ART_LF_OUTPUT_H) == (1920, 1080)
     assert c.ART_LF_REHOOK_POSITIONS == (2, 3)
     assert c.ART_LF_REGION_REUSE_WINDOW == 6
+
+
+def test_dedup_and_card_constants_exist():
+    from art_pipeline import config as C
+    assert C.ART_LF_SAID_LINES_MAX == 60
+    assert C.ART_LF_DEDUP_THRESHOLD == 0.86
+    assert C.ART_LF_DEDUP_MAX_PASSES == 2
+    assert C.ART_LF_CHAPTER_CARDS is True
+    assert C.ART_LF_CHAPTER_CARD_SEC == 2.6
+    assert C.ART_CARD_BG == "#0d1b2a"
+    assert C.ART_CARD_ACCENT == "#c9a44a"
+    assert C.ART_CARD_FONT.endswith("Anton-Regular.ttf")
