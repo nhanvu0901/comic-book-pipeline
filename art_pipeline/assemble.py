@@ -459,6 +459,43 @@ def _build_card_filtergraph(windows: list[dict], *, fade: float) -> tuple[str, s
     return ";".join(parts), base
 
 
+def _overlay_chapter_cards(silent_video: Path, chapters: list[dict],
+                           scene_timings: list[dict], *, w: int | None = None,
+                           h: int | None = None, log=print) -> None:
+    """Render a card per chapter boundary and overlay them onto the silent video
+    inside their silent windows (opaque, alpha-faded). Total duration is
+    unchanged — the cards live in silence the audio already contains, so A/V
+    sync is preserved. No-op when there are no boundaries."""
+    windows = _card_windows(chapters, scene_timings)
+    if not windows:
+        return
+    import stages.stage_5.shots as shots
+    w = w or shots.OUTPUT_W
+    h = h or shots.OUTPUT_H
+    ff = _resolve_ffmpeg()
+    card_dir = silent_video.parent / "_chapter_cards"
+    card_dir.mkdir(exist_ok=True)
+    card_pngs: list[Path] = []
+    for win in windows:
+        png = card_dir / f"card_{win['chapter_id']:02d}.png"
+        _render_chapter_card(win["chapter_id"], win["title"], png, w=w, h=h)
+        card_pngs.append(png)
+    fg, final_label = _build_card_filtergraph(windows, fade=0.5)
+    inputs = ["-i", str(silent_video)]
+    for win, png in zip(windows, card_pngs):
+        dur = win["t1"] - win["t0"]
+        inputs += ["-loop", "1", "-t", f"{dur:.3f}", "-i", str(png)]
+    out = silent_video.with_suffix(".carded.mp4")
+    cmd = [ff, "-y", *inputs, "-filter_complex", fg, "-map", final_label,
+           "-r", str(FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-preset", "medium", "-an", str(out)]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"chapter-card overlay failed: {res.stderr[-700:]}")
+    out.replace(silent_video)
+    log(f"[assemble] overlaid {len(windows)} chapter card(s)")
+
+
 def assemble_art_video(
     project_name: str,
     *,
@@ -532,8 +569,11 @@ def assemble_art_video(
         _concat(shot_paths, silent)
     if C.ART_FILM_LOOK:
         _apply_film_look(silent, log=log)
-    captions = root / "captions.ass"
     longform = (root / "chapters.json").exists()
+    if longform and C.ART_LF_CHAPTER_CARDS:
+        chapters_meta = json.loads((root / "chapters.json").read_text())
+        _overlay_chapter_cards(silent, chapters_meta, scene_timings, log=log)
+    captions = root / "captions.ass"
     if longform:
         # Long-form ships CC subtitles, not burned-in karaoke: write a
         # header-only .ass (renders nothing) + subtitles.srt for upload.

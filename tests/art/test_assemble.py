@@ -376,3 +376,42 @@ def test_build_card_filtergraph_chains_overlays():
     assert fg.count("overlay=") == 2
     assert "between(t,12.000,14.600)" in fg
     assert "alpha=1" in fg                    # cards fade via alpha
+
+
+def _make_silent(ff, path, seconds, w=320, h=180):
+    subprocess.run([ff, "-y", "-f", "lavfi", "-i",
+                    f"color=c=gray:s={w}x{h}:d={seconds}", "-r", "25",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)],
+                   capture_output=True, text=True, check=True)
+
+
+def test_overlay_chapter_cards_preserves_duration(tmp_path):
+    import art_pipeline.assemble as A
+    from stages.stage_5.pipeline import _probe_duration
+    ff = A._resolve_ffmpeg()
+    silent = tmp_path / "video_silent.mp4"
+    _make_silent(ff, silent, 12.0)
+    before = _probe_duration(silent)
+    chapters = [{"chapter_id": 1, "title": "One", "scene_ids": [1, 2]},
+                {"chapter_id": 2, "title": "Two", "scene_ids": [3, 4]}]
+    timings = [{"scene_id": 1, "start": 0.0, "end": 3.0},
+               {"scene_id": 2, "start": 3.0, "end": 5.0},
+               {"scene_id": 3, "start": 7.6, "end": 10.0},
+               {"scene_id": 4, "start": 10.0, "end": 12.0}]
+    A._overlay_chapter_cards(silent, chapters, timings, w=320, h=180, log=lambda m: None)
+    after = _probe_duration(silent)
+    assert abs(after - before) < 0.15      # zero drift (within one frame)
+
+
+def test_overlay_no_op_without_boundaries(tmp_path):
+    import art_pipeline.assemble as A
+    from stages.stage_5.pipeline import _probe_duration
+    ff = A._resolve_ffmpeg()
+    silent = tmp_path / "v.mp4"
+    _make_silent(ff, silent, 4.0)
+    before = _probe_duration(silent)
+    # single chapter → no boundary → file untouched
+    A._overlay_chapter_cards(silent, [{"chapter_id": 1, "title": "Solo",
+                                       "scene_ids": [1]}], [{"scene_id": 1,
+                                       "start": 0.0, "end": 4.0}], log=lambda m: None)
+    assert abs(_probe_duration(silent) - before) < 0.05
