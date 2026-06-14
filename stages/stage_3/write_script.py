@@ -381,7 +381,10 @@ def write_script(
     # Wiki mismatches are CRITICAL but we give the LLM up to MAX_PASSES tries
     # to land canonical narration before giving up. 4 (was 3) gives the order +
     # state-tracking + fidelity checks one more round to converge before best-draft.
-    MAX_PASSES = 4
+    # Multi-issue sagas run EVERY phase through the SDK and make ~2 SDK calls per
+    # pass (retry-wiki + wiki-check); 4 passes exhausts the account usage window
+    # mid-run. Cap arcs at 2 passes to roughly halve the SDK calls per saga run.
+    MAX_PASSES = 2 if comic_context.get("is_arc") else 4
     best_parsed = parsed
     # (length_ok, words_ok, -critical, -errors, -words): higher is better.
     # (complete, -n_critical, words_ok, -errors, -words) — see selection below.
