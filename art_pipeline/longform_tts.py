@@ -10,6 +10,7 @@ import json
 import wave
 from pathlib import Path
 
+from . import config as C
 from .config import ART_LF_CHAPTER_GAP_S, get_art_project_path
 
 
@@ -22,7 +23,7 @@ def _chapter_dir(root: Path, chapter_id: int) -> Path:
 
 
 def synthesize_longform(project_name: str, *, force: bool = False,
-                        log=print) -> dict:
+                        calm: bool = True, log=print) -> dict:
     root = get_art_project_path(project_name)
     chapters_path = root / "chapters.json"
     if not chapters_path.exists():
@@ -51,7 +52,13 @@ def synthesize_longform(project_name: str, *, force: bool = False,
                 json.dumps(ch_narration, indent=2, ensure_ascii=False))
             log(f"[tts-lf] chapter {ch['chapter_id']}/{len(chapters)} "
                 f"({len(ch['scene_ids'])} scenes)…")
-            s4.synthesize_project(ch_dir.name, force=force)
+            # calm-voice knobs per chapter (the frequency-shaping pass runs ONCE
+            # on the final stitched WAV below). caption_chunks unused (see note).
+            ch_kwargs = {"force": force}
+            if calm:
+                ch_kwargs.update(emotion=C.ART_VOICE_EMOTION, speed=C.ART_VOICE_SPEED,
+                                 volume=C.ART_VOICE_VOLUME, post_atempo=C.ART_POST_ATEMPO)
+            s4.synthesize_project(ch_dir.name, **ch_kwargs)
             # caption_chunks.json per-chapter is intentionally discarded: long-form ships
             # subtitles.srt derived from the stitched word timestamps (Task 6); root-level
             # caption_chunks.json is never written and Stage 5 falls back gracefully.
@@ -113,4 +120,12 @@ def synthesize_longform(project_name: str, *, force: bool = False,
     total = frames_written / framerate
     log(f"[tts-lf] stitched {len(chapters)} chapters → audio.wav "
         f"({total:.1f}s, gap {ART_LF_CHAPTER_GAP_S}s)")
+    # Frequency-shape the FINAL stitched WAV once (length-preserving → the
+    # frame-exact offsets above stay valid).
+    if calm and C.ART_CALM_AUDIO:
+        from .audio_fx import apply_calm_filters
+        apply_calm_filters(out_wav, lowpass_hz=C.ART_CALM_LOWPASS_HZ,
+                           bass_gain_db=C.ART_CALM_BASS_GAIN_DB,
+                           deess_gain_db=C.ART_CALM_DEESS_GAIN_DB,
+                           lufs=C.ART_CALM_LUFS, log=log)
     return {"chapters": len(chapters), "duration": round(total, 2)}

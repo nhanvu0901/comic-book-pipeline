@@ -6,9 +6,9 @@
   outline <project> [--mode KEY] [--force]
   narrate <project> [--mode KEY]
   hunt    <project> [--force]
-  tts     <project> [--force]
+  tts     <project> [--force] [--no-calm]
   video   <project> [--force] [--no-music]
-  all     <project> --ids 436535 [--mode KEY] [--length short|longform]
+  all     <project> --ids 436535 [--mode KEY] [--length short|longform] [--no-calm]
           (chain order: fetch → regions → ground → [outline] → narrate → hunt → tts → video)
 """
 import argparse
@@ -35,6 +35,8 @@ def main(argv=None) -> int:
     p = add("narrate"); p.add_argument("--mode", default=None)
     p = add("hunt"); p.add_argument("--force", action="store_true")
     p = add("tts"); p.add_argument("--force", action="store_true")
+    p.add_argument("--no-calm", action="store_true",
+                   help="skip the soothing voice + frequency shaping (plain Stage-4 defaults)")
     p = add("video"); p.add_argument("--force", action="store_true")
     p.add_argument("--no-music", action="store_true")
     p = add("all")
@@ -42,6 +44,7 @@ def main(argv=None) -> int:
     p.add_argument("--mode", default="painting_deep_dive")
     p.add_argument("--theme", default="")
     p.add_argument("--length", default="short", choices=["short", "longform"])
+    p.add_argument("--no-calm", action="store_true")
 
     a = ap.parse_args(argv)
 
@@ -81,12 +84,13 @@ def main(argv=None) -> int:
         from .hunt import hunt_visuals
         hunt_visuals(a.project, force=getattr(a, "force", False))
     if a.cmd in ("tts", "all"):
+        calm = not getattr(a, "no_calm", False)
         if _length(a.project) == "longform":
             from .longform_tts import synthesize_longform
-            synthesize_longform(a.project, force=getattr(a, "force", False))
+            synthesize_longform(a.project, force=getattr(a, "force", False), calm=calm)
         else:
             from .tts import synthesize_art
-            synthesize_art(a.project, force=getattr(a, "force", False))
+            synthesize_art(a.project, force=getattr(a, "force", False), calm=calm)
     if a.cmd in ("video", "all"):
         from .video import assemble_art
         assemble_art(a.project, force=getattr(a, "force", False),

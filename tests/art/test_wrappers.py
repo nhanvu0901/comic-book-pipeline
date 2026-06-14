@@ -6,7 +6,7 @@ def test_tts_wrapper_points_stage4_at_art_root(monkeypatch):
     calls = {}
     monkeypatch.setattr(s4, "synthesize_project",
                         lambda name, **kw: calls.update(name=name, kw=kw) or "RESULT")
-    out = tts.synthesize_art("proj-x", emotion="calm")
+    out = tts.synthesize_art("proj-x", calm=False, emotion="calm")
     assert out == "RESULT"
     assert calls["name"] == "proj-x" and calls["kw"]["emotion"] == "calm"
     assert s4.PROJECTS_ROOT == ART_PROJECTS_ROOT

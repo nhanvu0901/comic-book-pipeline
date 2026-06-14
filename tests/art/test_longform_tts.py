@@ -62,7 +62,7 @@ def _make_longform_project(tmp_path, monkeypatch, chapter_secs=(2.0, 3.0)):
 
 def test_stitch_offsets_exact(tmp_path, monkeypatch):
     root = _make_longform_project(tmp_path, monkeypatch, (2.0, 3.0))
-    out = longform_tts.synthesize_longform("proj", log=lambda *_: None)
+    out = longform_tts.synthesize_longform("proj", calm=False, log=lambda *_: None)
     with wave.open(str(root / "audio.wav"), "rb") as w:
         total = w.getnframes() / w.getframerate()
     assert total == pytest.approx(2.0 + ART_LF_CHAPTER_GAP_S + 3.0, abs=0.01)
@@ -82,7 +82,7 @@ def test_stitch_offsets_exact(tmp_path, monkeypatch):
 def test_skip_when_audio_exists(tmp_path, monkeypatch):
     root = _make_longform_project(tmp_path, monkeypatch)
     _write_wav(root / "audio.wav", 1.0)
-    out = longform_tts.synthesize_longform("proj", log=lambda *_: None)
+    out = longform_tts.synthesize_longform("proj", calm=False, log=lambda *_: None)
     assert out.get("skipped") is True
 
 
@@ -90,7 +90,7 @@ def test_missing_chapters_json_errors(tmp_path, monkeypatch):
     root = _make_longform_project(tmp_path, monkeypatch)
     (root / "chapters.json").unlink()
     with pytest.raises(FileNotFoundError):
-        longform_tts.synthesize_longform("proj", log=lambda *_: None)
+        longform_tts.synthesize_longform("proj", calm=False, log=lambda *_: None)
 
 
 def test_param_mismatch_errors_and_no_partial_wav(tmp_path, monkeypatch):
@@ -107,6 +107,6 @@ def test_param_mismatch_errors_and_no_partial_wav(tmp_path, monkeypatch):
     monkeypatch.setattr("stages.stage_4.pipeline.synthesize_project", mismatched)
 
     with pytest.raises(RuntimeError, match="params differ"):
-        longform_tts.synthesize_longform("proj", log=lambda *_: None)
+        longform_tts.synthesize_longform("proj", calm=False, log=lambda *_: None)
     # atomic write: a failure mid-stitch must not leave a corrupt audio.wav
     assert not (root / "audio.wav").exists()

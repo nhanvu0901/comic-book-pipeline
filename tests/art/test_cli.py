@@ -124,7 +124,7 @@ def test_cli_tts_dispatches_longform(tmp_path, monkeypatch):
     lf_tts_calls = []
     import art_pipeline.longform_tts as lftts_mod
     monkeypatch.setattr(lftts_mod, "synthesize_longform",
-                        lambda proj, force=False: lf_tts_calls.append(proj))
+                        lambda proj, force=False, calm=True: lf_tts_calls.append(proj))
 
     result = cli.main(["tts", "myproj"])
     assert result == 0
@@ -141,7 +141,7 @@ def test_cli_tts_short_unchanged(tmp_path, monkeypatch):
     short_tts_calls = []
     import art_pipeline.tts as tts_mod
     monkeypatch.setattr(tts_mod, "synthesize_art",
-                        lambda proj, force=False: short_tts_calls.append(proj))
+                        lambda proj, force=False, calm=True: short_tts_calls.append(proj))
 
     result = cli.main(["tts", "myproj"])
     assert result == 0

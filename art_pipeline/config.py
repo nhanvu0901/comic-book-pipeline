@@ -32,6 +32,23 @@ ART_SDK_MIN_STORY_CHARS = 200  # SDK result below this (or no source_url) = reje
 # chain. Art text calls `stages.stage_3._llm.call_with_chain` directly; there
 # is no art-specific flag. VLM region proposal always stays on OpenRouter.
 
+# ── Calm / sleep voice (2026-06-13, research/reports/2026-06-13-*) ───────────
+# Soothing delivery for relaxation / "chill / easy to fall asleep" videos. All
+# art-side: comic Stage 4 accepts emotion/speed/volume/post_atempo via
+# synthesize_project kwargs (no comic edit), and audio_fx shapes frequency on
+# the finished WAV (length-preserving → no A/V drift). post_atempo < 1.0 SLOWS
+# the pace (comic default 1.1 = faster); it runs BEFORE scene_timings, so sync
+# is preserved. Override any value via env.
+ART_VOICE_EMOTION = os.getenv("ART_VOICE_EMOTION", "peaceful")  # Cartesia: peaceful/serene/calm
+ART_VOICE_SPEED = float(os.getenv("ART_VOICE_SPEED", "0.9"))    # Cartesia speed (0.6–1.2 usable)
+ART_VOICE_VOLUME = float(os.getenv("ART_VOICE_VOLUME", "0.85"))
+ART_POST_ATEMPO = float(os.getenv("ART_POST_ATEMPO", "0.95"))   # <1 slows; pitch-preserving
+ART_CALM_AUDIO = os.getenv("ART_CALM_AUDIO", "true").lower() in ("true", "1", "yes")
+ART_CALM_LOWPASS_HZ = int(os.getenv("ART_CALM_LOWPASS_HZ", "4000"))
+ART_CALM_BASS_GAIN_DB = float(os.getenv("ART_CALM_BASS_GAIN_DB", "5"))
+ART_CALM_DEESS_GAIN_DB = float(os.getenv("ART_CALM_DEESS_GAIN_DB", "-6"))
+ART_CALM_LUFS = float(os.getenv("ART_CALM_LUFS", "-18"))
+
 # ── A4b narration — art keeps its OWN copies of word budgets (spec §6) ──────
 ART_TARGET_WORDS_MIN = 165
 ART_TARGET_WORDS_MAX = 270
