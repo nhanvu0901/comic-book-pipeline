@@ -11,6 +11,7 @@ back to an UNUSED painting region (keeps the variety rules), else painting_full.
 The pipeline never dies here."""
 import hashlib
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -26,6 +27,50 @@ from stages.stage_2.schema import PanelInfo, PreprocessedPage
 from ._json import extract_json
 from .config import VISUAL_MIN_SHORT_SIDE, get_art_project_path
 from .visual_plan import assign_motions, visual_target
+
+# A subject "names a specific artwork" when it carries a possessive/by-attributed
+# Title-Case work, e.g. "Van Gogh's The Starry Night" / "The Fighting Temeraire by
+# Turner". Best-effort (documented in the spec) — it targets the prominent, quoted
+# titles that caused the Toledo mismatch, not arbitrary art-title NER.
+#
+# Two patterns:
+#   (A) "<Artist>'s <Title>" — title follows the possessive
+#   (B) "<Title> by <Artist>" — title precedes "by"; must start at sentence
+#       start or after a determiner so we don't trigger on "inspired by".
+_POSSESSIVE_RE = re.compile(
+    r"'s\s+((?:The\s+)?[A-Z][\w'-]+(?:\s+[A-Z][\w'-]+){1,5})")
+_TITLE_BY_RE = re.compile(
+    r"(?:^|(?<=\s))((?:The\s+)?[A-Z][\w'-]+(?:\s+[A-Z][\w'-]+){1,5})\s+by\s+[A-Z]")
+
+
+def _named_artwork(subject: str) -> str | None:
+    """Return the lowercased artwork title named in `subject`, or None if the
+    subject is generic. 'by <Title>' / "<Artist>'s <Title>" patterns only."""
+    s = subject or ""
+    m = _POSSESSIVE_RE.search(s)
+    if m:
+        return " ".join(m.group(1).lower().split())
+    m = _TITLE_BY_RE.search(s)
+    if m:
+        return " ".join(m.group(1).lower().split())
+    return None
+
+
+def _image_matches_named_artwork(subject: str, resolved_title: str) -> bool:
+    """True = accept the image. If `subject` names a specific artwork, require the
+    resolved image title to contain that work's core tokens (>=80% overlap, the
+    fact_is_grounded style). Generic subjects always pass (guard does not fire)."""
+    work = _named_artwork(subject)
+    if not work:
+        return True
+    title_tokens = set(re.findall(r"[a-z0-9]+", (resolved_title or "").lower()))
+    work_tokens = [t for t in re.findall(r"[a-z0-9]+", work)
+                   if t not in ("the", "a", "of")]
+    if not work_tokens:
+        return True
+    hit = sum(1 for t in work_tokens if t in title_tokens)
+    return hit / len(work_tokens) >= 0.8
+
 
 # Arbitrary websites 403 obvious bot UAs; a browser-ish UA is standard practice
 # for one-off fetches of publicly served images.
@@ -316,7 +361,8 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
                     break
                 attempted.append({"url": url, "reason": got})
                 log(f"[hunt]   scene {d['scene_id']}: {url[:90]} → {got}")
-        if dims:
+        if dims and _image_matches_named_artwork(
+                str(d.get("subject") or ""), str((c or {}).get("title") or "")):
             w, h = dims
             page = build_related_page(page_number=next_page,
                                       image_path=str(dest.resolve()),
@@ -341,7 +387,8 @@ def hunt_visuals(project_name: str, *, force: bool = False, log=print) -> dict:
                 resolved_by_subject[subj_key] = s["page_ref"]
             continue
         # ── fallback: unused painting region, else painting_full ────────────
-        reason = ("no SDK candidate" if not c else
+        reason = ("named-artwork mismatch" if (dims and c) else
+                  "no SDK candidate" if not c else
                   "duplicate image" if not attempted else
                   "download/size reject (both candidates)" if len(attempted) > 1 else
                   "download/size reject")

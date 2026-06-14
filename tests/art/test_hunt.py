@@ -466,3 +466,26 @@ def test_hunt_force_restores_then_redoes(tmp_path, monkeypatch):
     rel = [p for p in (root / "preprocessed").glob("page_*.json")
            if json.loads(p.read_text())["preprocessing_method"] == "web-related"]
     assert len(rel) == 1
+
+
+# ── Task 10: named-artwork ↔ resolved-image guard ────────────────────────────
+
+def test_named_artwork_subject_detected():
+    assert hunt_mod._named_artwork("Vincent van Gogh's The Starry Night") == "the starry night"
+    assert hunt_mod._named_artwork("The Fighting Temeraire by J. M. W. Turner") == "the fighting temeraire"
+    # generic subjects are NOT named artworks → no gating
+    assert hunt_mod._named_artwork("a portrait of the artist") is None
+    assert hunt_mod._named_artwork("Toledo cathedral interior") is None
+
+
+def test_image_matches_named_artwork():
+    # subject names Starry Night, resolved image is Turner → REJECT
+    assert hunt_mod._image_matches_named_artwork(
+        "Vincent van Gogh's The Starry Night", "The Fighting Temeraire") is False
+    # resolved title contains the work → ACCEPT
+    assert hunt_mod._image_matches_named_artwork(
+        "Vincent van Gogh's The Starry Night",
+        "The Starry Night, Vincent van Gogh, 1889") is True
+    # generic subject → always accept (guard does not fire)
+    assert hunt_mod._image_matches_named_artwork(
+        "a portrait of the artist", "El Greco self-portrait") is True

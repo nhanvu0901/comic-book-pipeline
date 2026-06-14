@@ -88,7 +88,9 @@ Hard rules:
    - {{"kind": "painting_full"}} — whole artwork, AT MOST once in this chapter
      ({full_note}).
    - {{"kind": "related", "subject": "<concrete searchable image>"}} — artist,
-     era, place, technique, x-ray. Aim for roughly 30% related scenes.
+     era, place, technique, x-ray. Aim for roughly 30% related scenes. If the
+     scene's TEXT names a specific artwork (e.g. "Van Gogh's The Starry Night"),
+     the subject MUST be that exact artwork title — never a different work.
 4. VARIETY: no two consecutive scenes show the same thing; a region may
    RETURN later, but never within {window} scenes of its last use; related
    subjects all differ. The previous chapter ended on these region
