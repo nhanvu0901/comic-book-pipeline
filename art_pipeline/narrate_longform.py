@@ -63,13 +63,10 @@ def _role_budget(role: str) -> str:
 
 def _said_block(said_lines: list[str], *, limit: int = ART_LF_SAID_LINES_MAX) -> str:
     """The most-recent `limit` already-narrated sentences, as a bullet block for
-    the prompt. Empty list → empty string (chapter 1 has nothing prior).
-
-    Internally keeps up to `limit + 1` sentences so the model sees the
-    sentence immediately before the window boundary (avoids hard cut-off)."""
-    if not said_lines:
+    the prompt. Empty list → empty string (chapter 1 has nothing prior)."""
+    recent = said_lines[-limit:]
+    if not recent:
         return ""
-    recent = said_lines[-(limit + 1):]
     return ("ALREADY NARRATED (do NOT restate any of these — add only NEW "
             "information):\n" + "\n".join(f"- {s}" for s in recent))
 

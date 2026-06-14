@@ -324,7 +324,9 @@ def test_said_block_truncates_and_lists():
     import art_pipeline.narrate_longform as nlf
     lines = [f"sentence number {i}" for i in range(100)]
     block = nlf._said_block(lines, limit=10)
-    assert "sentence number 99" in block          # keeps the most recent
-    assert "sentence number 89" in block
-    assert "sentence number 50" not in block       # older ones dropped
+    assert "sentence number 99" in block          # most recent kept
+    assert "sentence number 90" in block          # exactly 10 most recent
+    assert "sentence number 89" not in block       # the 11th-from-last is dropped
     assert nlf._said_block([], limit=10) == ""      # empty → empty block
+    # exactly `limit` lines, no more
+    assert block.count("- sentence number") == 10
