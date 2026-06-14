@@ -169,9 +169,10 @@ def _complete_with_retry(
 ) -> str | None:
     """Run the SDK with proper transient-retry. Returns the model text, or None on
     a real failure (timeout / account usage cap / persistent error / no SDK). Never
-    raises — the caller falls back per FREE_MODEL policy. Retries ONLY transient
-    server errors (529 / per-minute 429 / empty) with backoff; an account usage cap
-    ('rejected') is surfaced immediately (retrying now is pointless)."""
+    raises — the caller falls back per FREE_MODEL policy. Retries transient server
+    errors (529 / per-minute 429 / empty) AND flaky SDK exceptions (e.g. 'Claude
+    Code returned an error result') with backoff; an account usage cap ('rejected')
+    is surfaced immediately (retrying now is pointless)."""
     if not sdk_available():
         return None
     for i in range(_TRANSIENT_RETRIES + 1):
@@ -181,7 +182,16 @@ def _complete_with_retry(
             _log(f"[claude-sdk] timeout >{timeout}s — falling back")
             return None
         if "_err" in res:
-            _log(f"[claude-sdk] error: {type(res['_err']).__name__}: {str(res['_err'])[:160]}")
+            # Flaky SDK/CLI exceptions ('error result: success', decode errors,
+            # transport blips) are usually transient — retry with backoff rather
+            # than killing the whole stage on the first one.
+            detail = f"exception {type(res['_err']).__name__}: {str(res['_err'])[:120]}"
+            if i < _TRANSIENT_RETRIES:
+                back = _TRANSIENT_BACKOFF_S[min(i, len(_TRANSIENT_BACKOFF_S) - 1)]
+                _log(f"[claude-sdk] {detail} — retry {i + 1}/{_TRANSIENT_RETRIES} in {back}s")
+                time.sleep(back)
+                continue
+            _log(f"[claude-sdk] {detail} — exhausted {_TRANSIENT_RETRIES} retries, falling back")
             return None
         kind, detail = _classify(res)
         if kind == "ok":
