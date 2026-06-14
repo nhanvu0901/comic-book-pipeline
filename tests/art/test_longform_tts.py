@@ -123,3 +123,18 @@ def test_inter_chapter_gap_follows_card_flag(monkeypatch):
     assert lftts._inter_chapter_gap_s() == 2.6
     monkeypatch.setattr(C, "ART_LF_CHAPTER_CARDS", False)
     assert lftts._inter_chapter_gap_s() == 1.0
+
+
+def test_longform_passes_art_voice_id(tmp_path, monkeypatch):
+    from art_pipeline import config as C
+    monkeypatch.setattr(C, "ART_LF_CHAPTER_CARDS", False)
+    root = _make_longform_project(tmp_path, monkeypatch, (2.0, 3.0))
+    import stages.stage_4.pipeline as s4
+    orig = s4.synthesize_project          # the fake set by _make_longform_project
+    seen = {}
+    def capture(project_name, **kwargs):
+        seen["voice_id"] = kwargs.get("voice_id")
+        return orig(project_name, **kwargs)
+    monkeypatch.setattr("stages.stage_4.pipeline.synthesize_project", capture)
+    longform_tts.synthesize_longform("proj", calm=True, log=lambda *_: None)
+    assert seen["voice_id"] == C.ART_VOICE_ID

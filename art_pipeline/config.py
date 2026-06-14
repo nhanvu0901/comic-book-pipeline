@@ -43,6 +43,10 @@ ART_VOICE_EMOTION = os.getenv("ART_VOICE_EMOTION", "peaceful")  # Cartesia: peac
 ART_VOICE_SPEED = float(os.getenv("ART_VOICE_SPEED", "0.9"))    # Cartesia speed (0.6–1.2 usable)
 ART_VOICE_VOLUME = float(os.getenv("ART_VOICE_VOLUME", "0.85"))
 ART_POST_ATEMPO = float(os.getenv("ART_POST_ATEMPO", "0.95"))   # <1 slows; pitch-preserving
+# Voice identity for art renders (a calm Cartesia narrator, distinct from the
+# comic default). Rupert - Caring Dad: warm, mature, reassuring → fits the
+# "story behind the painting" tone. Override via env to A/B other voices.
+ART_VOICE_ID = os.getenv("ART_VOICE_ID", "0ad65e7f-006c-47cf-bd31-52279d487913")  # Rupert - Caring Dad
 ART_CALM_AUDIO = os.getenv("ART_CALM_AUDIO", "true").lower() in ("true", "1", "yes")
 ART_CALM_LOWPASS_HZ = int(os.getenv("ART_CALM_LOWPASS_HZ", "4000"))
 ART_CALM_BASS_GAIN_DB = float(os.getenv("ART_CALM_BASS_GAIN_DB", "5"))

@@ -65,3 +65,8 @@ def test_dedup_and_card_constants_exist():
     assert C.ART_CARD_BG == "#0d1b2a"
     assert C.ART_CARD_ACCENT == "#c9a44a"
     assert C.ART_CARD_FONT.endswith("Anton-Regular.ttf")
+
+
+def test_art_voice_id_default_rupert():
+    from art_pipeline import config as C
+    assert C.ART_VOICE_ID == "0ad65e7f-006c-47cf-bd31-52279d487913"  # Rupert - Caring Dad

@@ -62,7 +62,7 @@ def synthesize_longform(project_name: str, *, force: bool = False,
                 f"({len(ch['scene_ids'])} scenes)…")
             # calm-voice knobs per chapter (the frequency-shaping pass runs ONCE
             # on the final stitched WAV below). caption_chunks unused (see note).
-            ch_kwargs = {"force": force}
+            ch_kwargs = {"force": force, "voice_id": C.ART_VOICE_ID}
             if calm:
                 ch_kwargs.update(emotion=C.ART_VOICE_EMOTION, speed=C.ART_VOICE_SPEED,
                                  volume=C.ART_VOICE_VOLUME, post_atempo=C.ART_POST_ATEMPO)
