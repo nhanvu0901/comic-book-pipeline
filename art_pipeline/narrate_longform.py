@@ -20,7 +20,7 @@ from .visual_plan import (
 )
 from .config import (
     ART_LF_CHAPTER_WORDS_BAND, ART_LF_REGION_REUSE_WINDOW, ART_LF_REHOOK_POSITIONS,
-    ART_LF_SCENE_MAX_WORDS, ART_LF_SCENES_PER_CHAPTER_MAX,
+    ART_LF_SAID_LINES_MAX, ART_LF_SCENE_MAX_WORDS, ART_LF_SCENES_PER_CHAPTER_MAX,
     ART_LF_SCENES_PER_CHAPTER_MIN, ART_LF_TOTAL_WORDS_FLOOR, ART_WORDS_PER_SEC,
     get_art_project_path,
 )
@@ -47,6 +47,31 @@ def _is_forward_hook(text: str) -> bool:
 def _has_cta(text: str) -> bool:
     low = text.lower()
     return any(p in low for p in _CTA_PHRASES)
+
+
+def _role_budget(role: str) -> str:
+    """Description budget by chapter role: only the cold_open and the evidence
+    chapter may catalog the painting's appearance; interpretive chapters must
+    reference features to build meaning, not re-describe them."""
+    if role in ("cold_open", "evidence"):
+        return ("DESCRIPTION BUDGET: You MAY describe the painting's visual "
+                "appearance in this chapter.")
+    return ("DESCRIPTION BUDGET: Do NOT catalog the painting's appearance — it "
+            "has been described already. Reference a feature only to make a new "
+            "interpretive or historical point.")
+
+
+def _said_block(said_lines: list[str], *, limit: int = ART_LF_SAID_LINES_MAX) -> str:
+    """The most-recent `limit` already-narrated sentences, as a bullet block for
+    the prompt. Empty list → empty string (chapter 1 has nothing prior).
+
+    Internally keeps up to `limit + 1` sentences so the model sees the
+    sentence immediately before the window boundary (avoids hard cut-off)."""
+    if not said_lines:
+        return ""
+    recent = said_lines[-(limit + 1):]
+    return ("ALREADY NARRATED (do NOT restate any of these — add only NEW "
+            "information):\n" + "\n".join(f"- {s}" for s in recent))
 
 
 _LF_SYSTEM = """You are writing CHAPTER {pos} of {total} of an 8-12 minute
@@ -342,6 +367,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
         all_decls: list[dict] = []
         chapters_meta: list[dict] = []
         used_subjects: list[str] = []
+        said_lines: list[str] = []
         recent_regions: list[int] = []   # panel_refs of the previous chapter's tail
         prev_tail = ""
         model_used = ""
@@ -376,6 +402,9 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
                 f"FORBIDDEN related subjects (already shown, any variation will be "
                 f"rejected): {sorted(set(used_subjects)) or 'none'}\n\n"
                 f"PREVIOUS CHAPTER ENDED WITH: {prev_tail or '(video start)'}\n\n"
+                f"{_role_budget(ch['role'])}\n\n"
+                + (_said_block(said_lines) + "\n\n" if said_lines else "")
+                +
                 f"THIS CHAPTER'S FACTS (the ONLY allowed source of claims):\n"
                 + "\n".join(f"- {f}" for f in ch["facts"]) +
                 f"\n\nREGION CATALOG (page_ref/panel_ref targets):\n{region_catalog(pages)}\n\n"
@@ -415,6 +444,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
                                   "start": None})
             used_subjects += [" ".join(str(d.get("subject") or "").lower().split())
                               for d in decls if d["kind"] == "related"]
+            said_lines += [sc.text for sc in scenes]
             # only the previous chapter's TAIL matters for the reuse window —
             # blocking the whole chapter starved low-region artworks (e2e)
             recent_regions = [d["panel_ref"] for d in decls[-5:]

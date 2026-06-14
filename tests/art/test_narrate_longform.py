@@ -307,3 +307,24 @@ def test_dedupe_called_after_draw_loop(monkeypatch, tmp_path):
     assert captured["n"] == 1
     assert (tmp_path / "repetition_report.json").exists()
     assert rep["rewrites"] == 0
+
+
+def test_role_budget_text():
+    import art_pipeline.narrate_longform as nlf
+    assert "MAY describe" in nlf._role_budget("cold_open")
+    assert "MAY describe" in nlf._role_budget("evidence")
+    # interpretive chapters must NOT re-catalog appearance
+    assert "do NOT" in nlf._role_budget("twist").lower() or \
+           "not catalog" in nlf._role_budget("twist").lower()
+    assert "do NOT" in nlf._role_budget("resolution").lower() or \
+           "not catalog" in nlf._role_budget("resolution").lower()
+
+
+def test_said_block_truncates_and_lists():
+    import art_pipeline.narrate_longform as nlf
+    lines = [f"sentence number {i}" for i in range(100)]
+    block = nlf._said_block(lines, limit=10)
+    assert "sentence number 99" in block          # keeps the most recent
+    assert "sentence number 89" in block
+    assert "sentence number 50" not in block       # older ones dropped
+    assert nlf._said_block([], limit=10) == ""      # empty → empty block
