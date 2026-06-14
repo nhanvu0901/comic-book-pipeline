@@ -1,3 +1,7 @@
+import os
+import shutil
+import subprocess
+
 import pytest
 
 from art_pipeline.assemble import _expand_extreme_bbox, _frame_bbox, plan_shots
@@ -325,3 +329,17 @@ def test_crossfade_pads_all_but_last(monkeypatch):
     for b, p in zip(base[:-1], plain[:-1]):
         assert abs(b.duration_seconds - (p.duration_seconds + 0.5)) < 0.01
     assert abs(base[-1].duration_seconds - plain[-1].duration_seconds) < 0.01
+
+
+def test_render_chapter_card(tmp_path):
+    import art_pipeline.assemble as A
+    out = tmp_path / "card.png"
+    A._render_chapter_card(2, "The City That Isn't There", out, w=640, h=360)
+    assert out.exists() and out.stat().st_size > 0
+    ffprobe = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
+    if shutil.which(ffprobe) or os.path.exists(ffprobe):
+        dims = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", str(out)],
+            capture_output=True, text=True).stdout.strip()
+        assert dims == "640,360"

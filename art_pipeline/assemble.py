@@ -388,6 +388,35 @@ def _apply_film_look(video_path: Path, *, log=print) -> None:
     log("[assemble] film look: vignette + warm tone")
 
 
+def _render_chapter_card(chapter_id: int, title: str, out_png: Path, *,
+                         w: int | None = None, h: int | None = None) -> None:
+    """Render a full-screen title card PNG: solid ART_CARD_BG with a gold
+    'CHAPTER N' kicker above the chapter title in white Anton. The title goes
+    through a sidecar textfile so apostrophes/colons need no drawtext escaping."""
+    import stages.stage_5.shots as shots
+    ff = _resolve_ffmpeg()
+    w = w or shots.OUTPUT_W
+    h = h or shots.OUTPUT_H
+    title_txt = out_png.with_suffix(".title.txt")
+    title_txt.write_text(title)
+    kicker_fs = max(12, int(h * 0.05))
+    title_fs = max(20, int(h * 0.085))
+    font = C.ART_CARD_FONT.replace(":", r"\:")
+    vf = (
+        f"drawtext=fontfile='{font}':text='CHAPTER {chapter_id}':"
+        f"fontcolor={C.ART_CARD_ACCENT}:fontsize={kicker_fs}:"
+        f"x=(w-text_w)/2:y=h*0.40,"
+        f"drawtext=fontfile='{font}':textfile='{title_txt}':"
+        f"fontcolor=white:fontsize={title_fs}:x=(w-text_w)/2:y=h*0.48"
+    )
+    cmd = [ff, "-y", "-f", "lavfi", "-i", f"color=c={C.ART_CARD_BG}:s={w}x{h}",
+           "-frames:v", "1", "-vf", vf, str(out_png)]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    title_txt.unlink(missing_ok=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"chapter-card render failed: {res.stderr[-600:]}")
+
+
 def assemble_art_video(
     project_name: str,
     *,
