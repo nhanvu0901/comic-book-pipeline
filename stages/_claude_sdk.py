@@ -14,6 +14,7 @@ is missing, not logged in, errors, times out, or the output signals a usage limi
 """
 import json
 import threading
+import time
 from pathlib import Path
 
 # Sonnet 4.6 — Opus 4.8 reasoned >330s before the first token on the big write
@@ -27,14 +28,6 @@ CLAUDE_SDK_MODEL = "claude-sonnet-4-6"
 # and cut the writer off mid-think → 330s gives Opus room to finish (~140-220s
 # typical). Small calls (panel-judge) still return in seconds, well under this.
 _SDK_TIMEOUT_S = 330
-
-# Usage/rate-limit phrases (from auto_generated_lyric). If the model echoes one of
-# these instead of real output, treat it as a limit hit and fall back.
-_LIMIT_PHRASES = (
-    "usage limit", "rate limit", "quota", "too many requests",
-    "limit reached", "please slow down", "overloaded", "capacity",
-    "try again later", "upgrade your plan",
-)
 
 try:
     import claude_agent_sdk as _sdk  # noqa: F401
@@ -56,38 +49,43 @@ def sdk_available() -> bool:
     return _SDK_IMPORTABLE and _logged_in()
 
 
+# Transient (server-side) failures worth retrying in-process: 529 Overloaded and
+# per-minute 429. Backoff seconds before retry 1/2/3 (529 wants a bigger first wait).
+_TRANSIENT_RETRIES = 3
+_TRANSIENT_BACKOFF_S = (5, 12, 25)
+
+
 def _collect(
     system: str, user: str, model: str,
     *, allowed_tools: list[str] | None = None, max_turns: int = 2,
-) -> str:
-    """Async query → concatenated assistant text. Runs inside a worker thread's
-    own event loop (via anyio.run), so it never collides with a caller loop.
-
-    allowed_tools=[] (default) → pure text generation. Pass e.g.
-    ["WebSearch","WebFetch"] (with a higher max_turns) to let the agent research
-    the web across several tool-call turns before answering."""
+) -> dict:
+    """Async query → STRUCTURED outcome dict. Reads the SDK's structured signals
+    (RateLimitEvent.rate_limit_info, ResultMessage.api_error_status) rather than
+    string-matching the assistant text — which false-positived whenever a story
+    legitimately used words like "overloaded"/"capacity"/"rate limit". Runs inside
+    a worker thread's own event loop (anyio.run), so it never collides with a
+    caller loop. Returns: {text, rl_status, resets_at, api_error_status, is_error,
+    subtype}."""
     import anyio
     from claude_agent_sdk import query, ClaudeAgentOptions
     from claude_agent_sdk.types import AssistantMessage, TextBlock, StreamEvent
 
-    async def _run() -> str:
+    async def _run() -> dict:
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system or None,
-            # ROOT-CAUSE FIX: the engine defaults to ADAPTIVE extended thinking —
-            # on complex creative prompts the model silently reasons for MINUTES
-            # before the first text token (measured: 85-330s+), which looked like
-            # a hang and blew every timeout. Disabling thinking → first token ~7s,
-            # full narration ~31s. thinking-disabled needs max_turns>=2 (the engine
-            # finalizes in a second message round; =1 errors "max turns reached").
-            # Tool-using research needs more turns (search→fetch→...→write).
+            # thinking disabled → first token ~7s (adaptive thinking reasoned for
+            # MINUTES and blew timeouts). Needs max_turns>=2; research needs more.
             thinking={"type": "disabled"},
             max_turns=max_turns,
             allowed_tools=allowed_tools if allowed_tools is not None else [],
             include_partial_messages=True,  # stream deltas (avoids buffered hang)
         )
         raw = ""
+        out = {"text": "", "rl_status": None, "resets_at": None,
+               "api_error_status": None, "is_error": False, "subtype": None}
         async for message in query(prompt=user, options=options):
+            cls = type(message).__name__
             if isinstance(message, StreamEvent):
                 event = message.event
                 if event.get("type") == "content_block_delta":
@@ -99,21 +97,53 @@ def _collect(
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             raw += block.text
-        return raw
+            elif cls == "RateLimitEvent":
+                info = getattr(message, "rate_limit_info", None)
+                if info is not None:
+                    out["rl_status"] = getattr(info, "status", None)
+                    out["resets_at"] = getattr(info, "resets_at", None)
+            elif cls == "ResultMessage":
+                out["api_error_status"] = getattr(message, "api_error_status", None)
+                out["is_error"] = bool(getattr(message, "is_error", False))
+                out["subtype"] = getattr(message, "subtype", None)
+                if not raw:
+                    r = getattr(message, "result", None)
+                    if isinstance(r, str):
+                        raw = r
+        out["text"] = raw
+        return out
 
     return anyio.run(_run)
 
 
-def _run_threaded(
-    system: str, user: str, model: str, timeout: int, _log,
-    *, allowed_tools: list[str] | None = None, max_turns: int = 2,
-) -> str | None:
-    """Run `_collect` in a daemon thread with a hard wall-clock deadline. Returns
-    the text, or None on any failure (timeout / error / empty / usage limit).
-    On timeout the thread is abandoned (dies with the process) and we fall back."""
-    if not sdk_available():
-        return None
+def _classify(res: dict) -> tuple[str, str]:
+    """('ok' | 'transient' | 'cap' | 'empty', detail) from a _collect result.
+    'cap' = real account usage limit (don't retry now); 'transient' = 529/per-min
+    429 (retry with backoff)."""
+    rl = res.get("rl_status")
+    api = res.get("api_error_status")
+    text = (res.get("text") or "").strip()
+    if rl == "rejected":
+        return "cap", f"account rate-limit REJECTED (resets_at={res.get('resets_at')})"
+    if api == 529:
+        return "transient", "529 overloaded (server-side)"
+    if api == 429:
+        # 429 without a 'rejected' RateLimitEvent → per-minute bucket → transient
+        return "transient", "429 per-minute rate-limit"
+    if res.get("is_error") and not text:
+        return "transient", f"error subtype={res.get('subtype')}"
+    if not text:
+        return "empty", "no text returned"
+    return "ok", ""
 
+
+def _attempt(
+    system: str, user: str, model: str, timeout: int,
+    *, allowed_tools: list[str] | None = None, max_turns: int = 2,
+) -> dict:
+    """One threaded SDK attempt with a hard wall-clock deadline. Returns the
+    _collect dict, or {'_timeout': True} / {'_err': exc}. The orphaned thread on
+    timeout dies with the process; we never block the caller past `timeout`."""
     box: dict = {}
 
     def _runner():
@@ -127,21 +157,47 @@ def _run_threaded(
     t.start()
     t.join(timeout)
     if t.is_alive():
-        _log(f"[claude-sdk] timeout >{timeout}s — falling back")
-        return None
+        return {"_timeout": True}
     if "err" in box:
-        _log(f"[claude-sdk] error: {type(box['err']).__name__}: {str(box['err'])[:160]}")
-        return None
+        return {"_err": box["err"]}
+    return box.get("out") or {}
 
-    out = (box.get("out") or "").strip()
-    if not out:
-        _log("[claude-sdk] empty output — falling back")
+
+def _complete_with_retry(
+    system: str, user: str, model: str, timeout: int, _log,
+    *, allowed_tools: list[str] | None = None, max_turns: int = 2,
+) -> str | None:
+    """Run the SDK with proper transient-retry. Returns the model text, or None on
+    a real failure (timeout / account usage cap / persistent error / no SDK). Never
+    raises — the caller falls back per FREE_MODEL policy. Retries ONLY transient
+    server errors (529 / per-minute 429 / empty) with backoff; an account usage cap
+    ('rejected') is surfaced immediately (retrying now is pointless)."""
+    if not sdk_available():
         return None
-    low = out.lower()
-    if any(p in low for p in _LIMIT_PHRASES):
-        _log("[claude-sdk] usage/rate limit signalled — falling back")
+    for i in range(_TRANSIENT_RETRIES + 1):
+        res = _attempt(system, user, model, timeout,
+                       allowed_tools=allowed_tools, max_turns=max_turns)
+        if res.get("_timeout"):
+            _log(f"[claude-sdk] timeout >{timeout}s — falling back")
+            return None
+        if "_err" in res:
+            _log(f"[claude-sdk] error: {type(res['_err']).__name__}: {str(res['_err'])[:160]}")
+            return None
+        kind, detail = _classify(res)
+        if kind == "ok":
+            return (res.get("text") or "").strip()
+        if kind == "cap":
+            _log(f"[claude-sdk] {detail} — NOT retrying (account usage cap)")
+            return None
+        # transient / empty → backoff + retry
+        if i < _TRANSIENT_RETRIES:
+            back = _TRANSIENT_BACKOFF_S[min(i, len(_TRANSIENT_BACKOFF_S) - 1)]
+            _log(f"[claude-sdk] {detail} — retry {i + 1}/{_TRANSIENT_RETRIES} in {back}s")
+            time.sleep(back)
+            continue
+        _log(f"[claude-sdk] {detail} — exhausted {_TRANSIENT_RETRIES} retries, falling back")
         return None
-    return out
+    return None
 
 
 def sdk_complete(
@@ -154,7 +210,7 @@ def sdk_complete(
 ) -> str | None:
     """Single-shot text completion via the Claude Agent SDK (no tools). Returns the
     model's text, or None on any failure. Never raises — caller falls back."""
-    return _run_threaded(system, user, model, timeout, log or (lambda _m: None))
+    return _complete_with_retry(system, user, model, timeout, log or (lambda _m: None))
 
 
 # Web research can need several minutes (search → fetch → ... → write).
@@ -175,7 +231,7 @@ def sdk_complete_web(
     the web before answering (allowed_tools enabled, higher max_turns, longer
     deadline). Returns the model's final text, or None on any failure. Never
     raises. Run standalone — the SDK throttles when another agent runs concurrently."""
-    return _run_threaded(
+    return _complete_with_retry(
         system, user, model, timeout, log or (lambda _m: None),
         allowed_tools=["WebSearch", "WebFetch"], max_turns=max_turns,
     )
