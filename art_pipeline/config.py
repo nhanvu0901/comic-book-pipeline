@@ -49,6 +49,14 @@ ART_CALM_BASS_GAIN_DB = float(os.getenv("ART_CALM_BASS_GAIN_DB", "5"))
 ART_CALM_DEESS_GAIN_DB = float(os.getenv("ART_CALM_DEESS_GAIN_DB", "-6"))
 ART_CALM_LUFS = float(os.getenv("ART_CALM_LUFS", "-18"))
 
+# ── Region framing (2026-06-14) — fix "zoom too close, hard to see" ──────────
+# VLM regions are often 4–8% of the canvas → cropping straight to them needs
+# 2–4x upscale = too tight + blurry + no sense of WHERE the detail sits.
+# Pad each region around its centre to keep CONTEXT and cap the upscale so the
+# crop stays sharp. Crop-only → no effect on durations / A/V sync.
+ART_REGION_CONTEXT_MARGIN = float(os.getenv("ART_REGION_CONTEXT_MARGIN", "0.3"))  # +30% each side
+ART_REGION_MAX_UPSCALE = float(os.getenv("ART_REGION_MAX_UPSCALE", "1.4"))        # never upscale past this
+
 # ── A4b narration — art keeps its OWN copies of word budgets (spec §6) ──────
 ART_TARGET_WORDS_MIN = 165
 ART_TARGET_WORDS_MAX = 270

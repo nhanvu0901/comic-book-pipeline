@@ -1,14 +1,16 @@
 import pytest
 
-from art_pipeline.assemble import _expand_extreme_bbox, plan_shots
+from art_pipeline.assemble import _expand_extreme_bbox, _frame_bbox, plan_shots
 
 
 def _page(n, w=2000, h=1500, n_panels=4, related=False):
     return {"page_number": n, "source_image": f"/tmp/p{n}.jpg",
             "image_dimensions": {"width": w, "height": h},
             "preprocessing_method": "web-related" if related else "vlm-regions",
+            # spread panels across the canvas so context-framed crops stay
+            # distinct (real VLM regions aren't clustered at the origin)
             "panels": [{"index": i,
-                        "bbox": {"x": 50 * i, "y": 40 * i, "w": 400, "h": 300}}
+                        "bbox": {"x": 450 * i, "y": 300 * i, "w": 400, "h": 300}}
                        for i in range(n_panels)]}
 
 
@@ -36,7 +38,9 @@ def test_motion_and_bbox_per_kind():
     shots = plan_shots(narration, plan, pages, timings, audio_duration=12.0)
     assert [s.motion for s in shots] == ["static", "zoom_in", "pan_right", "zoom_out"]
     assert shots[0].panel_bbox == {"x": 0, "y": 0, "w": 2000, "h": 1500}   # full painting
-    assert shots[1].panel_bbox == {"x": 0, "y": 0, "w": 400, "h": 300}     # region crop = the zoom
+    # region crop = the zoom, now CONTEXT-FRAMED (padded + upscale-capped)
+    assert shots[1].panel_bbox == _frame_bbox({"x": 0, "y": 0, "w": 400, "h": 300}, pages[1])
+    assert shots[1].panel_bbox["w"] > 400                                  # got context
     assert shots[2].source_image == "/tmp/p2.jpg"                          # related page image
     assert all(s.text_bboxes == [] for s in shots)
 
@@ -49,7 +53,7 @@ def test_long_scene_splits_into_two_shots():
     shots = plan_shots(narration, plan, pages, timings, audio_duration=15.5)
     scene2 = [s for s in shots if s.scene_id == 2]
     assert len(scene2) == 2
-    assert scene2[0].panel_bbox == {"x": 0, "y": 0, "w": 400, "h": 300}
+    assert scene2[0].panel_bbox == _frame_bbox({"x": 0, "y": 0, "w": 400, "h": 300}, pages[1])
     # secondary = an UNUSED region (not region 0 again)
     assert scene2[1].panel_bbox != scene2[0].panel_bbox
     assert abs(scene2[0].duration_seconds - 6.5 * 0.6) < 0.01
@@ -167,8 +171,10 @@ def test_extreme_wide_region_expanded():
              "motion": "zoom_in", "subject": "", "fallback": ""}]
     shots = plan_shots(narration, plan, {1: page}, [], audio_duration=3.0)
     b = shots[0].panel_bbox
-    assert b["h"] >= 2000 / 2.5                          # grown to w / MAX_ASPECT
-    assert abs((b["y"] + b["h"] / 2) - 665) <= 1         # center y preserved
+    # context-framing already grows the thin strip's height (no more sliver),
+    # then the aspect guard keeps it within bounds — both clamped to the canvas.
+    assert b["h"] >= 130                                 # grown well past the 130px strip
+    assert b["y"] <= 665 <= b["y"] + b["h"]              # the strip stays visible
     assert b["y"] >= 0 and b["y"] + b["h"] <= 1500       # clamped inside image
     assert b["w"] / b["h"] <= 2.5 + 0.01                 # aspect within bounds
 
@@ -236,3 +242,38 @@ def test_build_srt_skips_empty_cues():
     assert blocks[1].splitlines()[2] == "b0 b1 b2"
     # all-empty input → empty string, not a stray newline
     assert build_srt([{"word": "", "start": 0.0, "end": 0.4}]) == ""
+
+
+def test_contextualize_bbox_caps_upscale_and_adds_context(monkeypatch):
+    import stages.stage_5.shots as shots
+    from art_pipeline.assemble import _contextualize_bbox
+    monkeypatch.setattr(shots, "OUTPUT_W", 1920)
+    monkeypatch.setattr(shots, "OUTPUT_H", 1080)
+    page = {"image_dimensions": {"width": 3496, "height": 3934}}
+    # Toledo panel 4: 524x1180 (4.5% area → 3.66x upscale before fix)
+    out = _contextualize_bbox({"x": 1000, "y": 1000, "w": 524, "h": 1180}, page)
+    # grew on the binding axis; upscale now capped ~1.4 (=1920/min width 1371)
+    upscale = max(1920 / out["w"], 1080 / out["h"])
+    assert upscale <= 1.45
+    assert out["w"] > 524                     # added horizontal context
+    # stays inside the canvas
+    assert out["x"] >= 0 and out["x"] + out["w"] <= 3496
+    assert out["y"] >= 0 and out["y"] + out["h"] <= 3934
+
+
+def test_contextualize_bbox_large_region_untouched(monkeypatch):
+    import stages.stage_5.shots as shots
+    from art_pipeline.assemble import _contextualize_bbox
+    monkeypatch.setattr(shots, "OUTPUT_W", 1920)
+    monkeypatch.setattr(shots, "OUTPUT_H", 1080)
+    page = {"image_dimensions": {"width": 3496, "height": 3934}}
+    # a region already larger than frame/upscale gets only the margin pad, clamped
+    out = _contextualize_bbox({"x": 0, "y": 0, "w": 3496, "h": 1574}, page)
+    assert out["w"] <= 3496 and out["h"] <= 3934   # clamped to canvas
+
+
+def test_contextualize_bbox_degenerate_passthrough():
+    from art_pipeline.assemble import _contextualize_bbox
+    page = {"image_dimensions": {"width": 100, "height": 100}}
+    assert _contextualize_bbox({"x": 0, "y": 0, "w": 0, "h": 0}, page) == \
+        {"x": 0, "y": 0, "w": 0, "h": 0}

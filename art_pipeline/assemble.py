@@ -59,6 +59,45 @@ def _aspect_bounds() -> tuple[float, float]:
     return _REL_MIN_ASPECT * frame, _REL_MAX_ASPECT * frame
 
 
+def _contextualize_bbox(bbox: dict, page: dict) -> dict:
+    """Pad a region crop so the detail is shown IN CONTEXT and never upscaled
+    past ART_REGION_MAX_UPSCALE. Measured 2026-06-14: VLM regions were 4.5–8%
+    of the Toledo canvas → 2.2–3.7x upscale, which reads as "too close /
+    blurry / no idea where it is". Grow the box around its centre to a
+    context margin AND to at least frame/MAX_UPSCALE on each axis, clamped to
+    the image. Crop-only → durations and A/V sync are untouched."""
+    from . import config as C
+    import stages.stage_5.shots as shots
+    x, y = int(bbox.get("x", 0)), int(bbox.get("y", 0))
+    w, h = int(bbox.get("w", 0)), int(bbox.get("h", 0))
+    if w <= 0 or h <= 0:
+        return bbox
+    dims = page.get("image_dimensions") or {}
+    pw, ph = int(dims.get("width", 0)), int(dims.get("height", 0))
+    fw, fh = shots.OUTPUT_W, shots.OUTPUT_H
+    margin, max_up = C.ART_REGION_CONTEXT_MARGIN, C.ART_REGION_MAX_UPSCALE
+    cx, cy = x + w / 2, y + h / 2
+    tw = max(w * (1 + 2 * margin), fw / max_up)
+    th = max(h * (1 + 2 * margin), fh / max_up)
+    if pw:
+        tw = min(tw, pw)
+    if ph:
+        th = min(th, ph)
+    nx = cx - tw / 2
+    ny = cy - th / 2
+    if pw:
+        nx = max(0, min(nx, pw - tw))
+    if ph:
+        ny = max(0, min(ny, ph - th))
+    return {"x": int(round(nx)), "y": int(round(ny)),
+            "w": int(round(tw)), "h": int(round(th))}
+
+
+def _frame_bbox(bbox: dict, page: dict) -> dict:
+    """Region crop framing: add context + cap upscale, THEN fix extreme aspect."""
+    return _expand_extreme_bbox(_contextualize_bbox(bbox, page), page)
+
+
 def _expand_extreme_bbox(bbox: dict, page: dict) -> dict:
     """A region far wider/taller than the output frame renders as a thin sliver
     over blur (measured: 3920x262 'gas lamp string' intro). Grow the short side
@@ -183,7 +222,7 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
                 used_regions.add(key)
                 raw = {"x": int(pn["bbox"]["x"]), "y": int(pn["bbox"]["y"]),
                        "w": int(pn["bbox"]["w"]), "h": int(pn["bbox"]["h"])}
-                return page_ref, _expand_extreme_bbox(raw, page)
+                return page_ref, _frame_bbox(raw, page)
         return None
 
     shots: list[Shot] = []
@@ -196,7 +235,7 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
         dur = durations[s["scene_id"]]
         motion = d.get("motion") or "zoom_out"
         if d["kind"] == "painting_region":
-            bbox = _expand_extreme_bbox(_region_bbox(page, int(d["panel_ref"])), page)
+            bbox = _frame_bbox(_region_bbox(page, int(d["panel_ref"])), page)
         else:
             bbox = _full_bbox(page)
         if motion == "static" and dur > ART_MAX_STATIC_SEC:
@@ -257,7 +296,7 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
             if b is not None:
                 raw = {"x": int(b.get("x", 0)), "y": int(b.get("y", 0)),
                        "w": int(b.get("w", 0)), "h": int(b.get("h", 0))}
-                cur.panel_bbox = _expand_extreme_bbox(raw, rep_page)
+                cur.panel_bbox = _frame_bbox(raw, rep_page)
         # Oppose the previous shot's motion (pan_right/static before → zoom_in).
         cur.motion = "zoom_out" if prev.motion == "zoom_in" else "zoom_in"
 
