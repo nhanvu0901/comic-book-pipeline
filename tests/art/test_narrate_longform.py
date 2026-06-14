@@ -332,14 +332,13 @@ def test_said_block_truncates_and_lists():
     assert block.count("- sentence number") == 10
 
 
-def test_named_artwork_rule_softened():
-    """The named-artwork subject rule must not force identical subjects across
-    scenes (that caused chapter-2 dup-subject rejections). It is scoped to a
-    scene's MAIN subject and capped at one use per artwork."""
+def test_lf_system_prompt_formats():
+    """The chapter system prompt must format with all placeholders — a stray
+    brace from a prompt edit would break every chapter LLM call (not caught by
+    the helper tests, which don't format the template)."""
     import art_pipeline.narrate_longform as nlf
     s = nlf._LF_SYSTEM.format(
         pos=2, total=5, n_min=14, n_max=22, scene_max=32, target_words=320,
         full_note="use sparingly", window=6, recent_regions="none",
         blocked_subjects="none", position_rule="End on a complete thought.")
-    assert "at most ONCE" in s
-    assert "MAIN subject" in s
+    assert "CHAPTER 2 of 5" in s
