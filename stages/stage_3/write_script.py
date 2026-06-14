@@ -156,6 +156,29 @@ HARD RULES for the intro line:
 Return ONLY JSON, no markdown: {"archetype": "interrogative|temporal-when|temporal-other|scenic", "intro_line": "..."}"""
 
 
+def _fallback_hero(comic_context: dict) -> str:
+    """Best protagonist name for a fallback intro when the LLM intro call fails.
+    Saga / url-mode contexts usually have characters=[] but a populated
+    summary.characters, so 'this hero' looked broken. Priority: top-level
+    characters → summary.characters[0].name (parenthetical aliases stripped) →
+    first issue's characters → the comic title → 'this hero'."""
+    chars = comic_context.get("characters") or []
+    if chars and isinstance(chars[0], str) and chars[0].strip():
+        return chars[0].strip()
+    summ = (comic_context.get("summary") or {}).get("characters") or []
+    if summ:
+        first = summ[0]
+        nm = first.get("name") if isinstance(first, dict) else str(first)
+        nm = re.sub(r"\s*\([^)]*\)", "", nm or "").strip()  # drop "(Thunderer Thor)"
+        if nm:
+            return nm
+    for it in comic_context.get("issues", []) or []:
+        ic = it.get("characters") or []
+        if ic and str(ic[0]).strip():
+            return str(ic[0]).strip()
+    return str(comic_context.get("title", "")).strip() or "this hero"
+
+
 def generate_intro(
     comic_context: dict,
     *,
@@ -225,7 +248,7 @@ def generate_intro(
         return {"story_type": archetype, "intro_line": intro_line}
     except Exception as exc:
         # Deterministic fallback so the pipeline never blocks on the intro.
-        hero = (comic_context.get("characters") or ["this hero"])[0]
+        hero = _fallback_hero(comic_context)
         fallback = f"Ever wonder what if {hero} took a darker path?"
         log(f"[stage4] intro LLM failed ({type(exc).__name__}); using fallback: {fallback!r}")
         return {"story_type": "what_if", "intro_line": fallback}
@@ -478,7 +501,7 @@ def write_script(
         intro_line = (intro.get("intro_line") or "").strip()
         if not intro_line or _intro_overlaps(intro_line, first_body_line):
             # last-resort: a question hook never narrates a beat, so it can't echo
-            hero = (comic_context.get("characters") or ["this hero"])[0]
+            hero = _fallback_hero(comic_context)
             intro_line = f"What if {hero}'s greatest enemy was the person they became?"
             intro["intro_line"] = intro_line
             log(f"[stage4]   ⚠ still echoed; using fallback question hook: {intro_line!r}")
