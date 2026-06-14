@@ -22,6 +22,14 @@ def _chapter_dir(root: Path, chapter_id: int) -> Path:
     return d
 
 
+def _inter_chapter_gap_s() -> float:
+    """Silence between chapters. When chapter cards are on, widen the gap to fit
+    the card (it sits entirely inside this silence → no A/V drift); otherwise the
+    plain micro-pause."""
+    return (C.ART_LF_CHAPTER_CARD_SEC if C.ART_LF_CHAPTER_CARDS
+            else C.ART_LF_CHAPTER_GAP_S)
+
+
 def synthesize_longform(project_name: str, *, force: bool = False,
                         calm: bool = True, log=print) -> dict:
     root = get_art_project_path(project_name)
@@ -81,7 +89,7 @@ def synthesize_longform(project_name: str, *, force: bool = False,
     with wave.open(str(per_chapter[0]["wav"]), "rb") as first:
         params = first.getparams()
     framerate = params.framerate
-    gap_frames = int(round(ART_LF_CHAPTER_GAP_S * framerate))
+    gap_frames = int(round(_inter_chapter_gap_s() * framerate))
     silence = b"\x00" * (gap_frames * params.sampwidth * params.nchannels)
 
     # Atomic write: stitch into a temp file and rename at the end, so a failure
@@ -119,7 +127,7 @@ def synthesize_longform(project_name: str, *, force: bool = False,
     chapters_path.write_text(json.dumps(chapters, indent=2, ensure_ascii=False))
     total = frames_written / framerate
     log(f"[tts-lf] stitched {len(chapters)} chapters → audio.wav "
-        f"({total:.1f}s, gap {ART_LF_CHAPTER_GAP_S}s)")
+        f"({total:.1f}s, gap {_inter_chapter_gap_s()}s)")
     # Frequency-shape the FINAL stitched WAV once (length-preserving → the
     # frame-exact offsets above stay valid).
     if calm and C.ART_CALM_AUDIO:

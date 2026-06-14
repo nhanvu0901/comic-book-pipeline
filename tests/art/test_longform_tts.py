@@ -61,6 +61,8 @@ def _make_longform_project(tmp_path, monkeypatch, chapter_secs=(2.0, 3.0)):
 
 
 def test_stitch_offsets_exact(tmp_path, monkeypatch):
+    from art_pipeline import config as C
+    monkeypatch.setattr(C, "ART_LF_CHAPTER_CARDS", False)
     root = _make_longform_project(tmp_path, monkeypatch, (2.0, 3.0))
     out = longform_tts.synthesize_longform("proj", calm=False, log=lambda *_: None)
     with wave.open(str(root / "audio.wav"), "rb") as w:
@@ -110,3 +112,14 @@ def test_param_mismatch_errors_and_no_partial_wav(tmp_path, monkeypatch):
         longform_tts.synthesize_longform("proj", calm=False, log=lambda *_: None)
     # atomic write: a failure mid-stitch must not leave a corrupt audio.wav
     assert not (root / "audio.wav").exists()
+
+
+def test_inter_chapter_gap_follows_card_flag(monkeypatch):
+    import art_pipeline.longform_tts as lftts
+    from art_pipeline import config as C
+    monkeypatch.setattr(C, "ART_LF_CHAPTER_CARDS", True)
+    monkeypatch.setattr(C, "ART_LF_CHAPTER_CARD_SEC", 2.6)
+    monkeypatch.setattr(C, "ART_LF_CHAPTER_GAP_S", 1.0)
+    assert lftts._inter_chapter_gap_s() == 2.6
+    monkeypatch.setattr(C, "ART_LF_CHAPTER_CARDS", False)
+    assert lftts._inter_chapter_gap_s() == 1.0
