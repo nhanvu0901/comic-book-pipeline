@@ -88,9 +88,10 @@ Hard rules:
    - {{"kind": "painting_full"}} — whole artwork, AT MOST once in this chapter
      ({full_note}).
    - {{"kind": "related", "subject": "<concrete searchable image>"}} — artist,
-     era, place, technique, x-ray. Aim for roughly 30% related scenes. If the
-     scene's TEXT names a specific artwork (e.g. "Van Gogh's The Starry Night"),
-     the subject MUST be that exact artwork title — never a different work.
+     era, place, technique, x-ray. Aim for roughly 30% related scenes. If a
+     scene's MAIN subject is a specific external artwork it names (e.g. "Van
+     Gogh's The Starry Night"), set its subject to that exact artwork title —
+     never a different work; show any one named artwork at most ONCE.
 4. VARIETY: no two consecutive scenes show the same thing; a region may
    RETURN later, but never within {window} scenes of its last use; related
    subjects all differ. The previous chapter ended on these region
@@ -417,7 +418,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
             history = [visual_target(sc.__dict__, d) for sc, d in
                        list(zip(all_scenes, all_decls))[-ART_LF_REGION_REUSE_WINDOW:]]
             last_err: Exception | None = None
-            for attempt in (1, 2, 3):
+            for attempt in (1, 2, 3, 4, 5):
                 raw, model_used = call_with_chain(
                     system=system, user=user, models=CREATIVE_LLM_MODELS,
                     max_tokens=4000, progress=log,
@@ -435,7 +436,7 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
                     user += (f"\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION: {exc}. "
                              "Fix exactly that.")
             else:
-                raise ValueError(f"chapter {pos} failed after 3 attempts: {last_err}")
+                raise ValueError(f"chapter {pos} failed after 5 attempts: {last_err}")
 
             chapters_meta.append({"chapter_id": ch["chapter_id"], "title": ch["title"],
                                   "role": ch["role"], "rehook": rehook,

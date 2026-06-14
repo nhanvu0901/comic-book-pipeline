@@ -330,3 +330,16 @@ def test_said_block_truncates_and_lists():
     assert nlf._said_block([], limit=10) == ""      # empty → empty block
     # exactly `limit` lines, no more
     assert block.count("- sentence number") == 10
+
+
+def test_named_artwork_rule_softened():
+    """The named-artwork subject rule must not force identical subjects across
+    scenes (that caused chapter-2 dup-subject rejections). It is scoped to a
+    scene's MAIN subject and capped at one use per artwork."""
+    import art_pipeline.narrate_longform as nlf
+    s = nlf._LF_SYSTEM.format(
+        pos=2, total=5, n_min=14, n_max=22, scene_max=32, target_words=320,
+        full_note="use sparingly", window=6, recent_regions="none",
+        blocked_subjects="none", position_rule="End on a complete thought.")
+    assert "at most ONCE" in s
+    assert "MAIN subject" in s
