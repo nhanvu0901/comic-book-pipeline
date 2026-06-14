@@ -3,6 +3,17 @@ import pytest
 from art_pipeline.assemble import _expand_extreme_bbox, _frame_bbox, plan_shots
 
 
+@pytest.fixture(autouse=True)
+def _no_polish(monkeypatch):
+    """Existing geometry/duration tests assert the core plan_shots logic; turn
+    OFF the 2026-06-14 polish (crossfade pad, scale-variety) so they stay
+    deterministic. Dedicated tests below exercise the polish explicitly."""
+    import art_pipeline.config as cfg
+    monkeypatch.setattr(cfg, "ART_CROSSFADE", False)
+    monkeypatch.setattr(cfg, "ART_REGION_SCALE_VARIETY", False)
+    monkeypatch.setattr(cfg, "ART_FILM_LOOK", False)
+
+
 def _page(n, w=2000, h=1500, n_panels=4, related=False):
     return {"page_number": n, "source_image": f"/tmp/p{n}.jpg",
             "image_dimensions": {"width": w, "height": h},
@@ -277,3 +288,40 @@ def test_contextualize_bbox_degenerate_passthrough():
     page = {"image_dimensions": {"width": 100, "height": 100}}
     assert _contextualize_bbox({"x": 0, "y": 0, "w": 0, "h": 0}, page) == \
         {"x": 0, "y": 0, "w": 0, "h": 0}
+
+
+def test_scale_variety_alternates_establish_detail(monkeypatch):
+    import art_pipeline.config as cfg
+    monkeypatch.setattr(cfg, "ART_REGION_SCALE_VARIETY", True)
+    monkeypatch.setattr(cfg, "ART_CROSSFADE", False)
+    import stages.stage_5.shots as shots
+    monkeypatch.setattr(shots, "OUTPUT_W", 1920)
+    monkeypatch.setattr(shots, "OUTPUT_H", 1080)
+    # two region scenes back to back → shot 0 establish (wide), shot 1 detail (tight)
+    narration = {"scenes": [
+        {"scene_id": 1, "text": "a", "page_ref": 1, "panel_ref": 0},
+        {"scene_id": 2, "text": "b", "page_ref": 1, "panel_ref": 1}]}
+    plan = [{"scene_id": 1, "kind": "painting_region", "panel_ref": 0, "motion": "zoom_in", "subject": "", "fallback": ""},
+            {"scene_id": 2, "kind": "painting_region", "panel_ref": 1, "motion": "zoom_out", "subject": "", "fallback": ""}]
+    pages = {1: _page(1, w=4000, h=3000, n_panels=4)}
+    timings = [{"scene_id": 1, "start": 0.0, "end": 3.0},
+               {"scene_id": 2, "start": 3.0, "end": 6.0}]
+    shots_out = plan_shots(narration, plan, pages, timings, audio_duration=6.0)
+    establish_up = max(1920 / shots_out[0].panel_bbox["w"], 1080 / shots_out[0].panel_bbox["h"])
+    detail_up = max(1920 / shots_out[1].panel_bbox["w"], 1080 / shots_out[1].panel_bbox["h"])
+    assert detail_up > establish_up    # detail crop is tighter than the establish crop
+
+
+def test_crossfade_pads_all_but_last(monkeypatch):
+    import art_pipeline.config as cfg
+    monkeypatch.setattr(cfg, "ART_CROSSFADE", True)
+    monkeypatch.setattr(cfg, "ART_CROSSFADE_SEC", 0.5)
+    monkeypatch.setattr(cfg, "ART_REGION_SCALE_VARIETY", False)
+    narration, plan, pages, timings = _fixture()
+    base = plan_shots(narration, plan, pages, timings, audio_duration=12.0)
+    monkeypatch.setattr(cfg, "ART_CROSSFADE", False)
+    plain = plan_shots(narration, plan, pages, timings, audio_duration=12.0)
+    # every shot but the last is +0.5s vs the no-crossfade plan
+    for b, p in zip(base[:-1], plain[:-1]):
+        assert abs(b.duration_seconds - (p.duration_seconds + 0.5)) < 0.01
+    assert abs(base[-1].duration_seconds - plain[-1].duration_seconds) < 0.01

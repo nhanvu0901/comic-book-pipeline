@@ -57,6 +57,21 @@ ART_CALM_LUFS = float(os.getenv("ART_CALM_LUFS", "-18"))
 ART_REGION_CONTEXT_MARGIN = float(os.getenv("ART_REGION_CONTEXT_MARGIN", "0.3"))  # +30% each side
 ART_REGION_MAX_UPSCALE = float(os.getenv("ART_REGION_MAX_UPSCALE", "1.4"))        # never upscale past this
 
+# ── Visual polish (2026-06-14) — "make it more interesting" (art-side) ───────
+# Shot-scale variety: alternate ESTABLISH (wide, lots of context) and DETAIL
+# (tighter on the region) crops so the eye gets rhythm instead of all-wide.
+# DETAIL upscale stays <=1.8 (Met sources are ~4K → still sharp).
+ART_REGION_SCALE_VARIETY = os.getenv("ART_REGION_SCALE_VARIETY", "true").lower() in ("true", "1", "yes")
+ART_REGION_ESTABLISH_MARGIN = float(os.getenv("ART_REGION_ESTABLISH_MARGIN", "0.5"))
+ART_REGION_ESTABLISH_UPSCALE = float(os.getenv("ART_REGION_ESTABLISH_UPSCALE", "1.1"))
+ART_REGION_DETAIL_MARGIN = float(os.getenv("ART_REGION_DETAIL_MARGIN", "0.12"))
+ART_REGION_DETAIL_UPSCALE = float(os.getenv("ART_REGION_DETAIL_UPSCALE", "1.8"))
+# Crossfade (dissolve) between shots — softer, more pro than hard cuts.
+ART_CROSSFADE = os.getenv("ART_CROSSFADE", "true").lower() in ("true", "1", "yes")
+ART_CROSSFADE_SEC = float(os.getenv("ART_CROSSFADE_SEC", "0.5"))
+# Film look on the final encode: subtle vignette + warm tone.
+ART_FILM_LOOK = os.getenv("ART_FILM_LOOK", "true").lower() in ("true", "1", "yes")
+
 # ── A4b narration — art keeps its OWN copies of word budgets (spec §6) ──────
 ART_TARGET_WORDS_MIN = 165
 ART_TARGET_WORDS_MAX = 270

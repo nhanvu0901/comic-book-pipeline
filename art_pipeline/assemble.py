@@ -12,18 +12,22 @@ Motion contract (the user's "zoom with intent"):
 No shot holds a static frame longer than ART_MAX_STATIC_SEC; scenes at or over
 ART_SHOT_SPLIT_SEC get a second shot (mirrors comic SCENE_SECOND_PANEL_MIN_DUR)."""
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Callable
 
 from stages.stage_5.audio import mix_audio
 from stages.stage_5.captions import build_ass
 from stages.stage_5.pipeline import (
-    _concat, _final_encode, _load_preprocessed_pages, _probe_duration,
+    FPS, _concat, _final_encode, _load_preprocessed_pages, _probe_duration,
     _require_ffmpeg, _resolve_bgm, _wav_duration,
 )
 from stages.stage_5.schema import AssemblyResult, Shot
 from stages.stage_5.shots import render_shot
 
+from . import config as C
+from .audio_fx import _resolve_ffmpeg
 from .config import ART_MAX_STATIC_SEC, ART_SHOT_SPLIT_SEC, get_art_project_path
 from .visual_plan import derive_trivial_plan
 
@@ -59,13 +63,17 @@ def _aspect_bounds() -> tuple[float, float]:
     return _REL_MIN_ASPECT * frame, _REL_MAX_ASPECT * frame
 
 
-def _contextualize_bbox(bbox: dict, page: dict) -> dict:
+def _contextualize_bbox(bbox: dict, page: dict, *,
+                        margin: float | None = None,
+                        max_upscale: float | None = None) -> dict:
     """Pad a region crop so the detail is shown IN CONTEXT and never upscaled
-    past ART_REGION_MAX_UPSCALE. Measured 2026-06-14: VLM regions were 4.5–8%
-    of the Toledo canvas → 2.2–3.7x upscale, which reads as "too close /
-    blurry / no idea where it is". Grow the box around its centre to a
-    context margin AND to at least frame/MAX_UPSCALE on each axis, clamped to
-    the image. Crop-only → durations and A/V sync are untouched."""
+    past max_upscale. Measured 2026-06-14: VLM regions were 4.5–8% of the
+    Toledo canvas → 2.2–3.7x upscale, which reads as "too close / blurry / no
+    idea where it is". Grow the box around its centre to a context margin AND
+    to at least frame/max_upscale on each axis, clamped to the image. Crop-only
+    → durations and A/V sync are untouched. margin/max_upscale default to the
+    medium ART_REGION_CONTEXT_MARGIN/ART_REGION_MAX_UPSCALE (the establish and
+    detail profiles pass their own)."""
     from . import config as C
     import stages.stage_5.shots as shots
     x, y = int(bbox.get("x", 0)), int(bbox.get("y", 0))
@@ -75,7 +83,8 @@ def _contextualize_bbox(bbox: dict, page: dict) -> dict:
     dims = page.get("image_dimensions") or {}
     pw, ph = int(dims.get("width", 0)), int(dims.get("height", 0))
     fw, fh = shots.OUTPUT_W, shots.OUTPUT_H
-    margin, max_up = C.ART_REGION_CONTEXT_MARGIN, C.ART_REGION_MAX_UPSCALE
+    margin = C.ART_REGION_CONTEXT_MARGIN if margin is None else margin
+    max_up = C.ART_REGION_MAX_UPSCALE if max_upscale is None else max_upscale
     cx, cy = x + w / 2, y + h / 2
     tw = max(w * (1 + 2 * margin), fw / max_up)
     th = max(h * (1 + 2 * margin), fh / max_up)
@@ -93,9 +102,24 @@ def _contextualize_bbox(bbox: dict, page: dict) -> dict:
             "w": int(round(tw)), "h": int(round(th))}
 
 
-def _frame_bbox(bbox: dict, page: dict) -> dict:
+def _frame_bbox(bbox: dict, page: dict, *, margin: float | None = None,
+                max_upscale: float | None = None) -> dict:
     """Region crop framing: add context + cap upscale, THEN fix extreme aspect."""
-    return _expand_extreme_bbox(_contextualize_bbox(bbox, page), page)
+    return _expand_extreme_bbox(
+        _contextualize_bbox(bbox, page, margin=margin, max_upscale=max_upscale), page)
+
+
+def _scale_profile(region_index: int) -> tuple[float | None, float | None]:
+    """Shot-scale rhythm: alternate ESTABLISH (wide) / DETAIL (tight) crops so
+    the eye gets variety instead of every region at the same width. Returns
+    (margin, max_upscale) overrides, or (None, None) for the medium default
+    when variety is off."""
+    from . import config as C
+    if not C.ART_REGION_SCALE_VARIETY:
+        return None, None
+    if region_index % 2 == 0:
+        return C.ART_REGION_ESTABLISH_MARGIN, C.ART_REGION_ESTABLISH_UPSCALE
+    return C.ART_REGION_DETAIL_MARGIN, C.ART_REGION_DETAIL_UPSCALE
 
 
 def _expand_extreme_bbox(bbox: dict, page: dict) -> dict:
@@ -227,6 +251,7 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
 
     shots: list[Shot] = []
     shot_id = 0
+    region_index = 0   # counts painting_region shots → establish/detail rhythm
     for s in scenes:
         d = plan_by_id.get(s["scene_id"]) or {"kind": "painting_full",
                                                "panel_ref": -1, "motion": "zoom_out"}
@@ -235,7 +260,10 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
         dur = durations[s["scene_id"]]
         motion = d.get("motion") or "zoom_out"
         if d["kind"] == "painting_region":
-            bbox = _frame_bbox(_region_bbox(page, int(d["panel_ref"])), page)
+            mg, mu = _scale_profile(region_index)
+            region_index += 1
+            bbox = _frame_bbox(_region_bbox(page, int(d["panel_ref"])), page,
+                               margin=mg, max_upscale=mu)
         else:
             bbox = _full_bbox(page)
         if motion == "static" and dur > ART_MAX_STATIC_SEC:
@@ -303,7 +331,61 @@ def plan_shots(narration: dict, plan: list[dict], pages_by_number: dict,
     total = sum(sh.duration_seconds for sh in shots)
     if shots and total < audio_duration:
         shots[-1].duration_seconds += (audio_duration - total) + 0.20
+    # Crossfade compensation: a d-second dissolve eats d of overlap per cut, so
+    # pad every shot but the last by +d → the post-xfade timeline still equals
+    # the audio length (no A/V drift). Must match _concat_xfade's offsets.
+    if C.ART_CROSSFADE and len(shots) > 1:
+        for sh in shots[:-1]:
+            sh.duration_seconds = round(sh.duration_seconds + C.ART_CROSSFADE_SEC, 3)
     return shots
+
+
+def _concat_xfade(shot_paths: list[Path], durations: list[float],
+                  out_path: Path, *, d: float, log=print) -> None:
+    """Crossfade (dissolve) consecutive shots by `d` seconds via ffmpeg xfade.
+    `durations` are the RENDERED shot lengths — plan_shots pads every shot but
+    the last by +d so the post-xfade total still equals the intended timeline
+    (xfade eats (N-1)*d of overlap). Single shot → plain copy."""
+    ff = _resolve_ffmpeg()
+    if len(shot_paths) == 1:
+        shutil.copy(shot_paths[0], out_path)
+        return
+    inputs: list[str] = []
+    for p in shot_paths:
+        inputs += ["-i", str(p)]
+    parts, acc, cum = [], "[0:v]", durations[0]
+    for k in range(1, len(shot_paths)):
+        off = max(0.0, cum - d)
+        out_lab = "[vout]" if k == len(shot_paths) - 1 else f"[vx{k}]"
+        parts.append(f"{acc}[{k}:v]xfade=transition=fade:duration={d}:"
+                     f"offset={off:.3f}{out_lab}")
+        acc = out_lab
+        cum = cum + durations[k] - d
+    cmd = [ff, "-y", *inputs, "-filter_complex", ";".join(parts),
+           "-map", "[vout]", "-r", str(FPS), "-c:v", "libx264",
+           "-pix_fmt", "yuv420p", "-preset", "medium", str(out_path)]
+    log(f"[assemble] crossfading {len(shot_paths)} shots ({d}s dissolve)")
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"xfade concat failed: {res.stderr[-600:]}")
+
+
+def _apply_film_look(video_path: Path, *, log=print) -> None:
+    """Subtle film grade on the silent video: gentle vignette + warm tone.
+    Length-preserving."""
+    ff = _resolve_ffmpeg()
+    tmp = video_path.with_suffix(".graded.mp4")
+    vf = ("vignette=PI/4.5,"
+          "colorbalance=rs=0.02:rm=0.03:gs=0.0:bm=-0.03:bs=-0.02,"
+          "eq=saturation=1.05:gamma=1.02")
+    cmd = [ff, "-y", "-i", str(video_path), "-vf", vf, "-r", str(FPS),
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium",
+           "-an", str(tmp)]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"film-look failed: {res.stderr[-600:]}")
+    tmp.replace(video_path)
+    log("[assemble] film look: vignette + warm tone")
 
 
 def assemble_art_video(
@@ -371,8 +453,14 @@ def assemble_art_video(
          for sh in shots], indent=2, ensure_ascii=False))
 
     silent = root / "video_silent.mp4"
-    log(f"[assemble] concatenating {len(shot_paths)} shots")
-    _concat(shot_paths, silent)
+    if C.ART_CROSSFADE and len(shot_paths) > 1:
+        _concat_xfade(shot_paths, [sh.duration_seconds for sh in shots],
+                      silent, d=C.ART_CROSSFADE_SEC, log=log)
+    else:
+        log(f"[assemble] concatenating {len(shot_paths)} shots")
+        _concat(shot_paths, silent)
+    if C.ART_FILM_LOOK:
+        _apply_film_look(silent, log=log)
     captions = root / "captions.ass"
     longform = (root / "chapters.json").exists()
     if longform:
