@@ -103,11 +103,6 @@ def probe_duration(video: Path) -> float:
     return float(r.stdout.strip() or "0")
 
 
-CONNECTIVES = {"but","however","as","when","after","eventually","instead",
-               "with","now","suddenly","then","until","meanwhile","soon",
-               "so","just","that's"}
-
-
 def classify_hook(first_words: str) -> str:
     s = first_words.lower().strip()
     # Question hooks (teaser-intro pattern): "Ever wonder...?", "What if...?",

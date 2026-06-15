@@ -63,7 +63,6 @@ def _semantic_sim(a: str, b: str) -> float:
     import numpy as np
     return max(0.0, min(1.0, float(np.dot(va, vb))))
 PADDING_PCT = 0.05
-UPSCALE_DIM = 2160
 # Erase the comic's own speech-bubble text from panels before render (the video
 # already carries narration + burned captions, so on-art dialogue is clutter).
 INPAINT_BUBBLE_TEXT = True
@@ -86,18 +85,15 @@ SHOT_STRATEGY = "caption_chunk"
 SHOTS_PER_SCENE = 1            # used when SHOT_STRATEGY == "scene"
 SHOT_TARGET_SECONDS = 2.0   # ~1 panel / 2s → snappier cut rate (ref ~1.5-2s)
 SHOT_MIN_SECONDS = 0.6         # caption-chunk mode: ~0.5-2s per shot
-SHOT_MAX_SECONDS = 4.5
 STATIC_MOTION_BELOW_SECONDS = 1.5
 SILENCE_GAP_THRESHOLD = 0.2
 SNAP_WINDOW_SECONDS = 0.5
 
-# ── Fix A+C+E (scene panel coherence) ────────────────────────────────────────
-# E — cap distinct visual panels per scene. A scene maps to ONE narration
-# page_ref but used to be split into 3-4 caption-chunk shots, each grabbing a
-# different panel (often a neighbor page). Now a scene shows 1 held panel (with
-# Ken-Burns); only a long scene earns a 2nd panel. Captions still update per
-# chunk — only the picture changes less often (ComicsUnlocked style).
-SCENE_SECOND_PANEL_MIN_DUR = 5.0   # a scene ≥ this long (and ≥2 chunks) gets 2 panels
+# ── Fix A+C (scene panel coherence) ──────────────────────────────────────────
+# Distinct panels per scene are now driven by _llm_assign_panels, which returns an
+# ORDERED LIST of panels (preferring the scene's own page) so one narration line
+# plays across 2-4 panels of its moment unfolding. n_panels is capped by the
+# caption-chunk count and the ~1-panel-per-SHOT_TARGET_SECONDS cut rate.
 # C — LLM tie-breaker for near-tie panel scores. Disabled: it fired ~28% of
 # chunks, ran on the default LLM chain (no page_ref preference, often the
 # unavailable free models) and injected nondeterministic neighbor-page picks.
@@ -194,16 +190,19 @@ def _build_shots_per_scene(
 
 
 def _llm_assign_panels(narration: dict, pages_by_number: dict[int, dict],
-                       cluster_to_name: dict[int, str] | None = None) -> dict[int, tuple[int, int]]:
-    """ONE global LLM call: assign each narration scene → the (page, panel_index)
-    that DEPICTS it, by reading every story panel's description.
+                       cluster_to_name: dict[int, str] | None = None) -> dict[int, list[tuple[int, int]]]:
+    """ONE global LLM call: assign each narration scene → an ORDERED LIST of the
+    (page, panel_index) panels that depict its moment UNFOLDING in reading order,
+    by reading every story panel's description.
 
     Embedding cosine can't disambiguate panels in an entity-homogeneous comic
     (every panel says Ben/Reed/symbiote → similarity is dominated by shared
     nouns, not the distinguishing ACTION). An LLM reading the now-detailed
     descriptions reasons about the action ("raises the sonic gun" → the sonic-gun
-    panel). Returns {scene_id: (page, idx)}; empty on any failure → caller falls
-    back to the heuristic _select_panel_for_chunk."""
+    panel). Returns {scene_id: [(page, idx), ...]}; empty on any failure → caller
+    falls back to the heuristic _select_panel_for_chunk. Multiple panels per scene
+    let one narration line play across its page (the slam → the count → the
+    triumphant face) instead of holding a single frame."""
     scenes = [s for s in (narration.get("scenes") or [])
               if not s.get("is_intro") and not s.get("is_outro")]
     if not scenes or not pages_by_number:
@@ -227,25 +226,30 @@ def _llm_assign_panels(narration: dict, pages_by_number: dict[int, dict],
     sl = []
     for s in scenes:
         beat = beats.get(int(s.get("beat_id", 0) or 0), {})
-        sl.append(f"S{s.get('scene_id')}: {s.get('text','')}   (beat: {(beat.get('summary','') or '')[:120]})")
+        sl.append(f"S{s.get('scene_id')} (page {s.get('page_ref')}): {s.get('text','')}"
+                  f"   (beat: {(beat.get('summary','') or '')[:120]})")
     prompt = (
-        "Match each NARRATION scene to the comic PANEL that depicts it.\n\n"
-        "NARRATION SCENES (story order):\n" + "\n".join(sl) + "\n\n"
+        "Match each NARRATION scene to the comic PANELS that depict it.\n\n"
+        "NARRATION SCENES (story order — each tagged with its page):\n" + "\n".join(sl) + "\n\n"
         "PANELS (reading order — label [characters]: description):\n" + "\n".join(cat) + "\n\n"
-        "For EACH scene pick the ONE panel whose description best DEPICTS its ACTION "
-        "(match verb + object: 'raises the sonic gun' → the panel showing the sonic gun "
-        "raised; 'crushed the gun' → the gun being crushed). Rules:\n"
-        "- CONTENT MATCH WINS — choose the panel that truly depicts the line, even if its "
-        "page is earlier than the previous scene's.\n"
-        "- Reading order is only a tie-break between equally-good panels.\n"
-        "- Avoid giving two scenes the same panel unless nothing else fits.\n"
-        "Return ONLY JSON mapping every scene: {\"S2\":\"p3#3\", \"S3\":\"p6#2\", ...}."
+        "For EACH scene, list the 2-4 PANELS (in reading order) that show its moment "
+        "UNFOLDING — e.g. the slam, then standing over the body, then the triumphant face. "
+        "Rules:\n"
+        "- STRONGLY PREFER panels on the scene's OWN page (the 'page N' tag). Only borrow "
+        "from a neighbouring page if it genuinely continues the SAME moment.\n"
+        "- Panel #1 MUST be the single best one that depicts the line (match verb + object: "
+        "'raises the sonic gun' → the sonic-gun-raised panel); the rest continue the action.\n"
+        "- Use FEWER panels (even just 1) when the page has no extra panels that fit — NEVER "
+        "pad with an unrelated panel.\n"
+        "- Don't reuse a panel across scenes.\n"
+        "Return ONLY JSON mapping every scene to a LIST: "
+        "{\"S2\":[\"p10#2\",\"p10#0\",\"p10#9\"], \"S13\":[\"p50#0\",\"p50#1\",\"p50#2\"], ...}."
     )
     try:
         from stages.stage_3._llm import call_with_chain
         raw, _ = call_with_chain(
             system="You match narration lines to the comic panels that depict them. Return only JSON.",
-            user=prompt, max_tokens=900, label="panel-assign",
+            user=prompt, max_tokens=2000, label="panel-assign",
         )
     except Exception:
         return {}
@@ -256,14 +260,23 @@ def _llm_assign_panels(narration: dict, pages_by_number: dict[int, dict],
         mp = json.loads(m.group(0))
     except Exception:
         return {}
-    out: dict[int, tuple[int, int]] = {}
+    out: dict[int, list[tuple[int, int]]] = {}
     for k, v in mp.items():
         sid = int(re.sub(r"[^0-9]", "", str(k)) or 0)
-        mm = re.match(r"\s*p(\d+)#(\d+)", str(v))
-        if sid and mm:
+        if not sid:
+            continue
+        # v is a LIST of "pN#i" (new schema); tolerate a bare string (old schema).
+        items = v if isinstance(v, list) else [v]
+        seq: list[tuple[int, int]] = []
+        for item in items:
+            mm = re.match(r"\s*p(\d+)#(\d+)", str(item))
+            if not mm:
+                continue
             pg, ix = int(mm.group(1)), int(mm.group(2))
-            if (pg, ix) in valid:
-                out[sid] = (pg, ix)
+            if (pg, ix) in valid and (pg, ix) not in seq:  # dedup within scene, keep order
+                seq.append((pg, ix))
+        if seq:
+            out[sid] = seq
     return out
 
 
@@ -342,20 +355,24 @@ def _build_shots_per_chunk(
 
     for scene, members in groups:
         total_dur = sum(m[2] for m in members)
-        # E: one held panel per scene; a long scene (≥ threshold and ≥2 chunks)
-        # earns a 2nd panel so the picture isn't held static too long.
-        # Option 2: ~1 panel per SHOT_TARGET_SECONDS (≈2.5s) for a snappier,
-        # reference-paced cut rate — capped at 3 distinct panels and at the number
-        # of caption chunks available. (Was: 1 panel, 2 only if scene ≥5s.)
-        n_panels = max(1, min(len(members), 4, round(total_dur / SHOT_TARGET_SECONDS)))
-        for slice_members in _split_members(members, n_panels):
+        # MULTI-PANEL per scene: the LLM returns an ORDERED LIST of panels that show
+        # this one narration line unfolding (the slam → the count → the triumphant
+        # face). slice[i] shows panel_list[i], so a scene now plays across 2-4
+        # distinct panels of its OWN page instead of holding a single frame.
+        _sid = int(scene.get("scene_id") or 0)
+        panel_list = llm_panels.get(_sid) or []
+        # Distinct panels this scene gets: the LLM's list length, capped by the
+        # caption-chunk count (can't show more panels than time slices) and the
+        # ~1-panel-per-SHOT_TARGET_SECONDS cut rate. No list → 1 (heuristic fills).
+        cap = max(1, min(len(members), 4, round(total_dur / SHOT_TARGET_SECONDS)))
+        n_panels = max(1, min(cap, len(panel_list))) if panel_list else cap
+        for i, slice_members in enumerate(_split_members(members, n_panels)):
             slice_text = " ".join(m[0] for m in slice_members).strip()
             slice_dur = sum(m[2] for m in slice_members)
-            _sid = int(scene.get("scene_id") or 0)
             panel = source_image = None
-            if _sid in llm_panels:
-                panel, source_image = _resolve(llm_panels[_sid])
-            if panel is None:   # LLM had no usable pick → heuristic fallback
+            if i < len(panel_list):   # the LLM's i-th panel for this scene's i-th slice
+                panel, source_image = _resolve(panel_list[i])
+            if panel is None:   # LLM had no usable pick for this slice → heuristic fallback
                 panel, source_image = _select_panel_for_chunk(
                     chunk_text=slice_text,
                     scene=scene,
@@ -364,6 +381,8 @@ def _build_shots_per_chunk(
                     prev_panel=prev_panel,
                     cluster_to_name=cluster_to_name or {},
                 )
+            if panel is not None:   # register so no panel repeats across the video
+                used_global.add((panel.get("_page_number"), panel.get("index")))
             prev_panel = panel  # track for next slice's coherence score
             text_bboxes: list[dict] = []
             if panel is None:

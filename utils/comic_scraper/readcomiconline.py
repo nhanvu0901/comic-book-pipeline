@@ -283,27 +283,3 @@ def scrape_single_page(
     if 1 <= page_num <= len(pages):
         return pages[page_num - 1]
     return None
-
-
-# ─── URL / slug helpers ───────────────────────────────────────────────────────
-
-
-def build_issue_slug(source_issue: str) -> str:
-    """Convert '#1' → 'Issue-1', 'chapter 5' → 'Chapter-5'."""
-    s = source_issue.strip()
-    m = re.match(r"#(\d+)", s)
-    if m:
-        return f"Issue-{m.group(1)}"
-    m = re.match(r"chapter\s+(\d+)", s, re.IGNORECASE)
-    if m:
-        return f"Chapter-{m.group(1)}"
-    return re.sub(r"[^a-zA-Z0-9-]", "-", s).strip("-")
-
-
-def build_series_slug(series_name: str) -> str:
-    """Convert series name to a slug (display/cache label only)."""
-    s = series_name.strip().lower()
-    s = re.sub(r"\s+", "-", s)
-    s = re.sub(r"[?.!\'\",;:@#&=+$]+", "", s)
-    s = re.sub(r"-{2,}", "-", s)
-    return s.strip("-")

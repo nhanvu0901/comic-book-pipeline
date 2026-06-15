@@ -25,58 +25,6 @@ async def run_blocking(fn: Callable[..., Any], *args, **kwargs) -> Any:
     return await asyncio.to_thread(fn, *args, **kwargs)
 
 
-# ─── Stage 1 interactive I/O bridge ────────────────────────────────────────
-
-@dataclass
-class InputBridge:
-    """
-    Thread-safe Q/A channel between the agent (running in a worker thread
-    via asyncio.to_thread) and the Flet UI thread.
-
-      - worker calls `ask(prompt)` → blocks until UI calls `answer(text)`
-      - UI provides `on_question` which is called (on the worker thread)
-        whenever the worker wants input; the UI marshals the prompt to
-        its input field inside that callback.
-
-    The UI may also call `cancel()` to unblock pending asks (e.g. user
-    aborts). On cancel, ask() returns "" and the agent treats that as skip.
-    """
-    on_question: Callable[[str], None] | None = None
-
-    def __post_init__(self):
-        self._q: queue.Queue[str] = queue.Queue()
-        self._pending: str | None = None
-        self._cancelled = False
-
-    def ask(self, prompt: str) -> str:
-        if self._cancelled:
-            return ""
-        self._pending = prompt
-        if self.on_question:
-            try:
-                self.on_question(prompt)
-            except Exception:
-                pass
-        try:
-            return self._q.get(timeout=600)   # 10 min safety cap
-        except queue.Empty:
-            return ""
-
-    def answer(self, text: str) -> None:
-        self._pending = None
-        self._q.put(text)
-
-    def cancel(self) -> None:
-        self._cancelled = True
-        try:
-            self._q.put_nowait("")
-        except queue.Full:
-            pass
-
-    def pending(self) -> str | None:
-        return self._pending
-
-
 # ─── Phase approval bridge (new interactive agent flow) ────────────────────
 
 @dataclass

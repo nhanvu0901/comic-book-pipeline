@@ -462,7 +462,7 @@ def write_script(
             errors = []  # don't raise — fall through with best draft
             break
         log(f"[stage4]   retrying (pass {pass_num+1}/{MAX_PASSES})…")
-        parsed = _retry_fix_with_wiki(parsed, errors, comic_context,
+        parsed = _retry_fix_with_wiki(parsed, errors, beats, comic_context,
                                        model, progress, dump)
         # Re-anchor: the retry may rewrite prose / re-key beat_ids, but page_ref
         # and panel_ref stay deterministic so a retry can never re-break paging.
@@ -958,6 +958,7 @@ def _anchor_scenes_to_beats(
 
     parsed["scenes"] = anchored
     parsed["_coverage_gaps"] = gaps
+    parsed["_anchor_pool_count"] = len(pool)
     return parsed
 
 
@@ -1346,6 +1347,21 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      he had taken", "back at the lab"). No one and nothing should appear from
      nowhere between consecutive scenes.
 
+8.6) UNDERSTAND THE STORY LOGIC — you are telling ONE connected story, not labelling panels
+   - Before writing, read ALL beats as a single CAUSE→EFFECT chain. Each scene must
+     make the NEXT one make sense to a viewer who has NEVER read the comic.
+   - Preserve every SETUP→PAYOFF thread the beats contain:
+       • If a beat says a character is presumed DEAD ("appears to kill / apparently
+         killed"), plant that death CLEARLY, then PAY IT OFF at the beat where they
+         are revealed alive — name the reveal ("...steps from the shadows, alive").
+       • Any APOLOGY, breakdown, or emotional turn MUST say what it is FOR and why
+         NOW — use that beat's WHY/cause. "Apologises for everything" with no reason
+         is a FAILURE: state what he is sorry for and what just forced it out of him.
+   - ONE BEAT = ONE SCENE, ALWAYS. Each scene is locked to its beat's panel in the
+     finished video, so merging two beats into one sentence makes every later image
+     show the WRONG moment. Never drop or fold a beat for brevity — tighten wording
+     instead.
+
 9) CONTINUITY ANCHOR
    - For each scene from #2 onward, you will see a "prev_anchor" — the last 6-8 words of the previous scene. Continue from this thread; do not reset the subject without re-introducing them.
 
@@ -1465,6 +1481,12 @@ def _orientation_block() -> str:
         "detective in the Thor Corps, a police force of Thor variants on Battleworld —\n"
         "and when he found a body…'. Never open on a bare name or event the viewer\n"
         "cannot place.\n"
+        "ALSO gloss the FIRST mention of any key OBJECT, POWER, or SUBSTANCE with a\n"
+        "2-4 word 'what it is' tag — ESPECIALLY when its name could be mistaken for a\n"
+        "famous character. e.g. in a Bane comic 'Venom' is the strength DRUG that bulks\n"
+        "him up, NOT the Spider-Man symbiote — say 'Venom, the strength drug' (or 'the\n"
+        "super-steroid Venom') on first mention, never a bare 'Venom'. Same for any\n"
+        "serum, device, or power whose plain name a first-time viewer would misread.\n"
         "╚════════════════════════════════════════════╝\n\n"
     )
 
@@ -1590,6 +1612,7 @@ def _is_critical_error(msg: str) -> bool:
         "wiki:",                     # phase E wiki cross-check found canonical mismatch
         "repeat the same content",   # two consecutive scenes restate the same beat/phrase
         "narrates multiple events",  # single-event guard: >1 event in one sentence
+        "coverage gap",              # writer dropped/merged beats → panels desync
     )
     return any(marker in m for marker in critical_markers)
 
@@ -1670,6 +1693,21 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         return ["no scenes in output"]
     if not (9 <= len(scenes) <= 22):
         errors.append(f"scene count {len(scenes)} not in 9..22")
+
+    # Coverage-gap guard: the writer MUST emit exactly one story scene per beat. When
+    # it merges/drops beats (pool < beats), positional anchoring leaves later beats
+    # with no scene and every following panel desyncs from its narration. Flag it as
+    # a CRITICAL logic error so the retry loop re-writes with full beat coverage.
+    gaps = parsed.get("_coverage_gaps") or []
+    pool_n = parsed.get("_anchor_pool_count")
+    n_beats = len(valid_beat_ids)
+    if gaps or (pool_n is not None and n_beats and pool_n != n_beats):
+        detail = (f"beat(s) {gaps} have no scene" if gaps
+                  else f"got {pool_n} story scenes for {n_beats} beats")
+        errors.append(
+            f"coverage gap: {detail} — emit EXACTLY one story scene per beat, in beat "
+            f"order (position is binding; a missing or extra scene desyncs every "
+            f"following panel)")
 
     total_words = 0
     for i, s in enumerate(scenes, start=1):
@@ -1952,7 +1990,6 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
 
 
 _FEW_SHOT_CACHE: str | None = None
-_VTT_TIME_RE = re.compile(r"(\d+):(\d+):(\d+)\.(\d+)")
 
 
 def _parse_vtt_cues(vtt_path: Path) -> list[str]:
@@ -2189,123 +2226,6 @@ def _repair_truncated_json(s: str) -> str | None:
     return truncated + ("]" * open_brackets) + ("}" * open_braces)
 
 
-_FIDELITY_SYSTEM = """You are FactChecker, a strict narration auditor for comic-book Shorts.
-
-You will be given:
-  • A NARRATION SCRIPT (numbered scenes with text + page_ref + panel_ref)
-  • The PANEL DATA each scene cites (description, characters, dominant_emotion, dialog text_blocks, page_summary)
-
-Your job: identify every CLAIM in the narration that is NOT supported by the panel data. A claim is unsupported if:
-  • It names a character/object/location not in the panel's characters or page summary
-  • It states an action (verb) that isn't in the panel description or dialog
-  • It uses adjectives/emotions not in dominant_emotion or panel description
-  • It substitutes a related character (e.g. "Dr. Connors" instead of "the symbiote monster")
-  • It invents poetic metaphors not grounded in visual description
-  • It misframes a relationship (e.g. "war BETWEEN heroes" when heroes fought a single villain together)
-
-Return STRICT JSON only:
-{
-  "issues": [
-    {"scene_id": 1, "claim": "war between Spider-Man and Captain America", "reason": "panel shows them fighting a shadowy entity TOGETHER, not each other"},
-    {"scene_id": 8, "claim": "Dr. Connors' face in its fangs", "reason": "panel data does not mention Dr. Connors"}
-  ]
-}
-
-If everything is supported, return: {"issues": []}
-Do NOT flag stylistic phrasing — only flag claims that are factually unsupported."""
-
-
-def _fidelity_check(
-    parsed: dict, story_pages: list[dict], comic_context: dict,
-    *, model: str | None, progress: Callable[[str], None] | None,
-) -> list[str]:
-    """Phase D: LLM-as-fact-checker. Compares each scene's text against its
-    cited panel data and returns list of issue strings.
-    Each issue is formatted as: "scene N: claim X — reason Y" for retry prompt."""
-    log = progress or (lambda _msg: None)
-    scenes = parsed.get("scenes") or []
-    if not scenes:
-        return []
-
-    # Build panel data block — only for cited (page_ref, panel_ref) pairs
-    page_lookup = {int(p.get("page_number", 0)): p for p in story_pages}
-    panel_data_lines = []
-    nar_lines = []
-    for s in scenes:
-        sid = s.get("scene_id", "?")
-        text = str(s.get("text", "")).strip()
-        nar_lines.append(f"S{sid} (page {s.get('page_ref')}, panel {s.get('panel_ref')}): {text}")
-        pg = page_lookup.get(int(s.get("page_ref", 0) or 0))
-        if not pg:
-            panel_data_lines.append(f"S{sid} panel data: <MISSING PAGE>")
-            continue
-        panels = pg.get("panels") or []
-        idx = int(s.get("panel_ref", 0) or 0)
-        panel = panels[idx] if 0 <= idx < len(panels) else None
-        if panel:
-            desc = (panel.get("description") or "")[:300]
-            chars = panel.get("characters") or []
-            emo = panel.get("dominant_emotion") or ""
-            tbs = [
-                str(tb.get("text", ""))[:120]
-                for tb in (pg.get("text_blocks") or [])
-                if tb.get("panel_index") == idx
-            ][:4]
-            summary = (pg.get("page_summary") or "")[:200]
-            panel_data_lines.append(
-                f"S{sid} panel data:\n"
-                f"  desc: {desc}\n"
-                f"  characters: {chars}\n"
-                f"  emotion: {emo}\n"
-                f"  dialog: {tbs}\n"
-                f"  page_summary: {summary}"
-            )
-        else:
-            panel_data_lines.append(f"S{sid} panel data: <PANEL idx={idx} OUT OF BOUNDS>")
-
-    user = (
-        "NARRATION SCRIPT:\n" + "\n".join(nar_lines) + "\n\n"
-        + "PANEL DATA:\n" + "\n\n".join(panel_data_lines) + "\n\n"
-        + "Return JSON {\"issues\": [...]}."
-    )
-
-    log("[stage4] phase D — fidelity fact-check (reasoning chain)…")
-    chain = [model] if model else list(FIDELITY_LLM_MODELS)
-    try:
-        raw, mdl = call_with_chain(
-            system=_FIDELITY_SYSTEM,
-            user=user,
-            models=chain,
-            max_tokens=2500,
-            progress=progress,
-            label="fidelity",
-            validator=lambda c: '"issues"' in c,
-        )
-    except RuntimeError as exc:
-        log(f"[stage4]   fidelity check chain failed — skipping: {exc}")
-        return []
-
-    parsed_fc = _extract_json(raw)
-    if not isinstance(parsed_fc, dict):
-        return []
-    issues = parsed_fc.get("issues") or []
-    out: list[str] = []
-    for iss in issues:
-        if not isinstance(iss, dict):
-            continue
-        sid = iss.get("scene_id", "?")
-        claim = str(iss.get("claim", ""))[:100]
-        reason = str(iss.get("reason", ""))[:150]
-        out.append(f"scene {sid}: claim {claim!r} unsupported — {reason}")
-    if out:
-        log(f"[stage4]   fidelity check found {len(out)} unsupported claim(s)")
-        for issue in out[:5]:
-            log(f"[stage4]     - {issue}")
-    else:
-        log("[stage4]   fidelity check: all claims grounded ✓")
-    return out
-
-
 _WIKI_CROSS_CHECK_SYSTEM = """You are WikiAuditor — strictest canonical-story checker for comic-book Shorts.
 
 You will be given:
@@ -2529,6 +2449,7 @@ def _wiki_cross_check(
 def _retry_fix_with_wiki(
     parsed: dict,
     errors: list[str],
+    beats: list[Beat],
     comic_context: dict,
     model: str | None,
     progress: Callable[[str], None] | None,
@@ -2549,13 +2470,20 @@ def _retry_fix_with_wiki(
         + (f"CANONICAL STORY ARC:\n{arc}\n\n" if arc else "")
         + f"CANONICAL FULL PLOT (use this as your primary source of truth):\n{plot}\n\n"
         f"VALIDATION ERRORS (fix every one):\n{err_block}\n\n"
+        + f"BEATS — emit EXACTLY ONE scene per beat, in this order ({len(beats)} story "
+        f"scenes + 1 outro credit). If a 'coverage gap' error is listed above you "
+        f"DROPPED or MERGED beats — re-add every missing beat as its own scene:\n"
+        f"{_beats_block(beats)}\n\n"
         + _orientation_block()
         + _saga_clarity_block(comic_context)
         + f"HARD RULES (these don't change between retries):\n"
         f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
         f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words (punch lines may be as short as {_SCENE_MIN_WORDS}; NO scene over {_SCENE_MAX_WORDS}).\n"
-        f"- Total: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} words (HARD ceiling — calm 1.1 pace). 12-14 scenes.\n"
+        f"- EXACTLY {len(beats)} story scenes — ONE per beat, in beat order — PLUS the "
+        f"outro credit as the final element. Do NOT merge, skip, split, or reorder "
+        f"beats; a missing scene desyncs every following panel.\n"
+        f"- Total: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} words (HARD ceiling — calm 1.1 pace).\n"
         f"- ONE EVENT PER SENTENCE. If a 'narrates multiple events' error is listed, "
         f"keep ONLY that beat's single most important action as a punchy line and "
         f"drop the other clauses — do NOT add a scene (one beat → one scene).\n"
