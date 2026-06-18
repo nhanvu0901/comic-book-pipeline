@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 from typing import Callable
 
@@ -266,8 +267,14 @@ def _build_shots_per_chunk(
     # to the scene's own page, scores via _score_panel (all rules intact), LLM-
     # disambiguates a close lead, and falls back to a whole-page shot when no
     # panel depicts the scene. Replaces the old global _llm_assign_panels prompt.
+    # Fix A: pre-resolve panel contention so scenes sharing a page_ref each get the
+    # panel they match BEST (greedy), not first-come. reserved[gi] = the panel key
+    # owned by group gi; every other contended scene is blocked from it.
+    reserved = _resolve_page_contention(groups, pages_by_number or {}, cluster_to_name or {})
+    reserved_all = set(reserved.values())
+
     audit_whole = []  # A3: scene_ids that rendered as a whole page
-    for scene, members in groups:
+    for gi, (scene, members) in enumerate(groups):
         # Clause-anchored slicing: ONE panel per CLAUSE (subject+verb unit), each panel
         # matched to its OWN clause text → panel changes only at a natural speech pause,
         # never mid-phrase, and each panel depicts its clause. Intro/outro stay one panel.
@@ -280,10 +287,15 @@ def _build_shots_per_chunk(
             pairs = [(c, b) for c, b in zip(clauses, buckets) if b] or [(scene_text, members)]
             clause_texts = [c for c, _ in pairs]
             slices = [b for _, b in pairs]
+        # Panels reserved for OTHER scenes on the same page are off-limits here; this
+        # scene force-claims the panel reserved for IT (pinned).
+        mine = reserved.get(gi)
+        blocked = reserved_all - ({mine} if mine is not None else set())
         assigned = _assign_scene_panels(
             scene=scene, pages_by_number=pages_by_number or {},
             used_panel_keys=used_global, prev_panel=prev_panel,
             cluster_to_name=cluster_to_name or {}, clause_texts=clause_texts,
+            blocked_keys=blocked, pinned_key=mine,
         )
         is_whole = any(p and p.get("_whole_page") for p, _ in assigned)
         # Intro is the cover by design (R15), not a fallback — don't flag it.
@@ -318,6 +330,7 @@ def _build_shots_per_chunk(
                 source_image=source_image,
                 motion=motion,
                 text_bboxes=text_bboxes,
+                caption_text=" ".join(str(m[0]) for m in slice_members).strip(),
             ))
             shot_id += 1
     if audit_whole:
@@ -822,12 +835,35 @@ def _pick_best_panel(text, *, page_ref, scene, pages_by_number, used, prev_panel
     return lead
 
 
+def _panel_by_key(key, pages_by_number):
+    """Materialise a scored-style panel dict (with _page_number/index) + its src for a
+    (page, idx) key, or (None, '') if it doesn't exist."""
+    pn, idx = key
+    page = pages_by_number.get(pn) or {}
+    panels = page.get("panels") or []
+    if not (0 <= idx < len(panels)):
+        return None, ""
+    pw = dict(panels[idx])
+    pw["_page_number"] = pn
+    pw["index"] = idx
+    return pw, str(page.get("source_image") or "")
+
+
 def _assign_scene_panels(*, scene, pages_by_number, used_panel_keys, prev_panel,
-                         cluster_to_name, clause_texts):
+                         cluster_to_name, clause_texts, blocked_keys=frozenset(),
+                         pinned_key=None):
     """SINGLE panel authority. Returns one (panel, src) PER CLAUSE, each matched to
     that CLAUSE's OWN text (page-locked A1, no-repeat R17/R24, FLOOR A2, R19 tiebreak,
     every _score_panel rule). A clause that can't clear FLOOR holds the previous
-    clause's panel (coherent) or, if it's the first, the whole page. Intro → cover."""
+    clause's panel (coherent) or, if it's the first, the whole page. Intro → cover.
+
+    Fix A (2026-06-18) — page contention. When several scenes share a page_ref:
+    - blocked_keys: panels RESERVED for OTHER scenes — temporarily marked used so this
+      scene can't eat a neighbour's panel, then restored so the rightful owner claims it.
+    - pinned_key: the panel THIS scene owns. It is force-assigned to the clause that
+      depicts it best, so content-ownership beats R9 scene-entry coherence (the
+      'reduced to ash' panel must win for that line even though the previous shot was a
+      Ghost Rider panel). Both default off → non-contended scenes are unchanged."""
     if scene.get("is_intro"):
         pnl, src = _whole_page_panel(scene, pages_by_number)
         return [(pnl, src)] if pnl else []
@@ -836,22 +872,95 @@ def _assign_scene_panels(*, scene, pages_by_number, used_panel_keys, prev_panel,
     clause_texts = clause_texts or [str(scene.get("text", "") or "")]
     result: list = []
     prev = prev_panel
-    for ct in clause_texts:
-        lead = _pick_best_panel(ct, page_ref=page_ref, scene=scene,
-                                pages_by_number=pages_by_number, used=used_panel_keys,
-                                prev_panel=prev, cluster_to_name=cluster_to_name)
-        if lead is not None:
-            _, panel, src, key = lead
-            used_panel_keys.add(key)       # R17/R24 no-repeat across the whole video
-            result.append((panel, src))
-            prev = panel
-        elif result:
-            result.append(result[-1])      # clause too thin to match → hold previous
-        else:
-            pnl, src = _whole_page_panel(scene, pages_by_number)
-            result.append((pnl, src))
-            prev = pnl
+
+    # Resolve the pinned (owned) panel and which clause depicts it best.
+    pin_panel = pin_src = None
+    pin_clause = -1
+    if pinned_key is not None and pinned_key not in used_panel_keys:
+        pin_panel, pin_src = _panel_by_key(pinned_key, pages_by_number)
+        if pin_panel is not None:
+            page_tb = (pages_by_number.get(pinned_key[0]) or {}).get("text_blocks") or []
+            best_s = -1e9
+            for i, ct in enumerate(clause_texts):
+                s = _score_panel(pin_panel, ct, scene, page_text_blocks=page_tb,
+                                 prev_panel=None, cluster_to_name=cluster_to_name,
+                                 page_locked=True)
+                if s > best_s:
+                    best_s, pin_clause = s, i
+
+    # Temporarily reserve neighbours' panels + the pinned panel (only those not already
+    # claimed), so non-pinned clauses skip them; the finally restores all but real claims.
+    newly_blocked = set(blocked_keys)
+    if pin_panel is not None:
+        newly_blocked.add(pinned_key)
+    newly_blocked -= used_panel_keys
+    used_panel_keys |= newly_blocked
+    try:
+        for i, ct in enumerate(clause_texts):
+            if i == pin_clause and pin_panel is not None:
+                result.append((pin_panel, pin_src))   # force-claim the owned panel
+                prev = pin_panel
+                newly_blocked.discard(pinned_key)      # permanent claim, survive finally
+                continue
+            lead = _pick_best_panel(ct, page_ref=page_ref, scene=scene,
+                                    pages_by_number=pages_by_number, used=used_panel_keys,
+                                    prev_panel=prev, cluster_to_name=cluster_to_name)
+            if lead is not None:
+                _, panel, src, key = lead
+                used_panel_keys.add(key)   # R17/R24 no-repeat across the whole video
+                result.append((panel, src))
+                prev = panel
+            elif result:
+                result.append(result[-1])  # clause too thin to match → hold previous
+            else:
+                pnl, src = _whole_page_panel(scene, pages_by_number)
+                result.append((pnl, src))
+                prev = pnl
+    finally:
+        used_panel_keys -= newly_blocked   # free neighbours' reservations again
     return result
+
+
+def _resolve_page_contention(groups, pages_by_number, cluster_to_name):
+    """Fix A (2026-06-18): when several scenes lock to the SAME page_ref, give each
+    contended panel to the scene that matches it BEST — not to whichever scene the
+    narration reaches first. (BUG: 'The killer was reduced to ash' got the weak
+    'Ghost Rider turns away' panel because the previous line had already eaten the
+    'dissipates into ash' panel on the same page.)
+
+    Peek-only scoring (no used/prev state, scene's full text as the ownership signal);
+    greedy: the highest (scene, panel) score claims first, one panel per scene, one
+    scene per panel. Returns {group_index: reserved_panel_key}."""
+    by_page: dict[int, list[int]] = defaultdict(list)
+    for gi, (scene, _members) in enumerate(groups):
+        if scene.get("is_intro") or scene.get("is_outro"):
+            continue
+        pr = int(scene.get("page_ref", 0) or 0)
+        if pr:
+            by_page[pr].append(gi)
+    reserved: dict[int, tuple] = {}
+    for pr, gis in by_page.items():
+        if len(gis) < 2:
+            continue                       # no contention on this page
+        pairs = []                         # (score, group_index, panel_key)
+        for gi in gis:
+            scene = groups[gi][0]
+            text = str(scene.get("text", "") or "")
+            for score, _pw, _src, key in _gather_scored(
+                    [pr], chunk_text=text, scene=scene,
+                    pages_by_number=pages_by_number, used_panel_keys=set(),
+                    prev_panel=None, cluster_to_name=cluster_to_name):
+                pairs.append((score, gi, key))
+        pairs.sort(key=lambda t: -t[0])
+        taken_g: set = set()
+        taken_p: set = set()
+        for _score, gi, key in pairs:
+            if gi in taken_g or key in taken_p:
+                continue
+            reserved[gi] = key
+            taken_g.add(gi)
+            taken_p.add(key)
+    return reserved
 
 
 def _plan_durations(

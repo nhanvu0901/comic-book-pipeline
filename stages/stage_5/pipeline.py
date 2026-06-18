@@ -190,8 +190,10 @@ def _write_shots_log(shots, caption_chunks, shots_dir, out_path, log):
                 scale = round(max(OUTPUT_W / nw, OUTPUT_H / nh), 2)
             except Exception:
                 pass
-        text = ""
-        if 0 <= s.shot_id < len(caption_chunks):
+        # Fix C: shot count no longer equals caption-chunk count (clause-anchoring),
+        # so caption_chunks[shot_id] mislabels shots. Use the text the shot stored.
+        text = s.caption_text
+        if not text and 0 <= s.shot_id < len(caption_chunks):
             text = str(caption_chunks[s.shot_id].get("text", ""))
         entries.append({
             "shot_id": s.shot_id,

@@ -221,3 +221,50 @@ def test_build_shots_uses_assigned_panels():
     assert len(shots) == 1
     assert shots[0].source_image == "p10.png"
     assert shots[0].panel_bbox["w"] == 600   # the panel, not a whole page
+
+
+# ── Fix A: page-contention resolution (greedy best-match, not first-come) ─────
+def test_shared_page_panel_goes_to_best_matching_scene():
+    # Two scenes lock to the SAME page 10. The 'ash' panel (index 0) is the best
+    # match for the LATER scene 2 ('reduced to ash'), but scene 1 (narration-first)
+    # would grab it under first-come. With Fix A, scene 2 must win panel 0 and
+    # scene 1 must NOT show it (the 'reduced to ash' bug from the Ghost Rider video).
+    narration = {"scenes": [
+        {"scene_id": 1, "page_ref": 10, "panel_ref": -1, "text": "the man dissipates"},
+        {"scene_id": 2, "page_ref": 10, "panel_ref": -1,
+         "text": "the man is reduced to ash on the floor"},
+    ], "beats": []}
+    caption_chunks = [
+        {"text": "the man dissipates", "start": 0.0, "end": 2.0, "scene_id": 1},
+        {"text": "the man is reduced to ash on the floor", "start": 2.0, "end": 4.0,
+         "scene_id": 2},
+    ]
+    scene_timings = [
+        {"scene_id": 1, "start": 0.0, "end": 2.0},
+        {"scene_id": 2, "start": 2.0, "end": 4.0},
+    ]
+    ash = {"index": 0, "bbox": {"x": 0, "y": 0, "w": 600, "h": 900},
+           "description": "a man dissipates into ash", "characters": ["Man"]}
+    other = {"index": 1, "bbox": {"x": 0, "y": 900, "w": 600, "h": 900},
+             "description": "a quiet empty street at night", "characters": []}
+    pages = {10: {
+        "source_image": "p10.png",
+        "image_dimensions": {"width": 1200, "height": 1800},
+        "page_type": "story",
+        "panels": [ash, other],
+        "text_blocks": [
+            {"panel_index": 0, "type": "speech",
+             "text": "the man is reduced to ash on the floor",
+             "bbox": {"x": 0, "y": 0, "w": 50, "h": 20}},
+            {"panel_index": 1, "type": "speech", "text": "a quiet empty street",
+             "bbox": {"x": 0, "y": 900, "w": 50, "h": 20}},
+        ],
+    }}
+    shots = build_shots(narration, scene_timings=scene_timings,
+                        caption_chunks=caption_chunks, pages_by_number=pages,
+                        cluster_to_name={})
+    by_scene = {s.scene_id: s for s in shots}
+    # scene 2 ('reduced to ash') owns the ash panel (y=0, h=900, w=600)
+    assert by_scene[2].panel_bbox == {"x": 0, "y": 0, "w": 600, "h": 900}
+    # scene 1 must NOT have eaten the ash panel
+    assert by_scene[1].panel_bbox != {"x": 0, "y": 0, "w": 600, "h": 900}

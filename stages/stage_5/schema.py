@@ -14,6 +14,10 @@ class Shot:
     # Text-block bboxes (page coords) overlapping this panel — used by Stage 5 to
     # inpaint the comic's own speech-bubble text out before rendering.
     text_bboxes: list[dict] = field(default_factory=list)
+    # The caption words actually spoken over THIS shot (the clause-slice text).
+    # Stored so shots.json labels each shot correctly — shot count no longer
+    # equals caption-chunk count, so indexing caption_chunks[shot_id] is wrong.
+    caption_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
