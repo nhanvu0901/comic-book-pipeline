@@ -152,6 +152,12 @@ HARD RULES for the intro line:
     video says the same thing twice. Frame the broader stakes instead.
     ✗ (restates opening beat) "When Illyana returned from Limbo, she rejected the X-Men."
     ✓ (teases the whole hook)  "What if surviving hell meant becoming the very monster you fled?"
+  - BE TRUE TO THE PLOT above — never invent a framing it doesn't support: do NOT say
+    a hero "took a darker path" / "turned evil" / "went rogue" unless the plot says so.
+  - Do NOT use "What if" / "Ever wonder what if" ALTERNATE-REALITY framing for a
+    CANONICAL story — it falsely implies an alternate timeline or a different-dimension
+    hero (it confuses the viewer). Reserve "what if" ONLY for genuine What-If /
+    alternate-universe comics.
 
 Return ONLY JSON, no markdown: {"archetype": "interrogative|temporal-when|temporal-other|scenic", "intro_line": "..."}"""
 
@@ -249,9 +255,9 @@ def generate_intro(
     except Exception as exc:
         # Deterministic fallback so the pipeline never blocks on the intro.
         hero = _fallback_hero(comic_context)
-        fallback = f"Ever wonder what if {hero} took a darker path?"
+        fallback = f"What happens when {hero} faces the battle of a lifetime?"
         log(f"[stage4] intro LLM failed ({type(exc).__name__}); using fallback: {fallback!r}")
-        return {"story_type": "what_if", "intro_line": fallback}
+        return {"story_type": "interrogative", "intro_line": fallback}
 
 
 _OUTRO_SYSTEM = """You are OutroWriter. You write ONE short THEMATIC closing line for a YouTube Short retelling of a comic — the final sentence the viewer hears.
@@ -544,6 +550,16 @@ def write_script(
     elif outro_idx >= 0:
         log("[stage4] outro: factual credit (coin-flip)")
 
+    # B2: normalize confusing character TITLES/acronyms to the most-common name
+    # (e.g. M.Y.T.H.O.S. / "Master of Yggdrasil…" → MODOK), reading the comic's own
+    # character list. Runs AFTER all text is finalized so the spoken video never
+    # carries a name the viewer can't place. Short nicknames are left alone.
+    _normalize_titles_to_common(parsed.get("scenes") or [], comic_context, log)
+    # Speak "X vs. Y" titles as "versus" — TTS reads "vs." as "vee-ess" (the outro
+    # "The comic is Ghost Rider vs. Galactus" sounded like "v.s"). Caption reads fine too.
+    for _s in (parsed.get("scenes") or []):
+        _s["text"] = re.sub(r"\bvs\b\.?", "versus", _s.get("text", ""), flags=re.IGNORECASE)
+
     final_model = write_model or gloss_model or beats_model or (model or OPENROUTER_MODEL)
     return _to_narration(parsed, beats, glossary, mode, final_model)
 
@@ -551,6 +567,36 @@ def write_script(
 _OUTLINE_SYSTEM = """You are PanelOutliner. Your job is to extract the FULL dramatic skeleton of a comic story into 16-20 canonical beats — MUST cover the entire story arc including the climax, not just the opening.
 
 You DO NOT write narration prose yet. You produce structured beats only.
+
+GROUND EVERY BEAT IN THE WIKI PLOT — NEVER INVENT (HARD RULE):
+- Each beat's event MUST appear in the WIKI PLOT SUMMARY (your canonical authority).
+  The page/panel descriptions only tell you HOW a wiki event looks and WHICH page it's
+  on — a panel image ALONE is NOT enough to create a beat.
+- Do NOT invent an event the wiki doesn't describe, ESPECIALLY an internal experience
+  (telepathy, mind-merge, "phasing into someone's mind", sharing memories, a vision, a
+  dream). If a panel seems to show such a thing but the wiki never mentions it, treat
+  the panel as a plain physical moment, not a new event — or skip it.
+    ✗ beat "Surfer merges with a dying refugee's mind and shares her memories"
+      (no such event in the wiki — invented from an ambiguous panel)
+    ✓ beat "Surfer reaches for a falling survivor but his phantom hand passes through"
+- When the wiki and a panel conflict, the WIKI wins. A thinner beat list that is 100%
+  wiki-grounded beats a richer one padded with invented drama.
+
+MAIN FEATURE ONLY — one story, one thread:
+- Cover ONLY the issue's MAIN feature story. If the comic also contains a SECONDARY
+  / backup story, a prologue or teaser for ANOTHER series, an epilogue that sets up
+  a different book, or house ads, IGNORE them — do not make beats from them.
+- Within the main story, follow the SINGLE central conflict (hero vs the main
+  villain / threat). Drop subplots and minor characters that don't move it. A
+  focused, easy-to-follow spine beats a complete-but-confusing one.
+- EVERY BEAT MUST EARN ITS PLACE: a beat must ADVANCE the main conflict or SET UP a
+  payoff that lands later. If a beat could be deleted and nothing else would change
+  — a bystander's reaction, a side character's fate, a dangling consequence (e.g.
+  "the guardian is blinded and can only weep") — DO NOT create it.
+- FRONT-LOAD THE PREMISE in the first 2-3 beats, in order: (1) WHO the hero is in
+  plain, recognizable terms, (2) HOW/WHY the central threat AROSE — the mechanism
+  that gave the villain power, not merely that he "has" it, (3) what the hero must
+  now do. The reader must grasp the setup before any fight starts.
 
 Each beat has:
 - function: COLD_OPEN | SETUP | COMPLICATION | ESCALATION | MIDPOINT | CLIMAX | LANDING
@@ -595,11 +641,17 @@ Beats are in dramatic order (which is usually but not always chronological). The
 
 Constraints:
 - **16-20 beats** total. Beats map 1:1 to scenes (one panel shown per scene), so
-  MORE beats = MORE distinct panels on screen. Cover the FULL canonical arc, incl.
-  resolution/aftermath — every major wiki event gets its own beat.
+  MORE beats = MORE distinct panels on screen. Cover the FULL canonical arc THROUGH
+  the decisive RESOLUTION — every major wiki PLOT event gets its own beat. BUT a
+  trailing quiet EPILOGUE after the conflict resolves (hero resting, reuniting with
+  an ally, reaffirming themselves) is NOT a "major event" — do not give it a beat.
 - Each beat covers 1-4 input pages. Don't spread one beat across the whole comic.
 - COLD_OPEN beat must contain a concrete visual action, not exposition.
-- LANDING must be a payoff, twist, or final image — never a CTA or question.
+- LANDING = the DECISIVE RESOLUTION of the MAIN conflict (the villain's defeat / fate,
+  the world restored) — a payoff, twist, or final image; never a CTA or question.
+  Do NOT add a separate aftermath/epilogue beat AFTER it (a calm denouement, a
+  hero-and-ally coda) even if the comic has those pages — it dilutes the ending.
+  End on the decisive moment; the outro credit follows.
 - Spread page_refs across the FULL comic page range (page 1 → final page).
   If your last beat's page_ref is <50% of the comic's total pages, you've
   truncated the arc — go back and add climax beats.
@@ -831,15 +883,15 @@ def _ground_beat_panels(
 def _beat_anchor(beat: Beat) -> tuple[int, int]:
     """The deterministic (page_ref, panel_ref) a beat maps to.
 
-    The outliner (Phase A) already chose each beat's strongest visual moment with
-    full per-panel detail, so the beat — not the writer — owns the visual anchor:
-      - first key_panel (the moment the outliner flagged), else
-      - the beat's lowest page as a whole-page (-1) shot, else
-      - (0, -1) for a beat with no pages (should not happen post-outline).
-    panel_ref of -1 means "whole page" in the Scene schema."""
+    Choice B (unified panel matching, 2026-06-17): Stage 3 commits only the PAGE.
+    `_ground_beat_panels` still corrects off-by-one page_refs, but the specific
+    panel is chosen by Stage 5 (`_assign_scene_panels`) — the single panel
+    authority. So panel_ref is ALWAYS -1 ("whole page"); the retired honor-+15
+    rule (R3) no longer has a committed panel to honor.
+    """
     if beat.key_panels:
         kp = beat.key_panels[0]
-        return int(kp.get("page", 0) or 0), int(kp.get("panel", -1))
+        return int(kp.get("page", 0) or 0), -1
     if beat.page_refs:
         return min(beat.page_refs), -1
     return 0, -1
@@ -1250,6 +1302,20 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - sensory details not in panel description (NO "smelled of", "tasted like", "ear-splitting scream" unless explicitly stated)
    When a panel implies meaning that the data doesn't make explicit, write what's literally happening, not your interpretation. Reread the panel description before each scene.
 
+   ABSOLUTE RULE — NEVER INVENT AN EVENT. The WIKI plot / beat SUMMARY is the ONLY
+   authority for WHAT HAPPENED. A panel image only tells you HOW to phrase a moment —
+   it does NOT license a new event. If an event, death, mechanism, or INTERNAL
+   EXPERIENCE (telepathy, mind-reading, "phasing into someone's mind", a vision, a
+   shared memory, a character's private thought) is NOT in the beat summary, the wiki
+   plot, or the dialog, you MUST NOT write it — EVEN IF a panel seems to suggest it.
+   When a panel is ambiguous, narrate ONLY the plain physical action shown.
+     ✗ "in desperation he phased into her dying mind, witnessing the terror firsthand
+        before she died"  (invented internal experience + invented death — not in wiki)
+     ✓ "he reached for the falling crew member, but his phantom hand passed through her"
+        (the plain physical action actually shown)
+   If you cannot ground a dramatic beat in the wiki / summary / dialog, DROP it and tell
+   the simpler TRUE event. A thinner accurate scene ALWAYS beats a vivid invented one.
+
    SPECIAL CASE — "WAR" or BATTLE FRAMING:
    If panel shows heroes fighting a SINGLE villain/entity together, frame it as
    "fought against [entity]" NEVER "war between [hero list]" — that implies the
@@ -1346,6 +1412,10 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      viewer hasn't met without a half-clause that re-grounds them ("the symbiote
      he had taken", "back at the lab"). No one and nothing should appear from
      nowhere between consecutive scenes.
+   - SMOOTH BEAT-TO-BEAT TRANSITIONS: each scene must connect clearly to the one
+     before it (cause→effect or plain time order) so a first-time listener never
+     feels a jump between beats. The hand-off from one beat/scene to the next is
+     what must be easy to follow.
 
 8.6) UNDERSTAND THE STORY LOGIC — you are telling ONE connected story, not labelling panels
    - Before writing, read ALL beats as a single CAUSE→EFFECT chain. Each scene must
@@ -1361,6 +1431,30 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      finished video, so merging two beats into one sentence makes every later image
      show the WRONG moment. Never drop or fold a beat for brevity — tighten wording
      instead.
+   - TELL THE EVENT, NOT THE PICTURE: each line says WHAT HAPPENS and WHY in plain
+     words. Do NOT narrate incidental panel visuals the listener cannot place — a
+     crown, "weeping eyes", a curtain pulled back, crystalline textures, what a hand
+     is "holding". If a visual detail does not move the story forward, drop it.
+     Answer "what just happened and why", never "what does this panel look like".
+
+8.7) KEEP IT SIMPLE — ONE MAIN THREAD, EXPLAIN AS YOU GO
+   - Tell ONLY the main event/conflict (the hero vs the central villain/threat).
+     A confused viewer is worse than a thin one — drop side characters and subplots.
+   - The viewer knows NOTHING going in. Weave the key CONTEXT into the telling so
+     each turn makes sense: WHO a named character is + what is happening to them, and
+     HOW/WHY the villain did what he did. Never drop a big event bare — give the
+     one-clause reason the source provides (not "MODOK conquered nine realms" but
+     "by fusing with the Bifrost, MODOK seized the World Tree and conquered nine
+     realms").
+   - Establish the core SETUP — who the villain is, how the threat arose, what the
+     hero must do — plainly in the FIRST 2-3 scenes, before the fighting starts.
+   - DO NOT NAME a throwaway / one-scene character who has no recurring story role —
+     a random victim, mook, guard, bystander, pilot. Use a plain LABEL the viewer can
+     follow instantly ("the criminal", "a soldier", "a fleeing survivor"). A name the
+     viewer never hears again is noise that breaks the flow. Only name characters who
+     RECUR or matter to the main conflict.
+       ✗ "the Penance Stare forced Vinnie to feel every sin"  (who is Vinnie?)
+       ✓ "the Penance Stare forced the criminal to feel every sin"
 
 9) CONTINUITY ANCHOR
    - For each scene from #2 onward, you will see a "prev_anchor" — the last 6-8 words of the previous scene. Continue from this thread; do not reset the subject without re-introducing them.
@@ -1369,6 +1463,13 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - No em-dashes (—), no brackets, no parenthetical asides — this is spoken aloud.
    - No "what do you think in the comments", no "subscribe", no questions to viewer at the end.
    - No stage directions, no scene numbers inside text.
+   - No comic SOUND-EFFECTS / onomatopoeia (KA-THOOM, BOOM, SNIKT, KRAKA). Those are
+     lettering ART, not story — describe the ACTION instead ("a thunderclap shook the
+     city"), never the sound-word.
+   - No spelled-out ACRONYM names with periods (e.g. "M.Y.T.H.O.S."): read aloud they
+     become letters one-by-one. Use the character's common, familiar name instead
+     (e.g. "MODOK"). If a villain adopts an in-story acronym/title, still call them by
+     the recognizable name.
 
 11) VOICE & RHYTHM — channel-calibrated from 219 reference Shorts
 
@@ -1487,6 +1588,12 @@ def _orientation_block() -> str:
         "him up, NOT the Spider-Man symbiote — say 'Venom, the strength drug' (or 'the\n"
         "super-steroid Venom') on first mention, never a bare 'Venom'. Same for any\n"
         "serum, device, or power whose plain name a first-time viewer would misread.\n"
+        "NAME THE HERO PLAINLY by their familiar identity, not only an in-story title:\n"
+        "'Thor, the King of Asgard' — not just 'the new All-Father' (a newcomer must\n"
+        "never wonder 'who, or which version, is this?'). And EXPLAIN THE THREAT'S\n"
+        "ORIGIN up front: before the hero acts, say HOW the villain got their power or\n"
+        "how the danger began (the mechanism the source gives) — never just the result\n"
+        "('X conquered the realms' with no how).\n"
         "╚════════════════════════════════════════════╝\n\n"
     )
 
@@ -1946,6 +2053,46 @@ def _detect_multi_event(scenes: list[dict]) -> list[str]:
                 f"other beats). Do NOT add a scene — one beat maps to one scene."
             )
     return issues
+
+
+def _normalize_titles_to_common(scenes: list[dict], comic_context: dict,
+                                log=lambda _m: None) -> None:
+    """B2 — replace confusing character TITLES/acronyms in the narration with the
+    character's most-common (canonical) name, using the comic's own character list:
+      - dotted acronyms ("M.Y.T.H.O.S.")           → the character's name (MODOK)
+      - long self-given titles (>=4 words, e.g.
+        "Master of Yggdrasil, Tyrant of Humanity…") → the character's name
+    Short, recognizable nicknames (Spider-Man, All-Father, Thor Odinson) are LEFT
+    alone. Mutates scene dicts in place. The viewer should always hear the name they
+    know, never an in-world title they can't place."""
+    chars = (comic_context.get("summary") or {}).get("characters") or []
+    repl: list[tuple] = []   # (compiled_pattern, canonical_name)
+    for ch in chars:
+        canon = str(ch.get("name", "") or "").strip()
+        if not canon:
+            continue
+        for alias in ch.get("aliases", []) or []:
+            a = str(alias or "").strip()
+            if not a or a.lower() == canon.lower():
+                continue
+            is_dotted = bool(re.fullmatch(r"(?:[A-Za-z]\.){2,}[A-Za-z]?\.?", a))
+            if is_dotted:
+                letters = re.sub(r"[^A-Za-z]", "", a)          # M.Y.T.H.O.S. → MYTHOS
+                pat = re.compile(r"\b" + r"\.?".join(letters) + r"\.?", re.IGNORECASE)
+                repl.append((pat, canon))
+            elif len(a.split()) >= 4:                           # long self-title
+                repl.append((re.compile(re.escape(a), re.IGNORECASE), canon))
+    if not repl:
+        return
+    n = 0
+    for s in scenes:
+        t = s.get("text", "") or ""
+        for pat, canon in repl:
+            t, c = pat.subn(canon, t)
+            n += c
+        s["text"] = t
+    if n:
+        log(f"[stage4] B2: normalized {n} confusing title(s)/acronym(s) → canonical name")
 
 
 def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
