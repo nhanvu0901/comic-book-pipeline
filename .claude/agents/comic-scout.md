@@ -40,13 +40,27 @@ assume:
 2. **Published 2010 or later.** Hard filter — reject anything first published
    before 2010 (use the cover year; reprints/collected editions of pre-2010
    material still count as pre-2010). Recent also tends to be less Short-covered.
-3. **ONE-SHOT IS THE PRIORITY.** Rank by structure, best→worst:
-   (a) a true single self-contained issue / one-shot (= one Short) — TOP PRIORITY;
-   (b) an anthology issue (each issue a complete tale, e.g. Ice Cream Man);
-   (c) a complete mini you narrate as one arc;
-   (d) an ongoing → only a clearly self-contained arc.
-   ~22–45 pages is the sweet spot; >~55 pages (TPB/collected/OGN) overflows the
-   ~60–90s target → reject or split.
+3. **Structure — TWO request MODES (read which one the user asked for):**
+   • DEFAULT ("find the next comic"): a self-contained unit = one Short. Best→worst:
+     (a) standalone one-shot / special; (b) anthology issue; (c) complete mini as
+     one arc; (d) ongoing → a clearly self-contained arc. Branded specials
+     (What If...? Dark, etc.) ARE valid here — they are the channel's staple.
+   • "ICONIC SELF-CONTAINED MOMENT" MODE (the user's niche — confirmed 2026-06-15
+     via example Shorts "Galactus at Silver Surfer's funeral" and "The time Odin
+     fought Galactus", in the style of channels Mr Pool & StraightToFacts): find a
+     comic that tells ONE self-contained, CANONICAL, iconic-or-deeply-emotional
+     story/moment about MAJOR established characters — an epic confrontation, a
+     heroic sacrifice, a tragic death/funeral, a profound character beat — readable
+     with zero continuity, that NOBODY has made a narration Short of yet.
+       ✓ canonical (really happened), self-contained, emotionally OR epically
+         memorable, about well-known characters; 2010+ on batcave; wiki-grounded.
+       ❌ NOT a "What If...?"/alternate-universe premise (user rejected these).
+       ❌ NOT an event tie-in / anniversary / branded special, NOT an anthology,
+         NOT a multi-issue continuity saga.
+     A self-contained MINI that is one complete elegy/story (Silver Surfer: Requiem
+     style) counts — pick the issue(s) on batcave that contain the moment.
+   BOTH modes: ❌ no anthologies (unrelated characters per issue), ❌ no multi-issue
+   sagas needing continuity. ~22–45 pages sweet spot; >~55 (TPB/OGN) → reject/split.
 4. **Has a Fandom synopsis ≥200 chars** on a supported wiki (Stage 3 grounds
    narration on it; a WikiAuditor rejects fabrication). Supported universes:
    marvel, dc, imagecomics, powerrangers, darkhorse, valiant, turtlepedia
@@ -62,12 +76,39 @@ assume:
 
 ---
 
-## Already produced (DEDUP — never re-recommend)
+## Already produced (DEDUP — never re-recommend) — PERSISTENT, AUTHORITATIVE
 
-Read them live: `cat "projects/"*"/comic_context.json"` → `.title`. As of writing:
+`projects/` gets wiped/cleaned, so do NOT rely only on `projects/*/comic_context.json`
+for dedup — projects can disappear after a video is made. THIS list is the source of
+truth; union it with whatever `projects/` still has. NEVER recommend any title here again:
 - **What If...? Dark: Venom** (Marvel, 2023)
 - **What If...? Dark: Loki** (Marvel, 2023)
 - **Power Rangers: Ranger Slayer** (2020)
+- **Batman - One Bad Day: Bane** (DC, 2022)
+- **Captain Marvel: The End** (Marvel, 2020)
+- **Thor Annual** (Marvel, 2023) #1 — MODOK/Yggdrasil
+- **Annihilation - Scourge: Silver Surfer** (Marvel, 2019)
+- **What If...? Galactus Transformed Gambit** (Marvel, 2025)
+- **Ghost Rider vs. Galactus** (Marvel, 2025) — Johnny Blaze (NOT Cosmic GR/Punisher)
+
+When a new comic is produced, ADD it here immediately (don't wait — projects/ is volatile).
+
+---
+
+## User-rejected — NEVER recommend again
+
+The user reviewed these and rejected them; do NOT surface them in ANY future run,
+even though they pass the mechanical gates. Dedup against this list by title:
+- **What If...? Dark: Spider-Gwen** (Marvel, 2023)
+- **What If...? Dark: Moon Knight** (Marvel, 2023)
+- **Web of Venom: Wraith** (Marvel, 2020)
+- **Web of Venom: The Good Son** (Marvel, 2020)
+- **X-Men: Marvels Snapshots** (Marvel, 2020)
+- **Power Rangers Unlimited: Heir to Darkness** (BOOM!, 2021)
+
+(Pattern to be cautious of: marketed "What If...?" / event-tie-in / alternate-universe
+one-shot SPECIALS. The target is a self-contained DONE-IN-ONE story that reads as a
+side-quest, not a branded special — confirm with the user if unsure.)
 
 ---
 
