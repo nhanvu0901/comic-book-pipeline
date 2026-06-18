@@ -302,6 +302,8 @@ _AD_MARKER_PATTERNS = [
     r"\bdiscover yours\b", r"\bvolumes?\s+[\dI]", r"\bsubscribe\b",
     r"\bentertainment weekly\b", r"\bign\b", r"\.com\b", r"\bisbn\b",
     r"\bnext issue\b", r"\bfree preview\b", r"\bgraphic novel\b",
+    r"\bdon.t miss\b", r"\bnew volume\b", r"\bcovers? by\b",
+    r"\bexclusive to\b", r"\bfirst issue\b", r"\bnew series\b",
 ]
 
 
@@ -312,6 +314,32 @@ def _looks_like_ad(corpus: str) -> bool:
         return False
     hits = sum(1 for p in _AD_MARKER_PATTERNS if re.search(p, low))
     return hits >= 2
+
+
+# End-of-issue BACK-MATTER markers (creator credits + "to be continued" / next-issue
+# teaser). The VLM mis-labels these "story" when they reuse a big hero splash — real
+# case: Thor Annual 2023 p29, "WOULD YOU KNOW MORE? ... TO BE CONTINUED IN THE
+# IMMORTAL THOR #1" over a Thor figure + the creative-team credits. Not story.
+_BACKMATTER_STRONG = [
+    r"\bto be continued\b", r"\bcontinued in\b", r"\bcreated by\b",
+    r"\bwould you know more\b", r"\bcoming soon\b", r"\bnext month\b",
+]
+_BACKMATTER_ROLE_PATTERNS = [
+    r"\bwriter\b", r"\bpencill?er\b", r"\bartist\b", r"\binker\b",
+    r"\bcolou?rist\b", r"\bletterer\b", r"\beditor\b", r"\bcover art\b",
+]
+
+
+def _looks_like_backmatter(corpus: str) -> bool:
+    """True when a page's text reads like end-of-issue back-matter: a 'to be
+    continued'/next-issue teaser or a dense creative-team credits block (3+ role
+    labels). These pages reuse hero art so the VLM calls them 'story' — they are not."""
+    low = " ".join(corpus.lower().split())
+    if not low:
+        return False
+    if any(re.search(p, low) for p in _BACKMATTER_STRONG):
+        return True
+    return sum(1 for p in _BACKMATTER_ROLE_PATTERNS if re.search(p, low)) >= 3
 
 
 def _assemble_page_dict(
@@ -366,6 +394,8 @@ def _assemble_page_dict(
         )
         if _looks_like_ad(_ocr_corpus):
             page_type, skip_reason = "skip", "advertisement"
+        elif _looks_like_backmatter(_ocr_corpus):
+            page_type, skip_reason = "skip", "back_matter"
 
     # Build Magi assignments: which panel each char/text bbox belongs to.
     panel_chars: dict[int, list[int]] = {}

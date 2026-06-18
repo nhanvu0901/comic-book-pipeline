@@ -401,7 +401,8 @@ def _enrich_context_silent(
     if ENABLE_SDK_PLOT_FALLBACK and len(plot or "") < SDK_PLOT_FALLBACK_MIN_CHARS:
         try:
             from stages.stage_1.tools.gather_plot_sdk import gather_plot_sdk
-            res = gather_plot_sdk(title, issues_q, publisher, log=log)
+            res = gather_plot_sdk(title, issues_q, publisher,
+                                  year=str(ctx.get("year", "") or ""), log=log)
             # don't downgrade: only adopt the SDK plot if it beats the existing weak one
             if res and res.get("plot_summary") and len(res["plot_summary"]) > len(plot or ""):
                 plot = res["plot_summary"]
@@ -452,7 +453,8 @@ def _enrich_issues(
         if ENABLE_SDK_PLOT_FALLBACK and len(plot) < SDK_PLOT_FALLBACK_MIN_CHARS:
             try:
                 from stages.stage_1.tools.gather_plot_sdk import gather_plot_sdk
-                res = gather_plot_sdk(base_title, label, publisher, log=log)
+                res = gather_plot_sdk(base_title, label, publisher,
+                                      year=str(ctx.get("year", "") or ""), log=log)
                 if res and len(res.get("plot_summary", "")) > len(plot):
                     plot = res["plot_summary"]
                     wiki_url = res.get("source_url") or wiki_url

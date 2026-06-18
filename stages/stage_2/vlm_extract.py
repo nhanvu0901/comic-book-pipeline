@@ -78,13 +78,22 @@ STEP 2 — For cover + story pages ONLY, do this:
       panel apart from its neighbors. Then list characters present and dominant emotion.
       Good: "Reed Richards raises a sonic gun at the symbiote-covered Thing."
       Bad:  "He expresses frustration." / "The Venomized Thing looks menacing."
+      DESCRIBE ONLY WHAT IS VISIBLE — NEVER infer a MENTAL / INTERNAL event from an
+      image: no telepathy, mind-reading, "merging minds", sharing or seeing someone's
+      memories, dreams, or visions. If characters touch or one reaches for another,
+      describe the PHYSICAL action only.
+      Bad:  "Silver Surfer merges with the dying refugee's mind and sees her memories."
+      Good: "Silver Surfer reaches toward the falling refugee; his hand passes through her."
   2b. Extract EVERY visible text element (speech bubbles, narration/caption boxes,
       SFX text, cover title/subtitle/credits). For each: classify type, identify the
       speaker (null for narration/sfx/caption/title), and assign it to the panel whose
       bbox contains it (panel_index). Use -1 if the text is outside all panels.
   2c. Write a 2-3 sentence page_summary. For covers: describe what's visually depicted
       (e.g. "Cover: Spider-Man in classic red/blue swings past the Daily Bugle…").
-      For story pages: describe the key story beats on this page.
+      For story pages: recap the MAIN story action on this page in plain prose. Do NOT
+      transcribe in-world jargon, invented place-names, or social-class labels the
+      reader cannot place — summarize the gist instead (e.g. "Peter explains the city's
+      oppression under the villain" rather than quoting "City Prime / pleb-people").
 
 Return ONLY valid JSON. No markdown fences, no preamble, no explanation."""
 
@@ -175,9 +184,10 @@ def _detect_inline_rate_limit(content: str) -> bool:
 
 
 def _call_model(client: OpenAI, model: str, b64: str, user_text: str) -> str:
-    resp = client.chat.completions.create(
+    create_kwargs = dict(
         model=model,
-        max_tokens=2048,
+        max_tokens=4000,        # A3: avoid truncating a dense single page
+        temperature=0,          # A1: deterministic decoding
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {
@@ -190,6 +200,11 @@ def _call_model(client: OpenAI, model: str, b64: str, user_text: str) -> str:
             },
         ],
     )
+    try:
+        resp = client.chat.completions.create(
+            response_format={"type": "json_object"}, **create_kwargs)  # A2
+    except Exception:
+        resp = client.chat.completions.create(**create_kwargs)
     return (resp.choices[0].message.content or "").strip()
 
 
@@ -315,6 +330,11 @@ so it must stand on its own:
     different (who reacts, what changed, the new action). Two adjacent panels must
     never get near-identical descriptions.
 DO NOT invent — only describe what is visibly happening in THIS panel's image.
+  • NEVER infer a MENTAL / INTERNAL event from an image: no telepathy, mind-reading,
+    "merging minds", sharing or seeing someone's memories, dreams, or visions. If
+    characters touch or one reaches for another, describe the PHYSICAL action only.
+    Bad: "Surfer merges with the refugee's mind and sees her memories."
+    Good: "Silver Surfer reaches toward the falling refugee; his hand passes through her."
 
 PRIOR PAGE OVERLAP RULE — when a PRIOR PAGE block is present in the user message:
   • The first image in the batch is the prior page (already analyzed). It is included so you can see it visually for continuity, AND its structured data is provided as text.
@@ -474,14 +494,23 @@ def _call_model_batch(
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
         })
-    resp = client.with_options(timeout=_BATCH_TIMEOUT_S).chat.completions.create(
+    create_kwargs = dict(
         model=model,
-        max_tokens=3500,
+        max_tokens=8000,        # A3: 3 detailed pages can exceed 3500 tokens → truncated JSON
+        temperature=0,          # A1: deterministic decoding → far fewer malformed-JSON failures
         messages=[
             {"role": "system", "content": _BATCH_SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ],
     )
+    cli = client.with_options(timeout=_BATCH_TIMEOUT_S)
+    try:
+        # A2: force a valid JSON object (kills most "no 'pages' array" failures).
+        resp = cli.chat.completions.create(
+            response_format={"type": "json_object"}, **create_kwargs)
+    except Exception:
+        # Model/route doesn't support JSON mode → retry without it (plain decode).
+        resp = cli.chat.completions.create(**create_kwargs)
     return (resp.choices[0].message.content or "").strip()
 
 
