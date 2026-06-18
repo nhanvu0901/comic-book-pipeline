@@ -82,6 +82,12 @@ def enrich_with_summary(comic_context: dict, *, progress: Callable[[str], None] 
     """Mutate comic_context in place by adding the structured `summary` field. Returns the same dict."""
     if comic_context.get("summary"):
         return comic_context
+    # Cross-source fact-check the gathered plot BEFORE distilling it — corrects a
+    # wrong issue/volume, a misread ending, or a hallucinated event so the whole
+    # pipeline isn't built on a made-up story. Covers both the interactive agent
+    # (cli runs enrich) and the headless url_mode path. Auto-fixes + logs.
+    from .verify_plot import verify_plot
+    verify_plot(comic_context, progress=progress)
     comic_context["summary"] = summarize_context(comic_context, progress=progress)
     return comic_context
 

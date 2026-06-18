@@ -32,6 +32,10 @@ beat is missed (key fights, twists, deaths, and the ENDING / final fate of each 
 -> climax -> ending.
 - Summarize THIS specific issue/arc only. Do NOT invent events. If you cannot find a \
 reliable source describing the plot, return an empty plot_summary.
+- YEAR/VOLUME MATCH (critical): many comics share a title across different years/volumes \
+(e.g. "Thor Annual" exists in 1966, the 2000s, and 2023). When a year is given, use ONLY \
+sources describing THAT exact year's issue. If the only sources you find are a same-named \
+issue from a DIFFERENT year/volume, do NOT use them — return an empty plot_summary instead.
 - Output STRICT JSON and nothing else."""
 
 
@@ -50,7 +54,7 @@ def _extract_json(text: str) -> dict | None:
 
 
 def gather_plot_sdk(
-    title: str, issue: str = "", publisher: str = "", *, log=lambda _m: None
+    title: str, issue: str = "", publisher: str = "", *, year: str = "", log=lambda _m: None
 ) -> dict | None:
     """Research the issue's plot via a web-enabled Claude SDK agent.
 
@@ -73,11 +77,16 @@ def gather_plot_sdk(
         emit("[gather-plot-sdk] SDK unavailable — skipping web research")
         return None
 
-    who = f"{title} {issue}".strip() if issue else title
+    who = title
+    if year:
+        who = f"{who} ({year})"
+    if issue:
+        who = f"{who} {issue}"
     pub = f" (publisher: {publisher})" if publisher else ""
     user = (
         f"Research the plot of the comic: {who}{pub}.\n"
-        "Return STRICT JSON only, no prose around it:\n"
+        + (f"This is the {year} issue — do NOT use a same-named issue from another year.\n" if year else "")
+        + "Return STRICT JSON only, no prose around it:\n"
         '{"plot_summary":"<full start-to-finish plot IN ENGLISH — events only, no opinions>",'
         '"source_url":"<the main real URL you relied on>",'
         '"confidence":"high|medium|low"}\n'
