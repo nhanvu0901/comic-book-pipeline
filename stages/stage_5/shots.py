@@ -83,22 +83,37 @@ MOTION_MIN_DURATION = 2.0
 SHOT_STRATEGY = "caption_chunk"
 
 SHOTS_PER_SCENE = 1            # used when SHOT_STRATEGY == "scene"
-SHOT_TARGET_SECONDS = 2.0   # ~1 panel / 2s → snappier cut rate (ref ~1.5-2s)
+SHOT_TARGET_SECONDS = 3.0   # ~1 panel / 3s — cuts were racing AHEAD of the narration
+                            # (panel changed mid-sentence). 3s holds each panel long
+                            # enough to track the voiceover. Raise further for calmer.
 SHOT_MIN_SECONDS = 0.6         # caption-chunk mode: ~0.5-2s per shot
 STATIC_MOTION_BELOW_SECONDS = 1.5
 SILENCE_GAP_THRESHOLD = 0.2
 SNAP_WINDOW_SECONDS = 0.5
 
-# ── Fix A+C (scene panel coherence) ──────────────────────────────────────────
-# Distinct panels per scene are now driven by _llm_assign_panels, which returns an
-# ORDERED LIST of panels (preferring the scene's own page) so one narration line
+# ── Scene panel selection ────────────────────────────────────────────────────
+# Distinct panels per scene are driven by _assign_scene_panels (the single panel
+# authority): it page-locks to the scene's own page, scores every panel via
+# _score_panel, and returns an ORDERED LIST (reading order) so one narration line
 # plays across 2-4 panels of its moment unfolding. n_panels is capped by the
 # caption-chunk count and the ~1-panel-per-SHOT_TARGET_SECONDS cut rate.
-# C — LLM tie-breaker for near-tie panel scores. Disabled: it fired ~28% of
-# chunks, ran on the default LLM chain (no page_ref preference, often the
-# unavailable free models) and injected nondeterministic neighbor-page picks.
-# The heuristic + page_ref-first gathering (A) is reliable without it.
+# LLM_PANEL_JUDGE — gate for the R19 tiebreak: when the top two panel scores are
+# within PANEL_AMBIGUITY_MARGIN, one small LLM call (page-scoped top-5) breaks the
+# tie. Tests set this False for determinism.
 LLM_PANEL_JUDGE = True
+
+# ── Unified panel matching (2026-06-17) ─────────────────────────────────────
+# A2 whole-page floor — the ONLY new tunable knob. Selection is PAGE-LOCKED, so
+# even the weakest pick is already on the scene's correct page; the whole-page
+# fallback only needs to catch a page with NO depicting panel (all tiny / text-
+# wall / off-topic). Baseline: R12 gives +4 just for being on page_ref; one
+# character match (R5) adds +3 → a legit "right page + right character" panel
+# lands ≈7. Tuned on thor: page-6 panel 4 ("Thor stands defiantly with Mjolnir")
+# scored 7.38 and SHOULD win, so 8.0 was too aggressive. 6.0 accepts page+char
+# panels while still rejecting page-only/salience-only noise. Tune via benchmark.
+PANEL_MATCH_FLOOR = 6.0
+# R19 ambiguity gate (unchanged threshold): top1−top2 below this → LLM tiebreak.
+PANEL_AMBIGUITY_MARGIN = 1.0
 
 
 def build_shots(
@@ -189,97 +204,6 @@ def _build_shots_per_scene(
     return shots
 
 
-def _llm_assign_panels(narration: dict, pages_by_number: dict[int, dict],
-                       cluster_to_name: dict[int, str] | None = None) -> dict[int, list[tuple[int, int]]]:
-    """ONE global LLM call: assign each narration scene → an ORDERED LIST of the
-    (page, panel_index) panels that depict its moment UNFOLDING in reading order,
-    by reading every story panel's description.
-
-    Embedding cosine can't disambiguate panels in an entity-homogeneous comic
-    (every panel says Ben/Reed/symbiote → similarity is dominated by shared
-    nouns, not the distinguishing ACTION). An LLM reading the now-detailed
-    descriptions reasons about the action ("raises the sonic gun" → the sonic-gun
-    panel). Returns {scene_id: [(page, idx), ...]}; empty on any failure → caller
-    falls back to the heuristic _select_panel_for_chunk. Multiple panels per scene
-    let one narration line play across its page (the slam → the count → the
-    triumphant face) instead of holding a single frame."""
-    scenes = [s for s in (narration.get("scenes") or [])
-              if not s.get("is_intro") and not s.get("is_outro")]
-    if not scenes or not pages_by_number:
-        return {}
-    beats = {int(b.get("id", 0) or 0): b for b in (narration.get("beats") or [])}
-    cat: list[str] = []
-    valid: set[tuple[int, int]] = set()
-    for pn in sorted(pages_by_number):
-        page = pages_by_number[pn]
-        if _is_skip_page(page):
-            continue
-        for idx, panel in enumerate(page.get("panels") or []):
-            desc = str(panel.get("description", "") or "").strip()
-            if not desc:
-                continue
-            chars = ", ".join(panel.get("characters", []) or [])
-            cat.append(f"p{pn}#{idx} [{chars}]: {desc[:160]}")
-            valid.add((pn, idx))
-    if not cat:
-        return {}
-    sl = []
-    for s in scenes:
-        beat = beats.get(int(s.get("beat_id", 0) or 0), {})
-        sl.append(f"S{s.get('scene_id')} (page {s.get('page_ref')}): {s.get('text','')}"
-                  f"   (beat: {(beat.get('summary','') or '')[:120]})")
-    prompt = (
-        "Match each NARRATION scene to the comic PANELS that depict it.\n\n"
-        "NARRATION SCENES (story order — each tagged with its page):\n" + "\n".join(sl) + "\n\n"
-        "PANELS (reading order — label [characters]: description):\n" + "\n".join(cat) + "\n\n"
-        "For EACH scene, list the 2-4 PANELS (in reading order) that show its moment "
-        "UNFOLDING — e.g. the slam, then standing over the body, then the triumphant face. "
-        "Rules:\n"
-        "- STRONGLY PREFER panels on the scene's OWN page (the 'page N' tag). Only borrow "
-        "from a neighbouring page if it genuinely continues the SAME moment.\n"
-        "- Panel #1 MUST be the single best one that depicts the line (match verb + object: "
-        "'raises the sonic gun' → the sonic-gun-raised panel); the rest continue the action.\n"
-        "- Use FEWER panels (even just 1) when the page has no extra panels that fit — NEVER "
-        "pad with an unrelated panel.\n"
-        "- Don't reuse a panel across scenes.\n"
-        "Return ONLY JSON mapping every scene to a LIST: "
-        "{\"S2\":[\"p10#2\",\"p10#0\",\"p10#9\"], \"S13\":[\"p50#0\",\"p50#1\",\"p50#2\"], ...}."
-    )
-    try:
-        from stages.stage_3._llm import call_with_chain
-        raw, _ = call_with_chain(
-            system="You match narration lines to the comic panels that depict them. Return only JSON.",
-            user=prompt, max_tokens=2000, label="panel-assign",
-        )
-    except Exception:
-        return {}
-    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
-    if not m:
-        return {}
-    try:
-        mp = json.loads(m.group(0))
-    except Exception:
-        return {}
-    out: dict[int, list[tuple[int, int]]] = {}
-    for k, v in mp.items():
-        sid = int(re.sub(r"[^0-9]", "", str(k)) or 0)
-        if not sid:
-            continue
-        # v is a LIST of "pN#i" (new schema); tolerate a bare string (old schema).
-        items = v if isinstance(v, list) else [v]
-        seq: list[tuple[int, int]] = []
-        for item in items:
-            mm = re.match(r"\s*p(\d+)#(\d+)", str(item))
-            if not mm:
-                continue
-            pg, ix = int(mm.group(1)), int(mm.group(2))
-            if (pg, ix) in valid and (pg, ix) not in seq:  # dedup within scene, keep order
-                seq.append((pg, ix))
-        if seq:
-            out[sid] = seq
-    return out
-
-
 def _build_shots_per_chunk(
     narration: dict,
     caption_chunks: list[dict],
@@ -338,63 +262,53 @@ def _build_shots_per_chunk(
     prev_panel: dict | None = None
     shot_id = 0
 
-    # PRIMARY panel selection: one global LLM call assigns each scene → the panel
-    # that depicts it (reads detailed descriptions, reasons about the action — beats
-    # embedding cosine, which collapses to "magnet" panels in an entity-homogeneous
-    # comic). Heuristic _select_panel_for_chunk is the per-scene fallback.
-    llm_panels = _llm_assign_panels(narration, pages_by_number or {}, cluster_to_name or {})
-
-    def _resolve(pg_ix):
-        pg, ix = pg_ix
-        page = (pages_by_number or {}).get(pg) or {}
-        panels = page.get("panels") or []
-        if 0 <= ix < len(panels):
-            pnl = dict(panels[ix]); pnl["_page_number"] = pg; pnl["index"] = ix
-            return pnl, str(page.get("source_image") or "")
-        return None, ""
-
+    # SINGLE panel authority (unify, 2026-06-17): _assign_scene_panels page-locks
+    # to the scene's own page, scores via _score_panel (all rules intact), LLM-
+    # disambiguates a close lead, and falls back to a whole-page shot when no
+    # panel depicts the scene. Replaces the old global _llm_assign_panels prompt.
+    audit_whole = []  # A3: scene_ids that rendered as a whole page
     for scene, members in groups:
-        total_dur = sum(m[2] for m in members)
-        # MULTI-PANEL per scene: the LLM returns an ORDERED LIST of panels that show
-        # this one narration line unfolding (the slam → the count → the triumphant
-        # face). slice[i] shows panel_list[i], so a scene now plays across 2-4
-        # distinct panels of its OWN page instead of holding a single frame.
-        _sid = int(scene.get("scene_id") or 0)
-        panel_list = llm_panels.get(_sid) or []
-        # Distinct panels this scene gets: the LLM's list length, capped by the
-        # caption-chunk count (can't show more panels than time slices) and the
-        # ~1-panel-per-SHOT_TARGET_SECONDS cut rate. No list → 1 (heuristic fills).
-        cap = max(1, min(len(members), 4, round(total_dur / SHOT_TARGET_SECONDS)))
-        n_panels = max(1, min(cap, len(panel_list))) if panel_list else cap
-        for i, slice_members in enumerate(_split_members(members, n_panels)):
-            slice_text = " ".join(m[0] for m in slice_members).strip()
+        # Clause-anchored slicing: ONE panel per CLAUSE (subject+verb unit), each panel
+        # matched to its OWN clause text → panel changes only at a natural speech pause,
+        # never mid-phrase, and each panel depicts its clause. Intro/outro stay one panel.
+        scene_text = str(scene.get("text", "") or "")
+        if scene.get("is_intro") or scene.get("is_outro"):
+            clause_texts, slices = [scene_text], [members]
+        else:
+            clauses = _split_into_clauses(scene_text) or [scene_text]
+            buckets = _split_members_by_clause(members, clauses)
+            pairs = [(c, b) for c, b in zip(clauses, buckets) if b] or [(scene_text, members)]
+            clause_texts = [c for c, _ in pairs]
+            slices = [b for _, b in pairs]
+        assigned = _assign_scene_panels(
+            scene=scene, pages_by_number=pages_by_number or {},
+            used_panel_keys=used_global, prev_panel=prev_panel,
+            cluster_to_name=cluster_to_name or {}, clause_texts=clause_texts,
+        )
+        is_whole = any(p and p.get("_whole_page") for p, _ in assigned)
+        # Intro is the cover by design (R15), not a fallback — don't flag it.
+        if is_whole and not scene.get("is_intro"):
+            audit_whole.append(int(scene.get("scene_id") or 0))
+        for i, slice_members in enumerate(slices):
             slice_dur = sum(m[2] for m in slice_members)
-            panel = source_image = None
-            if i < len(panel_list):   # the LLM's i-th panel for this scene's i-th slice
-                panel, source_image = _resolve(panel_list[i])
-            if panel is None:   # LLM had no usable pick for this slice → heuristic fallback
-                panel, source_image = _select_panel_for_chunk(
-                    chunk_text=slice_text,
-                    scene=scene,
-                    pages_by_number=pages_by_number or {},
-                    used_panel_keys=used_global,
-                    prev_panel=prev_panel,
-                    cluster_to_name=cluster_to_name or {},
-                )
-            if panel is not None:   # register so no panel repeats across the video
-                used_global.add((panel.get("_page_number"), panel.get("index")))
-            prev_panel = panel  # track for next slice's coherence score
+            if i < len(assigned):
+                panel, source_image = assigned[i]
+            elif assigned:
+                panel, source_image = assigned[-1]   # hold last panel (R23 no-pad)
+            else:
+                panel, source_image = None, None
+            prev_panel = panel   # scene-entry coherence for next scene (R9/R10)
             text_bboxes: list[dict] = []
             if panel is None:
-                # Last resort — no panel data anywhere. Use scene's own bbox.
                 bbox = scene.get("panel_bbox") or {}
                 source_image = str(scene.get("source_image") or "")
             else:
                 bbox = panel.get("bbox") or {}
-                # Comic's own text-block bboxes inside this panel → inpaint mask.
                 text_bboxes = _panel_text_bboxes(panel, pages_by_number or {})
-
             motion = _choose_motion(panel, slice_dur)
+            if panel is not None and panel.get("_whole_page"):
+                # Whole page: reveal the full page (R15-style), never a random pan.
+                motion = "zoom_out" if slice_dur >= MOTION_MIN_DURATION else "static"
             shots.append(Shot(
                 shot_id=shot_id,
                 scene_id=int(scene.get("scene_id") or 1),
@@ -406,38 +320,86 @@ def _build_shots_per_chunk(
                 text_bboxes=text_bboxes,
             ))
             shot_id += 1
+    if audit_whole:
+        print(f"[stage5] panel-match: {len(audit_whole)} scene(s) → whole-page "
+              f"fallback (scene_ids {audit_whole})")
     return shots
 
 
-def _split_members(members: list, n: int) -> list[list]:
-    """Split a scene's chunk members into n contiguous slices of roughly EQUAL
-    DURATION (not equal count) — so panels are held for even lengths instead of
-    one long 4s hold next to a 0.9s flash. members = (text, start, dur)."""
-    if n <= 1 or len(members) <= 1:
+# ── Clause-anchored panel slicing (2026-06-18) ───────────────────────────────
+# The panel unit is a CLAUSE (a sentence-part with a full subject+verb), so a panel
+# changes only at a natural speech pause — never mid-phrase (the old equal-duration
+# split cut mid-clause → "scene jumps / runs ahead of narration"). spaCy gives
+# consistent clause boundaries; if unavailable, a scene stays one panel (still synced).
+_SPACY = None
+_SPACY_TRIED = False
+
+
+def _spacy():
+    global _SPACY, _SPACY_TRIED
+    if _SPACY_TRIED:
+        return _SPACY
+    _SPACY_TRIED = True
+    try:
+        import spacy
+        _SPACY = spacy.load("en_core_web_sm", disable=["ner", "lemmatizer"])
+    except Exception:
+        _SPACY = None
+    return _SPACY
+
+
+def _split_into_clauses(text: str) -> list[str]:
+    """Split a narration sentence into clauses (each a full subject+verb unit).
+    Rule: cut at a COMMA whose next content token is a clause SUBJECT (dep nsubj/
+    nsubjpass with a VERB/AUX head) — matches "between commas + subject+verb",
+    ignoring appositives, lists, and gerunds. Returns [text] when spaCy is
+    unavailable or the sentence is a single clause."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    nlp = _spacy()
+    if nlp is None:
+        return [text]
+    out: list[str] = []
+    doc = nlp(text)
+    for sent in doc.sents:
+        cuts = [sent.start]
+        for t in sent:
+            if t.text == "," and t.i + 1 < sent.end:
+                nxt = doc[t.i + 1]
+                if nxt.dep_ in ("nsubj", "nsubjpass") and nxt.head.pos_ in ("VERB", "AUX"):
+                    cuts.append(t.i + 1)
+        cuts = sorted(set(cuts)) + [sent.end]
+        for a, b in zip(cuts, cuts[1:]):
+            seg = doc[a:b].text.strip(" ,;.").strip()
+            if seg:
+                out.append(seg)
+    return out or [text]
+
+
+def _split_members_by_clause(members: list, clauses: list[str]) -> list[list]:
+    """Bucket a scene's caption-chunk members into one group PER CLAUSE, ALIGNED 1:1
+    with `clauses` (a bucket may be empty — the caller zips clauses↔buckets and drops
+    empty pairs so clause text, panel, and chunks stay aligned). Assignment is by WORD
+    position: chunks are word-fragments in reading order, so each chunk goes to the
+    clause covering its midpoint word. members = (text, start, dur). Returns [members]
+    (single group) when there's nothing to split (1 clause / <=1 chunk)."""
+    if len(clauses) <= 1 or len(members) <= 1:
         return [members]
-    n = min(n, len(members))
-    total = sum(m[2] for m in members) or 1.0
-    # Bucket each member into one of n equal-DURATION time slots by its midpoint.
-    # Members are time-ordered, so midpoints rise → buckets stay contiguous.
-    buckets: list[list] = [[] for _ in range(n)]
-    cum = 0.0
+    clause_of_word: list[int] = []
+    for ci, cl in enumerate(clauses):
+        clause_of_word.extend(ci for _ in cl.split())
+    nwords = len(clause_of_word)
+    if not nwords:
+        return [members]
+    buckets: list[list] = [[] for _ in clauses]
+    wptr = 0
     for m in members:
-        mid = cum + m[2] / 2.0
-        idx = min(n - 1, int(mid / total * n))
-        buckets[idx].append(m)
-        cum += m[2]
-    out = [b for b in buckets if b]
-    if len(out) < n:
-        # A lumpy chunk left a bucket empty → fall back to even-count split so we
-        # still get n contiguous, non-empty slices.
-        base, rem = divmod(len(members), n)
-        out, idx = [], 0
-        for j in range(n):
-            take = base + (1 if j < rem else 0)
-            out.append(members[idx:idx + take])
-            idx += take
-        out = [s for s in out if s]
-    return out
+        wc = max(1, len(str(m[0]).split()))
+        wi = min(nwords - 1, int(wptr + wc / 2.0))
+        buckets[clause_of_word[wi]].append(m)
+        wptr += wc
+    return buckets   # ALIGNED to clauses (may include empty buckets)
 
 
 def _panel_text_bboxes(panel: dict, pages_by_number: dict[int, dict]) -> list[dict]:
@@ -498,6 +460,7 @@ def _score_panel(
     page_text_blocks: list[dict] | None = None,
     prev_panel: dict | None = None,
     cluster_to_name: dict[int, str] | None = None,
+    page_locked: bool = False,
 ) -> float:
     """Hybrid panel relevance scoring (pipeline v5 Phase 1).
 
@@ -537,20 +500,13 @@ def _score_panel(
     _ph = int(_bb.get("h", 0) or 0)
     panel_scale = max(OUTPUT_W / _pw, OUTPUT_H / _ph) if (_pw > 0 and _ph > 0) else 99.0
 
-    # ── I: Scene's canonical (page_ref, panel_ref) bonus — SIZE-SCALED ───
-    # Stage 3's narration includes panel_ref — the canonical pick. Normally
-    # honor it with a big +15. BUT if that pick is a tiny panel (blown up >2×),
-    # shrink the bonus so a bigger, clearer panel on the same page can win.
-    # A 4% page panel (scale ~4.8×) only gets ~+3; a normal panel keeps +15.
-    scene_panel_ref = scene.get("panel_ref")
-    panel_index = int(panel.get("index", -1))
+    # ── R3 RETIRED (unified panel matching, 2026-06-17, choice B) ────────
+    # The "honor scene.panel_ref +15" bonus is gone: Stage 3 no longer commits a
+    # panel (panel_ref is always -1), so there is nothing to honor. Stage 5
+    # (`_assign_scene_panels`) is the sole panel authority. These two values are
+    # still read by R10 (page progression) and R12 (page_ref bonus) below.
     panel_page = int(panel.get("_page_number", 0) or 0)
     scene_page_ref_int = int(scene.get("page_ref", 0) or 0)
-    if (scene_panel_ref is not None and scene_page_ref_int
-            and panel_page == scene_page_ref_int
-            and panel_index == int(scene_panel_ref)):
-        honor_factor = max(0.2, min(1.0, 1.0 - 0.8 * (panel_scale - 2.0) / 2.0))
-        score += 15.0 * honor_factor
 
     # ── Small-panel penalty (BUG 1) — discourage panels that must be heavily
     # upscaled. Applies to ALL candidates so a big clear panel beats a tiny one
@@ -616,17 +572,23 @@ def _score_panel(
         }
         score += 1.5 * len(prev_chars & this_chars)
 
-        # Monotonic page progression (narrative order): reward a panel whose page
-        # is equal-or-forward vs the previous shot, and penalize a backward jump
-        # by distance — so a panel from an early page never resurfaces late.
-        prev_pg = int(prev_panel.get("_page_number", 0) or 0)
-        if prev_pg and panel_page:
-            if panel_page > prev_pg:
-                score += 2.0
-            elif panel_page == prev_pg:
-                score += 1.0
-            else:
-                score -= 5.0 * (prev_pg - panel_page)
+        # ── R10: Monotonic page progression — RETIRED under page-lock (2026-06-17,
+        # decision A). This cross-page forward-only signal was for the OLD multi-page
+        # pool; now selection is page-locked to the scene's page_ref, so every
+        # candidate shares the same page → R10 adds a CONSTANT (no ranking effect)
+        # yet deflates the absolute score below PANEL_MATCH_FLOOR whenever narration
+        # revisits an earlier page (prev scene on a later page), forcing a spurious
+        # whole-page. page-lock takes over R10's job (cf. retired R3). Code kept for
+        # any non-page-locked caller; skipped when page_locked=True.
+        if not page_locked:
+            prev_pg = int(prev_panel.get("_page_number", 0) or 0)
+            if prev_pg and panel_page:
+                if panel_page > prev_pg:
+                    score += 2.0
+                elif panel_page == prev_pg:
+                    score += 1.0
+                else:
+                    score -= 5.0 * (prev_pg - panel_page)
 
     # ── Semantic text↔panel match (TODO #124) — REPLACES lexical desc overlap ──
     # Cosine(narration chunk, panel description) via a local sentence-embedding
@@ -744,7 +706,11 @@ def _is_skip_page(page: dict) -> bool:
       3. text_block content (creator role names: WRITER/ARTIST/COLORIST/LETTERER/EDITOR)
     """
     pt = (page.get("page_type") or "").lower()
-    if pt in ("cover", "credits", "ads", "promo", "title"):
+    if pt in ("cover", "credits", "ads", "promo", "title", "skip"):
+        return True
+    # Stage 2 marks ads / back-matter as is_story_page=False (page_type "skip");
+    # honour that flag too so reclassified pages never get picked for a shot.
+    if page.get("is_story_page") is False and pt != "cover":
         return True
     summary = (page.get("page_summary") or "").lower()
     summary_markers = (
@@ -783,116 +749,109 @@ def _is_skip_page(page: dict) -> bool:
     return False
 
 
-def _select_panel_for_chunk(
-    *,
-    chunk_text: str,
-    scene: dict,
-    pages_by_number: dict[int, dict],
-    used_panel_keys: set,
-    prev_panel: dict | None = None,
-    cluster_to_name: dict[int, str] | None = None,
-) -> tuple[dict | None, str]:
-    """Pick BEST-MATCH panel from pool (scene.page_ref ± 1 adjacent pages).
-
-    Never picks an already-used (page, panel_idx) within the same scene's chunks.
-    Falls back to ±2 pool with repetition allowed if the ±1 pool is exhausted.
-    Returns (panel_dict_or_None, source_image_path)."""
-    page_ref = int(scene.get("page_ref", 0) or 0)
-
-    # Intro teaser scene: ALWAYS show the cover full-frame. The cover is a
-    # page_type=="cover" page, which _is_skip_page() deliberately filters out for
-    # story shots — so we resolve it directly here and bypass the skip filter.
-    if scene.get("is_intro"):
-        cover = pages_by_number.get(page_ref)
-        if cover:
-            src = str(cover.get("source_image") or "")
-            dims = cover.get("image_dimensions") or {}
-            iw = int(dims.get("width", 0) or 0)
-            ih = int(dims.get("height", 0) or 0)
-            panels = cover.get("panels") or []
-            if iw and ih:
-                full = {"bbox": {"x": 0, "y": 0, "w": iw, "h": ih}, "_page_number": page_ref}
-                return full, src
-            if panels:
-                p = dict(panels[0]); p["_page_number"] = page_ref
-                return p, src
-
-    def gather(pages_range):
-        out = []  # (score, panel, source_image, key)
-        for pn in pages_range:
-            page = pages_by_number.get(pn)
-            if not page:
-                continue
-            if _is_skip_page(page):
-                continue
-            src = str(page.get("source_image") or "")
-            page_tb = page.get("text_blocks") or []
-            for idx, panel in enumerate(page.get("panels") or []):
-                key = (pn, idx)
-                if key in used_panel_keys:
-                    continue
-                # Inject page_number so _score_panel can apply page_ref bonus
-                panel_with_pg = dict(panel)
-                panel_with_pg["_page_number"] = pn
-                s = _score_panel(
-                    panel_with_pg, chunk_text, scene,
-                    page_text_blocks=page_tb,
-                    prev_panel=prev_panel,
-                    cluster_to_name=cluster_to_name,
-                )
-                out.append((s, panel_with_pg, src, key))
-        return out
-
-    # FORWARD-ONLY widening (TODO #125): always include the scene's page AND the
-    # next 1-2 pages, NEVER an earlier page. This mirrors reading order — scenes
-    # march forward through the comic and an early panel can't resurface late
-    # (kills the "random early panel appears at the end" duplication). When the
-    # scene's own page has no good free panel (e.g. only the abstract FIZAPPT
-    # left), a semantically matching panel on the NEXT page can now win, because
-    # the page_ref bonus was loosened to +4. Backward fallback is gone on purpose.
-    candidates = gather([page_ref, page_ref + 1, page_ref + 2])
-    if not candidates:
-        # Last resort only: the scene's forward window is entirely exhausted.
-        candidates = gather(range(page_ref, page_ref + 5))
-
-    if candidates:
-        # Sort by score desc
-        candidates.sort(key=lambda t: -t[0])
-
-        # G: LLM-as-judge tie-breaker — only when top 2 scores are close.
-        # Gated off by default (C): it injected nondeterministic neighbor-page
-        # picks via the default LLM chain. Heuristic top is used directly.
-        if (LLM_PANEL_JUDGE and len(candidates) >= 2
-                and (candidates[0][0] - candidates[1][0]) < 1.0):
-            winner = _llm_judge_tiebreak(chunk_text, candidates[:5])
-            if winner is not None:
-                _, panel, src, key = winner
-                used_panel_keys.add(key)
-                return panel, src
-
-        score, panel, src, key = candidates[0]
-        used_panel_keys.add(key)
-        return panel, src
-
-    # Last resort — wider pool, repetition allowed
-    best: tuple[float, dict, str] | None = None
-    for pn in range(max(1, page_ref - 3), page_ref + 4):
+def _gather_scored(pages_range, *, chunk_text, scene, pages_by_number,
+                   used_panel_keys, prev_panel, cluster_to_name):
+    """Score every free, non-skip panel on the given pages (R16/R18 engine,
+    R17 no-repeat, R27-R31 skip-page). Returns (score, panel_with_pg, src, key)."""
+    out = []
+    for pn in pages_range:
         page = pages_by_number.get(pn)
         if not page or _is_skip_page(page):
             continue
         src = str(page.get("source_image") or "")
         page_tb = page.get("text_blocks") or []
-        for panel in (page.get("panels") or []):
-            s = _score_panel(panel, chunk_text, scene,
-                             page_text_blocks=page_tb, prev_panel=prev_panel,
-                             cluster_to_name=cluster_to_name)
-            if best is None or s > best[0]:
-                best = (s, panel, src)
-    if best:
-        return best[1], best[2]
+        for idx, panel in enumerate(page.get("panels") or []):
+            key = (pn, idx)
+            if key in used_panel_keys:
+                continue
+            pw = dict(panel)
+            pw["_page_number"] = pn
+            pw["index"] = idx
+            s = _score_panel(pw, chunk_text, scene, page_text_blocks=page_tb,
+                             prev_panel=prev_panel, cluster_to_name=cluster_to_name,
+                             page_locked=True)
+            out.append((s, pw, src, key))
+    return out
 
-    # No panel data anywhere — caller will fall back to scene's own bbox
-    return None, str(scene.get("source_image") or "")
+
+def _whole_page_panel(scene, pages_by_number):
+    """A2/R15 whole-page 'panel' so the renderer shows the entire page_ref page.
+    Returns (panel_dict_or_None, source_image)."""
+    p = int(scene.get("page_ref", 0) or 0)
+    page = pages_by_number.get(p) or {}
+    src = str(page.get("source_image") or "")
+    dims = page.get("image_dimensions") or {}
+    iw = int(dims.get("width", 0) or 0)
+    ih = int(dims.get("height", 0) or 0)
+    if iw and ih:
+        return ({"bbox": {"x": 0, "y": 0, "w": iw, "h": ih},
+                 "_page_number": p, "index": -1, "_whole_page": True}, src)
+    panels = page.get("panels") or []
+    if panels:
+        pp = dict(panels[0])
+        pp["_page_number"] = p
+        pp["index"] = 0
+        return pp, src
+    return None, src
+
+
+def _pick_best_panel(text, *, page_ref, scene, pages_by_number, used, prev_panel,
+                     cluster_to_name):
+    """Page-locked best panel for ONE text (a clause). Scores the scene's own page
+    first (A1), widens forward (R16) then last-resort (R18) only if empty; R19 LLM
+    tiebreak on a close lead. Returns (score, panel, src, key) or None when nothing
+    clears PANEL_MATCH_FLOOR (caller falls back to hold-previous / whole-page)."""
+    cands = []
+    for rng in ([page_ref], [page_ref + 1, page_ref + 2], range(page_ref, page_ref + 5)):
+        cands = _gather_scored(rng, chunk_text=text, scene=scene,
+                               pages_by_number=pages_by_number, used_panel_keys=used,
+                               prev_panel=prev_panel, cluster_to_name=cluster_to_name)
+        if cands:
+            break
+    if not cands:
+        return None
+    cands.sort(key=lambda t: -t[0])
+    lead = cands[0]
+    if (LLM_PANEL_JUDGE and len(cands) >= 2
+            and (cands[0][0] - cands[1][0]) < PANEL_AMBIGUITY_MARGIN):
+        w = _llm_judge_tiebreak(text, cands[:5])
+        if w is not None:
+            lead = w
+    if cands[0][0] < PANEL_MATCH_FLOOR:
+        return None
+    return lead
+
+
+def _assign_scene_panels(*, scene, pages_by_number, used_panel_keys, prev_panel,
+                         cluster_to_name, clause_texts):
+    """SINGLE panel authority. Returns one (panel, src) PER CLAUSE, each matched to
+    that CLAUSE's OWN text (page-locked A1, no-repeat R17/R24, FLOOR A2, R19 tiebreak,
+    every _score_panel rule). A clause that can't clear FLOOR holds the previous
+    clause's panel (coherent) or, if it's the first, the whole page. Intro → cover."""
+    if scene.get("is_intro"):
+        pnl, src = _whole_page_panel(scene, pages_by_number)
+        return [(pnl, src)] if pnl else []
+
+    page_ref = int(scene.get("page_ref", 0) or 0)
+    clause_texts = clause_texts or [str(scene.get("text", "") or "")]
+    result: list = []
+    prev = prev_panel
+    for ct in clause_texts:
+        lead = _pick_best_panel(ct, page_ref=page_ref, scene=scene,
+                                pages_by_number=pages_by_number, used=used_panel_keys,
+                                prev_panel=prev, cluster_to_name=cluster_to_name)
+        if lead is not None:
+            _, panel, src, key = lead
+            used_panel_keys.add(key)       # R17/R24 no-repeat across the whole video
+            result.append((panel, src))
+            prev = panel
+        elif result:
+            result.append(result[-1])      # clause too thin to match → hold previous
+        else:
+            pnl, src = _whole_page_panel(scene, pages_by_number)
+            result.append((pnl, src))
+            prev = pnl
+    return result
 
 
 def _plan_durations(
@@ -1146,7 +1105,17 @@ def _lama_clean(img_bgr, text_bboxes, iw: int, ih: int):
         if not mask.any():
             return img_bgr
         rgb = Image.fromarray(img_bgr[:, :, ::-1])   # BGR → RGB
-        out = _LAMA(rgb, Image.fromarray(mask))      # PIL RGB result
+        mask_img = Image.fromarray(mask)
+        # Cap LaMa input resolution. A double-page-SPREAD crop (e.g. 3960×2299 ≈ 9MP)
+        # blows LaMa's memory and HARD-CRASHES the process (SIGKILL, no traceback).
+        # The final frame is ≤1080×1920, so inpainting at reduced resolution is
+        # lossless for us — downscale image+mask, inpaint, then resize back to (iw,ih).
+        _MAX_SIDE = 1600
+        if max(iw, ih) > _MAX_SIDE:
+            s = _MAX_SIDE / max(iw, ih)
+            rgb = rgb.resize((max(1, int(iw * s)), max(1, int(ih * s))))
+            mask_img = mask_img.resize(rgb.size)
+        out = _LAMA(rgb, mask_img)                    # PIL RGB result
         if out.size != (iw, ih):
             out = out.resize((iw, ih))
         return np.ascontiguousarray(np.array(out)[:, :, ::-1])  # RGB → BGR
