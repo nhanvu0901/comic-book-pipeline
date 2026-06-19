@@ -12,6 +12,7 @@ immediately to the next provider; on transient errors it retries once on the
 same model; on unparseable JSON it sharpens the prompt and retries once.
 """
 import base64
+import io
 import json
 import re
 import time
@@ -70,7 +71,11 @@ STEP 1 — Classify the page into ONE of three types:
 
 STEP 2 — For cover + story pages ONLY, do this:
 
-  2a. For EACH panel: write a SELF-CONTAINED 1-2 sentence visual description that
+  2a. Each panel is OUTLINED with a magenta box and its index NUMBER is drawn in the
+      box's top-left corner ON the image. Your `index` for a panel MUST equal that drawn
+      number, and the description must cover ONLY the region inside that numbered box.
+      Do NOT renumber, merge, split, or re-order the panels — follow the boxes exactly.
+      For EACH panel: write a SELF-CONTAINED 1-2 sentence visual description that
       NAMES the character(s) (no bare pronouns), leads with the SPECIFIC ACTION (a
       concrete verb — raises, opens, crushes, fires, bites, grabs — not a mood like
       "expresses frustration"), and NAMES the defining OBJECT/PROP (sonic gun,
@@ -137,10 +142,62 @@ def _encode_image(path: Path | str) -> str:
     return base64.b64encode(data).decode("utf-8")
 
 
+def _encode_image_with_panels(path: Path | str, panels: list[dict]) -> str:
+    """Set-of-marks overlay: draw each Magi panel's NUMBERED box onto the page before
+    sending it to the VLM, so the VLM's per-panel `index` is anchored to Magi's exact
+    regions. Without this the VLM numbers panels by its OWN independent reading of the
+    page, and pipeline._panel_field then pairs description[i] with the WRONG bbox[i]
+    (the 'reduced to ash' panel got a 'Ghost Rider turns away' description, etc.).
+    Returns base64 JPEG. Falls back to the plain image on any drawing error."""
+    if not panels:
+        return _encode_image(path)
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.open(path).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        W, _H = img.size
+        lw = max(3, W // 350)            # outline width scales with page size
+        fsize = max(28, W // 30)         # badge number large enough to read
+        font = None
+        for cand in ("DejaVuSans-Bold.ttf", "Arial Bold.ttf", "Arial.ttf"):
+            try:
+                font = ImageFont.truetype(cand, fsize)
+                break
+            except Exception:
+                continue
+        if font is None:
+            font = ImageFont.load_default()
+        for i, p in enumerate(panels):
+            b = p.get("bbox") or {}
+            x, y = int(b.get("x", 0)), int(b.get("y", 0))
+            w, h = int(b.get("w", 0)), int(b.get("h", 0))
+            if w <= 0 or h <= 0:
+                continue
+            draw.rectangle([x, y, x + w, y + h], outline=(255, 0, 255), width=lw)
+            label = str(i)
+            tb = draw.textbbox((0, 0), label, font=font)
+            tw, th = tb[2] - tb[0], tb[3] - tb[1]
+            pad = max(4, fsize // 6)
+            draw.rectangle([x, y, x + tw + 2 * pad, y + th + 2 * pad], fill=(255, 0, 255))
+            draw.text((x + pad - tb[0], y + pad - tb[1]), label,
+                      fill=(255, 255, 255), font=font)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception:
+        return _encode_image(path)
+
+
 def _format_panels_prompt(panels: list[dict]) -> str:
     if not panels:
         return "No panels were detected by the layout detector. Treat the full page as one panel (index 0)."
-    lines = [f"Detected {len(panels)} panels (top-left origin, reading order):"]
+    lines = [
+        f"Detected {len(panels)} panels. Each is OUTLINED with a magenta box and its "
+        f"index NUMBER is drawn in the top-left corner of that box ON the image. Your "
+        f"per-panel `index` MUST equal the number drawn on the box, and your description "
+        f"must describe the exact region INSIDE that numbered box — do NOT renumber or "
+        f"re-segment the page yourself. Coordinates (top-left origin) for reference:",
+    ]
     for i, p in enumerate(panels):
         b = p["bbox"]
         lines.append(f"  Panel {i}: x={b['x']}, y={b['y']}, w={b['w']}, h={b['h']}")
@@ -219,7 +276,7 @@ def extract_page(
     chain = list(models) if models else list(VLM_MODELS or [VLM_MODEL])
     log = progress or (lambda _msg: None)
 
-    b64 = _encode_image(image_path)
+    b64 = _encode_image_with_panels(image_path, panels)
     panels_desc = _format_panels_prompt(panels)
     context_block = f"STORY CONTEXT (canonical names + setting; do NOT use to predict events):\n{story_context.strip()}\n\n" if story_context.strip() else ""
     base_user_text = (
@@ -312,6 +369,13 @@ CRITICAL READING-FLOW RULE — this is why you are batched, not asked per-page:
 You are simulating how a human reader experiences these pages back-to-back. Carry
 the story thread across pages in the `page_summary` and `running_state` fields
 (those may use pronouns and "He then…" / "Across the room…" connective phrasing).
+
+PANEL NUMBERING — READ THIS FIRST: every panel is OUTLINED with a magenta box and its
+index NUMBER is drawn in the box's top-left corner ON each page image. The `index` you
+return for a panel MUST equal the number drawn on its box, and its description must
+cover ONLY the region inside that numbered box. Do NOT renumber, merge, split, or
+re-order panels by your own reading — follow the drawn boxes exactly. A page with K
+drawn boxes must return exactly K panels with indices 0..K-1.
 
 BUT the per-panel `description` field is DIFFERENT — it is a SELF-CONTAINED,
 DISTINCTIVE caption used later to MATCH this exact panel against a narration line,
@@ -461,7 +525,11 @@ def _format_batch_user_text(
 
     pages_block_lines: list[str] = [
         f"You will analyze {len(panels_per_page)} NEW page(s) in reading order.",
-        "Panel bboxes are top-left origin, in pixels:",
+        "Each panel is OUTLINED with a magenta box and its index NUMBER is drawn in the "
+        "top-left corner of that box ON the image. Your per-panel `index` MUST equal the "
+        "number drawn on the box, and the description must cover the exact region INSIDE "
+        "that numbered box — do NOT renumber or re-segment the page yourself. "
+        "Coordinates (top-left origin, pixels) for reference:",
     ]
     for pidx, panels in enumerate(panels_per_page):
         pages_block_lines.append(f"\nNew page {pidx} ({len(panels)} panel(s)):")
@@ -550,12 +618,18 @@ def extract_pages_batch(
     chain = list(models) if models else list(VLM_MODELS_BATCH)
     log = progress or (lambda _msg: None)
 
-    # Build image list: [prior_image (optional), fresh_images...]
+    # Build image list: [prior_image (optional), fresh_images...]. Each page gets the
+    # set-of-marks overlay (numbered Magi panel boxes) so the VLM's `index` is anchored
+    # to Magi's regions. The prior page uses its own stored panels for the overlay.
     all_image_paths: list[Path] = []
+    panels_for_overlay: list[list[dict]] = []
     if prior_page is not None and prior_image_path is not None:
         all_image_paths.append(prior_image_path)
+        panels_for_overlay.append(prior_page.get("panels") or [])
     all_image_paths.extend(image_paths)
-    b64_images = [_encode_image(p) for p in all_image_paths]
+    panels_for_overlay.extend(panels_per_page)
+    b64_images = [_encode_image_with_panels(p, pn)
+                  for p, pn in zip(all_image_paths, panels_for_overlay)]
 
     user_text = _format_batch_user_text(
         panels_per_page, story_context, running_state, prior_page=prior_page,
