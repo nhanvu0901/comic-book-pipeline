@@ -139,12 +139,24 @@ def assemble_project(
     # without re-running. Flags shots upscaled ≥3× (too-zoomed candidates).
     _write_shots_log(shots, caption_chunks, shots_dir, root / "shots.json", log)
 
+    from config import (ENABLE_OUTRO_CARD, OUTRO_CARD_SECONDS, CHANNEL_NAME,
+                        CHANNEL_HANDLE, CHANNEL_LOGO_PATH)
+    outro_card = None
+    outro_dur = 0.0
+    if ENABLE_OUTRO_CARD:
+        card_path = root / "_outro_card.mp4"
+        outro_card = _build_outro_card(
+            card_path, duration=OUTRO_CARD_SECONDS,
+            logo=CHANNEL_LOGO_PATH, channel_name=CHANNEL_NAME, handle=CHANNEL_HANDLE)
+        outro_dur = OUTRO_CARD_SECONDS if outro_card is not None else 0.0
+
     if silent_video_path.exists() and not force:
         log(f"[stage5] reusing {silent_video_path.name}")
     else:
         log(f"[stage5] assembling {len(shot_paths)} shots → {silent_video_path.name} "
-            f"(xfade={ _xfade_label() })")
-        _assemble_video(shots, shot_paths, silent_video_path)
+            f"(xfade={ _xfade_label() }, outro_card={'on' if outro_card else 'off'})")
+        _assemble_video(shots, shot_paths, silent_video_path,
+                        outro_card=outro_card, outro_dur=outro_dur)
 
     log(f"[stage5] generating captions.ass ({len(word_timestamps)} words)")
     ass_text = build_ass(word_timestamps, audio_duration)
@@ -154,6 +166,10 @@ def assemble_project(
         log(f"[stage5] reusing {audio_mixed_path.name}")
     else:
         mix_audio(audio_path, bgm, audio_mixed_path, progress=log)
+        if outro_dur > 0:
+            _pad_audio_tail(audio_mixed_path, outro_dur, audio_mixed_path.with_suffix(".pad.wav"))
+            audio_mixed_path.with_suffix(".pad.wav").replace(audio_mixed_path)
+            log(f"[stage5] padded audio +{outro_dur:.2f}s so -shortest keeps the outro card")
 
     log(f"[stage5] final encode → {final_path.name}")
     _final_encode(silent_video_path, audio_mixed_path, captions_path, final_path)
@@ -297,7 +313,8 @@ def _xfade_label() -> str:
     return f"{XFADE_TRANSITION} {XFADE_DURATION}s" if float(XFADE_DURATION) > 0 else "off"
 
 
-def _assemble_video(shots, shot_paths, out_path: Path) -> Path:
+def _assemble_video(shots, shot_paths, out_path: Path,
+                    outro_card: Path | None = None, outro_dur: float = 0.0) -> Path:
     """Scene-grouped assembly: hard-cut within a scene, dissolve between scenes.
     Falls back to a plain hard-cut concat when disabled, single-scene, or on error."""
     from config import XFADE_DURATION, XFADE_TRANSITION
@@ -305,6 +322,9 @@ def _assemble_video(shots, shot_paths, out_path: Path) -> Path:
     x = float(XFADE_DURATION)
     groups = _group_shots_by_scene(shots, shot_paths)
     if x <= 0 or len(groups) < 2:
+        # hard-cut path: concat shots, then the card (if any)
+        if outro_card is not None:
+            return _concat(list(shot_paths) + [outro_card], out_path)
         return _concat(shot_paths, out_path)
     try:
         ff = _require_ffmpeg()
@@ -313,6 +333,9 @@ def _assemble_video(shots, shot_paths, out_path: Path) -> Path:
         clips = [_concat(paths, tmp / f"scene_{i:03d}.mp4")
                  for i, (_sid, paths, _d) in enumerate(groups)]
         durs = [d for (_sid, _p, d) in groups]
+        if outro_card is not None:
+            clips.append(outro_card)
+            durs.append(float(outro_dur))
         offs = _xfade_offsets(durs)
 
         inputs: list[str] = []
@@ -342,6 +365,8 @@ def _assemble_video(shots, shot_paths, out_path: Path) -> Path:
         return out_path
     except Exception as exc:  # any ffmpeg/IO failure → never block a render
         print(f"[stage5] xfade assembly failed ({exc}); falling back to hard-cut concat")
+        if outro_card is not None:
+            return _concat(list(shot_paths) + [outro_card], out_path)
         return _concat(shot_paths, out_path)
 
 
@@ -359,6 +384,59 @@ def _concat(shot_paths: list[Path], out_path: Path) -> Path:
         "-c", "copy",
         str(out_path),
     ]
+    _run(cmd)
+    return out_path
+
+
+def _ass_drawtext_escape(text: str) -> str:
+    """Escape text for ffmpeg drawtext (colon, backslash, single quote)."""
+    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "'")
+
+
+def _build_outro_card(out_path: Path, *, duration: float, logo: str | None,
+                      channel_name: str, handle: str) -> Path | None:
+    """Render a ~`duration`s silent outro card: dark background, centered logo,
+    channel name in Anton, and a SUBSCRIBE subline. Returns None on failure."""
+    try:
+        ff = _require_ffmpeg()
+        font = Path(__file__).resolve().parent.parent.parent / "fonts" / "Anton-Regular.ttf"
+        W, H = 1080, 1920
+        name = _ass_drawtext_escape(channel_name.upper())
+        sub = _ass_drawtext_escape(f"SUBSCRIBE FOR MORE  {handle}")
+        # base dark canvas
+        inputs = ["-f", "lavfi", "-i", f"color=c=0x0A0A0A:s={W}x{H}:d={duration}:r={FPS}"]
+        filters = []
+        base = "0:v"
+        if logo and Path(logo).exists():
+            inputs += ["-i", str(logo)]
+            filters.append(f"[1:v]scale=360:-1[lg]")
+            filters.append(f"[{base}][lg]overlay=(W-w)/2:(H-h)/2-200[bg]")
+            base = "bg"
+        fontfile = str(font).replace("\\", "/")
+        filters.append(
+            f"[{base}]drawtext=fontfile='{fontfile}':text='{name}':"
+            f"fontcolor=white:fontsize=96:x=(w-text_w)/2:y=h/2+120[t1]")
+        filters.append(
+            f"[t1]drawtext=fontfile='{fontfile}':text='{sub}':"
+            f"fontcolor=0xCC2222:fontsize=44:x=(w-text_w)/2:y=h/2+260[v]")
+        cmd = [ff, "-y", *inputs, "-filter_complex", ";".join(filters),
+               "-map", "[v]", "-t", f"{duration}",
+               "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+               "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", str(out_path)]
+        _run(cmd)
+        return out_path
+    except Exception as exc:
+        print(f"[stage5] outro card build failed ({exc}); shipping without it")
+        return None
+
+
+def _pad_audio_tail(audio_path: Path, extra_seconds: float, out_path: Path) -> Path:
+    """Append `extra_seconds` of silence to a WAV so the video's outro-card tail
+    is not trimmed by `-shortest` at final encode."""
+    ff = _require_ffmpeg()
+    cmd = [ff, "-y", "-i", str(audio_path),
+           "-af", f"apad=pad_dur={extra_seconds}",
+           str(out_path)]
     _run(cmd)
     return out_path
 
