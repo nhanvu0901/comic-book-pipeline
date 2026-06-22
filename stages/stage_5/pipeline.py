@@ -390,7 +390,7 @@ def _concat(shot_paths: list[Path], out_path: Path) -> Path:
 
 def _ass_drawtext_escape(text: str) -> str:
     """Escape text for ffmpeg drawtext (colon, backslash, single quote)."""
-    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "'")
+    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\u2019")
 
 
 def _build_outro_card(out_path: Path, *, duration: float, logo: str | None,
