@@ -21,13 +21,25 @@ issue's story, then write a faithful summary of what HAPPENS, start to finish.
 Rules:
 - WRITE plot_summary IN ENGLISH — the comic and the downstream narration are English. \
 Ignore any other language preference; the summary MUST be English.
-- PREFER neutral plot/recap sources that describe EVENTS: marvel.com / dc.com articles, \
-Comic Vine (comicvine.gamespot.com), uncannyxmen.net, Wikipedia, dedicated recaps. Use \
-opinion REVIEWS (comic-watch, CBR / ScreenRant op-eds, etc.) ONLY if nothing else exists \
-— and then extract ONLY the plot EVENTS, NEVER the reviewer's opinions (drop words like \
-"anticlimactic", "great art", "worth it", "slow", "disappointing").
+- REFERENCE SOURCES to search and read (try SEVERAL across these types):
+  * Fan-wiki synopses (fullest plots): uncannyxmen.net, the Marvel/DC Fandom database \
+(marvel.fandom.com, dc.fandom.com), Comic Vine (comicvine.gamespot.com), Wikipedia.
+  * Publisher pages + previews: marvel.com / dc.com issue pages and "first look" preview articles.
+  * Reviews / recaps: comicbookroundup.com, leagueofcomicgeeks.com, youdontreadcomics.com, \
+fandompost.com, aiptcomics.com, comic-watch.com, CBR / ScreenRant. Forum spoiler/recap \
+threads (e.g. community.cbr.com) are fine for beat-by-beat events.
+  * Creator interviews (e.g. AIPT "X-Men Monday", comicsbeat.com) — for authorial intent / \
+what the story is ABOUT.
+  * Real-world references: if the story leans on a myth, legend, historical figure, or artwork \
+(e.g. a folk hero), look it up on Wikipedia / a folklore source so the background is accurate.
+  When using opinion REVIEWS, extract ONLY plot EVENTS, NEVER the reviewer's opinions (drop \
+words like "anticlimactic", "great art", "worth it", "slow", "disappointing").
 - Open and read at least TWO real sources with WebFetch and reconcile them, so no major \
 beat is missed (key fights, twists, deaths, and the ENDING / final fate of each character).
+- CAPTURE THE EMOTIONAL SPINE as story FACTS, not just dry events: who matters to whom (an \
+idol / childhood hero, a mentor, family), the core relationship and how it TURNS (betrayal, \
+sacrifice, a reveal), any recurring motif or repeated line, and the gut-punch — WHY the climax \
+lands. These are facts about the story, not opinions; include them so the narration isn't flat.
 - Describe what HAPPENS, not whether it is good. Cover the full arc: setup -> key events \
 -> climax -> ending.
 - Summarize THIS specific issue/arc only. Do NOT invent events. If you cannot find a \

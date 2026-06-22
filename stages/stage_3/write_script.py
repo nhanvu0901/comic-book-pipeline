@@ -42,13 +42,16 @@ _MIN_PUNCH_SCENES = 3    # enforce variance toward SHORT (the channel signature)
 _HOOK_MIN_WORDS = 14
 _HOOK_MAX_WORDS = 26
 
-# Channel connective frequencies (219-video sample): But 16.7%, So 9.0%, When 6.8%,
-# However 3.1%, Then 1.8%, After 1.5%. "Just then" / "That's when" are channel-
-# signature multi-word pivots — added per pipeline v3 spec.
+# Connectives a scene MAY open with — CHOOSE BY MEANING, never to hit a frequency.
+# Contrast words ("But", "However") are reserved for a GENUINE reversal of the prior
+# beat; the rest are sequence/time or consequence. A scene needs NO connective when
+# none is natural (scene-setting/context) — open subject-first (connective=null) then.
+# Order here is deliberate: sequence/time + consequence first, contrast LAST, so the
+# writer doesn't reach for "But" as the default.
 _CONNECTIVES = (
-    "But", "So", "However", "When", "After", "Then", "Eventually",
-    "As", "Instead", "With", "Now", "Suddenly", "Until", "Meanwhile", "Soon",
-    "Just then", "That's when",
+    "Then", "Now", "Soon", "As", "When", "After", "Eventually", "Meanwhile", "Until",
+    "So", "With", "Instead", "Suddenly", "Just then", "That's when",
+    "But", "However",
 )
 
 
@@ -431,6 +434,11 @@ def write_script(
                                          model=model, progress=progress)
         if wiki_issues:
             errors = errors + [f"wiki: {i}" for i in wiki_issues]
+        # Phase F — internal coherence (soft: triggers a revise, but stays
+        # non-critical so wiki-fidelity still dominates best-draft selection).
+        coherence_issues = _coherence_check(parsed, model=model, progress=progress)
+        if coherence_issues:
+            errors = errors + [f"coherence: {i}" for i in coherence_issues]
         dump[f"validation_pass{pass_num}"] = errors
 
         # Best-draft selection. The OLD key gated on length FIRST (words >= 165),
@@ -617,6 +625,24 @@ CAUSAL CHAIN — connect cause→effect, set up motives before they pay off:
   reclaim Ben), make sure the SETUP is captured in an EARLY beat's summary/cause
   so the payoff is connected, not out of nowhere.
 
+REVEAL IN STORY ORDER — DON'T SPOIL A LATE TWIST EARLY (HARD RULE):
+- Tell information in the order the COMIC reveals it. A fact the story deliberately
+  HIDES until a late reveal — a twist, a confession, "what X really did", "the truth
+  behind Y" — MUST live in a LATE beat, at the panel where the comic discloses it.
+- NEVER state or foreshadow that hidden fact in an early SETUP/flashback beat. A
+  flashback shows the hero's STATED reasoning; it must NOT also tell the audience the
+  secret the hero doesn't yet know.
+    ✗ early beat "what the flashback hides: the Avengers secretly brokered the deal"
+      AND late beat "Stark confesses the Avengers brokered the deal" — told TWICE; the
+      early beat SPOILS the reveal.
+    ✓ early beat "a flashback shows Banner's stated reasoning for taking the offer"
+      + late beat "a defeated Stark confesses the Avengers brokered the deal" — the
+      twist lands ONCE, where the comic reveals it.
+- Each reveal appears EXACTLY ONCE, at its latest natural position. If the canonical
+  plot mentions a twist out of order (e.g. "revealed later by…", "what the flashback
+  withholds…"), STILL place your beat at the LATE reveal point — never at the early
+  mention.
+
 Beats are in dramatic order (which is usually but not always chronological). The first beat is COLD_OPEN — the moment that should hook the viewer. The last beat is LANDING — the line that pays it off.
 
 ╔════════════════════════════════════════════════════════════════════════════╗
@@ -646,6 +672,12 @@ Constraints:
   trailing quiet EPILOGUE after the conflict resolves (hero resting, reuniting with
   an ally, reaffirming themselves) is NOT a "major event" — do not give it a beat.
 - Each beat covers 1-4 input pages. Don't spread one beat across the whole comic.
+- HIGHLIGHTS — pages/panels marked "★BIG SHOT" are large splash/action/reveal art:
+  the visual highlights of the comic. When you cannot cover every page (more pages
+  than beats), PRIORITIZE giving each ★BIG-SHOT page its OWN beat, and DROP/merge
+  talky small-panel pages instead. Never skip a ★BIG SHOT (a transformation, a big
+  reveal, a major clash) — these are the money shots that make the Short. Point that
+  beat's key_panels at the ★BIG SHOT panel.
 - COLD_OPEN beat must contain a concrete visual action, not exposition.
 - LANDING = the DECISIVE RESOLUTION of the MAIN conflict (the villain's defeat / fate,
   the world restored) — a payoff, twist, or final image; never a CTA or question.
@@ -664,6 +696,61 @@ Constraints:
   the previous beat with a slightly later frame.
 
 Return ONLY JSON. No prose, no markdown fences."""
+
+
+# Words signalling a CONCEALED truth being disclosed. The guard only ACTS when 2+
+# beats carry such a marker AND describe the same fact (word overlap), so a single
+# legitimate "betrayal"/"sacrifice" beat is never dropped.
+_REVEAL_MARKERS = (
+    "secretly", "broker", "in truth", "all along", "withhold", "withheld",
+    "concealed", "the truth", "really was", "hidden", "betray", "in reality",
+    "what the flashback", "unbeknownst", "behind his back",
+)
+_REVEAL_STOP = {
+    "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "at", "as", "is",
+    "was", "his", "her", "their", "they", "he", "she", "it", "that", "this", "with",
+    "for", "from", "into", "by", "who", "whom", "then", "than", "not", "no", "be",
+    "been", "are", "were", "had", "has", "have", "him", "them", "you", "your", "its",
+    "one", "what", "when", "while", "him",
+}
+
+
+def _dedupe_reveal_beats(beats: list[Beat], log: Callable[[str], None]) -> list[Beat]:
+    """Drop an EARLY beat that foreshadows a twist a LATER beat reveals (anti-spoiler).
+
+    Fires only when two beats BOTH carry a concealment marker AND share enough
+    content (Jaccard ≥ 0.34 on significant words) to be the same reveal — then keeps
+    the one at the latest page (where the comic discloses it) and drops the earlier."""
+    def _sig(b: Beat) -> set[str]:
+        return {w for w in re.findall(r"[a-z']+", (b.summary or "").lower())
+                if len(w) > 3 and w not in _REVEAL_STOP}
+
+    def _marked(b: Beat) -> bool:
+        s = (b.summary or "").lower()
+        return any(m in s for m in _REVEAL_MARKERS)
+
+    marked = [b for b in beats if _marked(b)]
+    if len(marked) < 2:
+        return beats
+    drop_ids: set[int] = set()
+    for i in range(len(marked)):
+        for j in range(i + 1, len(marked)):
+            a, b = marked[i], marked[j]
+            if a.id in drop_ids or b.id in drop_ids:
+                continue
+            sa, sb = _sig(a), _sig(b)
+            if not sa or not sb:
+                continue
+            jac = len(sa & sb) / len(sa | sb)
+            if jac >= 0.34:
+                pa = max(a.page_refs or [0]); pb = max(b.page_refs or [0])
+                early = a if pa <= pb else b
+                drop_ids.add(early.id)
+                log(f"[stage4]   reveal-dedup: dropped early beat '{early.name}' "
+                    f"(p{max(early.page_refs or [0])}) — duplicates a later reveal")
+    if drop_ids:
+        beats = [b for b in beats if b.id not in drop_ids]
+    return beats
 
 
 def outline_beats(
@@ -810,6 +897,13 @@ def outline_beats(
         ) or beats
         beats = _order_beats_canonical(beats)  # re-apply bookend invariant after bridge
 
+    # Reveal-dedup guard: a twist the comic hides until late (a confession, "what X
+    # really did") sometimes gets emitted TWICE — once foreshadowed in an early
+    # setup/flashback beat, once at the real late reveal — which spoils the payoff.
+    # Drop the early duplicate, keep the beat at the latest page (where the comic
+    # discloses it). Belt-and-suspenders to the REVEAL-IN-STORY-ORDER prompt rule.
+    beats = _dedupe_reveal_beats(beats, log)
+
     # Visual grounding: replace the outliner's UNRELIABLE panel-index guess with a
     # content-matched pick (beat summary ↔ panel descriptions). Sets key_panels
     # (the VISUAL anchor); does NOT change narration order.
@@ -834,13 +928,36 @@ def _ground_beat_panels(
     no LLM. Beats whose pages have no usable panel/description keep their anchor."""
     log = progress or (lambda _msg: None)
     panels_by_page: dict[int, list[dict]] = {}
+    area_by_page: dict[int, int] = {}
     for p in story_pages or []:
         pn = int(p.get("page_number", 0) or 0)
         if pn:
             panels_by_page[pn] = p.get("panels") or []
+            dims = p.get("image_dimensions") or {}
+            area_by_page[pn] = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
 
+    def _is_big_shot(pg, idx) -> bool:
+        pans = panels_by_page.get(pg) or []
+        if not (isinstance(idx, int) and 0 <= idx < len(pans)):
+            return False
+        a = area_by_page.get(pg, 0)
+        return a > 0 and _panel_area_frac(pans[idx], a) >= _BIG_SHOT_FRAC
+
+    # KEEP the outliner's ★BIG-SHOT key_panel when it cited one on the beat's OWN
+    # page_refs (outliner rule :670-675 deliberately points a money-shot beat at its
+    # splash). Re-grounding by description-sim must NOT demote that splash to a small
+    # text-match panel — the recurring "money shot lost" bug (Hulkbuster, transform).
+    # Each big-shot panel is kept for at most ONE beat; everything else re-grounds.
+    kept_keys: set = set()
     regrounded = 0
     for beat in beats:
+        kp0 = beat.key_panels[0] if beat.key_panels else None
+        if kp0:
+            kpg, kidx = kp0.get("page"), kp0.get("panel")
+            if (kpg in (beat.page_refs or []) and _is_big_shot(kpg, kidx)
+                    and (kpg, kidx) not in kept_keys):
+                kept_keys.add((kpg, kidx))
+                continue  # keep the outliner's money-shot panel; skip re-grounding
         summary = (beat.summary or "").strip()
         if not summary:
             continue
@@ -1236,10 +1353,34 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
         bitterly for a way out..."  (only the first beat — the imprisonment.)
    The teaser line shown over the cover is the only place a future twist is hinted.
 
-2) CONNECTIVE GRAMMAR (scenes 2 onward)
-   - Every scene from #2 onward MUST start with one of these connectives, exactly: But, However, As, When, After, Eventually, Instead, With, Now, Suddenly, Then, Until, Meanwhile, Soon.
-   - The schema field "connective" is REQUIRED non-null for every scene where scene_id >= 2.
-   - These are documented in 95%+ of successful comic Shorts and create the "and then... and then..." feeling that holds retention.
+2) CONNECTIVE GRAMMAR — CHOOSE BY MEANING (scenes 2 onward)
+   - Most scenes open with a connective to create the "and then... and then..." flow,
+     but it is NOT mandatory. When no transition is natural — a scene-setting / context
+     beat, or a fresh beat that doesn't follow from the last one — open SUBJECT-FIRST
+     and set "connective" to null. A forced connective on a non-transitional beat reads
+     wrong and is an AI-tell.
+   - Pick the connective by MEANING, not by habit:
+     • CONTRAST / REVERSAL only → "But" / "However". Use ONLY when the beat genuinely
+       defies the previous beat or the viewer's expectation. You must be able to point
+       at the thing it contradicts. If you can't, it is the WRONG word.
+       ✗ "But this is 1970s New York." (no contrast — just setting the scene)
+       ✗ "But Patton webbed up a mouse." (just the next action — not a reversal)
+       ✓ "But the Penance Stare had no effect." (he expected it to work — it didn't)
+     • SEQUENCE / TIME → Then, Now, Soon, As, When, After, Eventually, Meanwhile, Until
+     • CONSEQUENCE → So, With, Instead
+   - Do NOT chain "But" across scenes, and don't let it become your default opener —
+     across the whole script only a FEW scenes should be true contrasts.
+   - The schema field "connective" = the opener you actually used, or null if subject-first.
+
+2.5) PACING — PROTECT THE HIGHLIGHT, DON'T DWELL ON SETUP
+   - A story has ONE biggest reveal or visual (a transformation, a new foe, a twist).
+     Do NOT name it in the SETUP beat that leads into it. Introduce the moment plainly
+     first (e.g. "enemies were already waiting"), then let the reveal LAND on its own
+     later beat. Naming the payoff inside its own setup kills the tension.
+   - Setup and FLASHBACKS are context, not the story. Keep them BRIEF — a flashback or
+     backstory should occupy 1-2 scenes, then return to the main action. Spend the bulk
+     of the script on the central confrontation and its payoff, not the lead-up. If
+     several scenes in a row are still "establishing," collapse them.
 
 3) SENTENCE SHAPE — SHORT + PUNCHY, ONE EVENT PER SENTENCE (this is the fix)
    - **ONE EVENT PER SENTENCE — HARD RULE.** Each scene is ONE page held on screen
@@ -1256,11 +1397,12 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
        ~24 words; the hook (scene 1) too. Plain scenes over 17w with no causal
        clause are still rejected — don't pad.
      • 1 outro credit "The comic is X" (5-8 words)
-   - Punch examples (≤11w, hit hard — these LAND):
-     ✓ "But, even as an infant, Thanos was a unit." (9w)
-     ✓ "Stating they would die anyway." (5w)
-     ✓ "But he only stopped punching once he remembered his aunt." (10w)
-     ✓ "But Ben crushed the sonic gun and stormed out." (9w)
+   - Punch examples (≤11w, hit hard — these LAND). VARY the opener — most punches do
+     NOT start with "But":
+     ✓ "The Penance Stare had no effect." (6w)                 — subject-first
+     ✓ "Stating they would die anyway." (5w)                   — fragment lead-in
+     ✓ "Then Ben crushed the sonic gun and stormed out." (9w)  — sequence opener
+     ✓ "But he only stopped once he remembered his aunt." (9w) — TRUE contrast (he wouldn't stop — then did)
    - Medium examples (12-17w):
      ✓ "So, Odin returned his cosmic powers and turned him into Ghost Rider again." (13w)
    - **NO redundant consecutive scenes.** Each scene advances to a NEW moment —
@@ -1649,7 +1791,7 @@ def write_scenes(
         + f"PAGE DETAIL (background grounding — what is actually on each page, so "
         f"your prose stays factual):\n{_pages_block_compact(story_pages)}\n\n"
         f"WORD BUDGET: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} total words across all scenes.\n"
-        f"CONNECTIVE WHITELIST (scene 2 onward MUST start with one): {', '.join(_CONNECTIVES)}.\n\n"
+        f"CONNECTIVES (OPTIONAL — pick by meaning; null if subject-first; But/However = real contrast ONLY): {', '.join(_CONNECTIVES)}.\n\n"
         f"╔═══ STRICT 1-TO-1 OUTPUT (this is how scenes map to the video) ═══╗\n"
         f"The \"scenes\" array MUST have EXACTLY {len(beats)} story scenes — ONE per beat,\n"
         f"in the SAME ORDER as the beats above, PLUS the outro credit as the final\n"
@@ -1665,7 +1807,7 @@ def write_scenes(
         f'  "hook": "<scenes[0] text — narrates the FIRST beat only>",\n'
         f'  "scenes": [\n'
         f'    {{"text": "When ...", "connective": null, "beat_id": {beats[0].id}}},\n'
-        f'    {{"text": "But ...", "connective": "But", "beat_id": "<2nd beat id>"}},\n'
+        f'    {{"text": "Then ...", "connective": "Then", "beat_id": "<2nd beat id>"}},\n'
         f"    ...  (one per beat, in order) ...,\n"
         f'    {{"text": "The comic is <title>.", "connective": null, "beat_id": {beats[-1].id}}}\n'
         f"  ]\n"
@@ -1817,6 +1959,7 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
             f"following panel)")
 
     total_words = 0
+    contrast_flags: list[bool] = []  # per body scene: opens with But/However/Yet?
     for i, s in enumerate(scenes, start=1):
         text = str(s.get("text", "")).strip()
         wc = len(text.split())
@@ -1856,14 +1999,19 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
                 errors.append("scene 1 must have connective=null")
             continue
 
+        # Connectives are OPTIONAL and chosen by MEANING (not forced on every scene).
+        # If the writer set one, it must be whitelisted AND actually open the text; a
+        # subject-first scene (connective=null) is allowed.
         conn = (s.get("connective") or "").strip()
-        if conn not in _CONNECTIVES:
-            errors.append(f"scene {i} connective {conn!r} not in whitelist")
-        # Match multi-word connectives ("Just then", "That's when") via prefix scan.
         text_start_conn = _starts_with_connective(text)
-        if text_start_conn is None:
-            first_word = text.split()[0] if text else ""
-            errors.append(f"scene {i} text starts with {first_word!r}, not a whitelist connective")
+        if conn:
+            if conn not in _CONNECTIVES:
+                errors.append(f"scene {i} connective {conn!r} not in whitelist")
+            elif text_start_conn is None or text_start_conn.lower() != conn.lower():
+                errors.append(f"scene {i} connective={conn!r} but text does not open with it")
+        # Tally contrast openers (But/However/Yet) — guarded for overuse after the loop.
+        first_word = text.split()[0].rstrip(",").lower() if text else ""
+        contrast_flags.append(first_word in ("but", "however", "yet"))
 
         floor = 8 if is_last else _SCENE_MIN_WORDS
         if not (floor <= wc <= _SCENE_MAX_WORDS):
@@ -1878,6 +2026,19 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
             f"total words {total_words} not in "
             f"{_TARGET_WORDS_MIN}..{_TARGET_WORDS_MAX + 20}"
         )
+
+    # Contrast-opener overuse guard — replaces the old "every scene MUST start with a
+    # connective" mandate. But/However/Yet must mark a GENUINE reversal, so cap them
+    # (MAX safety rail, NOT a target frequency) and forbid back-to-back contrast opens.
+    n_contrast = sum(contrast_flags)
+    contrast_cap = max(2, len(contrast_flags) // 5)   # ~20% of body scenes, min 2
+    if n_contrast > contrast_cap:
+        errors.append(
+            f"{n_contrast} scenes open with But/However/Yet (max {contrast_cap}) — "
+            f"reserve contrast words for real reversals; use sequence words or none"
+        )
+    if any(a and b for a, b in zip(contrast_flags, contrast_flags[1:])):
+        errors.append("two consecutive scenes open with But/However/Yet — vary the opener")
 
     # Median sentence-length soft check (excluding hook). Punchy target: most
     # scenes 12-17w, so a median over _TARGET_SENT_LEN+3 (=16) means overstuffing.
@@ -2259,18 +2420,35 @@ def _ctx_block(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def _panel_area_frac(panel: dict, page_area: int) -> float:
+    """Panel bbox area as a fraction of the whole page (0..1). A big/splash panel
+    (a visual highlight: a splash, a large action/reveal shot) is >= 0.40."""
+    bb = panel.get("bbox") or {}
+    a = int(bb.get("w", 0) or 0) * int(bb.get("h", 0) or 0)
+    return a / page_area if page_area > 0 else 0.0
+
+
+_BIG_SHOT_FRAC = 0.40  # panel filling >=40% of its page = a highlight ("big shot")
+
+
 def _pages_block_full(story_pages: list[dict]) -> str:
     out: list[str] = []
     for p in story_pages:
         pn = p.get("page_number")
         issue = p.get("issue_label", "")
         summary = (p.get("page_summary") or "").strip()
-        block = [f"[page {pn}{' ' + issue if issue else ''}] {summary}"]
-        for pan in (p.get("panels") or []):
+        dims = p.get("image_dimensions") or {}
+        page_area = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
+        panels = p.get("panels") or []
+        page_big = any(_panel_area_frac(pan, page_area) >= _BIG_SHOT_FRAC for pan in panels)
+        head = f"[page {pn}{' ' + issue if issue else ''}]" + (" ★BIG-SHOT PAGE" if page_big else "")
+        block = [f"{head} {summary}"]
+        for pan in panels:
             desc = pan.get("description", "")
             chars = ", ".join(pan.get("characters", []) or [])
             emo = pan.get("dominant_emotion", "")
-            block.append(f"  panel {pan.get('index')}: {desc} [chars: {chars or '?'}] [emotion: {emo or '?'}]")
+            big = " ★BIG SHOT" if _panel_area_frac(pan, page_area) >= _BIG_SHOT_FRAC else ""
+            block.append(f"  panel {pan.get('index')}:{big} {desc} [chars: {chars or '?'}] [emotion: {emo or '?'}]")
             for tb in (p.get("text_blocks") or []):
                 if int(tb.get("panel_index", -99)) == pan.get("index"):
                     spk = tb.get("speaker") or "—"
@@ -2444,6 +2622,59 @@ RULES:
     to rip the symbiote away", "a sewer lab") when the wiki states a simpler fact
     ("bonded with the symbiote himself").
   • If everything is canonical and grounded: {"issues": [], "missing_beats": []}"""
+
+
+# Phase F — INTERNAL coherence (a DIFFERENT axis from phase E's wiki-fidelity).
+# Phase E asks "does the narration match the canonical plot?"; phase F asks "is the
+# narration self-consistent?" — does a line contradict the situation the narration
+# itself sets up (e.g. a character railing that others 'only care about Earth' while
+# every scene places them on another planet). Narration-ONLY (no panels/bubbles) so
+# noisy VLM panel descriptions can't cause false contradictions.
+_COHERENCE_SYSTEM = """You check ONE thing: is the narration INTERNALLY consistent? Read the scenes in order and flag a scene ONLY when its claim HARD-CONTRADICTS a fact ANOTHER scene establishes, or is self-defeating given the story's own setup — a contradiction a casual viewer would notice and find nonsensical.
+
+Examples that SHOULD flag:
+- One scene places everyone on another planet (a colony in space), and another scene has a character attack the others for "only caring about Earth" — their being there refutes it.
+- A character is said to be dead in one scene and acting in a later one with no revival.
+- A stated cause that cannot produce the stated effect within the story as told.
+
+Do NOT flag: style, pacing, emphasis, missing detail, plausible omissions, or anything that merely COULD be richer. Do NOT invent a contradiction from outside knowledge. When unsure, DO NOT flag. Most narrations are clean — returning zero issues is the common, correct answer.
+
+Return JSON ONLY: {"issues":[{"scene_id":N,"contradiction":"...","fix_hint":"..."}]}."""
+
+
+def _coherence_check(
+    parsed: dict, *, model: str | None, progress: Callable[[str], None] | None,
+) -> list[str]:
+    """Phase F: internal/situational coherence (narration-only). Returns issue
+    strings — empty when the narration is self-consistent. Never raises (skips on
+    any LLM failure) so it can only ADD a soft signal, never block the pipeline."""
+    log = progress or (lambda _msg: None)
+    scenes = [s for s in (parsed.get("scenes") or []) if not s.get("is_intro")]
+    if len(scenes) < 3:
+        return []
+    nar_lines = [f"S{s.get('scene_id', '?')}: {str(s.get('text', '')).strip()}" for s in scenes]
+    user = ("NARRATION SCENES (check internal consistency only):\n"
+            + "\n".join(nar_lines) + "\n\nReturn JSON {\"issues\": [...]}.")
+    log("[stage4] phase F — internal coherence check…")
+    chain = [model] if model else list(FIDELITY_LLM_MODELS)
+    try:
+        raw, _mdl = call_with_chain(
+            system=_COHERENCE_SYSTEM, user=user, models=chain, max_tokens=2000,
+            progress=progress, label="coherence", validator=lambda c: '"issues"' in c)
+    except RuntimeError as exc:
+        log(f"[stage4]   coherence check chain failed — skipping: {exc}")
+        return []
+    pc = _extract_json(raw)
+    if not isinstance(pc, dict):
+        return []
+    out = []
+    for it in (pc.get("issues") or []):
+        c = str(it.get("contradiction", "")).strip()
+        if c:
+            out.append(f"scene S{it.get('scene_id', '?')}: {c} (fix: {str(it.get('fix_hint', '')).strip()})")
+    if out:
+        log(f"[stage4]   phase F found {len(out)} coherence issue(s)")
+    return out
 
 
 def _wiki_cross_check(
@@ -2624,7 +2855,7 @@ def _retry_fix_with_wiki(
         + _orientation_block()
         + _saga_clarity_block(comic_context)
         + f"HARD RULES (these don't change between retries):\n"
-        f"- Connective whitelist (scene 2+ MUST start with one): {', '.join(_CONNECTIVES)}.\n"
+        f"- Connectives (OPTIONAL — pick by meaning; null if subject-first; But/However = real contrast ONLY): {', '.join(_CONNECTIVES)}.\n"
         f"- Scene 1 (hook): {_HOOK_MIN_WORDS}-{_HOOK_MAX_WORDS} words, connective MUST be null.\n"
         f"- Scenes 2+: {_SCENE_MIN_WORDS}-{_SCENE_MAX_WORDS} words (punch lines may be as short as {_SCENE_MIN_WORDS}; NO scene over {_SCENE_MAX_WORDS}).\n"
         f"- EXACTLY {len(beats)} story scenes — ONE per beat, in beat order — PLUS the "

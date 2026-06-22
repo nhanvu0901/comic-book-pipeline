@@ -185,7 +185,16 @@ def _complete_with_retry(
             # Flaky SDK/CLI exceptions ('error result: success', decode errors,
             # transport blips) are usually transient — retry with backoff rather
             # than killing the whole stage on the first one.
-            detail = f"exception {type(res['_err']).__name__}: {str(res['_err'])[:120]}"
+            msg = str(res["_err"])
+            detail = f"exception {type(res['_err']).__name__}: {msg[:120]}"
+            # 'Reached maximum number of turns' is DETERMINISTIC, not flaky: the
+            # agent genuinely exhausted its turn budget (e.g. looping WebSearch on
+            # a comic with no single plot source, like an anthology issue). Retrying
+            # re-burns the same turns for nothing — fall back immediately.
+            if "maximum number of turns" in msg.lower():
+                _log(f"[claude-sdk] {detail} — NOT retrying "
+                     f"(ran out of turns; needs more turns or better grounding)")
+                return None
             if i < _TRANSIENT_RETRIES:
                 back = _TRANSIENT_BACKOFF_S[min(i, len(_TRANSIENT_BACKOFF_S) - 1)]
                 _log(f"[claude-sdk] {detail} — retry {i + 1}/{_TRANSIENT_RETRIES} in {back}s")

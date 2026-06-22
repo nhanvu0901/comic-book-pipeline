@@ -6,7 +6,6 @@ Usage:
     python -m stages.stage_1 "The death of Gwen Stacy"
     python -m stages.stage_1 --project existing_project_name
 """
-import json
 import sys
 import textwrap
 import argparse
@@ -16,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL, get_project_dirs, PROJECTS_ROOT
 
 from .agent import ScriptAgent, PhaseResult, PhaseDecision
-from .storage import save_comic_context, save_conversation_log, slugify
+from .storage import save_comic_context, slugify
 from .ui import Colors, print_error, print_success, print_info, get_user_input
 
 

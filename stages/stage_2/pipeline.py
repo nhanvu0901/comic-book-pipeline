@@ -17,13 +17,21 @@ from PIL import Image
 
 from config import VLM_BATCH_SIZE, VLM_MODEL, get_project_dirs
 from .cache import image_hash, load_cached, save_cached
-from .panel_detect import assign_to_panels, detect_full, detect_panels
+from .panel_detect import assign_to_panels, detect_full
 from .schema import PanelInfo, PreprocessedPage, TextBlock
 from .vlm_extract import extract_page, extract_pages_batch
 
 # The last N pages of an issue (covers/credits/ads/cliffhanger back-matter) are
 # processed single-page instead of batched — batching mislabels them.
 _BACKMATTER_TAIL = 4
+# The first N pages (cover + recap + TITLE/CREDITS page) are ALSO front-matter that
+# batching mislabels: a title/credits page mid-front (common after a cold open, e.g.
+# "What If...? Galactus Transformed Hulk" puts its title+credits on p7) gets a mid-
+# batch shift that keeps the SAME count, so the count-mismatch guard misses it and a
+# neighbour's story description lands on the credits image. Single-page extraction has
+# no continuity bias and classifies these correctly (title/credits -> cover/skip), so
+# process the head one-by-one too. Covers a cover + a short cold open + the title page.
+_FRONTMATTER_HEAD = 8
 
 
 def preprocess_project(
@@ -114,13 +122,14 @@ def preprocess_project(
         # outro). Single-page extract_page() has no continuity bias and is
         # verified to classify these correctly (credits -> skip/solicit_credits),
         # so we process the trailing pages one-by-one via the per-page path.
-        if i >= n - _BACKMATTER_TAIL:
+        if i < _FRONTMATTER_HEAD or i >= n - _BACKMATTER_TAIL:
             s = page_states[i]
             with Image.open(s["img"]) as im:
                 dims = im.size
             magi = detect_full(s["img"])
+            _where = "front-matter head" if i < _FRONTMATTER_HEAD else "back-matter tail"
             log(f"[preprocess]   p{s['pn']:03d}: Magi → {len(magi['panels'])} panel(s) "
-                f"(back-matter tail → single-page, no batch)")
+                f"({_where} → single-page, no batch)")
             page_dict = _build_page_from_single(
                 page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
                 panels_raw=magi["panels"], dimensions=dims, project_root=project_root,
@@ -206,6 +215,7 @@ def preprocess_project(
 
     log(f"[preprocess] running_state final: {running_state[:200]}")
     _reclassify_mid_doc_covers(results, project_root, log)
+    _demote_credits_pages(results, project_root, log)
 
     # v5 Phase 2: resolve Magi cluster_ids → character names via VLM
     _resolve_clusters_after_preprocess(results, project_root, log)
@@ -272,6 +282,36 @@ def _reclassify_mid_doc_covers(
                 save_cached(project_root, pn, h, p)
             except Exception as exc:
                 log(f"[preprocess]   ⚠ couldn't persist reclassification for p{pn}: {exc}")
+
+
+def _demote_credits_pages(
+    pages: list[dict], project_root: Path, log: Callable[[str], None]
+) -> None:
+    """Demote any 'story' page whose FINAL merged text reads like a title/credits/
+    recap page (issue-title logo + creative-team credits + recap blurb). The inline
+    extraction guard can miss these — a stylized title OCRs poorly mid-extraction, or
+    the VLM tags the page 'story' anyway — so re-check the assembled text here, where
+    it is complete, and flip matches to skip so they are NEVER chosen as a story panel.
+    General: runs on every issue (a credits/title page can sit mid-front after a cold
+    open, e.g. p7 of 'What If...? Galactus Transformed Hulk')."""
+    for p in pages:
+        if not p.get("is_story_page"):
+            continue
+        corpus = " ".join(str(tb.get("text", "")) for tb in (p.get("text_blocks") or []))
+        if not _looks_like_backmatter(corpus):
+            continue
+        pn = int(p.get("page_number", 0) or 0)
+        log(f"[preprocess] credits/title text on p{pn:03d} → demoting story→skip (not a story panel)")
+        p["page_type"] = "skip"
+        p["is_story_page"] = False
+        p["skip_reason"] = "credits_title"
+        p["panels"] = []
+        h = str(p.get("content_hash", "") or "")
+        if h:
+            try:
+                save_cached(project_root, pn, h, p)
+            except Exception as exc:
+                log(f"[preprocess]   ⚠ couldn't persist demotion for p{pn}: {exc}")
 
 
 def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:

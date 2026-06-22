@@ -3,7 +3,7 @@ import threading
 import time
 from typing import Callable
 
-from openai import OpenAI, RateLimitError, APITimeoutError
+from openai import OpenAI, APITimeoutError
 
 from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, LLM_MODELS, FREE_MODEL
 from stages.stage_2.vlm_extract import _is_rate_limited, _detect_inline_rate_limit

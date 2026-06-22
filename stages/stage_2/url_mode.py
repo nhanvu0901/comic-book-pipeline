@@ -21,11 +21,10 @@ import re
 import time
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
 
-from config import get_project_dirs, PROJECTS_ROOT
+from config import get_project_dirs
 from utils.comic_scraper import discover_issues, scrape_issue_pages
-from .issue_resolver import parse_issue_range, resolve_chapters
+from .issue_resolver import resolve_chapters
 
 try:
     from stages.stage_1.tools.fetch_fandom import fetch_fandom
