@@ -90,6 +90,9 @@ truth; union it with whatever `projects/` still has. NEVER recommend any title h
 - **Annihilation - Scourge: Silver Surfer** (Marvel, 2019)
 - **What If...? Galactus Transformed Gambit** (Marvel, 2025)
 - **Ghost Rider vs. Galactus** (Marvel, 2025) — Johnny Blaze (NOT Cosmic GR/Punisher)
+- **Weapon VIII** (Marvel) — Edge of Spider-Verse (2024) #1, "New Toys" (Earth-72 Peter Parker weapon)
+- **Edge of Spider-Verse (2014) #4** — Patton Parnell, the horror "monster" Spider-Man
+- **Shadowland: Spider-Man** (Marvel, 2010) — Spider-Man + Shang-Chi vs Mr. Negative
 
 When a new comic is produced, ADD it here immediately (don't wait — projects/ is volatile).
 

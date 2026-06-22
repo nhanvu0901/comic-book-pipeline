@@ -26,6 +26,7 @@ Thumbs.db
 # Stage logs
 logs/
 projects/
+art_projects/
 .understand-anything/
 bin/
 comic-pipeline-course/
