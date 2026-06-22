@@ -74,7 +74,7 @@ def _starts_with_connective(text: str) -> str | None:
 
 # Hook archetypes the benchmark accepts (research/reports/_BENCHMARK_thresholds.json
 # → qualifying.hook_archetype_allowed). The intro MUST classify into one of these.
-_ALLOWED_HOOK_ARCHETYPES = ("interrogative", "temporal-when", "temporal-other", "scenic")
+_ALLOWED_HOOK_ARCHETYPES = ("interrogative", "temporal-when", "temporal-other", "scenic", "character_action")
 
 
 def _classify_hook(line: str) -> str:
@@ -140,6 +140,9 @@ Pick the ONE hook archetype that makes THIS story most intriguing, then write th
         e.g. "After Limbo broke her, Magik swore she would never be a weapon again."
   • scenic         — a STATEMENT beginning with "In a <adjective> universe/reality/world" (or "In <year>"). Ends with ".".
         e.g. "In a broken reality, Magik turned her back on the X-Men for good."
+  • character-action — a STATEMENT that OPENS INSIDE THE SCENE: begin with the hero's name + an active verb (was/were/is/are/had/broke/entered/woke/fell/found/stands). No question, no "When/After". Ends with ".". Use when jumping straight into the action is the strongest hook.
+        e.g. "Peter woke in a body that was no longer his."
+        e.g. "Magik stood over the boy she once called her hero, blade drawn."
 
 VARIETY RULE (important): do NOT default to "Ever wonder" — it is only ONE of several interrogative options, and across many comics these openers must VARY. Prefer a different archetype/opener unless an "Ever wonder" question is clearly the strongest fit.
 
@@ -162,7 +165,7 @@ HARD RULES for the intro line:
     hero (it confuses the viewer). Reserve "what if" ONLY for genuine What-If /
     alternate-universe comics.
 
-Return ONLY JSON, no markdown: {"archetype": "interrogative|temporal-when|temporal-other|scenic", "intro_line": "..."}"""
+Return ONLY JSON, no markdown: {"archetype": "interrogative|temporal-when|temporal-other|scenic|character-action", "intro_line": "..."}"""
 
 
 def _fallback_hero(comic_context: dict) -> str:

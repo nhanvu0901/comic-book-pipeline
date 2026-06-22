@@ -141,7 +141,8 @@
       "interrogative",
       "temporal-when",
       "temporal-other",
-      "scenic"
+      "scenic",
+      "character_action"
     ]
   }
 }
