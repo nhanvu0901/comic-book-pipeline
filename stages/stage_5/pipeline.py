@@ -113,13 +113,25 @@ def assemble_project(
     silence_aligned = "silence-aligned" if scene_timings and word_timestamps else "even-split"
     log(f"[stage5] planning {len(shots)} shots across {len(narration.get('scenes') or [])} scenes ({silence_aligned} cuts)")
 
+    # Item 8: corner channel logo, baked into each shot (the outro card is built
+    # separately and is NOT a shot, so it never gets a double logo).
+    from config import ENABLE_CORNER_LOGO, CHANNEL_LOGO_PATH
+    from .shots import _prepare_corner_logo, OUTPUT_W
+    corner_logo = None
+    if ENABLE_CORNER_LOGO:
+        corner_logo = _prepare_corner_logo(
+            CHANNEL_LOGO_PATH, shots_dir / "_corner_logo.png",
+            width=int(OUTPUT_W * 0.10), alpha=0.55)
+        if corner_logo is None:
+            log(f"[stage5] corner logo unavailable ({CHANNEL_LOGO_PATH}); skipping overlay")
+
     shot_paths: list[Path] = []
     for s in shots:
         sp = shots_dir / f"shot_{s.shot_id:03d}.mp4"
         if sp.exists() and not force:
             log(f"[stage5] reusing {sp.name}")
         else:
-            render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log)
+            render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log, corner_logo=corner_logo)
         shot_paths.append(sp)
 
     # Debug log: record every shot's panel selection (page, bbox, image path,

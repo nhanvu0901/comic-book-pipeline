@@ -173,6 +173,15 @@ BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
 XFADE_DURATION = float(os.getenv("XFADE_DURATION", "0.25"))
 XFADE_TRANSITION = os.getenv("XFADE_TRANSITION", "dissolve")
 
+# ─── Stage 5: channel branding (Grimframe) ──────────────────────────────────
+CHANNEL_NAME = os.getenv("CHANNEL_NAME", "Grimframe")
+CHANNEL_HANDLE = os.getenv("CHANNEL_HANDLE", "@grimframe")
+_LOGO_RAW = os.getenv("CHANNEL_LOGO_PATH", "assets/branding/grimframe_logo.jpg")
+CHANNEL_LOGO_PATH = _LOGO_RAW if os.path.isabs(_LOGO_RAW) else str(Path(__file__).parent / _LOGO_RAW)
+ENABLE_CORNER_LOGO = os.getenv("ENABLE_CORNER_LOGO", "true").lower() in ("true", "1", "yes")
+ENABLE_OUTRO_CARD = os.getenv("ENABLE_OUTRO_CARD", "true").lower() in ("true", "1", "yes")
+OUTRO_CARD_SECONDS = float(os.getenv("OUTRO_CARD_SECONDS", "3.5"))
+
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
 

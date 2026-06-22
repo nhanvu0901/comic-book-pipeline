@@ -108,6 +108,26 @@ def _panel_has_critical_text(panel: dict | None) -> bool:
         return False
     desc = str(panel.get("description") or "").lower()
     return any(h in desc for h in _CRITICAL_TEXT_HINTS)
+
+
+def _prepare_corner_logo(logo_src, out_png: Path, *, width: int, alpha: float) -> Path | None:
+    """Scale the channel logo to `width` px and bake a uniform alpha into it,
+    saving an RGBA PNG for overlay. Returns None if the source can't be read."""
+    try:
+        with Image.open(logo_src) as im:
+            im = im.convert("RGBA")
+            w, h = im.size
+            new_h = max(1, int(round(h * (width / w))))
+            im = im.resize((width, new_h), Image.LANCZOS)
+            a = im.split()[3].point(lambda p: int(p * max(0.0, min(1.0, alpha))))
+            im.putalpha(a)
+            out_png.parent.mkdir(parents=True, exist_ok=True)
+            im.save(out_png)
+        return out_png
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+
+
 MOTION_CYCLE = ("zoom_in", "pan_right", "zoom_out")
 # Threshold for "big enough to deserve motion": panel area > 25% of full page.
 # Below this we keep static to avoid distracting zoom on small panels.
@@ -1081,6 +1101,7 @@ def render_shot(
     *,
     work_dir: Path | None = None,
     progress: Callable[[str], None] | None = None,
+    corner_logo: Path | None = None,
 ) -> Path:
     """Render one Ken Burns shot to MP4."""
     ff = _require_ffmpeg()
@@ -1107,14 +1128,20 @@ def render_shot(
         pre = f"scale={OUTPUT_W * 2}:{OUTPUT_H * 2}:flags=bicubic,"
     else:
         pre = ""
-    filter_complex = f"[0:v]{pre}{_zoompan_expr(shot.motion, frames)}[v]"
+    inputs = ["-framerate", "1", "-loop", "1", "-t", "1", "-i", str(framed)]
+    if corner_logo is not None:
+        # logo top-right with a 36px margin; logo PNG already carries its alpha
+        inputs += ["-i", str(corner_logo)]
+        filter_complex = (
+            f"[0:v]{pre}{_zoompan_expr(shot.motion, frames)}[vz];"
+            f"[vz][1:v]overlay=W-w-36:36[v]"
+        )
+    else:
+        filter_complex = f"[0:v]{pre}{_zoompan_expr(shot.motion, frames)}[v]"
 
     cmd = [
         ff, "-y",
-        "-framerate", "1",
-        "-loop", "1",
-        "-t", "1",
-        "-i", str(framed),
+        *inputs,
         "-filter_complex", filter_complex,
         "-map", "[v]",
         "-frames:v", str(frames),
