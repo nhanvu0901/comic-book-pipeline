@@ -18,6 +18,11 @@ class Shot:
     # Stored so shots.json labels each shot correctly — shot count no longer
     # equals caption-chunk count, so indexing caption_chunks[shot_id] is wrong.
     caption_text: str = ""
+    # Skip the horizontal mirror for this panel. Set when the panel contains
+    # story-critical readable text baked into the art (a gravestone, a sign, a
+    # nameplate) — mirroring would reverse the letters and break the reveal
+    # (e.g. the 'PETER' gravestone payoff in Weapon VIII).
+    no_mirror: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -10,7 +10,7 @@ from typing import Callable
 from config import BG_MUSIC_PATH, PROJECTS_ROOT
 from .audio import mix_audio
 from .captions import build_ass
-from .schema import AssemblyResult, Shot
+from .schema import AssemblyResult
 from .shots import build_shots, render_shot
 
 
@@ -130,8 +130,9 @@ def assemble_project(
     if silent_video_path.exists() and not force:
         log(f"[stage5] reusing {silent_video_path.name}")
     else:
-        log(f"[stage5] concatenating {len(shot_paths)} shots → {silent_video_path.name}")
-        _concat(shot_paths, silent_video_path)
+        log(f"[stage5] assembling {len(shot_paths)} shots → {silent_video_path.name} "
+            f"(xfade={ _xfade_label() })")
+        _assemble_video(shots, shot_paths, silent_video_path)
 
     log(f"[stage5] generating captions.ass ({len(word_timestamps)} words)")
     ass_text = build_ass(word_timestamps, audio_duration)
@@ -253,6 +254,83 @@ def _resolve_bgm(
             return c
     log("[stage5] no BGM file found — narration-only mix")
     return None
+
+
+def _group_shots_by_scene(shots, shot_paths):
+    """Group parallel (shot, path) lists by scene_id, order preserved.
+    Returns [(scene_id, [paths], total_scene_dur)]."""
+    groups: list[list] = []
+    for s, p in zip(shots, shot_paths):
+        if groups and groups[-1][0] == s.scene_id:
+            groups[-1][1].append(p)
+            groups[-1][2] += float(s.duration_seconds)
+        else:
+            groups.append([s.scene_id, [p], float(s.duration_seconds)])
+    return [(g[0], g[1], g[2]) for g in groups]
+
+
+def _xfade_offsets(scene_durs: list[float]) -> list[float]:
+    """Cumulative xfade offsets [d0, d0+d1, ...] (len = M-1). With each non-final
+    scene clip tail-padded by the xfade duration and the final clip unpadded, the
+    chain's net duration == sum(scene_durs) — preserving scene_timings sync."""
+    offs, acc = [], 0.0
+    for d in scene_durs[:-1]:
+        acc += d
+        offs.append(round(acc, 3))
+    return offs
+
+
+def _xfade_label() -> str:
+    from config import XFADE_DURATION, XFADE_TRANSITION
+    return f"{XFADE_TRANSITION} {XFADE_DURATION}s" if float(XFADE_DURATION) > 0 else "off"
+
+
+def _assemble_video(shots, shot_paths, out_path: Path) -> Path:
+    """Scene-grouped assembly: hard-cut within a scene, dissolve between scenes.
+    Falls back to a plain hard-cut concat when disabled, single-scene, or on error."""
+    from config import XFADE_DURATION, XFADE_TRANSITION
+    from .shots import FPS as _SHOTS_FPS
+    x = float(XFADE_DURATION)
+    groups = _group_shots_by_scene(shots, shot_paths)
+    if x <= 0 or len(groups) < 2:
+        return _concat(shot_paths, out_path)
+    try:
+        ff = _require_ffmpeg()
+        tmp = out_path.parent / "_scene_clips"
+        tmp.mkdir(parents=True, exist_ok=True)
+        clips = [_concat(paths, tmp / f"scene_{i:03d}.mp4")
+                 for i, (_sid, paths, _d) in enumerate(groups)]
+        durs = [d for (_sid, _p, d) in groups]
+        offs = _xfade_offsets(durs)
+
+        inputs: list[str] = []
+        for c in clips:
+            inputs += ["-i", str(c)]
+        # normalize + tail-pad every clip except the last (pad absorbs the overlap)
+        chains = []
+        last = len(clips) - 1
+        for i in range(len(clips)):
+            pad = "" if i == last else f",tpad=stop_mode=clone:stop_duration={x}"
+            chains.append(f"[{i}:v]settb=AVTB,fps={FPS}{pad}[v{i}]")
+        prev = "v0"
+        for k in range(1, len(clips)):
+            out = f"x{k}"
+            chains.append(
+                f"[{prev}][v{k}]xfade=transition={XFADE_TRANSITION}:"
+                f"duration={x}:offset={offs[k-1]}[{out}]")
+            prev = out
+        filter_complex = ";".join(chains)
+        cmd = [ff, "-y", *inputs,
+               "-filter_complex", filter_complex,
+               "-map", f"[{prev}]",
+               "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+               "-pix_fmt", "yuv420p", "-r", str(FPS),
+               str(out_path)]
+        _run(cmd)
+        return out_path
+    except Exception as exc:  # any ffmpeg/IO failure → never block a render
+        print(f"[stage5] xfade assembly failed ({exc}); falling back to hard-cut concat")
+        return _concat(shot_paths, out_path)
 
 
 def _concat(shot_paths: list[Path], out_path: Path) -> Path:

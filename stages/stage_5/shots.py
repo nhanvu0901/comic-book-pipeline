@@ -1,5 +1,4 @@
 """Shot list construction and per-shot ffmpeg Ken Burns rendering."""
-import json
 import os
 import re
 import shutil
@@ -64,12 +63,51 @@ def _semantic_sim(a: str, b: str) -> float:
     import numpy as np
     return max(0.0, min(1.0, float(np.dot(va, vb))))
 PADDING_PCT = 0.05
+# Small (non-highlight) panels are often cropped a touch tight by the detector and
+# look cramped/cut on screen. Give any panel smaller than a highlight (< 40% of its
+# page — matches stage-3 _BIG_SHOT_FRAC) a WIDER crop margin (30% per side) so the
+# whole panel shows with breathing room. Highlights (big splashes) already fill the
+# frame, so they keep the tight PADDING_PCT.
+SMALL_PANEL_FRAC = 0.40
+SMALL_PANEL_PAD_PCT = 0.30
+
+
+def _pad_pct_for(w: int, h: int, iw: int, ih: int) -> float:
+    """Crop margin (per side, as a fraction of panel size): 30% for a small panel,
+    tight 5% for a highlight. 'Small' = panel area < SMALL_PANEL_FRAC of the page."""
+    page_area = max(1, int(iw) * int(ih))
+    frac = (max(0, int(w)) * max(0, int(h))) / page_area
+    return SMALL_PANEL_PAD_PCT if frac < SMALL_PANEL_FRAC else PADDING_PCT
+
+
 # Erase the comic's own speech-bubble text from panels before render (the video
 # already carries narration + burned captions, so on-art dialogue is clutter).
 INPAINT_BUBBLE_TEXT = True
 # Horizontally flip each panel before render (the cleaned, mirrored frame is no
 # longer a pixel-identical copy of the source page).
 MIRROR_PANELS = True
+# Hints (in a panel's VLM description) that the art contains story-critical
+# readable text baked into the image — a gravestone, a sign, a nameplate. Mirroring
+# such a panel reverses the letters and breaks the reveal (e.g. the 'PETER'
+# gravestone payoff in Weapon VIII), so we keep these panels un-mirrored.
+_CRITICAL_TEXT_HINTS = (
+    "gravestone", "tombstone", "headstone", "grave marker",
+    "engraved", "engraving", "carved", "carving", "inscribed", "inscription",
+    "etched", "chiseled", "nameplate", "name plate", "plaque",
+    "dog tag", "dogtag", "name tag",
+    "a sign reading", "sign that reads", "sign reads",
+    "reading '", "reads '", "spelled out",
+)
+
+
+def _panel_has_critical_text(panel: dict | None) -> bool:
+    """True when a panel's description signals readable text baked into the art
+    (gravestone/sign/nameplate) that mirroring would reverse. Used to skip the
+    horizontal flip for that one panel so the lettering stays legible."""
+    if not panel:
+        return False
+    desc = str(panel.get("description") or "").lower()
+    return any(h in desc for h in _CRITICAL_TEXT_HINTS)
 MOTION_CYCLE = ("zoom_in", "pan_right", "zoom_out")
 # Threshold for "big enough to deserve motion": panel area > 25% of full page.
 # Below this we keep static to avoid distracting zoom on small panels.
@@ -331,6 +369,7 @@ def _build_shots_per_chunk(
                 motion=motion,
                 text_bboxes=text_bboxes,
                 caption_text=" ".join(str(m[0]) for m in slice_members).strip(),
+                no_mirror=_panel_has_critical_text(panel),
             ))
             shot_id += 1
     if audit_whole:
@@ -623,15 +662,21 @@ def _score_panel(
     if scene_page_ref_int and panel_page and scene_page_ref_int == panel_page:
         score += 4.0
 
-    # ── C: Visual salience (TODO #124 signal 3) — bigger panel = more important
-    # moment (splash/reveal). Replaces the old near-negligible +0.5·log term with
-    # a normalized [0,1] bonus weighted +3. The small-panel upscale penalty above
-    # stays as a separate image-QUALITY guard (distinct axis: blur vs importance).
+    # ── C/B: Visual salience — PAGE-RELATIVE (2026-06-20). A big/splash panel is a
+    # highlight (reveal/money shot); reward it so the epic shot beats a small panel
+    # ON THE SAME PAGE. The OLD absolute-area term maxed out on EVERY panel of a
+    # large page (e.g. 1961×3050), giving no tie-break — so the Hulkbuster barrage
+    # tied with tiny panels. Now scale by fraction-of-page: +4 at a >=50% splash,
+    # proportionally less below. Big enough to win close calls, NOT to override a
+    # strong content match (dialog +12, character +3). Falls back to absolute area
+    # when page dims are unavailable.
     bbox = panel.get("bbox", {}) or {}
     area = int(bbox.get("w", 0) or 0) * int(bbox.get("h", 0) or 0)
-    if area > 50000:
-        area_saliency = min(1.0, math.log(area / 50000) / 3.0)
-        score += 3.0 * area_saliency
+    page_area = int(panel.get("_page_area", 0) or 0)
+    if page_area > 0:
+        score += 4.0 * min(1.0, (area / page_area) / 0.5)
+    elif area > 50000:
+        score += 3.0 * min(1.0, math.log(area / 50000) / 3.0)
 
     # ── Text-coverage penalty (Fix 1) — avoid text-WALL panels ───────────
     # A panel drowning in caption/dialogue (e.g. a full-page epilogue splash with
@@ -773,12 +818,15 @@ def _gather_scored(pages_range, *, chunk_text, scene, pages_by_number,
             continue
         src = str(page.get("source_image") or "")
         page_tb = page.get("text_blocks") or []
+        _pdims = page.get("image_dimensions") or {}
+        _parea = int(_pdims.get("width", 0) or 0) * int(_pdims.get("height", 0) or 0)
         for idx, panel in enumerate(page.get("panels") or []):
             key = (pn, idx)
             if key in used_panel_keys:
                 continue
             pw = dict(panel)
             pw["_page_number"] = pn
+            pw["_page_area"] = _parea
             pw["index"] = idx
             s = _score_panel(pw, chunk_text, scene, page_text_blocks=page_tb,
                              prev_panel=prev_panel, cluster_to_name=cluster_to_name,
@@ -1042,7 +1090,8 @@ def render_shot(
 
     panel_png = work_dir / f"panel_{shot.shot_id:03d}.png"
     _crop_panel(shot.source_image, shot.panel_bbox, panel_png,
-                text_bboxes=getattr(shot, "text_bboxes", None))
+                text_bboxes=getattr(shot, "text_bboxes", None),
+                skip_mirror=getattr(shot, "no_mirror", False))
 
     framed = _prepare_panel_frame(panel_png, panel_png.with_name(panel_png.stem + "_9x16.png"))
 
@@ -1090,22 +1139,24 @@ def _zoompan_expr(motion: str, frames: int) -> str:
     shot feels random/distracting."""
     s = f"{OUTPUT_W}x{OUTPUT_H}"
     fps = FPS
+    d = max(1, frames)
+    ease = f"pow(on/{d},2)*(3-2*(on/{d}))"   # smoothstep 0->1, eased ends
     if motion == "zoom_in":
         return (
-            f"zoompan=z='min(1.05,zoom+{0.05 / max(1, frames):.6f})':"
+            f"zoompan=z='1+0.05*{ease}':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )
     if motion == "zoom_out":
         return (
-            f"zoompan=z='if(eq(on,0),1.05,max(1.0,zoom-{0.05 / max(1, frames):.6f}))':"
+            f"zoompan=z='1.05-0.05*{ease}':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )
     if motion == "pan_right":
         return (
             f"zoompan=z='1.03':"
-            f"x='iw/2-(iw/zoom/2)+(iw*0.03)*(on/{max(1, frames)})':"
+            f"x='iw/2-(iw/zoom/2)+(iw*0.03)*{ease}':"
             f"y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )
@@ -1135,15 +1186,21 @@ def _prepare_panel_frame(panel_png: Path, out_path: Path) -> Path:
     giant, and a wide/tall panel gets cropped down to a meaningless center sliver
     (e.g. a 3.8:1 establishing strip at 6× cover shows only ~15% of its width).
     BOTH are fixed by contain+blur: show the WHOLE panel sharp (capped at 2×
-    upscale) centered over a blurred copy of itself filling the frame. We no longer
-    gate on aspect ratio — high cover-scale alone is the trigger, because that is
-    exactly when cover-crop loses too much regardless of shape."""
+    upscale) centered over a blurred copy of itself filling the frame.
+
+    Triggers (either): (1) cover-scale > _BLUR_FALLBACK_SCALE, OR (2) a LANDSCAPE
+    panel (iw ≥ ih·1.2). A wide panel forced into the 1080×1920 PORTRAIT frame by
+    cover-crop chops its left/right off to a center sliver (e.g. the magik 0:53
+    p12 strip, 1.83:1 at 1.77× cover, showed only ~31% of its width = a disembodied
+    hand). Showing the whole panel on a blurred bg keeps the context. Portrait/tall
+    splashes (ih>iw) stay on cover-scale and fill the frame edge-to-edge."""
     with Image.open(panel_png) as im:
         im = im.convert("RGB")
         iw, ih = im.size
         cover = max(OUTPUT_W / iw, OUTPUT_H / ih)
 
-        use_blur_bg = cover > _BLUR_FALLBACK_SCALE
+        is_landscape = iw >= ih * 1.2  # wide panel: cover-crop chops the sides
+        use_blur_bg = cover > _BLUR_FALLBACK_SCALE or is_landscape
         if not use_blur_bg:
             # ── Cover-scale (original behavior) ──
             new_w = max(OUTPUT_W, int(round(iw * cover)))
@@ -1234,7 +1291,8 @@ def _lama_clean(img_bgr, text_bboxes, iw: int, ih: int):
 
 
 def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
-                text_bboxes: list[dict] | None = None) -> Path:
+                text_bboxes: list[dict] | None = None,
+                skip_mirror: bool = False) -> Path:
     """Crop one panel from the source page, then (1) inpaint the comic's own
     speech-bubble text out of the CROP and (2) mirror it horizontally. Uses
     OpenCV; falls back to a plain PIL crop (no inpaint/mirror) if cv2 is missing.
@@ -1250,7 +1308,8 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
     # (B) cache — same panel crop reused across shots → inpaint once, copy after.
     cache_key = (
         str(src), int(bbox.get("x", 0)), int(bbox.get("y", 0)),
-        int(bbox.get("w", 0)), int(bbox.get("h", 0)), bool(MIRROR_PANELS),
+        int(bbox.get("w", 0)), int(bbox.get("h", 0)),
+        bool(MIRROR_PANELS and not skip_mirror),
         bool(INPAINT_BUBBLE_TEXT),
         tuple((int(b.get("x", 0)), int(b.get("y", 0)), int(b.get("w", 0)), int(b.get("h", 0)))
               for b in (text_bboxes or [])),
@@ -1281,7 +1340,8 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
         w = int(bbox.get("w", 0)); h = int(bbox.get("h", 0))
         if w <= 0 or h <= 0:
             x, y, w, h = 0, 0, iw, ih
-        pad_x = int(w * PADDING_PCT); pad_y = int(h * PADDING_PCT)
+        _pp = _pad_pct_for(w, h, iw, ih)
+        pad_x = int(w * _pp); pad_y = int(h * _pp)
         left = max(0, x - pad_x); top = max(0, y - pad_y)
         right = min(iw, x + w + pad_x); bottom = min(ih, y + h + pad_y)
         crop = img[top:bottom, left:right]
@@ -1311,8 +1371,9 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
                                       255, -1)
                     if mask.any():
                         crop = cv2.inpaint(crop, mask, 6, cv2.INPAINT_NS)
-        # 3. Mirror horizontally.
-        if MIRROR_PANELS:
+        # 3. Mirror horizontally — UNLESS this panel has story-critical readable
+        #    text baked into the art (gravestone/sign), which a flip would reverse.
+        if MIRROR_PANELS and not skip_mirror:
             crop = cv2.flip(crop, 1)
         ok, buf = cv2.imencode(".png", crop)
         if ok:
@@ -1328,7 +1389,8 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
         w = int(bbox.get("w", 0)); h = int(bbox.get("h", 0))
         if w <= 0 or h <= 0:
             x, y, w, h = 0, 0, iw, ih
-        pad_x = int(w * PADDING_PCT); pad_y = int(h * PADDING_PCT)
+        _pp = _pad_pct_for(w, h, iw, ih)
+        pad_x = int(w * _pp); pad_y = int(h * _pp)
         left = max(0, x - pad_x); top = max(0, y - pad_y)
         right = min(iw, x + w + pad_x); bottom = min(ih, y + h + pad_y)
         cropped = im.convert("RGB").crop((left, top, right, bottom))
