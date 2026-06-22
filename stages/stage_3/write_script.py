@@ -6,7 +6,7 @@ import statistics
 from pathlib import Path
 from typing import Callable
 
-from config import CREATIVE_LLM_MODELS, FIDELITY_LLM_MODELS, OPENROUTER_MODEL
+from config import CREATIVE_LLM_MODELS, ENABLE_LOOP_TEASE, FIDELITY_LLM_MODELS, OPENROUTER_MODEL
 from .modes import MODES_BY_KEY
 from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
@@ -341,6 +341,85 @@ def generate_outro(
         return ""
 
 
+def _append_loop_tease(closure_text: str, tease: str) -> str:
+    """Join the outro closure with a loop tease, normalizing whitespace. Empty
+    tease → closure unchanged."""
+    closure = " ".join(str(closure_text).split()).strip()
+    t = " ".join(str(tease).split()).strip()
+    return f"{closure} {t}".strip() if t else closure
+
+
+_LOOP_TEASE_SYSTEM = """You are LoopWriter. You write ONE short final clause for a YouTube Short retelling of a comic — spoken AFTER the closing line — that makes the viewer want to watch again.
+
+HARD RULES:
+  - 4-12 words, exactly ONE sentence.
+  - It POINTS FORWARD at the story's aftermath, irony, or unanswered weight — phrased as intrigue.
+  - It MUST NOT state a NEW fact that the plot below does not support (no invented sequel, no made-up detail). It teases what was ALREADY implied.
+  - NOT a question. No meta talk, no hashtags, no "subscribe", no comic title.
+  - Tone: ominous, resonant — matches a dark comic retelling.
+
+Examples (for OTHER comics — match the TONE, not the words):
+  - "But what he became next, no one dares tell."
+  - "The cost was only beginning to show."
+  - "Some doors, once opened, never close."
+
+Return ONLY JSON, no markdown: {"loop_tease": "..."}"""
+
+
+def generate_loop_tease(
+    comic_context: dict,
+    body_scenes: list[dict],
+    *,
+    model: str | None = None,
+    progress: Callable[[str], None] | None = None,
+    debug_dump: dict | None = None,
+) -> str:
+    """Craft a short forward-pointing tease appended after the outro closure.
+    Returns "" if unusable (caller keeps the closure-only outro)."""
+    log = progress or (lambda _msg: None)
+    dump = debug_dump if debug_dump is not None else {}
+
+    title = str(comic_context.get("title", "")).strip()
+    plot = str(comic_context.get("plot_summary", "")).strip()
+    if not plot:
+        plot = str((comic_context.get("summary") or {}).get("story_arc", "")).strip()
+    body_text = " ".join(
+        str(s.get("text", "")).strip()
+        for s in (body_scenes or [])
+        if not s.get("is_intro") and not s.get("is_outro")
+    )
+
+    user = (
+        f"COMIC TITLE: {title}\n"
+        f"PLOT (ground truth — do NOT go beyond it):\n{plot[:1500]}\n\n"
+        f"THE NARRATION (for tone + what was covered):\n{body_text[:1200]}\n\n"
+        f"Write the loop-tease JSON now."
+    )
+
+    def _valid(out: str) -> bool:
+        try:
+            d = _json_loads_loose(out)
+            line = " ".join(str(d.get("loop_tease", "")).split()).strip()
+        except Exception:
+            return False
+        n = len(line.split())
+        return 3 <= n <= 14 and "?" not in line and "subscribe" not in line.lower()
+
+    try:
+        content, used = call_with_chain(
+            system=_LOOP_TEASE_SYSTEM, user=user,
+            models=list(CREATIVE_LLM_MODELS) or None,
+            max_tokens=120, progress=progress, label="loop_tease", validator=_valid,
+        )
+        data = _json_loads_loose(content)
+        line = " ".join(str(data.get("loop_tease", "")).split()).strip()
+        dump["loop_tease"] = {"loop_tease": line, "model": used}
+        return line
+    except Exception as exc:
+        log(f"[stage4] loop tease LLM failed ({type(exc).__name__}); keeping closure-only outro")
+        return ""
+
+
 def _find_cover_page(all_pages: list[dict] | None, story_pages: list[dict]) -> int:
     """Page number of the comic's cover (page_type=='cover'); else the lowest
     page number seen, else 1 — used as the intro scene's visual."""
@@ -560,6 +639,15 @@ def write_script(
             log("[stage4] outro: factual credit (thematic gen failed)")
     elif outro_idx >= 0:
         log("[stage4] outro: factual credit (coin-flip)")
+    # Item 2: hybrid loop ending — append a forward-pointing tease after the
+    # chosen closure so the ending invites a rewatch (closure is preserved).
+    if outro_idx >= 0 and ENABLE_LOOP_TEASE:
+        tease = generate_loop_tease(comic_context, scenes_now,
+                                    model=model, progress=progress, debug_dump=dump)
+        if tease:
+            scenes_now[outro_idx]["text"] = _append_loop_tease(
+                scenes_now[outro_idx].get("text", ""), tease)
+            log(f"[stage4] outro: + loop tease → {tease!r}")
 
     # B2: normalize confusing character TITLES/acronyms to the most-common name
     # (e.g. M.Y.T.H.O.S. / "Master of Yggdrasil…" → MODOK), reading the comic's own

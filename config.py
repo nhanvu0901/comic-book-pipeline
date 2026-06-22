@@ -161,6 +161,11 @@ RESEMBLE_VOICE_MAP = os.getenv(
     str(Path(__file__).resolve().parent / "voice_samples" / "voice_map.json"),
 )
 
+# ─── Stage 3: loop-friendly ending ──────────────────────────────────────────
+# Append a short forward-pointing "tease" after the outro closure so the ending
+# invites a rewatch (loop signal) without dropping the complete-story payoff.
+ENABLE_LOOP_TEASE = os.getenv("ENABLE_LOOP_TEASE", "true").lower() in ("true", "1", "yes")
+
 # ─── Stage 5: Video assembly ────────────────────────────────────────────────
 BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
 
