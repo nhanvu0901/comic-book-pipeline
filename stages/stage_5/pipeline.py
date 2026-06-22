@@ -167,9 +167,12 @@ def assemble_project(
     else:
         mix_audio(audio_path, bgm, audio_mixed_path, progress=log)
         if outro_dur > 0:
-            _pad_audio_tail(audio_mixed_path, outro_dur, audio_mixed_path.with_suffix(".pad.wav"))
-            audio_mixed_path.with_suffix(".pad.wav").replace(audio_mixed_path)
-            log(f"[stage5] padded audio +{outro_dur:.2f}s so -shortest keeps the outro card")
+            try:
+                _pad_audio_tail(audio_mixed_path, outro_dur, audio_mixed_path.with_suffix(".pad.wav"))
+                audio_mixed_path.with_suffix(".pad.wav").replace(audio_mixed_path)
+                log(f"[stage5] padded audio +{outro_dur:.2f}s so -shortest keeps the outro card")
+            except Exception as exc:
+                log(f"[stage5] audio pad failed ({exc}); shipping without the outro-card tail")
 
     log(f"[stage5] final encode → {final_path.name}")
     _final_encode(silent_video_path, audio_mixed_path, captions_path, final_path)
