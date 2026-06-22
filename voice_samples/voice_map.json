@@ -1,0 +1,44 @@
+{
+  "_comment": "Resemble TTS voice catalog for AUTO-SELECTION. When TTS_PROVIDER=resemble, a Claude SDK call reads the narration content (genre, tone, emotional spine) + the vibe/use_for fields below and picks the best-fit voice_uuid. This is the FINAL shortlist (5 voices). Vibe wording for Arthur/Amelia/Nova was inferred (not heard) — adjust freely.",
+  "provider": "resemble",
+  "default_uuid": "7f40ff35",
+  "selection": "llm_claude_sdk",
+  "voices": [
+    {
+      "name": "CarlBishop_Convo",
+      "uuid": "7f40ff35",
+      "gender": "male",
+      "vibe": "intellectual, calm, measured",
+      "use_for": "analytical / explainer / steady neutral narrative; ALSO epic COSMIC & sci-fi scale (space, gods, world-enders, Power Cosmic) told with grand measured authority; the default when no strong tone dominates"
+    },
+    {
+      "name": "Rupert",
+      "uuid": "28f1626c",
+      "gender": "male",
+      "vibe": "deep, ominous",
+      "use_for": "HORROR ONLY — vampires, monsters, supernatural dread, creepy/villain menace. Do NOT use for cosmic / sci-fi / superhero epics or non-horror tragedy."
+    },
+    {
+      "name": "Arthur",
+      "uuid": "9de11312",
+      "gender": "male",
+      "vibe": "warm, classic, emotive",
+      "use_for": "heartfelt / emotional / tragic male-led drama — betrayal, sacrifice, rage, redemption, bittersweet arcs (including tragic cosmic or superhero stories)"
+    },
+    {
+      "name": "Amelia",
+      "uuid": "ecbe5d97",
+      "gender": "female",
+      "vibe": "warm, gentle, intimate",
+      "use_for": "tender / emotional / female-led stories; quiet sorrow, love, loss, character-driven drama"
+    },
+    {
+      "name": "Nova",
+      "uuid": "a9fc5a41",
+      "gender": "female",
+      "vibe": "mature, calm, slightly British, formal",
+      "use_for": "refined / poised female narration; measured literary or period storytelling, elegant restraint, dignified drama"
+    }
+  ],
+  "not_selected": ["Orion", "Tanja_WarmWeaver", "Charlotte", "Evelyn", "Grace", "Luna", "Atlas"]
+}

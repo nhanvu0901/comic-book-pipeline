@@ -1,7 +1,6 @@
 """
 Stage 4 orchestrator: load narration.json → Cartesia TTS → align → persist.
 """
-import io
 import json
 import subprocess
 import wave
@@ -12,9 +11,9 @@ from config import (
     CARTESIA_VOICE_ID,
     FFMPEG_BIN,
     PROJECTS_ROOT,
-    get_project_dirs,
+    RESEMBLE_VOICE_UUID,
+    TTS_PROVIDER,
 )
-from .cartesia_tts import synthesize
 from .chunker import align_scenes_to_words, build_caption_chunks, words_from_dicts
 from .schema import TTSResult
 
@@ -126,6 +125,7 @@ def synthesize_project(
     scenes = narration.get("scenes") or []
     if not scenes:
         raise ValueError("narration.json has no scenes")
+    selected_voice = voice_id  # may be overridden by Resemble auto-select below
 
     audio_path = root / "audio.wav"
     words_path = root / "word_timestamps.json"
@@ -139,21 +139,41 @@ def synthesize_project(
         duration = _wav_duration(audio_path)
     else:
         base_emotion = (emotion or _base_emotion_for(narration)).strip().lower()
-        if flat:
+        if TTS_PROVIDER == "resemble":
+            from .resemble_tts import synthesize as _synthesize, select_voice
+            # Resemble has no Cartesia <emotion> SSML — speak plain normalized text.
             full_text = _normalize_for_tts(
                 " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text")))
+            if selected_voice is None:   # auto-pick via Claude SDK (reads narration + context, NOT bubbles)
+                cc = {}
+                cc_path = root / "comic_context.json"
+                if cc_path.exists():
+                    try:
+                        cc = json.loads(cc_path.read_text())
+                    except Exception:
+                        cc = {}
+                selected_voice, chosen_name = select_voice(narration, cc, log=print)
+                print(f"[stage4] auto-selected Resemble voice: {chosen_name} ({selected_voice})")
+            print(f"[stage4] synthesizing {len(full_text)} chars via Resemble "
+                  f"(voice={selected_voice or RESEMBLE_VOICE_UUID})")
+            result = _synthesize(full_text, voice_id=selected_voice)
         else:
-            full_text = _build_emotional_transcript(scenes, base_emotion, print)
-        print(f"[stage4] synthesizing {len(full_text)} chars via Cartesia "
-              f"({model or CARTESIA_MODEL}, voice={voice_id or CARTESIA_VOICE_ID}, "
-              f"speed={speed}, volume={volume}, base_emotion={base_emotion}, flat={flat})")
-        result = synthesize(full_text, voice_id=voice_id, model=model,
-                            speed=speed, volume=volume, emotion=base_emotion)
+            from .cartesia_tts import synthesize as _synthesize
+            if flat:
+                full_text = _normalize_for_tts(
+                    " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text")))
+            else:
+                full_text = _build_emotional_transcript(scenes, base_emotion, print)
+            print(f"[stage4] synthesizing {len(full_text)} chars via Cartesia "
+                  f"({model or CARTESIA_MODEL}, voice={voice_id or CARTESIA_VOICE_ID}, "
+                  f"speed={speed}, volume={volume}, base_emotion={base_emotion}, flat={flat})")
+            result = _synthesize(full_text, voice_id=voice_id, model=model,
+                                 speed=speed, volume=volume, emotion=base_emotion)
         audio_path.write_bytes(result.wav_bytes)
         words = result.word_timestamps
         duration = _wav_duration(audio_path)
-        print(f"[stage4] cartesia output: {duration:.2f}s, {len(words)} words "
-              f"({len(words)/duration:.2f} wps)")
+        print(f"[stage4] {TTS_PROVIDER} output: {duration:.2f}s, {len(words)} words "
+              f"({len(words)/max(duration, 0.01):.2f} wps)")
 
         if post_atempo and post_atempo != 1.0:
             print(f"[stage4] post-process: ffmpeg atempo={post_atempo} (preserves pitch)")
@@ -182,11 +202,14 @@ def synthesize_project(
     )
     print(f"[stage4] saved scene_timings ({len(scene_timings)}) and caption_chunks ({len(caption_chunks)})")
 
+    used_voice = (selected_voice or RESEMBLE_VOICE_UUID) if TTS_PROVIDER == "resemble" \
+        else (voice_id or CARTESIA_VOICE_ID)
+    used_model = "resemble/chatterbox" if TTS_PROVIDER == "resemble" else (model or CARTESIA_MODEL)
     return TTSResult(
         audio_path=str(audio_path),
         audio_duration_seconds=round(duration, 3),
-        voice_id=voice_id or CARTESIA_VOICE_ID,
-        model=model or CARTESIA_MODEL,
+        voice_id=used_voice,
+        model=used_model,
         speed=speed,
         word_timestamps=words_from_dicts(words),
         scene_timings=scene_timings,

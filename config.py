@@ -146,8 +146,28 @@ CARTESIA_API_VERSION = os.getenv("CARTESIA_API_VERSION", "2026-03-01")
 # Kyle — Cartesia "Emotive" preset voice; deep male storyteller, responds well to emotion tags.
 CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "c961b81c-a935-4c17-bfb3-ba2239de8c2f")
 
+# ─── TTS provider selector ──────────────────────────────────────────────────
+# Which engine Stage 4 uses: "cartesia" (default) | "resemble". Switch freely via
+# the TTS_PROVIDER env var — no code change needed.
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "cartesia").strip().lower()
+
+# ─── TTS (Resemble AI — Chatterbox) ─────────────────────────────────────────
+RESEMBLE_API_KEY = os.getenv("RESEMBLE_API_KEY", "")
+RESEMBLE_SYNTH_URL = os.getenv("RESEMBLE_SYNTH_URL", "https://f.cluster.resemble.ai/synthesize")
+RESEMBLE_VOICE_UUID = os.getenv("RESEMBLE_VOICE_UUID", "28f1626c")  # Rupert — fallback when no map/SDK
+# Voice catalog (name/uuid/vibe) the Claude SDK reads to auto-pick a narrator per story.
+RESEMBLE_VOICE_MAP = os.getenv(
+    "RESEMBLE_VOICE_MAP",
+    str(Path(__file__).resolve().parent / "voice_samples" / "voice_map.json"),
+)
+
 # ─── Stage 5: Video assembly ────────────────────────────────────────────────
 BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
+
+# Crossfade dissolve between SCENES. 0 = disabled → hard-cut concat (current behavior).
+XFADE_DURATION = float(os.getenv("XFADE_DURATION", "0.25"))
+XFADE_TRANSITION = os.getenv("XFADE_TRANSITION", "dissolve")
+
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
 
