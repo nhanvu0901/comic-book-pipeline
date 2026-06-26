@@ -17,51 +17,12 @@ OUTPUT_H = 1920
 TARGET_ASPECT = OUTPUT_W / OUTPUT_H
 FPS = 30
 
-# ── Semantic text↔panel alignment (TODO #124) ───────────────────────────────
-# A small local sentence-embedding model scores how well a narration chunk
-# matches a panel's VLM description — far more reliable than lexical word
-# overlap ("mistletoe" vs "spear", "reverted to mortal form" vs "FIZAPPT").
-# Lazy-loaded singleton; if unavailable the scorer degrades gracefully to 0.
-_SENT_MODEL = None
-_SENT_MODEL_TRIED = False
-_EMBED_CACHE: dict[str, "object"] = {}
+# ── Semantic text↔panel alignment ───────────────────────────────────────────
+# Cosine similarity from the shared embedding backend (Azure text-embedding-3-large
+# when configured, else local mxbai-embed-large-v1). Far more reliable than lexical
+# overlap ("reverted to mortal form" vs "FIZAPPT"). One model + cache across stages.
+from .._embedding import semantic_sim as _semantic_sim  # noqa: E402
 
-
-def _sent_model():
-    global _SENT_MODEL, _SENT_MODEL_TRIED
-    if _SENT_MODEL_TRIED:
-        return _SENT_MODEL
-    _SENT_MODEL_TRIED = True
-    try:
-        from sentence_transformers import SentenceTransformer
-        _SENT_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-    except Exception:
-        _SENT_MODEL = None
-    return _SENT_MODEL
-
-
-def _embed(text: str):
-    """Cached unit-normalized embedding for a piece of text (or None)."""
-    text = (text or "").strip()
-    if not text:
-        return None
-    if text in _EMBED_CACHE:
-        return _EMBED_CACHE[text]
-    m = _sent_model()
-    if m is None:
-        return None
-    vec = m.encode(text, convert_to_numpy=True, normalize_embeddings=True)
-    _EMBED_CACHE[text] = vec
-    return vec
-
-
-def _semantic_sim(a: str, b: str) -> float:
-    """Cosine similarity in [0,1] between two texts (0 if model unavailable)."""
-    va, vb = _embed(a), _embed(b)
-    if va is None or vb is None:
-        return 0.0
-    import numpy as np
-    return max(0.0, min(1.0, float(np.dot(va, vb))))
 PADDING_PCT = 0.05
 # Small (non-highlight) panels are often cropped a touch tight by the detector and
 # look cramped/cut on screen. Give any panel smaller than a highlight (< 40% of its
@@ -85,6 +46,12 @@ def _pad_pct_for(w: int, h: int, iw: int, ih: int) -> float:
 INPAINT_BUBBLE_TEXT = True
 # Horizontally flip each panel before render (the cleaned, mirrored frame is no
 # longer a pixel-identical copy of the source page).
+# The mirror reverses any on-art text the bubble-inpaint did not fully remove.
+# That is safe for a TIGHT single panel (its 1-2 bubbles get cleaned), but NOT for
+# a WHOLE-PAGE render (many panels + heavy dialogue the inpaint can't all clear →
+# the whole page renders with BACKWARDS lettering). So the mirror stays ON, but
+# `no_mirror` is set for whole-page / no-panel renders (see render_shots) and for
+# panels whose art carries readable text (_panel_has_critical_text).
 MIRROR_PANELS = True
 # Hints (in a panel's VLM description) that the art contains story-critical
 # readable text baked into the image — a gravestone, a sign, a nameplate. Mirroring
@@ -97,6 +64,11 @@ _CRITICAL_TEXT_HINTS = (
     "dog tag", "dogtag", "name tag",
     "a sign reading", "sign that reads", "sign reads",
     "reading '", "reads '", "spelled out",
+    # On-screen readouts / labelled surveillance feeds bake location text into the
+    # art (e.g. "BARBARA HOUSE" / "GORDON HOME" on a security monitor) that a
+    # horizontal mirror reverses into gibberish.
+    "monitor", "surveillance", "security camera", "security feed", "cctv",
+    "screen showing", "screen shows", "display showing", "readout", "label",
 )
 
 
@@ -171,6 +143,9 @@ LLM_PANEL_JUDGE = True
 # scored 7.38 and SHOULD win, so 8.0 was too aggressive. 6.0 accepts page+char
 # panels while still rejecting page-only/salience-only noise. Tune via benchmark.
 PANEL_MATCH_FLOOR = 6.0
+# Narration-driven matcher (final update of beat): below this content score a unit's
+# aligned panel doesn't really depict the line → HOLD the previous panel instead of
+# showing a wrong one (see _match_panels_forward).
 # R19 ambiguity gate (unchanged threshold): top1−top2 below this → LLM tiebreak.
 PANEL_AMBIGUITY_MARGIN = 1.0
 
@@ -243,9 +218,9 @@ def _build_shots_per_scene(
                 word_timestamps=word_timestamps,
             )
         for i, dur in enumerate(durations):
-            if dur < STATIC_MOTION_BELOW_SECONDS:
-                motion = "static"
-            elif SHOTS_PER_SCENE <= 1:
+            # Never static — a held still frame reads as a freeze. Always rotate
+            # through MOTION_CYCLE (all entries move) so every shot has motion.
+            if SHOTS_PER_SCENE <= 1:
                 # Rotate motion based on scene_id so consecutive scenes differ.
                 motion = MOTION_CYCLE[(scene_id - 1) % len(MOTION_CYCLE)]
             else:
@@ -312,141 +287,86 @@ def _build_shots_per_chunk(
         else:
             groups.append((scene, [(text, c_start, dur)]))
 
-    # GLOBAL no-repeat across the whole video (BUG #122 Fix B — stops the same
-    # splash panel reappearing in two scenes). With ≤2 panels/scene (E) and
-    # page_ref-first gathering (A), a page is rarely exhausted, so scenes now
-    # stay on their own page instead of bleeding into neighbors.
-    used_global: set = set()
-    shots: list[Shot] = []
-    prev_panel: dict | None = None
-    shot_id = 0
-
-    # SINGLE panel authority (unify, 2026-06-17): _assign_scene_panels page-locks
-    # to the scene's own page, scores via _score_panel (all rules intact), LLM-
-    # disambiguates a close lead, and falls back to a whole-page shot when no
-    # panel depicts the scene. Replaces the old global _llm_assign_panels prompt.
-    # Fix A: pre-resolve panel contention so scenes sharing a page_ref each get the
-    # panel they match BEST (greedy), not first-come. reserved[gi] = the panel key
-    # owned by group gi; every other contended scene is blocked from it.
-    reserved = _resolve_page_contention(groups, pages_by_number or {}, cluster_to_name or {})
-    reserved_all = set(reserved.values())
-
-    audit_whole = []  # A3: scene_ids that rendered as a whole page
-    for gi, (scene, members) in enumerate(groups):
-        # Clause-anchored slicing: ONE panel per CLAUSE (subject+verb unit), each panel
-        # matched to its OWN clause text → panel changes only at a natural speech pause,
-        # never mid-phrase, and each panel depicts its clause. Intro/outro stay one panel.
+    # ── Narration-driven panel matching (final update of beat) ──────────────
+    # Replaces the page-locked, beat-anchored picker. Flatten the scenes into
+    # ordered narration UNITS (still split by clause + capped at MAX_PANEL_SECONDS
+    # so a long sentence becomes several shots), then walk the panel pool ONCE,
+    # FORWARD-ONLY + NO-REUSE: hold the current panel while narration stays on its
+    # subject, advance to a clearly-better forward panel when the subject changes.
+    units: list[tuple[dict, list, str]] = []   # (scene, slice_members, match_text)
+    for scene, members in groups:
         scene_text = str(scene.get("text", "") or "")
         if scene.get("is_intro") or scene.get("is_outro"):
             clause_texts, slices = [scene_text], [members]
         else:
-            clauses = _split_into_clauses(scene_text) or [scene_text]
+            # visual_beats may be absent (slim Stage 3) → one slice per sentence;
+            # _cap_panel_holds then splits a long sentence into ≤MAX_PANEL_SECONDS
+            # sub-slices so the matcher can hold OR advance within it.
+            clauses = [str(c).strip() for c in (scene.get("visual_beats") or []) if str(c).strip()] \
+                or [scene_text]
             buckets = _split_members_by_clause(members, clauses)
             pairs = [(c, b) for c, b in zip(clauses, buckets) if b] or [(scene_text, members)]
             clause_texts = [c for c, _ in pairs]
             slices = [b for _, b in pairs]
-        # Panels reserved for OTHER scenes on the same page are off-limits here; this
-        # scene force-claims the panel reserved for IT (pinned).
-        mine = reserved.get(gi)
-        blocked = reserved_all - ({mine} if mine is not None else set())
-        assigned = _assign_scene_panels(
-            scene=scene, pages_by_number=pages_by_number or {},
-            used_panel_keys=used_global, prev_panel=prev_panel,
-            cluster_to_name=cluster_to_name or {}, clause_texts=clause_texts,
-            blocked_keys=blocked, pinned_key=mine,
-        )
-        is_whole = any(p and p.get("_whole_page") for p, _ in assigned)
-        # Intro is the cover by design (R15), not a fallback — don't flag it.
-        if is_whole and not scene.get("is_intro"):
+            clause_texts, slices = _cap_panel_holds(clause_texts, slices)
+        for ct, sl in zip(clause_texts, slices):
+            spoken = " ".join(str(m[0]) for m in sl).strip() or ct
+            units.append((scene, sl, spoken))
+
+    assigned = _match_panels_forward(
+        [(sc, txt) for sc, _sl, txt in units],
+        pages_by_number or {}, cluster_to_name or {},
+    )
+
+    shots: list[Shot] = []
+    shot_id = 0
+    audit_whole = []
+    for (scene, slice_members, _spoken), (panel, source_image) in zip(units, assigned):
+        slice_dur = sum(m[2] for m in slice_members)
+        if panel is not None and panel.get("_whole_page") and not scene.get("is_intro"):
             audit_whole.append(int(scene.get("scene_id") or 0))
-        for i, slice_members in enumerate(slices):
-            slice_dur = sum(m[2] for m in slice_members)
-            if i < len(assigned):
-                panel, source_image = assigned[i]
-            elif assigned:
-                panel, source_image = assigned[-1]   # hold last panel (R23 no-pad)
-            else:
-                panel, source_image = None, None
-            prev_panel = panel   # scene-entry coherence for next scene (R9/R10)
-            text_bboxes: list[dict] = []
-            if panel is None:
-                bbox = scene.get("panel_bbox") or {}
-                source_image = str(scene.get("source_image") or "")
-            else:
-                bbox = panel.get("bbox") or {}
-                text_bboxes = _panel_text_bboxes(panel, pages_by_number or {})
-            motion = _choose_motion(panel, slice_dur)
-            if panel is not None and panel.get("_whole_page"):
-                # Whole page: reveal the full page (R15-style), never a random pan.
-                motion = "zoom_out" if slice_dur >= MOTION_MIN_DURATION else "static"
-            shots.append(Shot(
-                shot_id=shot_id,
-                scene_id=int(scene.get("scene_id") or 1),
-                duration_seconds=max(0.4, slice_dur),
-                panel_bbox={"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
-                            "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))},
-                source_image=source_image,
-                motion=motion,
-                text_bboxes=text_bboxes,
-                caption_text=" ".join(str(m[0]) for m in slice_members).strip(),
-                no_mirror=_panel_has_critical_text(panel),
-            ))
-            shot_id += 1
+        text_bboxes: list[dict] = []
+        if panel is None:
+            bbox = scene.get("panel_bbox") or {}
+            source_image = source_image or str(scene.get("source_image") or "")
+        else:
+            bbox = panel.get("bbox") or {}
+            text_bboxes = _panel_text_bboxes(panel, pages_by_number or {})
+        motion = _choose_motion(panel, slice_dur, seq=shot_id)
+        if panel is not None and panel.get("_whole_page"):
+            # Whole page: slow reveal of the full page; never a random pan, never static.
+            motion = "zoom_out"
+        shots.append(Shot(
+            shot_id=shot_id,
+            scene_id=int(scene.get("scene_id") or 1),
+            duration_seconds=max(0.4, slice_dur),
+            panel_bbox={"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
+                        "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))},
+            source_image=source_image,
+            motion=motion,
+            text_bboxes=text_bboxes,
+            caption_text=" ".join(str(m[0]) for m in slice_members).strip(),
+            # Skip the mirror when it would reverse legible text: a whole-page or a
+            # no-panel render shows uncleaned bubbles, and a panel whose art carries
+            # readable text (sign/monitor/nameplate) would flip into gibberish.
+            no_mirror=(panel is None or bool(panel.get("_whole_page"))
+                       or _panel_has_critical_text(panel)),
+            is_intro=bool(scene.get("is_intro")),
+        ))
+        shot_id += 1
     if audit_whole:
         print(f"[stage5] panel-match: {len(audit_whole)} scene(s) → whole-page "
               f"fallback (scene_ids {audit_whole})")
     return shots
 
 
-# ── Clause-anchored panel slicing (2026-06-18) ───────────────────────────────
-# The panel unit is a CLAUSE (a sentence-part with a full subject+verb), so a panel
-# changes only at a natural speech pause — never mid-phrase (the old equal-duration
-# split cut mid-clause → "scene jumps / runs ahead of narration"). spaCy gives
-# consistent clause boundaries; if unavailable, a scene stays one panel (still synced).
-_SPACY = None
-_SPACY_TRIED = False
-
-
-def _spacy():
-    global _SPACY, _SPACY_TRIED
-    if _SPACY_TRIED:
-        return _SPACY
-    _SPACY_TRIED = True
-    try:
-        import spacy
-        _SPACY = spacy.load("en_core_web_sm", disable=["ner", "lemmatizer"])
-    except Exception:
-        _SPACY = None
-    return _SPACY
-
-
-def _split_into_clauses(text: str) -> list[str]:
-    """Split a narration sentence into clauses (each a full subject+verb unit).
-    Rule: cut at a COMMA whose next content token is a clause SUBJECT (dep nsubj/
-    nsubjpass with a VERB/AUX head) — matches "between commas + subject+verb",
-    ignoring appositives, lists, and gerunds. Returns [text] when spaCy is
-    unavailable or the sentence is a single clause."""
-    text = (text or "").strip()
-    if not text:
-        return []
-    nlp = _spacy()
-    if nlp is None:
-        return [text]
-    out: list[str] = []
-    doc = nlp(text)
-    for sent in doc.sents:
-        cuts = [sent.start]
-        for t in sent:
-            if t.text == "," and t.i + 1 < sent.end:
-                nxt = doc[t.i + 1]
-                if nxt.dep_ in ("nsubj", "nsubjpass") and nxt.head.pos_ in ("VERB", "AUX"):
-                    cuts.append(t.i + 1)
-        cuts = sorted(set(cuts)) + [sent.end]
-        for a, b in zip(cuts, cuts[1:]):
-            seg = doc[a:b].text.strip(" ,;.").strip()
-            if seg:
-                out.append(seg)
-    return out or [text]
+# ── Visual-beat panel slicing ────────────────────────────────────────────────
+# The panel unit is a VISUAL BEAT — scene["visual_beats"], verbatim fragments computed
+# by the LLM beat-splitter at the END OF STAGE 3 (stages/stage_3/beat_split.py). A panel
+# changes at each new visual moment, never mid-phrase. (Replaced the spaCy clause splitter,
+# which almost never fired: it required the token right after a comma to be the subject,
+# but that token is nearly always a determiner/conjunction/compound-name.) When a scene
+# has no visual_beats it stays one panel — still synced.
 
 
 def _split_members_by_clause(members: list, clauses: list[str]) -> list[list]:
@@ -474,6 +394,35 @@ def _split_members_by_clause(members: list, clauses: list[str]) -> list[list]:
     return buckets   # ALIGNED to clauses (may include empty buckets)
 
 
+# One panel holds at most this long. A visual beat can span several caption chunks
+# (a 27-word sentence = 4 chunks ≈ 9s); without a cap the panel FREEZES on one image
+# for the whole beat (the s8 "Murdock" case held 7.5s while the caption advanced 3×).
+MAX_PANEL_SECONDS = 3.5
+
+
+def _cap_panel_holds(clause_texts: list[str], slices: list[list]) -> tuple[list[str], list[list]]:
+    """Break any beat-slice that would hold one panel too long into sub-slices at
+    caption-chunk boundaries (each ≤ MAX_PANEL_SECONDS), so the picker assigns a
+    DISTINCT panel per sub-slice (no-repeat) and the image changes every ~3.5s instead
+    of freezing for the whole beat. Returns expanded (clause_texts, slices) aligned 1:1.
+    members = (text, start, dur); a sub-slice keeps the beat's clause text so its panels
+    stay on-topic. Never grows a slice — only splits."""
+    out_t: list[str] = []
+    out_s: list[list] = []
+    for ct, members in zip(clause_texts, slices):
+        cur: list = []
+        cur_dur = 0.0
+        for m in members:
+            md = float(m[2]) if len(m) > 2 else 0.0
+            if cur and cur_dur + md > MAX_PANEL_SECONDS:
+                out_t.append(ct); out_s.append(cur)
+                cur, cur_dur = [], 0.0
+            cur.append(m); cur_dur += md
+        if cur:
+            out_t.append(ct); out_s.append(cur)
+    return out_t, out_s
+
+
 def _panel_text_bboxes(panel: dict, pages_by_number: dict[int, dict]) -> list[dict]:
     """Return the page-coordinate bboxes of every text block (speech/narration)
     belonging to this panel — matched by panel_index on the panel's page. Used to
@@ -492,28 +441,24 @@ def _panel_text_bboxes(panel: dict, pages_by_number: dict[int, dict]) -> list[di
     return out
 
 
-def _choose_motion(panel: dict | None, dur: float) -> str:
-    """Content-aware motion picker. Default static; subtle zoom_in only for
-    splash-sized panels with enough duration. No random pans on close-ups."""
-    if dur < MOTION_MIN_DURATION:
-        return "static"
-    if panel is None:
-        return "static"
-    bbox = panel.get("bbox") or {}
+def _choose_motion(panel: dict | None, dur: float, seq: int = 0) -> str:
+    """Content-aware motion picker. NEVER returns "static": a still frame (z=1.00
+    held for seconds) reads as a FREEZE / glitch in a motion comic — half this
+    project's shots were static and visibly froze. Every shot now gets a gentle
+    Ken-Burns move (the calm zoom is a subtle 1.05 push, see _zoompan_expr, which
+    spans the FULL duration so there is no static tail). A splash gets the epic
+    slow zoom_in; other panels alternate zoom_in / zoom_out by `seq` for variety."""
+    bbox = (panel or {}).get("bbox") or {}
     w = int(bbox.get("w", 0) or 0)
     h = int(bbox.get("h", 0) or 0)
-    if w <= 0 or h <= 0:
-        return "static"
-    # Page dimensions inferred via source image dimensions if present, else
-    # use a typical comic page area threshold (~1200x1800 = 2.16M px).
     panel_area = w * h
-    full_page_typical = 1200 * 1800
+    full_page_typical = 1200 * 1800  # typical comic page area (~2.16M px)
     # Splash (big panel) → slow zoom_in to make the moment feel epic.
-    if panel_area / full_page_typical >= PANEL_BIG_AREA_RATIO:
+    if panel_area and panel_area / full_page_typical >= PANEL_BIG_AREA_RATIO:
         return "zoom_in"
-    # Otherwise static — most narration chunks are 1-2s and a small panel
-    # doesn't benefit from motion (random pan/zoom feels arbitrary).
-    return "static"
+    # Smaller panel (or no bbox) → still MOVE, never freeze; alternate in/out so
+    # consecutive shots don't all push the same way.
+    return "zoom_in" if (seq % 2 == 0) else "zoom_out"
 
 
 _PANEL_STOPWORDS = {
@@ -791,11 +736,20 @@ def _is_skip_page(page: dict) -> bool:
     if page.get("is_story_page") is False and pt != "cover":
         return True
     summary = (page.get("page_summary") or "").lower()
+    # A page whose OWN summary calls itself a cover is a cover, even when page_type
+    # was mis-tagged "story" (real case: a recap/collage cover with the title logo +
+    # licensing credits → became a content magnet that matched every narration line).
+    if summary.startswith("cover"):
+        return True
     summary_markers = (
         "promotional or advertisement",
         "promotional page",
         "advertisement page",
         "creator credits",
+        "licensing credits",        # cover/credits page (e.g. "...Toho licensing credits")
+        "stylized collage",         # cover montage
+        "collage depicting",        # cover montage
+        "title logo",               # cover/title page
         "table of contents",
         "next issue",
         "upcoming comic book",
@@ -853,6 +807,42 @@ def _gather_scored(pages_range, *, chunk_text, scene, pages_by_number,
                              page_locked=True)
             out.append((s, pw, src, key))
     return out
+
+
+def _cold_open_panel(pages_by_number):
+    """COLD-OPEN: pick a striking STORY panel to open the video on instead of the
+    cover — the LARGEST-area panel in the OPENING pages (a splash/big dramatic shot
+    grabs in <1s, and an opening panel establishes the premise instead of dropping the
+    viewer into a mid-story fight that mismatches the hook). Skips cover/credits/ad
+    pages and the final 2 story pages (no ending spoiler). Returns (panel, src) or (None,'')."""
+    story_pns = sorted(pn for pn, pg in (pages_by_number or {}).items()
+                       if pg and not _is_skip_page(pg))
+    if not story_pns:
+        return None, ""
+    ending = set(story_pns[-2:])   # exclude the last 2 story pages (ending/outro splash)
+    # Only the OPENING third (≥3 pages): the hook is about the SETUP, so frame 1 should
+    # come from where the premise is established — not the globally-largest panel, which
+    # was landing on a mid-story action splash unrelated to the opening line.
+    opening = story_pns[:max(3, len(story_pns) // 3)]
+    best = None  # (area, panel_dict, src)
+    for pn in opening:
+        if pn in ending:
+            continue
+        page = pages_by_number.get(pn) or {}
+        src = str(page.get("source_image") or "")
+        for idx, panel in enumerate(page.get("panels") or []):
+            bb = panel.get("bbox") or {}
+            area = int(bb.get("w", 0) or 0) * int(bb.get("h", 0) or 0)
+            if area <= 0:
+                continue
+            if best is None or area > best[0]:
+                pw = dict(panel)
+                pw["_page_number"] = pn
+                pw["index"] = idx
+                best = (area, pw, src)
+    if best is None:
+        return None, ""
+    return best[1], best[2]
 
 
 def _whole_page_panel(scene, pages_by_number):
@@ -917,6 +907,149 @@ def _panel_by_key(key, pages_by_number):
     return pw, str(page.get("source_image") or "")
 
 
+def _bbox_tuple(panel: dict) -> tuple[int, int, int, int]:
+    b = panel.get("bbox") or {}
+    return (int(b.get("x", 0) or 0), int(b.get("y", 0) or 0),
+            int(b.get("w", 0) or 0), int(b.get("h", 0) or 0))
+
+
+def _containment_ratio(a: tuple, b: tuple) -> float:
+    """Intersection over the SMALLER panel's area. Unlike plain IoU this catches a
+    panel that sits (almost) entirely INSIDE another — exactly the overlapping
+    Magi detections that make two scenes on one page render near-identical crops
+    (e.g. moonknight pg14: p0 (0,1,1533,1947) nested in p1 (0,1,1981,1956))."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    small = min(aw * ah, bw * bh)
+    return inter / small if (inter > 0 and small > 0) else 0.0
+
+
+# A panel overlapping an already-claimed one by ≥ this (containment) renders a
+# near-identical crop — block it too so no two scenes show the same art.
+_PANEL_OVERLAP_BLOCK = 0.7
+
+
+def _overlapping_panel_keys(key, pages_by_number) -> set:
+    """Keys of OTHER panels on the same page that overlap `key`'s panel ≥
+    _PANEL_OVERLAP_BLOCK (containment). Used to extend the no-repeat set when a
+    panel is claimed, so an overlapping duplicate detection can't be picked next."""
+    pn, idx = key
+    panels = (pages_by_number.get(pn) or {}).get("panels") or []
+    if not (0 <= idx < len(panels)):
+        return set()
+    base = _bbox_tuple(panels[idx])
+    out = set()
+    for j, p in enumerate(panels):
+        if j != idx and _containment_ratio(base, _bbox_tuple(p)) >= _PANEL_OVERLAP_BLOCK:
+            out.add((pn, j))
+    return out
+
+
+def _panel_pool(pages_by_number: dict) -> list:
+    """All non-skip panels in READING ORDER (page asc, panel idx asc) across every
+    page/issue: [(key, panel_dict, source_image, page_text_blocks)]. Each panel dict
+    carries _page_number/_page_area/index so _score_panel's rules work unchanged."""
+    pool = []
+    for pn in sorted(pages_by_number or {}):
+        page = pages_by_number.get(pn)
+        if not page or _is_skip_page(page):
+            continue
+        src = str(page.get("source_image") or "")
+        page_tb = page.get("text_blocks") or []
+        dims = page.get("image_dimensions") or {}
+        parea = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
+        for idx, panel in enumerate(page.get("panels") or []):
+            pw = dict(panel)
+            pw["_page_number"] = pn
+            pw["_page_area"] = parea
+            pw["index"] = idx
+            pool.append(((pn, idx), pw, src, page_tb))
+    return pool
+
+
+def _match_panels_forward(units: list, pages_by_number: dict, cluster_to_name: dict) -> list:
+    """Align the narration sequence to the panel sequence by MONOTONIC DTW: pick a
+    non-decreasing panel index per unit that maximizes the TOTAL content match
+    (_score_panel: dialog/char/emotion/salience/text-penalty + semantic sim). This is
+    forward-only (panel index never decreases), holds a panel across consecutive units
+    that share its subject (same index repeated), and — being a GLOBAL optimum — never
+    strands the runway the way a greedy walk does (jumping to a late panel early would
+    lower the total, so it won't). A unit whose best aligned panel still doesn't depict
+    it (score < PANEL_MATCH_FLOOR) HOLDS the previous panel instead of showing a wrong
+    one. `units` = [(scene, match_text)] in audio order → [(panel_or_None, src)]."""
+    pool = _panel_pool(pages_by_number)
+    n, m = len(units), len(pool)
+    if n == 0:
+        return []
+    if m == 0:
+        return [(None, "")] * n
+
+    # cost matrix: static content score of unit i on panel j (no prev-coherence term —
+    # the monotonic alignment supplies sequence coherence on its own).
+    score = [[0.0] * m for _ in range(n)]
+    for i, (scene, text) in enumerate(units):
+        for j, (_key, panel, _src, page_tb) in enumerate(pool):
+            score[i][j] = _score_panel(panel, text, scene, page_text_blocks=page_tb,
+                                       prev_panel=None, cluster_to_name=cluster_to_name,
+                                       page_locked=False)
+
+    # DP: dp[i][j] = best total aligning units 0..i with unit i → panel j, j
+    # non-decreasing. Either ADVANCE from a strictly-earlier panel (+ADVANCE_BONUS, so
+    # the alignment is rewarded for moving to a NEW panel instead of parking on one
+    # broadly-matching panel — e.g. a recap/cover collage) or STAY on panel j (a hold,
+    # no bonus). The strict-prefix-max is carried in O(1) → O(n·m) overall.
+    ADVANCE_BONUS = 2.0
+    NEG = float("-inf")
+    dp = [[NEG] * m for _ in range(n)]
+    bk = [[-1] * m for _ in range(n)]
+    for j in range(m):
+        dp[0][j] = score[0][j]
+    for i in range(1, n):
+        spm, sparg = NEG, 0      # strict prefix max of dp[i-1][0..j-1]
+        for j in range(m):
+            adv = spm + ADVANCE_BONUS if spm > NEG else NEG   # advance from an earlier panel
+            stay = dp[i - 1][j]                               # hold on panel j
+            if adv >= stay:
+                dp[i][j], bk[i][j] = score[i][j] + adv, sparg
+            else:
+                dp[i][j], bk[i][j] = score[i][j] + stay, j
+            if dp[i - 1][j] > spm:
+                spm, sparg = dp[i - 1][j], j
+    # backtrack from the best end panel
+    jbest = max(range(m), key=lambda j: dp[n - 1][j])
+    idxs = [0] * n
+    j = jbest
+    for i in range(n - 1, -1, -1):
+        idxs[i] = j
+        if i > 0:
+            j = bk[i][j]
+
+    out = []
+    prev = None        # (panel, src) currently on screen
+    for i, (scene, text) in enumerate(units):
+        j = idxs[i]
+        key, panel, src, _tb = pool[j]
+        # Cold-open: the teaser opens on a striking OPENING panel, not a content match.
+        if i == 0 and scene.get("is_intro"):
+            cp, csrc = _cold_open_panel(pages_by_number)
+            if cp is not None:
+                out.append((cp, csrc))
+                prev = (cp, csrc)
+                print(f"[stage5] match u{i}: COLD-OPEN | {text[:42]!r}")
+                continue
+        if score[i][j] < PANEL_MATCH_FLOOR and prev is not None:
+            out.append(prev)                         # weak match → hold (no wrong panel)
+            print(f"[stage5] match u{i}: HOLD(weak) {key} base={score[i][j]:.1f} | {text[:42]!r}")
+        else:
+            out.append((panel, src))
+            prev = (panel, src)
+            print(f"[stage5] match u{i}: ALIGN {key} base={score[i][j]:.1f} | {text[:42]!r}")
+    return out
+
+
 def _assign_scene_panels(*, scene, pages_by_number, used_panel_keys, prev_panel,
                          cluster_to_name, clause_texts, blocked_keys=frozenset(),
                          pinned_key=None):
@@ -933,6 +1066,12 @@ def _assign_scene_panels(*, scene, pages_by_number, used_panel_keys, prev_panel,
       'reduced to ash' panel must win for that line even though the previous shot was a
       Ghost Rider panel). Both default off → non-contended scenes are unchanged."""
     if scene.get("is_intro"):
+        # Cold-open on a striking story panel (not the cover) so frame 1 grabs in <1s.
+        from config import COLD_OPEN
+        if COLD_OPEN:
+            pnl, src = _cold_open_panel(pages_by_number)
+            if pnl is not None:
+                return [(pnl, src)]
         pnl, src = _whole_page_panel(scene, pages_by_number)
         return [(pnl, src)] if pnl else []
 
@@ -969,6 +1108,8 @@ def _assign_scene_panels(*, scene, pages_by_number, used_panel_keys, prev_panel,
                 result.append((pin_panel, pin_src))   # force-claim the owned panel
                 prev = pin_panel
                 newly_blocked.discard(pinned_key)      # permanent claim, survive finally
+                # block overlapping detections of the owned panel too (dup guard)
+                used_panel_keys |= _overlapping_panel_keys(pinned_key, pages_by_number)
                 continue
             lead = _pick_best_panel(ct, page_ref=page_ref, scene=scene,
                                     pages_by_number=pages_by_number, used=used_panel_keys,
@@ -976,6 +1117,9 @@ def _assign_scene_panels(*, scene, pages_by_number, used_panel_keys, prev_panel,
             if lead is not None:
                 _, panel, src, key = lead
                 used_panel_keys.add(key)   # R17/R24 no-repeat across the whole video
+                # …and block overlapping detections so the next scene on this page
+                # can't render a near-identical crop (duplicate-panel guard).
+                used_panel_keys |= _overlapping_panel_keys(key, pages_by_number)
                 result.append((panel, src))
                 prev = panel
             elif result:
@@ -1028,6 +1172,11 @@ def _resolve_page_contention(groups, pages_by_number, cluster_to_name):
             reserved[gi] = key
             taken_g.add(gi)
             taken_p.add(key)
+            # Block OVERLAPPING detections too, so a second scene on this page can't
+            # reserve a near-identical crop (e.g. moonknight pg14: p0 nested in p1).
+            # Without this the greedy "one scene per panel" rule treats p0/p1 as
+            # distinct (different keys) and hands each to a scene → duplicate panel.
+            taken_p |= _overlapping_panel_keys(key, pages_by_number)
     return reserved
 
 
@@ -1102,6 +1251,7 @@ def render_shot(
     work_dir: Path | None = None,
     progress: Callable[[str], None] | None = None,
     corner_logo: Path | None = None,
+    banner_text: str = "",
 ) -> Path:
     """Render one Ken Burns shot to MP4."""
     ff = _require_ffmpeg()
@@ -1128,22 +1278,43 @@ def render_shot(
         pre = f"scale={OUTPUT_W * 2}:{OUTPUT_H * 2}:flags=bicubic,"
     else:
         pre = ""
+    # Motion-comic: action/impact panels — and the cold-open hook shot — get a
+    # stronger, faster camera push (energy in the opening seconds, not a slow hold).
+    from config import MOTION_COMIC
+    action = bool(MOTION_COMIC) and (
+        _is_action_text(getattr(shot, "caption_text", "")) or getattr(shot, "is_intro", False))
+    zp = _zoompan_expr(shot.motion, frames, action=action)
+
+    # Build the filter chain: zoompan → [corner logo] → [title banner] → final.
     inputs = ["-framerate", "1", "-loop", "1", "-t", "1", "-i", str(framed)]
+    segs = [f"[0:v]{pre}{zp}[vz]"]
+    prev = "vz"
     if corner_logo is not None:
         # logo top-right with a 36px margin; logo PNG already carries its alpha
         inputs += ["-i", str(corner_logo)]
-        filter_complex = (
-            f"[0:v]{pre}{_zoompan_expr(shot.motion, frames)}[vz];"
-            f"[vz][1:v]overlay=W-w-36:36[v]"
+        segs.append(f"[{prev}][1:v]overlay=W-w-36:36[vl]")
+        prev = "vl"
+    if banner_text:
+        from config import TITLE_BANNER_FONTSIZE
+        font = Path(__file__).resolve().parent.parent.parent / "fonts" / "Anton-Regular.ttf"
+        fontfile = str(font).replace("\\", "/")
+        bt = _drawtext_escape(banner_text.upper())
+        # small white box, dark text, top-center on EVERY frame (captions sit at the
+        # bottom, the logo top-right — top-center stays clear of both).
+        segs.append(
+            f"[{prev}]drawtext=fontfile='{fontfile}':text='{bt}':"
+            f"fontcolor=black:fontsize={int(TITLE_BANNER_FONTSIZE)}:"
+            f"box=1:boxcolor=white@0.92:boxborderw=22:"
+            f"x=(w-text_w)/2:y=140[vb]"
         )
-    else:
-        filter_complex = f"[0:v]{pre}{_zoompan_expr(shot.motion, frames)}[v]"
+        prev = "vb"
+    filter_complex = ";".join(segs)
 
     cmd = [
         ff, "-y",
         *inputs,
         "-filter_complex", filter_complex,
-        "-map", "[v]",
+        "-map", f"[{prev}]",
         "-frames:v", str(frames),
         "-c:v", "libx264",
         "-preset", "veryfast",
@@ -1160,30 +1331,66 @@ def render_shot(
     return out_path
 
 
-def _zoompan_expr(motion: str, frames: int) -> str:
-    """ffmpeg zoompan expression. Subtle motion (max 1.05) — reference channels
-    favor static cuts with tiny push-in on splash moments. Big zoom on every
-    shot feels random/distracting."""
+# Action/impact words in a shot's spoken clause → motion-comic push (stronger,
+# faster camera). General + comic-agnostic; high-precision impact verbs only so
+# calm/talky scenes are not falsely energized.
+_ACTION_WORDS = frozenset((
+    "punch punches punched smash smashes smashed blast blasts blasted "
+    "explode explodes exploded explosion slam slams slammed strike strikes struck "
+    "crash crashes crashed rip rips ripped tear tears tore unleash unleashes unleashed "
+    "attack attacks attacked charge charges charged lunge lunges lunged slash slashes slashed "
+    "clash clashes clashed erupt erupts erupted burst bursts shatter shatters shattered "
+    "crush crushes crushed devour devours devoured destroy destroys destroyed "
+    "seize seizes seized roar roars rampage leap leaps leaped fight fights fought "
+    "kill kills killed claw claws clawed hurl hurls hurled"
+).split())
+
+
+def _is_action_text(text: str) -> bool:
+    """True if the spoken clause signals a fight/impact moment (→ stronger camera)."""
+    for raw in (text or "").lower().split():
+        if raw.strip(".,!?;:'\"()—-") in _ACTION_WORDS:
+            return True
+    return False
+
+
+def _drawtext_escape(text: str) -> str:
+    """Escape text for an ffmpeg drawtext filter: backslash + colon, and a straight
+    apostrophe → curly (a straight ' breaks the single-quoted text='...' value)."""
+    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "’")
+
+
+def _zoompan_expr(motion: str, frames: int, action: bool = False) -> str:
+    """ffmpeg zoompan expression. CALM panels keep a subtle eased push (max 1.05,
+    smoothstep). ACTION panels (fights/impacts) get a stronger, faster push
+    (max ~1.13 with an ease-OUT 'punch' that hits fast then settles) so the moment
+    feels dynamic — the motion-comic feel. action=False reproduces the prior subtle
+    behavior byte-for-byte."""
     s = f"{OUTPUT_W}x{OUTPUT_H}"
     fps = FPS
     d = max(1, frames)
-    ease = f"pow(on/{d},2)*(3-2*(on/{d}))"   # smoothstep 0->1, eased ends
+    if action:
+        zamt, hi, pamt = "0.13", "1.13", "0.06"
+        ease = f"(1-pow(1-on/{d},2))"            # ease-out: fast hit, then settle (punch)
+    else:
+        zamt, hi, pamt = "0.05", "1.05", "0.03"
+        ease = f"pow(on/{d},2)*(3-2*(on/{d}))"   # smoothstep 0->1, eased ends
     if motion == "zoom_in":
         return (
-            f"zoompan=z='1+0.05*{ease}':"
+            f"zoompan=z='1+{zamt}*{ease}':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )
     if motion == "zoom_out":
         return (
-            f"zoompan=z='1.05-0.05*{ease}':"
+            f"zoompan=z='{hi}-{zamt}*{ease}':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )
     if motion == "pan_right":
         return (
             f"zoompan=z='1.03':"
-            f"x='iw/2-(iw/zoom/2)+(iw*0.03)*{ease}':"
+            f"x='iw/2-(iw/zoom/2)+(iw*{pamt})*{ease}':"
             f"y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )

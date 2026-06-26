@@ -166,6 +166,56 @@ RESEMBLE_VOICE_MAP = os.getenv(
 # invites a rewatch (loop signal) without dropping the complete-story payoff.
 ENABLE_LOOP_TEASE = os.getenv("ENABLE_LOOP_TEASE", "true").lower() in ("true", "1", "yes")
 
+# Stage 3 narration LOGIC CRITIC (story-editor in a loop with the writer). When on:
+#   1. a beat-impact critic drops low-impact beats AFTER outlining (→ fewer, punchier
+#      scenes) while preserving the cold-open, climax, landing and the cause→effect spine;
+#   2. a clarity critic reviews the written draft for zero-context understandability
+#      (missing glosses, logic jumps, a twist that doesn't land) and feeds targeted
+#      fix directives back to the writer via the existing retry loop.
+# It lets the writer prompt stay light — the critic drives fixes dynamically instead
+# of baking heavy static rules into the writer. Faithfulness stays owned by the wiki
+# cross-check. Both critics are soft (never raise; skip on any LLM failure).
+ENABLE_LOGIC_CRITIC = os.getenv("ENABLE_LOGIC_CRITIC", "true").lower() in ("true", "1", "yes")
+# Never let the beat-impact critic gut the story below this many beats.
+LOGIC_CRITIC_MIN_BEATS = int(os.getenv("LOGIC_CRITIC_MIN_BEATS", "9"))
+
+# Stage 3 LLM VISUAL-BEAT SPLIT (end of Stage 3). Splits each body scene's sentence into
+# VERBATIM visual beats so Stage 5 can show a distinct panel per beat (panel changes at
+# each new visual moment, not held static for the whole sentence). Replaces the old spaCy
+# clause splitter. Uses a cheap/free OpenRouter model DIRECTLY (not the SDK — this is a
+# trivial mechanical task; does NOT touch the global FREE_MODEL switch). Never raises:
+# any failure / non-verbatim output falls back to the whole sentence = today's 1-panel
+# behavior. Beats must be verbatim (concat == sentence word-for-word) so Stage 5's
+# word-position bucketing of caption chunks stays aligned.
+ENABLE_LLM_BEAT_SPLIT = os.getenv("ENABLE_LLM_BEAT_SPLIT", "true").lower() in ("true", "1", "yes")
+BEAT_SPLIT_MODELS: list[str] = [
+    m.strip() for m in os.getenv(
+        "BEAT_SPLIT_MODELS",
+        "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it"
+    ).split(",") if m.strip()
+]
+
+# Stage 3 STORY ARCHITECT (advisory pre-write analysis). When on, one LLM call builds a
+# structured story map (structure/timeline/spine/characters+visual_available/omit/framing)
+# that grounds the outliner + writer so framed/non-linear stories and plot characters with
+# no panel (e.g. the Batman Who Laughs) are handled without manual fixes. Advisory only —
+# never deletes beats; degrades to today's behavior when off or on any failure.
+ENABLE_STORY_ARCHITECT = os.getenv("ENABLE_STORY_ARCHITECT", "true").lower() in ("true", "1", "yes")
+
+# ─── Embeddings (Azure OpenAI, OpenAI-compatible) ───────────────────────────
+# Panel↔narration semantic matching (Stage 3 grounding + Stage 5 panel pick).
+# When AZURE_OPENAI_EMBEDDING_API_KEY + _ENDPOINT are set, stages/_embedding.py
+# uses Azure text-embedding-3-large; otherwise it degrades to the local
+# sentence-transformer (mxbai), and finally to None (callers handle gracefully).
+AZURE_OPENAI_EMBEDDING_API_KEY = os.getenv("AZURE_OPENAI_EMBEDDING_API_KEY", "").strip().strip('"')
+AZURE_OPENAI_EMBEDDING_ENDPOINT = os.getenv("AZURE_OPENAI_EMBEDDING_ENDPOINT", "").strip().strip('"')
+AZURE_OPENAI_EMBEDDING_MODEL_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_NAME", "text-embedding-3-large").strip().strip('"')
+AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION", "2023-05-15").strip().strip('"')
+# A placeholder like "<your-...-here>" counts as unset.
+def _azure_embed_ready() -> bool:
+    k, e = AZURE_OPENAI_EMBEDDING_API_KEY, AZURE_OPENAI_EMBEDDING_ENDPOINT
+    return bool(k) and bool(e) and not k.startswith("<") and not e.startswith("<")
+
 # ─── Stage 5: Video assembly ────────────────────────────────────────────────
 BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
 
@@ -181,6 +231,26 @@ CHANNEL_LOGO_PATH = _LOGO_RAW if os.path.isabs(_LOGO_RAW) else str(Path(__file__
 ENABLE_CORNER_LOGO = os.getenv("ENABLE_CORNER_LOGO", "true").lower() in ("true", "1", "yes")
 ENABLE_OUTRO_CARD = os.getenv("ENABLE_OUTRO_CARD", "true").lower() in ("true", "1", "yes")
 OUTRO_CARD_SECONDS = float(os.getenv("OUTRO_CARD_SECONDS", "3.5"))
+
+# ─── Stage 5: motion-comic dynamics ─────────────────────────────────────────
+# Action/impact panels (detected from the spoken clause — punch/smash/blast/...)
+# get a STRONGER, faster camera push so fights feel dynamic; calm/talky panels
+# keep the subtle 1.05 Ken Burns. Off → uniform subtle motion (prior behavior).
+MOTION_COMIC = os.getenv("MOTION_COMIC", "true").lower() in ("true", "1", "yes")
+
+# ─── Stage 5: cold-open ─────────────────────────────────────────────────────
+# Open the video on a striking STORY panel (a big/splash image) instead of the
+# cover/title — the first frame must grab in <1s or the seed pool swipes away
+# (measured swipe-away fix). Excludes the final pages so the ending isn't spoiled.
+# Off → intro opens on the cover (prior behavior).
+COLD_OPEN = os.getenv("COLD_OPEN", "true").lower() in ("true", "1", "yes")
+
+# ─── Stage 5: persistent title banner ───────────────────────────────────────
+# A small white-box catchy title (narration.banner_title, generated in Stage 3)
+# burned at the top of EVERY narration frame so a scroller instantly gets the
+# hook — the technique high-view comic Shorts use. Off → no banner.
+ENABLE_TITLE_BANNER = os.getenv("ENABLE_TITLE_BANNER", "true").lower() in ("true", "1", "yes")
+TITLE_BANNER_FONTSIZE = int(os.getenv("TITLE_BANNER_FONTSIZE", "40"))
 
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)

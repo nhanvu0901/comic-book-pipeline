@@ -86,6 +86,10 @@ def write_script(
     nar.source_project = project_name
     debug_dump["narration"] = nar.to_dict()
     _write_run_dump(project_name, debug_dump, narration=nar)
+    sm = (debug_dump or {}).get("story_map")
+    if sm:
+        (get_project_dirs(project_name)["root"] / "story_map.json").write_text(
+            json.dumps(sm, indent=2, ensure_ascii=False))
     return nar
 
 
@@ -100,6 +104,11 @@ def save_narration(
     path = root / "narration.json"
     data = narration.to_dict()
     _enrich_scenes_with_panel_metadata(data, root, log)
+    # Slim output (final update of beat): no visual-beat split. Stage 5 no longer
+    # anchors panels to beats/visual_beats — it matches panels to the narration
+    # semantically (forward-only, no-reuse, hold-while-same-subject), so the pace
+    # follows what's being SAID, not a fixed beat highlight. page_ref stays in the
+    # JSON as a legacy hint but is no longer the panel authority.
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
     log(f"[stage4] saved narration → {path}")
     return path

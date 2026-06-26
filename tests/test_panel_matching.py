@@ -61,8 +61,11 @@ def _page(num, panels, *, w=1200, h=1800, text_blocks=None, page_type="story"):
 
 
 def _bigpanel(idx, desc="", chars=None):
-    # 600x900 → scale ~2.13 (< 2.5, no upscale penalty), area 540000 → salience on
-    return {"index": idx, "bbox": {"x": 0, "y": 0, "w": 600, "h": 900},
+    # 600x900 → scale ~2.13 (< 2.5, no upscale penalty), area 540000 → salience on.
+    # Tile panels side-by-side (distinct x per index) so they don't spatially overlap
+    # — real comic panels occupy different regions, and the duplicate-panel guard
+    # (_overlapping_panel_keys) blocks panels that overlap an already-claimed one.
+    return {"index": idx, "bbox": {"x": idx * 600, "y": 0, "w": 600, "h": 900},
             "description": desc, "characters": chars or []}
 
 
@@ -137,6 +140,32 @@ def test_per_clause_panel_match():
                                prev_panel=None, cluster_to_name={},
                                clause_texts=["He raises the sonic gun", "he fires the cannon"])
     assert [p["index"] for p, _ in out] == [1, 0]
+
+
+def test_overlapping_panels_not_both_rendered():
+    # Duplicate-panel guard: p1 heavily CONTAINS p0 (overlapping Magi detections of
+    # the same region — the moonknight pg14 bug). p2 is spatially distinct. Two scenes
+    # locking to this page must NOT both render the overlapping pair — the second gets
+    # a non-overlapping crop instead. Regression for _overlapping_panel_keys.
+    from stages.stage_5.shots import _bbox_tuple, _containment_ratio
+    pages = {10: _page(10, [
+        {"index": 0, "bbox": {"x": 0, "y": 0, "w": 600, "h": 900},
+         "description": "hero strikes", "characters": ["Hero"]},
+        {"index": 1, "bbox": {"x": 0, "y": 0, "w": 660, "h": 960},   # contains p0
+         "description": "hero strikes", "characters": ["Hero"]},
+        {"index": 2, "bbox": {"x": 720, "y": 0, "w": 420, "h": 900},  # distinct region
+         "description": "hero strikes", "characters": ["Hero"]},
+    ], text_blocks=[_dialog(0, "hero strikes"), _dialog(1, "hero strikes"),
+                    _dialog(2, "hero strikes")])}
+    used = set()
+    scene = {"scene_id": 1, "page_ref": 10, "panel_ref": -1, "text": "hero strikes"}
+    a = _assign_scene_panels(scene=scene, pages_by_number=pages, used_panel_keys=used,
+                             prev_panel=None, cluster_to_name={}, clause_texts=["hero strikes"])
+    b = _assign_scene_panels(scene={**scene, "scene_id": 2}, pages_by_number=pages,
+                             used_panel_keys=used, prev_panel=None,
+                             cluster_to_name={}, clause_texts=["hero strikes"])
+    assert _containment_ratio(_bbox_tuple(a[0][0]), _bbox_tuple(b[0][0])) < 0.7, \
+        "two scenes on one page rendered near-identical (overlapping) crops"
 
 
 def test_clause_count_drives_panel_count():
@@ -225,10 +254,10 @@ def test_build_shots_uses_assigned_panels():
 
 # ── Fix A: page-contention resolution (greedy best-match, not first-come) ─────
 def test_shared_page_panel_goes_to_best_matching_scene():
-    # Two scenes lock to the SAME page 10. The 'ash' panel (index 0) is the best
-    # match for the LATER scene 2 ('reduced to ash'), but scene 1 (narration-first)
-    # would grab it under first-come. With Fix A, scene 2 must win panel 0 and
-    # scene 1 must NOT show it (the 'reduced to ash' bug from the Ghost Rider video).
+    # Narration-driven matcher (final update of beat): both scenes are about the
+    # SAME moment (the man dissolving into ash), so the matcher HOLDS the ash panel
+    # across both instead of forcing the unrelated 'empty street' panel onto scene 1
+    # just to avoid reuse. The on-subject panel wins; no wrong panel is forced.
     narration = {"scenes": [
         {"scene_id": 1, "page_ref": 10, "panel_ref": -1, "text": "the man dissipates"},
         {"scene_id": 2, "page_ref": 10, "panel_ref": -1,
@@ -264,7 +293,11 @@ def test_shared_page_panel_goes_to_best_matching_scene():
                         caption_chunks=caption_chunks, pages_by_number=pages,
                         cluster_to_name={})
     by_scene = {s.scene_id: s for s in shots}
-    # scene 2 ('reduced to ash') owns the ash panel (y=0, h=900, w=600)
-    assert by_scene[2].panel_bbox == {"x": 0, "y": 0, "w": 600, "h": 900}
-    # scene 1 must NOT have eaten the ash panel
-    assert by_scene[1].panel_bbox != {"x": 0, "y": 0, "w": 600, "h": 900}
+    ash_bbox = {"x": 0, "y": 0, "w": 600, "h": 900}
+    street_bbox = {"x": 0, "y": 900, "w": 600, "h": 900}
+    # The ash narration gets the ash panel (best match) …
+    assert by_scene[2].panel_bbox == ash_bbox
+    # … and scene 1 (same dissolving-man moment) HOLDS it rather than being forced
+    # onto the unrelated empty-street panel.
+    assert by_scene[1].panel_bbox == ash_bbox
+    assert by_scene[1].panel_bbox != street_bbox
