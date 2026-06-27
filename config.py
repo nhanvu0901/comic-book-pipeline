@@ -113,7 +113,8 @@ VLM_MODEL = os.getenv("VLM_MODEL", VLM_MODELS[0])
 # Order: paid-but-fast first, free fallback only when paid hits 429/transient errors.
 _DEFAULT_VLM_BATCH_CHAIN = (
     "google/gemini-2.5-flash-lite,"
-    "google/gemma-4-31b-it:free"
+    "google/gemma-4-31b-it:free,"
+    "google/gemma-4-26b-a4b-it:free"
 )
 VLM_MODELS_BATCH: list[str] = [
     m.strip() for m in os.getenv("VLM_MODELS_BATCH", _DEFAULT_VLM_BATCH_CHAIN).split(",") if m.strip()
@@ -212,6 +213,9 @@ AZURE_OPENAI_EMBEDDING_ENDPOINT = os.getenv("AZURE_OPENAI_EMBEDDING_ENDPOINT", "
 AZURE_OPENAI_EMBEDDING_MODEL_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_NAME", "text-embedding-3-large").strip().strip('"')
 AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION", "2023-05-15").strip().strip('"')
 # A placeholder like "<your-...-here>" counts as unset.
+# ─── Qdrant vector store (panel↔narration matching) ─────────────────────────
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+
 def _azure_embed_ready() -> bool:
     k, e = AZURE_OPENAI_EMBEDDING_API_KEY, AZURE_OPENAI_EMBEDDING_ENDPOINT
     return bool(k) and bool(e) and not k.startswith("<") and not e.startswith("<")

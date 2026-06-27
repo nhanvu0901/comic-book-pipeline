@@ -1,9 +1,10 @@
 """Narration-driven panel matcher (final update of beat) — _match_panels_forward.
 
-Mocks _score_panel so the FORWARD-ONLY / NO-REUSE / HOLD-while-same-subject /
+Mocks _panel_content_score so the FORWARD-ONLY / NO-REUSE / HOLD-while-same-subject /
 ADVANCE-on-new-subject control flow is asserted deterministically (no embeddings,
-offline). The scorer just returns 10.0 when a panel's tag word appears in the
-narration text, else 0.5 — so we control every decision."""
+offline). The scorer returns (10.0, 0.9) when a panel's tag word appears in the
+narration text, else (0.5, 0.1) — the 2nd value is the raw cosine the floor checks,
+so 0.1 < PANEL_COS_FLOOR drives the weak-hold path — and we control every decision."""
 import stages.stage_5.shots as shots
 
 
@@ -21,14 +22,13 @@ def _page(tags):
     }}
 
 
-def _fake_score(panel, text, scene, *, page_text_blocks=None, prev_panel=None,
-                cluster_to_name=None, page_locked=False):
+def _fake_score(panel, panel_vec, chunk_vec, scene_vec, page_tb, *, chunk_text, scene_text):
     tag = str(panel.get("description", "")).strip().lower()
-    return 10.0 if tag and tag in (text or "").lower() else 0.5
+    return (10.0, 0.9) if tag and tag in (chunk_text or "").lower() else (0.5, 0.1)
 
 
 def _idx_seq(monkeypatch):
-    monkeypatch.setattr(shots, "_score_panel", _fake_score)
+    monkeypatch.setattr(shots, "_panel_content_score", _fake_score)
     pages = _page(["alpha", "beta", "gamma"])
     scene = {"scene_id": 1, "text": "x"}
     units = [
@@ -61,7 +61,7 @@ def test_no_reuse(monkeypatch):
 def test_weak_match_holds_not_force(monkeypatch):
     # Every forward panel scores low for the unit → matcher HOLDS the current panel
     # instead of forcing an unrelated one (Master's "giữ panel hiện tại" rule).
-    monkeypatch.setattr(shots, "_score_panel", _fake_score)
+    monkeypatch.setattr(shots, "_panel_content_score", _fake_score)
     pages = _page(["alpha", "beta"])
     scene = {"scene_id": 1, "text": "x"}
     units = [(scene, "alpha here"), (scene, "something off-panel nobody drew")]

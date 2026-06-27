@@ -222,6 +222,13 @@ def preprocess_project(
 
     story_count = sum(1 for r in results if r.get("is_story_page"))
     log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
+
+    # Persist panel embeddings to Qdrant so Stage 5 matches against pre-computed
+    # vectors instead of re-embedding every panel each run. Graceful no-op if
+    # Qdrant/embeddings are unavailable (matcher falls back to in-memory embed).
+    from .._panel_index import index_project
+    index_project(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
+
     return results
 
 
@@ -473,9 +480,23 @@ def _assemble_page_dict(
                 cluster_ids=cluster_ids,  # NEW v5 Phase 2
             ))
 
-        # Build text_blocks PREFERRING Magi (with OCR + speaker cluster) over VLM.
-        # VLM text_blocks become fallback if Magi extracted no text on this page.
-        if magi_texts_list:
+        # Build text_blocks PREFERRING the VLM transcription over Magi's OCR (SWAPPED
+        # 2026-06-26): Magi's predict_ocr garbles stylized speech bubbles ("I had an
+        # epiphany at a cave! I could suck at a periper"), while the VLM (gemini) reads
+        # them cleanly. Magi is the FALLBACK when the VLM returned no text — it keeps the
+        # per-text bbox + speaker_cluster_id that the VLM blocks lack.
+        if vlm_text_blocks:
+            text_blocks = [
+                TextBlock(
+                    panel_index=int(tb.get("panel_index", -1)),
+                    text=str(tb.get("text", "")),
+                    type=str(tb.get("type", "speech")),
+                    speaker=tb.get("speaker") or None,
+                )
+                for tb in vlm_text_blocks
+                if str(tb.get("text", "")).strip()
+            ]
+        elif magi_texts_list:
             text_blocks = []
             # Reverse map: text_idx → panel_idx
             text_to_panel: dict[int, int] = {}
@@ -489,20 +510,33 @@ def _assemble_page_dict(
                     panel_index=text_to_panel.get(ti, -1),
                     text=str(tx.get("ocr", "")),
                     type=str(tx.get("type", "narration")),
-                    speaker=None,  # VLM-style name not from Magi; resolved later if cluster_to_name available
+                    speaker=None,  # Magi gives cluster, not name; resolved later if cluster_to_name available
                     speaker_cluster_id=tx.get("speaker_cluster_id"),
                     bbox=tx.get("bbox", {}),
                 ))
         else:
-            text_blocks = [
-                TextBlock(
-                    panel_index=int(tb.get("panel_index", -1)),
-                    text=str(tb.get("text", "")),
-                    type=str(tb.get("type", "speech")),
-                    speaker=tb.get("speaker") or None,
-                )
-                for tb in vlm_text_blocks
-            ]
+            text_blocks = []
+
+        # Last-resort fill: any panel still left with a BLANK description is invisible
+        # to the embedding matcher. Synthesize one from its dialog → characters → a
+        # generic marker so every panel can be matched (the VLM empty-desc retry already
+        # ran; this catches genuinely figure-less SFX/transition panels).
+        _tb_by_panel: dict[int, list[str]] = {}
+        for tb in text_blocks:
+            t = str(getattr(tb, "text", "") or "").strip()
+            if t:
+                _tb_by_panel.setdefault(tb.panel_index, []).append(t)
+        for pinfo in panel_infos:
+            if str(pinfo.description or "").strip():
+                continue
+            dlg = " ".join(_tb_by_panel.get(pinfo.index, []))
+            chars = ", ".join(pinfo.characters or [])
+            if dlg:
+                pinfo.description = (f"{chars}: " if chars else "") + dlg[:160]
+            elif chars:
+                pinfo.description = f"{chars} ({pinfo.dominant_emotion or 'present'})"
+            else:
+                pinfo.description = "Wordless transition/SFX panel"
         page_summary = str(vlm_data.get("page_summary", ""))
 
     return PreprocessedPage(

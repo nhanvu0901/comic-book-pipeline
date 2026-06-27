@@ -22,6 +22,7 @@ FPS = 30
 # when configured, else local mxbai-embed-large-v1). Far more reliable than lexical
 # overlap ("reverted to mortal form" vs "FIZAPPT"). One model + cache across stages.
 from .._embedding import semantic_sim as _semantic_sim  # noqa: E402
+from .._panel_index import panel_embed_text  # noqa: E402
 
 PADDING_PCT = 0.05
 # Small (non-highlight) panels are often cropped a touch tight by the detector and
@@ -144,10 +145,31 @@ LLM_PANEL_JUDGE = True
 # panels while still rejecting page-only/salience-only noise. Tune via benchmark.
 PANEL_MATCH_FLOOR = 6.0
 # Narration-driven matcher (final update of beat): below this content score a unit's
-# aligned panel doesn't really depict the line → HOLD the previous panel instead of
+# best panel doesn't really depict the line → HOLD the previous panel instead of
 # showing a wrong one (see _match_panels_forward).
+# Forward bias — rewards a DIAGONAL alignment (unit i of n → panel at relative position
+# i/n) so a chronological script maps to panels in reading order without back-and-forth.
+# Content (_score_panel ≈ 8-40) still dominates; this only steers near-ties + curbs drift.
+# 0.0 = disabled (pure content → panels jump around). ~6 = weak (still jumps under
+# strong content). ~25 = STRONG: orders a chronological (panel_walk) script into reading
+# order while content still picks among panels in the same region. Tuned for panel_walk;
+# lower it for a deliberately reordered (tragedy/twist) narration so position can't force
+# a wrong panel.
+PANEL_FWD_TIEBREAK = float(os.getenv("PANEL_FWD_TIEBREAK", "25.0"))
 # R19 ambiguity gate (unchanged threshold): top1−top2 below this → LLM tiebreak.
 PANEL_AMBIGUITY_MARGIN = 1.0
+
+# ── Pure-vector matcher (2026-06-26, validated: cosine on the richer panel embed beats
+# the lexical hybrid — the embed already encodes chars/dialog/emotion, so lexical
+# double-counts and over-rewards crowded talking-head panels, starving action/climax
+# panels). _match_panels_forward scores each (unit, panel) as:
+#     W_COS·cos(chunk,panel) + W_COS_SCENE·cos(scene,panel) + render_adjust
+# cosine comes from the Stage-2 Qdrant vectors (no re-embed) when available, else an
+# in-memory embed. A unit whose best panel's RAW cosine is below PANEL_COS_FLOOR HOLDS
+# the previous panel rather than showing a wrong one. Tune via PANEL_* env vars.
+W_COS = float(os.getenv("PANEL_W_COS", "10.0"))
+W_COS_SCENE = float(os.getenv("PANEL_W_COS_SCENE", "2.0"))
+PANEL_COS_FLOOR = float(os.getenv("PANEL_COS_FLOOR", "0.38"))
 
 
 def build_shots(
@@ -158,6 +180,7 @@ def build_shots(
     caption_chunks: list[dict] | None = None,
     pages_by_number: dict[int, dict] | None = None,
     cluster_to_name: dict[int, str] | None = None,
+    project: str | None = None,
 ) -> list[Shot]:
     """Split each narration scene into shots.
 
@@ -169,7 +192,7 @@ def build_shots(
     if SHOT_STRATEGY == "caption_chunk" and caption_chunks and pages_by_number is not None:
         return _build_shots_per_chunk(
             narration, caption_chunks, pages_by_number, scene_timings or [],
-            cluster_to_name=cluster_to_name or {},
+            cluster_to_name=cluster_to_name or {}, project=project,
         )
     return _build_shots_per_scene(narration, scene_timings, word_timestamps)
 
@@ -245,6 +268,7 @@ def _build_shots_per_chunk(
     scene_timings: list[dict],
     *,
     cluster_to_name: dict[int, str] | None = None,
+    project: str | None = None,
 ) -> list[Shot]:
     """TheComicCivilian-style: one shot per caption chunk, with SMART panel
     selection scoring each candidate panel against the chunk text. Pool spans
@@ -315,7 +339,7 @@ def _build_shots_per_chunk(
 
     assigned = _match_panels_forward(
         [(sc, txt) for sc, _sl, txt in units],
-        pages_by_number or {}, cluster_to_name or {},
+        pages_by_number or {}, cluster_to_name or {}, project=project,
     )
 
     shots: list[Shot] = []
@@ -469,6 +493,47 @@ _PANEL_STOPWORDS = {
 }
 
 
+def _render_adjust(panel: dict, page_text_blocks: list[dict] | None,
+                   *, salience_w: float = 4.0) -> float:
+    """Render-quality adjustments (NOT content): penalize tiny panels that must be
+    heavily upscaled, reward big/splash panels as a tie-break, penalize text-wall
+    panels (cluttered + smear under inpaint). Shared by the legacy hybrid _score_panel
+    (salience_w=4.0 → identical to before) and the pure-vector matcher, so both pick the
+    better-RENDERING panel among content-similar candidates."""
+    import math
+    bbox = panel.get("bbox", {}) or {}
+    _pw = int(bbox.get("w", 0) or 0)
+    _ph = int(bbox.get("h", 0) or 0)
+    score = 0.0
+    # Small-panel penalty — upscale factor to fill 1080×1920; >2.5× → blurry giant.
+    panel_scale = max(OUTPUT_W / _pw, OUTPUT_H / _ph) if (_pw > 0 and _ph > 0) else 99.0
+    if panel_scale > 2.5:
+        score -= 3.0 * (panel_scale - 2.5)
+    # Visual salience — page-relative: a >=50% splash gets the full weight.
+    area = _pw * _ph
+    page_area = int(panel.get("_page_area", 0) or 0)
+    if page_area > 0:
+        score += salience_w * min(1.0, (area / page_area) / 0.5)
+    elif area > 50000:
+        score += (salience_w * 0.75) * min(1.0, math.log(area / 50000) / 3.0)
+    # Text-coverage penalty — avoid text-wall panels.
+    if area > 0 and page_text_blocks:
+        px, py = int(bbox.get("x", 0) or 0), int(bbox.get("y", 0) or 0)
+        text_area = 0
+        for tb in page_text_blocks:
+            tbb = tb.get("bbox") or {}
+            tx, ty = int(tbb.get("x", 0) or 0), int(tbb.get("y", 0) or 0)
+            tw, th = int(tbb.get("w", 0) or 0), int(tbb.get("h", 0) or 0)
+            ix0, iy0 = max(px, tx), max(py, ty)
+            ix1, iy1 = min(px + _pw, tx + tw), min(py + _ph, ty + th)
+            if ix1 > ix0 and iy1 > iy0:
+                text_area += (ix1 - ix0) * (iy1 - iy0)
+        coverage = text_area / area
+        if coverage > 0.15:
+            score -= min(8.0, 30.0 * (coverage - 0.15))
+    return score
+
+
 def _score_panel(
     panel: dict,
     chunk_text: str,
@@ -489,7 +554,6 @@ def _score_panel(
       +1.0 × description word overlap  (current keyword scoring)
       +0.5 × log(panel area / 100000)  (C — visual salience)
     """
-    import math
     from .emotion_lexicon import detect_chunk_emotion
 
     score = 0.0
@@ -508,15 +572,6 @@ def _score_panel(
     chunk_words = chunk_own | scene_words           # combined — for name presence checks
     scene_bg = scene_words - chunk_own              # scene context not in this fragment
 
-    # ── Panel upscale factor — how much we'd blow this panel up to fill the
-    # 1080×1920 frame. >3× means a tiny source panel → blurry giant where you
-    # can't tell what the scene is about. Used to scale the honor bonus and to
-    # penalize tiny panels (BUG 1 fix).
-    _bb = panel.get("bbox", {}) or {}
-    _pw = int(_bb.get("w", 0) or 0)
-    _ph = int(_bb.get("h", 0) or 0)
-    panel_scale = max(OUTPUT_W / _pw, OUTPUT_H / _ph) if (_pw > 0 and _ph > 0) else 99.0
-
     # ── R3 RETIRED (unified panel matching, 2026-06-17, choice B) ────────
     # The "honor scene.panel_ref +15" bonus is gone: Stage 3 no longer commits a
     # panel (panel_ref is always -1), so there is nothing to honor. Stage 5
@@ -524,12 +579,6 @@ def _score_panel(
     # still read by R10 (page progression) and R12 (page_ref bonus) below.
     panel_page = int(panel.get("_page_number", 0) or 0)
     scene_page_ref_int = int(scene.get("page_ref", 0) or 0)
-
-    # ── Small-panel penalty (BUG 1) — discourage panels that must be heavily
-    # upscaled. Applies to ALL candidates so a big clear panel beats a tiny one
-    # even when the tiny one was the LLM's pick.
-    if panel_scale > 2.5:
-        score -= 3.0 * (panel_scale - 2.5)
 
     # ── Character overlap (existing, +3 per first-name match) ────────────
     panel_chars = panel.get("characters", []) or []
@@ -614,9 +663,22 @@ def _score_panel(
     # but high against a panel actually depicting Blake. The old word-overlap
     # term is removed — it measured the same (chunk, desc) pair lexically and
     # would double-count.
-    desc = panel.get("description", "") or ""
-    sim_chunk = _semantic_sim(chunk_text, desc)
-    sim_scene = _semantic_sim(scene_text, desc)
+    # Richer panel text for the embedding (A, 2026-06-26): visual DESCRIPTION + who is
+    # present + dominant emotion + the panel's DIALOG — so the semantic match sees what
+    # is SAID and WHO, not just the drawn scene. Dialog now comes from the VLM
+    # transcription (clean) rather than Magi's garbled OCR.
+    _chars = " ".join(str(c) for c in (panel.get("characters") or []))
+    _emo = str(panel.get("dominant_emotion") or "")
+    _dlg = ""
+    if page_text_blocks:
+        _pidx = int(panel.get("index", -999) or -999)
+        _dlg = " ".join(str(tb.get("text", "")) for tb in page_text_blocks
+                        if int(tb.get("panel_index", -2) or -2) == _pidx).strip()
+    panel_text = " — ".join(x for x in (panel.get("description", "") or "",
+                                        _chars, _emo, _dlg) if x).strip() \
+        or (panel.get("description", "") or "")
+    sim_chunk = _semantic_sim(chunk_text, panel_text)
+    sim_scene = _semantic_sim(scene_text, panel_text)
     score += 6.0 * sim_chunk + 1.0 * sim_scene
 
     # ── H: page_ref bonus — LOOSENED +10 → +4 (TODO #125) ───────────────
@@ -627,41 +689,10 @@ def _score_panel(
     if scene_page_ref_int and panel_page and scene_page_ref_int == panel_page:
         score += 4.0
 
-    # ── C/B: Visual salience — PAGE-RELATIVE (2026-06-20). A big/splash panel is a
-    # highlight (reveal/money shot); reward it so the epic shot beats a small panel
-    # ON THE SAME PAGE. The OLD absolute-area term maxed out on EVERY panel of a
-    # large page (e.g. 1961×3050), giving no tie-break — so the Hulkbuster barrage
-    # tied with tiny panels. Now scale by fraction-of-page: +4 at a >=50% splash,
-    # proportionally less below. Big enough to win close calls, NOT to override a
-    # strong content match (dialog +12, character +3). Falls back to absolute area
-    # when page dims are unavailable.
-    bbox = panel.get("bbox", {}) or {}
-    area = int(bbox.get("w", 0) or 0) * int(bbox.get("h", 0) or 0)
-    page_area = int(panel.get("_page_area", 0) or 0)
-    if page_area > 0:
-        score += 4.0 * min(1.0, (area / page_area) / 0.5)
-    elif area > 50000:
-        score += 3.0 * min(1.0, math.log(area / 50000) / 3.0)
-
-    # ── Text-coverage penalty (Fix 1) — avoid text-WALL panels ───────────
-    # A panel drowning in caption/dialogue (e.g. a full-page epilogue splash with
-    # a paragraph of text, ~26% covered) is a poor visual: cluttered, and LaMa
-    # must inpaint a huge text area → smears. Measured: clean panels 2-7% covered,
-    # text-walls 25%+. Penalize above 15% so a cleaner panel wins when one exists.
-    if area > 0 and page_text_blocks:
-        px, py, pw, ph = (int(bbox.get(k, 0) or 0) for k in ("x", "y", "w", "h"))
-        text_area = 0
-        for tb in page_text_blocks:
-            tbb = tb.get("bbox") or {}
-            tx, ty = int(tbb.get("x", 0) or 0), int(tbb.get("y", 0) or 0)
-            tw, th = int(tbb.get("w", 0) or 0), int(tbb.get("h", 0) or 0)
-            ix0, iy0 = max(px, tx), max(py, ty)
-            ix1, iy1 = min(px + pw, tx + tw), min(py + ph, ty + th)
-            if ix1 > ix0 and iy1 > iy0:
-                text_area += (ix1 - ix0) * (iy1 - iy0)
-        coverage = text_area / area
-        if coverage > 0.15:
-            score -= min(8.0, 30.0 * (coverage - 0.15))
+    # ── Render-quality adjustments (small-panel penalty, page-relative salience,
+    # text-coverage penalty) — see _render_adjust. salience_w=4.0 keeps the legacy
+    # weight so this function's score is unchanged by the extraction.
+    score += _render_adjust(panel, page_text_blocks, salience_w=4.0)
 
     return score
 
@@ -970,55 +1001,91 @@ def _panel_pool(pages_by_number: dict) -> list:
     return pool
 
 
-def _match_panels_forward(units: list, pages_by_number: dict, cluster_to_name: dict) -> list:
-    """Align the narration sequence to the panel sequence by MONOTONIC DTW: pick a
-    non-decreasing panel index per unit that maximizes the TOTAL content match
-    (_score_panel: dialog/char/emotion/salience/text-penalty + semantic sim). This is
-    forward-only (panel index never decreases), holds a panel across consecutive units
-    that share its subject (same index repeated), and — being a GLOBAL optimum — never
-    strands the runway the way a greedy walk does (jumping to a late panel early would
-    lower the total, so it won't). A unit whose best aligned panel still doesn't depict
-    it (score < PANEL_MATCH_FLOOR) HOLDS the previous panel instead of showing a wrong
-    one. `units` = [(scene, match_text)] in audio order → [(panel_or_None, src)]."""
+def _panel_content_score(panel, panel_vec, chunk_vec, scene_vec, page_tb,
+                         *, chunk_text, scene_text):
+    """PURE-VECTOR content match + render tie-break. Returns (score, sim_chunk).
+    cosine comes from the persisted Qdrant vector (panel_vec, no re-embed) when
+    available, else an in-memory embed of the richer panel text. The lexical hybrid
+    (char/dialog/emotion) is deliberately gone — validated worse, see W_COS notes."""
+    import numpy as np
+    if panel_vec is not None and chunk_vec is not None:
+        sim_chunk = max(0.0, float(np.dot(chunk_vec, panel_vec)))
+        sim_scene = (max(0.0, float(np.dot(scene_vec, panel_vec)))
+                     if scene_vec is not None else 0.0)
+    else:
+        ptext = panel_embed_text(panel, page_tb)
+        sim_chunk = _semantic_sim(chunk_text, ptext)
+        sim_scene = _semantic_sim(scene_text, ptext)
+    score = W_COS * sim_chunk + W_COS_SCENE * sim_scene
+    score += _render_adjust(panel, page_tb, salience_w=1.5)
+    return score, sim_chunk
+
+
+def _match_panels_forward(units: list, pages_by_number: dict, cluster_to_name: dict,
+                          *, project: str | None = None) -> list:
+    """Align the narration sequence to the panel sequence by MONOTONIC DTW: choose a
+    NON-DECREASING panel index per unit that maximizes total content match. Reading-order
+    is guaranteed BY CONSTRUCTION (no jumping, no fragile forward-knob), best content is
+    picked along the monotonic path, holds happen naturally (a panel repeats across units
+    on the same subject), and an ADVANCE_BONUS rewards moving to a NEW panel so the
+    alignment never parks on one broadly-matching panel. Content is scored PURE-VECTOR by
+    _panel_content_score (cosine on the richer panel embed, from the Stage-2 Qdrant vectors
+    when present). A unit whose aligned panel's raw cosine is below PANEL_COS_FLOOR HOLDS
+    the previous panel rather than showing a wrong one. Cold-open for the intro. Best fit
+    for a chronological (panel_walk) script. units=[(scene,text)] in audio order → [(panel,src)]."""
     pool = _panel_pool(pages_by_number)
-    n, m = len(units), len(pool)
+    n = len(units)
     if n == 0:
         return []
-    if m == 0:
+    if not pool:
         return [(None, "")] * n
+    m = len(pool)
 
-    # cost matrix: static content score of unit i on panel j (no prev-coherence term —
-    # the monotonic alignment supplies sequence coherence on its own).
-    score = [[0.0] * m for _ in range(n)]
+    import numpy as np
+    from .._embedding import embed_batch as _embed_batch
+    from .._panel_index import load_vectors
+
+    # Persisted panel vectors (Stage 2 → Qdrant); {} → fall back to in-memory embed.
+    panel_vecs = load_vectors(project) if project else {}
+    unit_vecs = _embed_batch([txt for _sc, txt in units])
+    scene_text_list = [str(sc.get("text", "") or "") for sc, _txt in units]
+    scene_vecs = _embed_batch(scene_text_list)
+    if panel_vecs:
+        print(f"[stage5] panel-match: PURE-VECTOR via {len(panel_vecs)} Qdrant vectors")
+    else:
+        print("[stage5] panel-match: PURE-VECTOR via in-memory embed (no Qdrant index)")
+
+    content = np.full((n, m), -1.0e9, dtype="float64")
+    sim = np.zeros((n, m), dtype="float64")
     for i, (scene, text) in enumerate(units):
-        for j, (_key, panel, _src, page_tb) in enumerate(pool):
-            score[i][j] = _score_panel(panel, text, scene, page_text_blocks=page_tb,
-                                       prev_panel=None, cluster_to_name=cluster_to_name,
-                                       page_locked=False)
+        cv, sv = unit_vecs[i], scene_vecs[i]
+        for j, (key, panel, _src, page_tb) in enumerate(pool):
+            sc, sc_sim = _panel_content_score(
+                panel, panel_vecs.get(key), cv, sv, page_tb,
+                chunk_text=text, scene_text=scene_text_list[i])
+            content[i][j] = sc
+            sim[i][j] = sc_sim
 
-    # DP: dp[i][j] = best total aligning units 0..i with unit i → panel j, j
-    # non-decreasing. Either ADVANCE from a strictly-earlier panel (+ADVANCE_BONUS, so
-    # the alignment is rewarded for moving to a NEW panel instead of parking on one
-    # broadly-matching panel — e.g. a recap/cover collage) or STAY on panel j (a hold,
-    # no bonus). The strict-prefix-max is carried in O(1) → O(n·m) overall.
+    # DP: dp[i][j] = best total aligning units 0..i with unit i → panel j (j non-decreasing).
+    # Either ADVANCE from a strictly-earlier panel (+ADVANCE_BONUS, rewarding a new panel
+    # over parking on one) or STAY on panel j (a hold). Strict-prefix-max → O(n·m).
     ADVANCE_BONUS = 2.0
     NEG = float("-inf")
     dp = [[NEG] * m for _ in range(n)]
     bk = [[-1] * m for _ in range(n)]
     for j in range(m):
-        dp[0][j] = score[0][j]
+        dp[0][j] = float(content[0][j])
     for i in range(1, n):
         spm, sparg = NEG, 0      # strict prefix max of dp[i-1][0..j-1]
         for j in range(m):
-            adv = spm + ADVANCE_BONUS if spm > NEG else NEG   # advance from an earlier panel
-            stay = dp[i - 1][j]                               # hold on panel j
+            adv = spm + ADVANCE_BONUS if spm > NEG else NEG
+            stay = dp[i - 1][j]
             if adv >= stay:
-                dp[i][j], bk[i][j] = score[i][j] + adv, sparg
+                dp[i][j], bk[i][j] = float(content[i][j]) + adv, sparg
             else:
-                dp[i][j], bk[i][j] = score[i][j] + stay, j
+                dp[i][j], bk[i][j] = float(content[i][j]) + stay, j
             if dp[i - 1][j] > spm:
                 spm, sparg = dp[i - 1][j], j
-    # backtrack from the best end panel
     jbest = max(range(m), key=lambda j: dp[n - 1][j])
     idxs = [0] * n
     j = jbest
@@ -1028,25 +1095,25 @@ def _match_panels_forward(units: list, pages_by_number: dict, cluster_to_name: d
             j = bk[i][j]
 
     out = []
-    prev = None        # (panel, src) currently on screen
+    prev: tuple | None = None
     for i, (scene, text) in enumerate(units):
-        j = idxs[i]
-        key, panel, src, _tb = pool[j]
         # Cold-open: the teaser opens on a striking OPENING panel, not a content match.
         if i == 0 and scene.get("is_intro"):
             cp, csrc = _cold_open_panel(pages_by_number)
             if cp is not None:
-                out.append((cp, csrc))
                 prev = (cp, csrc)
+                out.append((cp, csrc))
                 print(f"[stage5] match u{i}: COLD-OPEN | {text[:42]!r}")
                 continue
-        if score[i][j] < PANEL_MATCH_FLOOR and prev is not None:
-            out.append(prev)                         # weak match → hold (no wrong panel)
-            print(f"[stage5] match u{i}: HOLD(weak) {key} base={score[i][j]:.1f} | {text[:42]!r}")
+        j = idxs[i]
+        key, panel, src, _tb = pool[j]
+        if float(sim[i][j]) < PANEL_COS_FLOOR and prev is not None:
+            out.append(prev)                             # weak → hold (no wrong panel)
+            print(f"[stage5] match u{i}: HOLD(weak) {key} cos={float(sim[i][j]):.3f} | {text[:42]!r}")
         else:
             out.append((panel, src))
             prev = (panel, src)
-            print(f"[stage5] match u{i}: ALIGN {key} base={score[i][j]:.1f} | {text[:42]!r}")
+            print(f"[stage5] match u{i}: ALIGN {key} cos={float(sim[i][j]):.3f} score={float(content[i][j]):.1f} | {text[:42]!r}")
     return out
 
 

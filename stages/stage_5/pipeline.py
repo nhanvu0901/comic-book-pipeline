@@ -94,6 +94,7 @@ def assemble_project(
         caption_chunks=caption_chunks,
         pages_by_number=pages_by_number,
         cluster_to_name=cluster_to_name,
+        project=project_name,
     )
     if not shots:
         raise RuntimeError("build_shots produced 0 shots — check narration.json fields")
@@ -125,13 +126,21 @@ def assemble_project(
         if corner_logo is None:
             log(f"[stage5] corner logo unavailable ({CHANNEL_LOGO_PATH}); skipping overlay")
 
+    # Persistent title banner — a small white-box catchy line burned on every shot
+    # (the outro card is built separately, so it never gets the banner).
+    from config import ENABLE_TITLE_BANNER
+    banner_text = str(narration.get("banner_title", "")).strip() if ENABLE_TITLE_BANNER else ""
+    if banner_text:
+        log(f"[stage5] title banner: {banner_text!r}")
+
     shot_paths: list[Path] = []
     for s in shots:
         sp = shots_dir / f"shot_{s.shot_id:03d}.mp4"
         if sp.exists() and not force:
             log(f"[stage5] reusing {sp.name}")
         else:
-            render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log, corner_logo=corner_logo)
+            render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log,
+                        corner_logo=corner_logo, banner_text=banner_text)
         shot_paths.append(sp)
 
     # Debug log: record every shot's panel selection (page, bbox, image path,
