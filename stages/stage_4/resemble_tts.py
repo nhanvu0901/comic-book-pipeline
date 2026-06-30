@@ -91,6 +91,7 @@ def synthesize(
     voice_id: str | None = None,
     sample_rate: int = 44100,
     timeout: int = 180,
+    log=None,
     **_ignored,   # swallow Cartesia-only kwargs (model/speed/volume/emotion/language)
 ) -> ResembleResult:
     """Generate TTS audio + word timestamps via Resemble. Long text is chunked by
@@ -102,6 +103,7 @@ def synthesize(
     if not text or not text.strip():
         raise ValueError("synthesize() called with empty text")
 
+    _log = log or (lambda _m: None)
     voice = voice_id or RESEMBLE_VOICE_UUID
     chunks = _split_chunks(text, _MAX_SYNTH_CHARS)
     pcm_parts: list[bytes] = []
@@ -116,7 +118,18 @@ def synthesize(
             nframes = wf.getnframes()
             pcm_parts.append(wf.readframes(nframes))
             dur = nframes / float(sr or sample_rate)
-        for w in _words_from_graphemes(d.get("audio_timestamps") or {}):
+        chunk_words = _words_from_graphemes(d.get("audio_timestamps") or {})
+        # Resemble sometimes returns valid AUDIO but EMPTY/missing timestamps for a
+        # chunk. Without this fallback that chunk's ~dur seconds contribute ZERO word
+        # timestamps while `offset` still advances → a hole in word_timestamps that
+        # blanks the captions AND freezes the panel for that whole span (scene_timings
+        # + shots derive from word_timestamps). Spread the chunk's words evenly across
+        # its audio so the caption/scene timeline stays continuous.
+        if not chunk_words and c.split():
+            chunk_words = _even_word_timestamps(c, dur)
+            _log(f"[resemble] chunk returned no timestamps ({len(c)} chars); "
+                 f"even-spread {len(chunk_words)} words over {dur:.1f}s")
+        for w in chunk_words:
             words.append({"word": w["word"], "start": w["start"] + offset, "end": w["end"] + offset})
         offset += dur
 
@@ -157,6 +170,18 @@ def _words_from_graphemes(ts: dict) -> list[dict]:
     if cur and start is not None:
         words.append({"word": cur, "start": float(start), "end": float(end)})
     return words
+
+
+def _even_word_timestamps(text: str, dur: float) -> list[dict]:
+    """Fallback when a chunk returns audio but no grapheme timestamps: split the
+    chunk text into words and spread them evenly across [0, dur]. Approximate, but
+    keeps captions + the scene timeline continuous instead of leaving a blank hole."""
+    toks = text.split()
+    n = len(toks)
+    if n == 0 or dur <= 0:
+        return []
+    step = dur / n
+    return [{"word": t, "start": i * step, "end": (i + 1) * step} for i, t in enumerate(toks)]
 
 
 def _load_voice_map() -> dict:

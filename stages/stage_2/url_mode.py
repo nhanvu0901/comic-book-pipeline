@@ -413,12 +413,20 @@ def _enrich_context_silent(
 
     if plot:
         ctx["plot_summary"] = plot
+        ctx["plot_status"] = "OK"
         try:
             enrich_with_summary(ctx, progress=log)
         except Exception as exc:
             log(f"[url-mode] summarize failed: {exc}")
     else:
-        log("[url-mode] no plot found — narration will run with weaker context")
+        # No plot grounded (Fandom miss + SDK web fallback failed). Mark it so
+        # Stage 3 can warn LOUDLY instead of silently shipping a hallucinated
+        # draft. Do NOT pretend the context is ready.
+        ctx["plot_status"] = "MISSING"
+        log("⚠️  [url-mode] NO PLOT GROUNDED — fandom missed AND the SDK web "
+            "fallback returned nothing (check the log above for the reason: turns/"
+            "throttle/no-source). plot_status=MISSING; Stage 3 will run with WEAK "
+            "context and likely invent events. Hand-populate plot_summary or re-run enrichment.")
 
     (project_root / "comic_context.json").write_text(
         json.dumps(ctx, indent=2, ensure_ascii=False)
@@ -488,6 +496,14 @@ def _enrich_issues(
             f"[{it['label']}] {it['plot_summary']}".strip()
             for it in issues_meta if it["plot_summary"]
         )
+
+    if str(ctx.get("plot_summary", "")).strip():
+        ctx["plot_status"] = "OK"
+    else:
+        ctx["plot_status"] = "MISSING"
+        log("⚠️  [saga] NO PLOT GROUNDED for any issue — fandom missed AND the SDK "
+            "web fallback returned nothing. plot_status=MISSING; Stage 3 will run "
+            "with WEAK context and likely invent events.")
 
     try:
         from stages.stage_1.tools.summarize_context import enrich_with_summary

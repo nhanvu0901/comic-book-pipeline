@@ -117,7 +117,9 @@ def classify_hook(first_words: str) -> str:
     if re.match(r"^(after|while|during|once)\b", s): return "temporal-other"
     if re.match(r"^(in an? \w+ (universe|reality|world|year|future|past|version)|in [\d]{4})", s):
         return "scenic"
-    if re.match(r"^[A-Z][\w-]+\s+(?:was|were|is|are|had|broke|entered|woke|fell|found|wakes|stands)", first_words):
+    # Broadened character-first ACTION opener (cap subject 1-4 tokens + verb).
+    # KEEP IDENTICAL to stages/stage_3/write_script._classify_hook.
+    if re.match(r"^[A-Z][\w'’.-]+(?:\s+[A-Z][\w'’.-]+){0,3}\s+[a-z]", first_words):
         return "character_action"
     return "other_character"
 

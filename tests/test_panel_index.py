@@ -2,8 +2,59 @@
 scorer). Both run offline — the scorer is fed explicit unit-vectors so cosine is exact."""
 import numpy as np
 
-from stages._panel_index import panel_embed_text
+from stages._panel_index import panel_embed_text, panel_dialog, page_dialog
 import stages.stage_5.shots as shots
+
+
+def test_embed_retry_fills_missing_on_second_attempt(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+    from stages._panel_index import _embed_with_retry
+    calls = {"n": 0}
+
+    def fake(texts):
+        calls["n"] += 1
+        return [None, None] if calls["n"] == 1 else [[1.0], [2.0]]   # fail, then succeed
+
+    assert _embed_with_retry(fake, ["a", "b"], tries=4) == [[1.0], [2.0]]
+    assert calls["n"] == 2
+
+
+def test_embed_retry_gives_up_after_tries(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+    from stages._panel_index import _embed_with_retry
+    calls = {"n": 0}
+
+    def always_fail(texts):
+        calls["n"] += 1
+        return [None] * len(texts)
+
+    assert _embed_with_retry(always_fail, ["a", "b"], tries=3) == [None, None]
+    assert calls["n"] == 3   # initial + 2 retries
+
+
+def test_panel_embed_text_reads_nested_dialog():
+    panel = {"index": 0, "description": "Hulk smashes", "characters": ["Hulk"],
+             "dominant_emotion": "rage",
+             "dialog": [{"text": "PUNY GOD", "type": "speech"}]}
+    # nested dialog wins; page_text_blocks not needed
+    assert panel_embed_text(panel) == "Hulk smashes — Hulk — rage — PUNY GOD"
+
+
+def test_panel_dialog_nested_vs_flat_fallback():
+    nested = {"index": 1, "dialog": [{"text": "A"}, {"text": "B"}]}
+    assert panel_dialog(nested) == [{"text": "A"}, {"text": "B"}]
+    # old cached schema: no nested dialog → filter page-level text_blocks by panel_index
+    old = {"index": 1}
+    page_tb = [{"panel_index": 0, "text": "X"}, {"panel_index": 1, "text": "Y"}]
+    assert panel_dialog(old, page_tb) == [{"panel_index": 1, "text": "Y"}]
+
+
+def test_page_dialog_flattens_panels_or_uses_old_text_blocks():
+    new_page = {"panels": [{"index": 0, "dialog": [{"text": "A"}]},
+                           {"index": 1, "dialog": [{"text": "B"}]}]}
+    assert [d["text"] for d in page_dialog(new_page)] == ["A", "B"]
+    old_page = {"panels": [], "text_blocks": [{"text": "Z"}]}
+    assert page_dialog(old_page) == [{"text": "Z"}]
 
 
 def test_panel_embed_text_joins_desc_chars_emotion_dialog():

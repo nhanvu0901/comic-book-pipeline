@@ -156,7 +156,7 @@ def synthesize_project(
                 print(f"[stage4] auto-selected Resemble voice: {chosen_name} ({selected_voice})")
             print(f"[stage4] synthesizing {len(full_text)} chars via Resemble "
                   f"(voice={selected_voice or RESEMBLE_VOICE_UUID})")
-            result = _synthesize(full_text, voice_id=selected_voice)
+            result = _synthesize(full_text, voice_id=selected_voice, log=print)
         else:
             from .cartesia_tts import synthesize as _synthesize
             if flat:

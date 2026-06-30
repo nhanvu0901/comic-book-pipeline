@@ -233,8 +233,14 @@ def sdk_complete(
 
 
 # Web research can need several minutes (search → fetch → ... → write).
-_SDK_WEB_TIMEOUT_S = 420
-_SDK_WEB_MAX_TURNS = 12
+# max_turns must cover MULTIPLE source reads (the research prompt requires
+# reading >= 2 sources with WebSearch/WebFetch and reconciling them) AND the
+# final JSON write. At 12 the agent reliably ran out of turns mid-research and
+# returned NOTHING — silently emptying the context for every comic that needs
+# this fallback (all DC, whose Fandom api.php is Cloudflare-blocked, + any
+# Fandom-miss Marvel). 28 leaves room for ~3-4 source reads + the write.
+_SDK_WEB_TIMEOUT_S = 540
+_SDK_WEB_MAX_TURNS = 28
 
 
 def sdk_complete_web(
@@ -253,4 +259,30 @@ def sdk_complete_web(
     return _complete_with_retry(
         system, user, model, timeout, log or (lambda _m: None),
         allowed_tools=["WebSearch", "WebFetch"], max_turns=max_turns,
+    )
+
+
+# Vision judging: the agent reads local PNG files (panel crops) via the Read tool —
+# the Claude model is vision-capable, so Read on an image lets it SEE the panel. Used by
+# Stage 5's #6 panel rerank. max_turns must cover one Read per candidate image + the answer.
+_SDK_VISION_TIMEOUT_S = 200
+_SDK_VISION_MAX_TURNS = 14
+
+
+def sdk_complete_vision(
+    system: str,
+    user: str,
+    *,
+    model: str = CLAUDE_SDK_MODEL,
+    max_turns: int = _SDK_VISION_MAX_TURNS,
+    timeout: int = _SDK_VISION_TIMEOUT_S,
+    log=None,
+) -> str | None:
+    """Like `sdk_complete` but the agent may Read local image files (panel crops) so it
+    can VISUALLY judge them — the user prompt lists absolute image paths. Returns the
+    model's final text, or None on any failure. Never raises. Run standalone — the SDK
+    throttles when another agent runs concurrently."""
+    return _complete_with_retry(
+        system, user, model, timeout, log or (lambda _m: None),
+        allowed_tools=["Read"], max_turns=max_turns,
     )

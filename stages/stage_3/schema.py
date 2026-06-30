@@ -59,6 +59,7 @@ class Narration:
     mode: str                      # one of MODES_BY_KEY
     title: str                     # short title for the short video
     hook: str                      # the opening line of scene 1 (also used as thumbnail text)
+    banner_title: str = ""         # short catchy on-screen banner (Stage 5 burns it every frame)
     scenes: list[Scene] = field(default_factory=list)
     total_word_count: int = 0
     estimated_duration_seconds: float = 0.0
@@ -73,6 +74,7 @@ class Narration:
             "mode": self.mode,
             "title": self.title,
             "hook": self.hook,
+            "banner_title": self.banner_title,
             "scenes": [asdict(s) for s in self.scenes],
             "total_word_count": self.total_word_count,
             "estimated_duration_seconds": self.estimated_duration_seconds,

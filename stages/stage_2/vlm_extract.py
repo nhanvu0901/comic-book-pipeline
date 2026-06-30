@@ -28,7 +28,7 @@ from config import (
 
 _SYSTEM_PROMPT = """You are a comic book page analyst. You receive one page image, a list of pre-detected panel bounding boxes, and optionally a STORY CONTEXT block listing the comic's named characters, setting, and key objects.
 
-Use the STORY CONTEXT only to recognize and disambiguate entities by their canonical names (e.g. label "Ben Grimm" or "the Thing" instead of "Unknown character"). Do NOT use it to predict events, invent dialog, or assume a character is on a panel they aren't visibly in. Every text block must come verbatim from the panel itself; every character listed for a panel must be visually present.
+Use the STORY CONTEXT only to recognize and disambiguate entities by their canonical names. HARD RULE — CHARACTER NAMING: only use a name that appears in the STORY CONTEXT roster. If a visible figure is not clearly one of the roster characters, label them GENERICALLY — "a man", "a woman", "a figure", "a hero", "soldiers", "a crowd" — and NEVER guess a famous Marvel/DC character from visual resemblance. Do NOT write "the Thing", "Reed Richards", "Sue Storm", "Loki", "the Fantastic Four" (or any name) unless it is in the roster. Recognizing a character by how they LOOK and naming them when they are not in the roster is a HALLUCINATION that corrupts the panel match — a green muscular figure is "a hulking figure" (or the roster's Hulk if listed), NOT a guessed cameo. Do NOT predict events, invent dialog, or assume a character is on a panel they aren't visibly in. Every text block must come verbatim from the panel itself; every character listed for a panel must be visually present.
 
 STEP 1 — Classify the page into ONE of three types:
 
@@ -80,7 +80,11 @@ STEP 2 — For cover + story pages ONLY, do this:
       concrete verb — raises, opens, crushes, fires, bites, grabs — not a mood like
       "expresses frustration"), and NAMES the defining OBJECT/PROP (sonic gun,
       canister, specimen cage, the machine). Make it distinctive enough to tell this
-      panel apart from its neighbors. Then list characters present and dominant emotion.
+      panel apart from its neighbors. SCENE-GROUND IT: situate the moment in the page's
+      overall action in ≤1 clause so it carries story meaning (e.g. "As the suit begins
+      replacing his flesh, Tony raises his glove" not "Tony raises his hand"), while
+      keeping the panel DISTINCT (do not just repeat the page summary on every panel).
+      Then list characters present and dominant emotion.
       Good: "Reed Richards raises a sonic gun at the symbiote-covered Thing."
       Bad:  "He expresses frustration." / "The Venomized Thing looks menacing."
       DESCRIBE ONLY WHAT IS VISIBLE — NEVER infer a MENTAL / INTERNAL event from an
@@ -93,6 +97,9 @@ STEP 2 — For cover + story pages ONLY, do this:
       SFX text, cover title/subtitle/credits). For each: classify type, identify the
       speaker (null for narration/sfx/caption/title), and assign it to the panel whose
       bbox contains it (panel_index). Use -1 if the text is outside all panels.
+      READING ORDER — these are WESTERN / American comics: read panels AND the text
+      bubbles inside each panel LEFT-to-RIGHT, then TOP-to-BOTTOM. NEVER use manga
+      right-to-left order. List each panel's text_blocks in that sequence.
   2c. Write a 2-3 sentence page_summary. For covers: describe what's visually depicted
       (e.g. "Cover: Spider-Man in classic red/blue swings past the Daily Bugle…").
       For story pages: recap the MAIN story action on this page in plain prose. Do NOT
@@ -407,6 +414,8 @@ PRIOR PAGE OVERLAP RULE — when a PRIOR PAGE block is present in the user messa
 
 DO NOT invent events, dialog, or characters. Every fact must be derivable from the panel image. STORY CONTEXT, PRIOR PAGE, and RUNNING STATE are name-disambiguation aids only — not predictive prompts.
 
+HARD RULE — CHARACTER NAMING (most common corruption): only use a character name that appears in the STORY CONTEXT roster. If a visible figure is not clearly one of the roster characters, label them GENERICALLY — "a man", "a woman", "a figure", "a hero", "soldiers", "a crowd". NEVER guess a famous Marvel/DC name from visual resemblance: do NOT write "the Thing", "Reed Richards", "Sue Storm", "Loki", "the Fantastic Four" (or any off-roster name) just because a figure LOOKS like them. A green muscular figure is "a hulking figure" (or the roster's Hulk only if listed), a rocky figure is "a rocky man", a person on a rooftop is "a man" — never a guessed cameo. Recognizing-and-naming an off-roster character is a HALLUCINATION that makes the panel un-matchable to the narration.
+
 PER-PAGE STEPS (apply to each page independently for classification, but write descriptions with continuity):
 
   STEP 1 — Classify each page into "cover" | "story" | "skip" (same rules as single-page mode: cover requires visible title/issue text; skip = ad/recap/blank).
@@ -424,6 +433,11 @@ PER-PAGE STEPS (apply to each page independently for classification, but write d
     2a. Per panel: a SELF-CONTAINED 1-2 sentence description (see the READING-FLOW
         rule above) — named character(s) + the specific ACTION + the defining
         OBJECT/PROP, distinctive enough to tell this panel apart from its neighbors.
+        SCENE-GROUND IT: situate this panel's moment in the page's overall action so
+        the description carries story meaning, NOT just a snapshot — e.g. "As the suit
+        begins replacing his flesh, Tony raises his glove to Pepper" rather than "Tony
+        raises his hand." Add the context in ≤1 clause; keep the panel still DISTINCT
+        from its neighbors (do NOT just repeat the page summary on every panel).
         Then the character list and dominant emotion.
         Examples (good): "Reed Richards raises a sonic gun at the symbiote-covered
         Thing." / "Ben Grimm pulls the cloth off a glass specimen cage holding the
@@ -431,6 +445,10 @@ PER-PAGE STEPS (apply to each page independently for classification, but write d
         Examples (BAD, too vague): "He expresses frustration." / "The Venomized
         Thing looks menacing." / "Reed reacts with concern."
     2b. Extract every text element (speech, narration, sfx, caption, title) into text_blocks, assigned to panel_index.
+        READING ORDER — these are WESTERN / American comics: read panels AND the text
+        bubbles inside each panel LEFT-to-RIGHT, then TOP-to-BOTTOM. NEVER use manga
+        right-to-left order. List each panel's text_blocks in that left-to-right,
+        top-to-bottom sequence so the dialog flows in the correct order.
     2c. A 2-3 sentence page_summary that recaps what happened on THIS page in plain prose.
 
 OUTPUT: a single JSON object containing a `pages` array (one entry per input page, in order) and a `running_state` string (~150-250 chars) summarizing the story state AFTER reading this batch — for feeding into the next batch.
@@ -473,7 +491,15 @@ def _format_prior_page_block(prior_page: dict) -> str:
     pn = prior_page.get("page_number", "?")
     summary = (prior_page.get("page_summary") or "").strip()
     panels = prior_page.get("panels") or []
-    text_blocks = prior_page.get("text_blocks") or []
+    # Dialog is nested under each panel now (no page-level text_blocks); flatten it back
+    # with its panel index for this context render. Backward-compat for old cached pages.
+    text_blocks = []
+    if prior_page.get("text_blocks") is not None:
+        text_blocks = prior_page.get("text_blocks") or []
+    else:
+        for p in panels:
+            for tb in (p.get("dialog") or []):
+                text_blocks.append({**tb, "panel_index": p.get("index")})
 
     lines: list[str] = [
         f"PRIOR PAGE (page {pn}{' ' + label if label else ''}) — already analyzed, included here AS CONTEXT ONLY:",
@@ -514,14 +540,17 @@ def _format_batch_user_text(
             f"STORY CONTEXT (canonical names + setting; do NOT use to predict events):\n"
             f"{story_context.strip()}\n\n"
         )
-    if prior_page is not None:
-        context_block += _format_prior_page_block(prior_page) + "\n\n"
-    elif running_state.strip():
-        # Fallback: when no overlap (first batch), still use running_state if present.
+    # The cumulative story-so-far summary (running_state) is ALWAYS included when present
+    # — it carries the whole arc up to here, not just the last page. The prior page adds
+    # immediate detail on top. (Previously running_state was only a first-batch fallback,
+    # so from page 2 on the VLM saw only the last page and lost the cumulative thread.)
+    if running_state.strip():
         context_block += (
-            f"RUNNING NARRATIVE STATE (from prior pages — continue from here, do NOT contradict):\n"
+            f"STORY SO FAR (cumulative summary of all prior pages — continue from here, do NOT contradict):\n"
             f"{running_state.strip()}\n\n"
         )
+    if prior_page is not None:
+        context_block += _format_prior_page_block(prior_page) + "\n\n"
 
     pages_block_lines: list[str] = [
         f"You will analyze {len(panels_per_page)} NEW page(s) in reading order.",
@@ -582,7 +611,69 @@ def _call_model_batch(
     return (resp.choices[0].message.content or "").strip()
 
 
+_EMPTY_DESC_RETRIES = 3
+_EMPTY_DESC_NUDGE = (
+    "\n\nIMPORTANT: a previous pass left one or more panels with an EMPTY description. "
+    "EVERY cover/story panel MUST have a non-empty, specific description — describe even "
+    "SFX, transition, establishing, or figure-less panels by exactly what is visibly "
+    "drawn (objects, setting, motion lines, colors). Never return a blank description."
+)
+
+
+def _count_empty_desc(pages: list[dict]) -> int:
+    """Panels on cover/story pages whose description is blank — the matcher-invisible ones."""
+    n = 0
+    for pg in pages or []:
+        if str(pg.get("page_type", "")).lower() not in ("cover", "story"):
+            continue
+        for p in pg.get("panels") or []:
+            if not str(p.get("description", "")).strip():
+                n += 1
+    return n
+
+
 def extract_pages_batch(
+    image_paths: list[Path],
+    panels_per_page: list[list[dict]],
+    *,
+    models: list[str] | None = None,
+    progress: Callable[[str], None] | None = None,
+    story_context: str = "",
+    running_state: str = "",
+    prior_page: dict | None = None,
+    prior_image_path: Path | None = None,
+) -> tuple[list[dict] | None, str, str]:
+    """Batch VLM extraction with an EMPTY-DESCRIPTION retry: if the result comes back
+    with blank panel descriptions (matcher-invisible panels), re-run up to
+    _EMPTY_DESC_RETRIES times with EXPONENTIAL backoff (1s, 2s, 4s). A nudge is injected
+    via story_context on each retry so the (temperature=0) call isn't a deterministic
+    repeat. Returns the last result even if still imperfect after 3 tries."""
+    log = progress or (lambda _msg: None)
+    last: tuple[list[dict] | None, str, str] = (None, running_state, "")
+    for attempt in range(_EMPTY_DESC_RETRIES):
+        sc = story_context + (_EMPTY_DESC_NUDGE if attempt > 0 else "")
+        last = _extract_pages_batch_once(
+            image_paths, panels_per_page, models=models, progress=progress,
+            story_context=sc, running_state=running_state,
+            prior_page=prior_page, prior_image_path=prior_image_path,
+        )
+        pages = last[0]
+        if pages is None:
+            return last                      # total failure → caller falls back per-page
+        n_empty = _count_empty_desc(pages)
+        if n_empty == 0:
+            return last                      # clean
+        if attempt < _EMPTY_DESC_RETRIES - 1:
+            wait = min(2.0 ** attempt, 30.0)
+            log(f"[vlm-batch] {n_empty} empty description(s) — retry "
+                f"{attempt + 2}/{_EMPTY_DESC_RETRIES} after {wait:.0f}s")
+            time.sleep(wait)
+    log(f"[vlm-batch] still {_count_empty_desc(last[0])} empty desc after "
+        f"{_EMPTY_DESC_RETRIES} tries — keeping best result (pipeline fills the rest)")
+    return last
+
+
+def _extract_pages_batch_once(
     image_paths: list[Path],
     panels_per_page: list[list[dict]],
     *,
@@ -640,6 +731,13 @@ def extract_pages_batch(
     has_prior = prior_page is not None
 
     for idx, model in enumerate(chain, start=1):
+        # Exponential backoff as we fall through the model list (scales with position
+        # in the chain): model 1 fires immediately, then 2s, 4s, 8s… (capped) so a
+        # rate-limited provider gets time to recover before we hit the next one.
+        if idx > 1:
+            wait = min(2.0 ** (idx - 1), 30.0)
+            log(f"[vlm-batch] backoff {wait:.0f}s before model {idx}/{len(chain)}")
+            time.sleep(wait)
         nice_label = f"{n} new" + (f" +1 prior" if has_prior else "")
         log(f"[vlm-batch] try {idx}/{len(chain)} model={model} ({nice_label})")
         try:

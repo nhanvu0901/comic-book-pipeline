@@ -75,8 +75,9 @@ def build(
         )
 
     def _show_detail(pg: dict):
+        from stages._panel_index import page_dialog
         panels = pg.get("panels") or []
-        texts = pg.get("text_blocks") or []
+        texts = page_dialog(pg)
         blocks: list[ft.Control] = [
             ft.Text(f"Page {pg.get('page_number')} — {pg.get('issue_label','')}",
                     size=14, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),

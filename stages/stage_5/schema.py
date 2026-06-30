@@ -23,6 +23,9 @@ class Shot:
     # nameplate) — mirroring would reverse the letters and break the reveal
     # (e.g. the 'PETER' gravestone payoff in Weapon VIII).
     no_mirror: bool = False
+    # The cold-open / hook shot. Stage 5 renders it with a stronger, faster camera
+    # push (energy in the first seconds) so the opening doesn't read as a slow hold.
+    is_intro: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

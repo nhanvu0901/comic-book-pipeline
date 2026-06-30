@@ -213,8 +213,28 @@ AZURE_OPENAI_EMBEDDING_ENDPOINT = os.getenv("AZURE_OPENAI_EMBEDDING_ENDPOINT", "
 AZURE_OPENAI_EMBEDDING_MODEL_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_NAME", "text-embedding-3-large").strip().strip('"')
 AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION", "2023-05-15").strip().strip('"')
 # A placeholder like "<your-...-here>" counts as unset.
+# ─── Gemini embedding (preferred when set; used while Azure endpoint is blocked) ──
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip().strip('"')
+GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+
+# ─── Embedding backend switch (easy toggle Google ↔ local Qwen ↔ …) ──────────
+# EMBED_BACKEND picks the embedding backend explicitly:
+#   "auto"   (default) → Gemini (if GEMINI_API_KEY) → Azure → local mxbai
+#   "google"/"gemini"  → force Gemini
+#   "qwen"/"openai"    → an OpenAI-compatible /v1/embeddings server (EMBED_OPENAI_URL).
+#                        Served by LM Studio (:1234) as model `text-embedding-qwen3-embedding-8b`
+#                        — LM Studio DOES serve it correctly under the `text-embedding-` id
+#                        (returns real 4096-dim qwen, NOT the 768-dim nomic fallback; verified
+#                        2026-06-29). Earlier note that LM Studio routed qwen3→nomic applied
+#                        only to the bare `qwen3-embedding-8b` id; the text-embedding- id works.
+#   "azure"            → force Azure ·  "local" → force local mxbai
+EMBED_BACKEND = os.getenv("EMBED_BACKEND", "auto").strip().lower()
+EMBED_OPENAI_URL = os.getenv("EMBED_OPENAI_URL", "http://127.0.0.1:1234/v1/embeddings").strip()
+EMBED_OPENAI_MODEL = os.getenv("EMBED_OPENAI_MODEL", "text-embedding-qwen3-embedding-8b").strip()
+EMBED_OPENAI_DIM = int(os.getenv("EMBED_OPENAI_DIM", "4096"))
+
 # ─── Qdrant vector store (panel↔narration matching) ─────────────────────────
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:8069")
 
 def _azure_embed_ready() -> bool:
     k, e = AZURE_OPENAI_EMBEDDING_API_KEY, AZURE_OPENAI_EMBEDDING_ENDPOINT

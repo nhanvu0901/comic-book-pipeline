@@ -14,15 +14,34 @@ import sys
 EMBED_DIM = 3072  # Azure text-embedding-3-large
 
 
+def panel_dialog(panel: dict, page_text_blocks: list[dict] | None = None) -> list[dict]:
+    """A panel's dialog lines. New schema: nested panel['dialog']. Old cached pages:
+    filter the page-level text_blocks by panel_index (backward-compat)."""
+    d = panel.get("dialog")
+    if d is not None:
+        return d
+    _idx = panel.get("index", -999)
+    idx = int(_idx) if _idx is not None else -999   # NB: `or` would turn index 0 into -999
+    return [tb for tb in (page_text_blocks or [])
+            if (int(tb.get("panel_index", -2)) if tb.get("panel_index") is not None else -2) == idx]
+
+
+def page_dialog(page: dict) -> list[dict]:
+    """ALL dialog on a page. New schema: flattened from panels[].dialog. Old cached
+    pages: the page-level text_blocks (backward-compat)."""
+    tb = page.get("text_blocks")
+    if tb:   # non-empty page-level list = old cached schema; new comic output leaves it []
+        return tb
+    out: list[dict] = []
+    for p in page.get("panels") or []:
+        out.extend(p.get("dialog") or [])
+    return out
+
+
 def panel_embed_text(panel: dict, page_text_blocks: list[dict] | None = None) -> str:
     """The text we embed for a panel — mirrors what the matcher matches against:
     visual description + who is present + dominant emotion + the panel's dialog."""
-    _idx = panel.get("index", -999)
-    idx = int(_idx) if _idx is not None else -999   # NB: `or` would turn index 0 into -999
-    dlg = " ".join(
-        str(tb.get("text", "")) for tb in (page_text_blocks or [])
-        if int(tb.get("panel_index", -2) if tb.get("panel_index") is not None else -2) == idx
-    ).strip()
+    dlg = " ".join(str(d.get("text", "")) for d in panel_dialog(panel, page_text_blocks)).strip()
     chars = " ".join(str(c) for c in (panel.get("characters") or []))
     emo = str(panel.get("dominant_emotion") or "")
     parts = [panel.get("description", "") or "", chars, emo, dlg]
@@ -33,55 +52,98 @@ def _is_story_page(page: dict) -> bool:
     return bool(page.get("is_story_page")) and not page.get("skip_reason")
 
 
-def index_project(project: str, pages_by_number: dict[int, dict], *, log=print) -> int:
-    """Embed every story panel and upsert to Qdrant. Returns count upserted (0 on
-    any failure — never raises into the pipeline)."""
+def _embed_with_retry(embed_batch, texts: list[str], *, tries: int = 4, log=print) -> list:
+    """Embed one batch, retrying while any entry is still None (Azure 'Connection error'
+    is usually transient). embed_batch caches successes, so each retry only re-fetches the
+    still-missing texts. Exponential backoff between tries."""
+    import time
+    vecs = embed_batch(texts)
+    k = 1
+    while any(v is None for v in vecs) and k < tries:
+        time.sleep(min(2.0 ** k, 20.0))
+        log(f"[panel-index] retry embed (attempt {k + 1}/{tries}) — {sum(v is None for v in vecs)} text(s) still missing")
+        vecs = embed_batch(texts)
+        k += 1
+    return vecs
+
+
+def index_project(project: str, pages_by_number: dict[int, dict], *, log=print,
+                  batch_pages: int = 5) -> int:
+    """Embed every story panel and upsert to Qdrant, in batches of `batch_pages` pages so
+    a transient network error kills only one batch (which is retried), not the whole run.
+    The collection is RECREATED first so every re-run replaces the project's vectors (no
+    stale points). Returns the count upserted (0 on total failure — never raises)."""
     try:
         from . import _embedding, _qdrant
     except Exception as exc:  # pragma: no cover
         log(f"[panel-index] skipped (import): {exc}")
         return 0
 
-    texts, points = [], []
+    # Group points+texts BY PAGE so we can batch a few pages at a time.
+    per_page: list[tuple[int, list[dict], list[str]]] = []
     for pn in sorted(pages_by_number or {}):
         page = pages_by_number.get(pn) or {}
         if not _is_story_page(page):
             continue
-        page_tb = page.get("text_blocks") or []
+        page_tb = page.get("text_blocks")  # None on new schema → panel_dialog uses nested
         src = str(page.get("source_image") or "")
         dims = page.get("image_dimensions") or {}
         parea = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
+        pts, txts = [], []
         for idx, panel in enumerate(page.get("panels") or []):
             bb = panel.get("bbox", {}) or {}
             area = int(bb.get("w", 0) or 0) * int(bb.get("h", 0) or 0)
-            texts.append(panel_embed_text(panel, page_tb))
-            points.append({
+            txts.append(panel_embed_text(panel, page_tb))
+            pts.append({
                 "id": pn * 1000 + idx,
                 "payload": {"page": pn, "index": idx, "source_image": src,
                             "area": area, "page_area": parea},
             })
+        if pts:
+            per_page.append((pn, pts, txts))
 
-    if not texts:
+    if not per_page:
         return 0
+    if _embedding.backend_name() == "none":
+        log("[panel-index] skipped — no embedding backend")
+        return 0
+
+    # CLEAR the project's old vectors on every re-run (recreate the collection), sized
+    # to the ACTIVE embedding backend (Gemini 3072 / Qwen 4096 / mxbai 1024).
     try:
-        if _embedding.backend_name() == "none":
-            log("[panel-index] skipped — no embedding backend")
-            return 0
-        vecs = _embedding.embed_batch(texts)
-        ok = [(p, v) for p, v in zip(points, vecs) if v is not None]
-        if not ok:
-            log("[panel-index] skipped — embedding produced no vectors")
-            return 0
-        for p, v in ok:
-            p["vector"] = v.tolist() if hasattr(v, "tolist") else list(v)
-        _qdrant.ensure_collection(project, EMBED_DIM, recreate=True)
-        _qdrant.upsert_panels(project, [p for p, _ in ok])
-        n = _qdrant.count(project)
-        log(f"[panel-index] {project}: {n} panel vectors → '{_qdrant.collection_name(project)}'")
-        return n
+        _qdrant.ensure_collection(project, _embedding.embed_dim(), recreate=True)
     except Exception as exc:
-        log(f"[panel-index] skipped (Qdrant/embed unavailable): {exc}")
+        log(f"[panel-index] skipped (Qdrant unavailable): {exc}")
         return 0
+
+    total, failed_pages = 0, []
+    for i in range(0, len(per_page), batch_pages):
+        chunk = per_page[i:i + batch_pages]
+        chunk_pns = [pn for pn, _p, _t in chunk]
+        pts = [p for _pn, ps, _t in chunk for p in ps]
+        txts = [t for _pn, _p, ts in chunk for t in ts]
+        try:
+            vecs = _embed_with_retry(_embedding.embed_batch, txts, log=log)
+            ok = [(p, v) for p, v in zip(pts, vecs) if v is not None]
+            for p, v in ok:
+                p["vector"] = v.tolist() if hasattr(v, "tolist") else list(v)
+            if ok:
+                _qdrant.upsert_panels(project, [p for p, _ in ok])
+                total += len(ok)
+            if len(ok) != len(pts):
+                failed_pages.extend(chunk_pns)
+                log(f"[panel-index] pages {chunk_pns}: {len(pts) - len(ok)}/{len(pts)} panels failed to embed")
+        except Exception as exc:
+            failed_pages.extend(chunk_pns)
+            log(f"[panel-index] pages {chunk_pns} batch failed: {exc}")
+
+    coll = _qdrant.collection_name(project)
+    if failed_pages:
+        log(f"[panel-index] {project}: {total} vectors → '{coll}' "
+            f"(⚠ pages with missing embeds: {sorted(set(failed_pages))})")
+    else:
+        log(f"[panel-index] {project}: {total} panel vectors → '{coll}'")
+    return total
 
 
 def load_vectors(project: str) -> dict[tuple[int, int], "object"]:

@@ -1,7 +1,7 @@
 """
 Catalog of narration modes the LLM can propose.
 
-Each mode is an angle for the 60-second narration. The LLM picks the 3 that
+Each mode is an angle for the short-form narration. The LLM picks the 3 that
 best fit a given comic, and the user selects one.
 """
 from dataclasses import dataclass

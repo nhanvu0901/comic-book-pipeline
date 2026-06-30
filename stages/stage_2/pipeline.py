@@ -216,6 +216,7 @@ def preprocess_project(
     log(f"[preprocess] running_state final: {running_state[:200]}")
     _reclassify_mid_doc_covers(results, project_root, log)
     _demote_credits_pages(results, project_root, log)
+    _demote_backmatter_tail(results, project_root, log)
 
     # v5 Phase 2: resolve Magi cluster_ids → character names via VLM
     _resolve_clusters_after_preprocess(results, project_root, log)
@@ -304,7 +305,8 @@ def _demote_credits_pages(
     for p in pages:
         if not p.get("is_story_page"):
             continue
-        corpus = " ".join(str(tb.get("text", "")) for tb in (p.get("text_blocks") or []))
+        from .._panel_index import page_dialog
+        corpus = " ".join(str(tb.get("text", "")) for tb in page_dialog(p))
         if not _looks_like_backmatter(corpus):
             continue
         pn = int(p.get("page_number", 0) or 0)
@@ -319,6 +321,56 @@ def _demote_credits_pages(
                 save_cached(project_root, pn, h, p)
             except Exception as exc:
                 log(f"[preprocess]   ⚠ couldn't persist demotion for p{pn}: {exc}")
+
+
+# Terminal back-matter reasons that ONLY appear at the very END of a Western single
+# issue (letters page, house ads, "next issue" previews, solicits). Once one shows up
+# in the BACK of the book, the main story never resumes — so every later page is
+# back-matter too, INCLUDING a preview of ANOTHER comic rendered as real story panels
+# (the VLM tags those "story" because they ARE genuine sequential art — it can't know
+# they belong to a different book). A positional cutoff catches what per-page content
+# inspection cannot.
+_TERMINAL_BACKMATTER = {
+    "letter_column", "solicit_credits", "advertisement",
+    "next_issue_preview", "back_matter",
+}
+
+
+def _demote_backmatter_tail(
+    pages: list[dict], project_root: Path, log: Callable[[str], None]
+) -> None:
+    """Demote every story page that follows the first terminal back-matter page in the
+    BACK HALF of the issue. General: keyed on page position + an already-detected
+    terminal reason, no per-issue constants. The front story is never touched — a recap
+    or credits page near the FRONT sits below the half-way cutoff and is ignored, so this
+    only ever trims a genuine end-of-book tail (e.g. a G.I. Joe preview printed after the
+    letters page that the VLM mislabelled 'story')."""
+    numbers = [int(p.get("page_number", 0) or 0) for p in pages]
+    if not numbers:
+        return
+    half = max(numbers) * 0.5
+    cut: int | None = None
+    for p in pages:
+        pn = int(p.get("page_number", 0) or 0)
+        if pn > half and str(p.get("skip_reason", "")) in _TERMINAL_BACKMATTER:
+            cut = pn if cut is None else min(cut, pn)
+    if cut is None:
+        return
+    for p in pages:
+        pn = int(p.get("page_number", 0) or 0)
+        if pn <= cut or not p.get("is_story_page"):
+            continue
+        log(f"[preprocess] back-matter tail after p{cut:03d} → demoting p{pn:03d} story→skip")
+        p["page_type"] = "skip"
+        p["is_story_page"] = False
+        p["skip_reason"] = "back_matter_tail"
+        p["panels"] = []
+        h = str(p.get("content_hash", "") or "")
+        if h:
+            try:
+                save_cached(project_root, pn, h, p)
+            except Exception as exc:
+                log(f"[preprocess]   ⚠ couldn't persist tail-demotion for p{pn}: {exc}")
 
 
 def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:
@@ -389,6 +441,46 @@ def _looks_like_backmatter(corpus: str) -> bool:
     return sum(1 for p in _BACKMATTER_ROLE_PATTERNS if re.search(p, low)) >= 3
 
 
+def _vlm_text_blocks_with_magi_bboxes(vlm_text_blocks, panel_texts, magi_texts_list):
+    """VLM gives clean TEXT but NO pixel bbox; Magi gives the text-region BBOXES plus a
+    geometric panel assignment (panel_texts = box-inside-panel). Pair them PER PANEL in
+    reading order so each VLM bubble regains a bbox for the inpaint mask — without it a
+    mirrored panel shows the comic's own dialogue BACKWARDS and the text-coverage penalty
+    reads 0. No VLM-string↔Magi-box CONTENT pairing is needed; the mask only needs WHERE
+    text is, and Magi already aligned that to the panel. Magi boxes with no VLM partner
+    are appended as bbox-only blocks (empty text → inert for embed/dialog) so the mask
+    still erases ALL detected text."""
+    magi_boxes_by_panel: dict[int, list[dict]] = {}
+    for pi, t_idxs in (panel_texts or {}).items():
+        boxes = [magi_texts_list[ti].get("bbox") or {}
+                 for ti in t_idxs if 0 <= ti < len(magi_texts_list)]
+        boxes = [b for b in boxes if b.get("w") and b.get("h")]
+        boxes.sort(key=lambda b: (int(b.get("y", 0)), int(b.get("x", 0))))  # reading order
+        magi_boxes_by_panel[int(pi)] = boxes
+
+    text_blocks: list[TextBlock] = []
+    seen_per_panel: dict[int, int] = {}
+    for tb in vlm_text_blocks:
+        if not str(tb.get("text", "")).strip():
+            continue
+        pidx = int(tb.get("panel_index", -1))
+        boxes = magi_boxes_by_panel.get(pidx, [])
+        k = seen_per_panel.get(pidx, 0)
+        seen_per_panel[pidx] = k + 1
+        text_blocks.append(TextBlock(
+            panel_index=pidx,
+            text=str(tb.get("text", "")),
+            type=str(tb.get("type", "speech")),
+            speaker=tb.get("speaker") or None,
+            bbox=(boxes[k] if k < len(boxes) else {}),
+        ))
+    # Leftover Magi boxes (more detected regions than VLM bubbles) → bbox-only mask entries.
+    for pi, boxes in magi_boxes_by_panel.items():
+        for b in boxes[seen_per_panel.get(pi, 0):]:
+            text_blocks.append(TextBlock(panel_index=pi, text="", type="magi_box", bbox=b))
+    return text_blocks
+
+
 def _assemble_page_dict(
     *,
     page_number: int,
@@ -457,7 +549,6 @@ def _assemble_page_dict(
 
     if page_type == "skip":
         panel_infos: list[PanelInfo] = []
-        text_blocks: list[TextBlock] = []
         page_summary = ""
     else:
         # Per-panel cluster IDs from Magi characters inside that panel.
@@ -480,25 +571,16 @@ def _assemble_page_dict(
                 cluster_ids=cluster_ids,  # NEW v5 Phase 2
             ))
 
-        # Build text_blocks PREFERRING the VLM transcription over Magi's OCR (SWAPPED
-        # 2026-06-26): Magi's predict_ocr garbles stylized speech bubbles ("I had an
-        # epiphany at a cave! I could suck at a periper"), while the VLM (gemini) reads
-        # them cleanly. Magi is the FALLBACK when the VLM returned no text — it keeps the
-        # per-text bbox + speaker_cluster_id that the VLM blocks lack.
+        # Dialog/text, PREFERRING the VLM transcription over Magi's OCR (Magi garbles
+        # stylized bubbles: "I had an epiphany at a cave! I could suck at a periper").
+        # Built as a flat list (panel_index + Magi bbox), then NESTED into each panel's
+        # `dialog` so ALL of a panel's data lives in one object — no separate page-level
+        # text_blocks. Magi is the fallback when the VLM returned no text.
         if vlm_text_blocks:
-            text_blocks = [
-                TextBlock(
-                    panel_index=int(tb.get("panel_index", -1)),
-                    text=str(tb.get("text", "")),
-                    type=str(tb.get("type", "speech")),
-                    speaker=tb.get("speaker") or None,
-                )
-                for tb in vlm_text_blocks
-                if str(tb.get("text", "")).strip()
-            ]
+            flat = _vlm_text_blocks_with_magi_bboxes(
+                vlm_text_blocks, panel_texts, magi_texts_list)
         elif magi_texts_list:
-            text_blocks = []
-            # Reverse map: text_idx → panel_idx
+            flat = []
             text_to_panel: dict[int, int] = {}
             for pi, t_idxs in panel_texts.items():
                 for ti in t_idxs:
@@ -506,30 +588,37 @@ def _assemble_page_dict(
             for ti, tx in enumerate(magi_texts_list):
                 if not str(tx.get("ocr", "")).strip():
                     continue
-                text_blocks.append(TextBlock(
+                flat.append(TextBlock(
                     panel_index=text_to_panel.get(ti, -1),
                     text=str(tx.get("ocr", "")),
                     type=str(tx.get("type", "narration")),
-                    speaker=None,  # Magi gives cluster, not name; resolved later if cluster_to_name available
+                    speaker=None,  # Magi gives cluster, not name; resolved later if available
                     speaker_cluster_id=tx.get("speaker_cluster_id"),
                     bbox=tx.get("bbox", {}),
                 ))
         else:
-            text_blocks = []
+            flat = []
 
-        # Last-resort fill: any panel still left with a BLANK description is invisible
-        # to the embedding matcher. Synthesize one from its dialog → characters → a
-        # generic marker so every panel can be matched (the VLM empty-desc retry already
-        # ran; this catches genuinely figure-less SFX/transition panels).
-        _tb_by_panel: dict[int, list[str]] = {}
-        for tb in text_blocks:
-            t = str(getattr(tb, "text", "") or "").strip()
-            if t:
-                _tb_by_panel.setdefault(tb.panel_index, []).append(t)
+        # Nest dialog into its panel (drop panel_index — implied by nesting). Blocks the
+        # detector could not place on any panel (panel_index < 0) are dropped (rare).
+        dialog_by_panel: dict[int, list[dict]] = {}
+        for tb in flat:
+            if tb.panel_index < 0:
+                continue
+            dialog_by_panel.setdefault(tb.panel_index, []).append({
+                "text": tb.text, "type": tb.type, "speaker": tb.speaker,
+                "speaker_cluster_id": tb.speaker_cluster_id, "bbox": tb.bbox,
+            })
+        for pinfo in panel_infos:
+            pinfo.dialog = dialog_by_panel.get(pinfo.index, [])
+
+        # Last-resort fill: any panel with a BLANK description is invisible to the
+        # embedding matcher. Synthesize one from its dialog → characters → a generic marker.
         for pinfo in panel_infos:
             if str(pinfo.description or "").strip():
                 continue
-            dlg = " ".join(_tb_by_panel.get(pinfo.index, []))
+            dlg = " ".join(str(d.get("text", "")).strip() for d in pinfo.dialog
+                           if str(d.get("text", "")).strip())
             chars = ", ".join(pinfo.characters or [])
             if dlg:
                 pinfo.description = (f"{chars}: " if chars else "") + dlg[:160]
@@ -544,7 +633,7 @@ def _assemble_page_dict(
         source_image=str(image_path.resolve()),
         image_dimensions={"width": width, "height": height},
         is_story_page=(page_type == "story"),
-        page_type=page_type, panels=panel_infos, text_blocks=text_blocks,
+        page_type=page_type, panels=panel_infos,
         page_summary=page_summary, issue_label=issue_label,
         vlm_model=VLM_MODEL, vlm_model_used=vlm_model_used,
         content_hash=content_hash, preprocessing_method="magi+vlm",

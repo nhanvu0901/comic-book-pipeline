@@ -9,7 +9,7 @@ from .schema import ProposedMode
 from ._llm import call_with_chain
 
 
-_SYSTEM = """You are PanelNarrator, a script writer for 60-second YouTube Shorts / TikTok narration of comic book stories. You write in a ComicsExplained-style third-person documentary voice.
+_SYSTEM = """You are PanelNarrator, a script writer for short-form YouTube Shorts / TikTok narration of comic book stories. You write in a ComicsExplained-style third-person documentary voice.
 
 Given a comic's context and its actual page content (panels, dialog, summary), you pick the 3 narration angles that would make the BEST short from this specific story — not generic picks. For each, you provide a candidate hook line (the opening sentence of the narration) that demonstrates the angle.
 
@@ -76,7 +76,7 @@ def _build_user_prompt(comic_context: dict, story_pages: list[dict], n: int) -> 
         f"Series: {comic_context.get('series', '?')} {comic_context.get('issues', '')}".strip(),
         f"Year: {comic_context.get('year', '?')}",
         f"Writer / Artist: {comic_context.get('writer', '?')} / {comic_context.get('artist', '?')}",
-        f"Characters: {', '.join(comic_context.get('characters', [])) or '?'}",
+        f"Characters: {', '.join((c.get('name', '') if isinstance(c, dict) else str(c)) for c in comic_context.get('characters', [])) or '?'}",
     ]
     from stages.stage_1.tools.summarize_context import format_for_narration
     summary_block = format_for_narration(comic_context.get("summary") or {})
@@ -107,7 +107,7 @@ def _build_user_prompt(comic_context: dict, story_pages: list[dict], n: int) -> 
         f"COMIC CONTEXT:\n" + "\n".join(ctx_lines) + "\n\n"
         f"STORY PAGE SUMMARIES:\n{pages_block}\n\n"
         f"MODE CATALOG:\n{_CATALOG}\n\n"
-        f"TASK: Pick the {n} narration modes that would make the most compelling ≤58-second Short from THIS specific story. "
+        f"TASK: Pick the {n} narration modes that would make the most compelling Short from THIS specific story. "
         f"{panel_walk_pref}"
         f"For each, write a 1-sentence hook (the opening line of the narration, ≤20 words, punchy, drops us into the story) "
         f"and a 1-sentence rationale explaining why this mode fits this comic.\n\n"

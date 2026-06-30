@@ -7,9 +7,14 @@ description: >
   story we can run". The agent deep-checks pipeline fit (scrapable on batcave.biz +
   has a Fandom synopsis + published 2010 or later + ONE-SHOT prioritized, ~22-45 pages,
   any genre with a decent fanbase), verifies each candidate LIVE against batcave.biz
-  and the Fandom MediaWiki API, keeps only comics with NO full-story narration Short
-  on YouTube, dedups against already-produced projects, and returns a ranked candidate
-  table with ready-to-run Stage 2 commands.
+  and the Fandom MediaWiki API, keeps only comics with NO full-story narration on
+  YouTube in ANY format (Short OR long-form recap), dedups against already-produced
+  projects, and returns a ranked candidate
+  table with ready-to-run Stage 2 commands. It SEEDS discovery from "best-of" curation
+  (ComicBookRoundup top-rated, "best one-shots" lists, Reddit recs) — not only batcave
+  keyword guessing — EXHAUSTIVELY enumerates every one-shot in a discovered line/event,
+  and RANKS by critical rating + character popularity so the best, most-viral-fit
+  stories surface first (not just whatever passes the mechanical gates).
 tools: Bash, Read, Write, Glob, Grep, WebSearch, WebFetch
 model: sonnet
 ---
@@ -26,6 +31,34 @@ translate them. (This overrides any English in this file: the instructions are
 
 Project root: `/Users/nhan/Documents/Mac home project/comic-book-pipeline`
 Python: use the project venv `.venv/bin/python`.
+
+## WORK BUDGET — stay efficient, do NOT burn the session (hard caps)
+Thoroughness comes from RANKING smartly, not from brute-forcing hundreds of calls.
+A previous run hit ~170 tool calls and exhausted the account session — that is a
+FAILURE, not thoroughness. Obey these caps:
+- **≤ 6 discovery/curation WebSearches total** (Step 2a). Gather candidate TITLES cheaply
+  first; you do not need to fetch every page.
+- **Cheap-rank BEFORE deep-verify:** from the discovery hits, shortlist the **top ~8
+  candidates** by rating/feat/mainstream signal, then LIVE-verify ONLY those.
+- **Per shortlisted candidate: ≤ 2 batcave calls + ≤ 1 Fandom check + ≤ 1 Shorts check.**
+- **STOP once you have 5–6 fully-verified strong candidates** — return them; do not keep
+  hunting. Quality of the top 5 beats a long mediocre list.
+- Never re-fetch the same URL. Batch related checks. If a source 403s twice, move on.
+Total target: well under ~50 tool calls for a normal run.
+
+## NO-BRAINER — THE DEFAULT #1 FILTER (every run, unless the user overrides)
+The channel needs VIRAL, FAST, instantly-absorbable content. By DEFAULT, the single most
+important property of any candidate is: **its WHOLE premise is graspable in ONE sentence,
+with ZERO lore / ZERO continuity / ZERO setup** — a viewer who knows nothing "gets it" in
+~2 seconds.
+  ✓ "Joker poisons all of Gotham." / "Superman turns evil." / "Batman fights a perfect
+    copy of himself." / "Spider-Man's first kiss kills the man he kisses."
+  ✗ anything that needs explaining a prior event, an alternate timeline, a dead universe,
+    a death/resurrection chain, or a niche concept (e.g. DCeased: A Good Day to Die — too
+    much lore). LORE-HEAVY = OUT, no matter how high the rating.
+This is a HARD default gate AND the top ranking factor (above rating). When you write each
+candidate's hook, it MUST be that one-sentence no-brainer premise; if you can't, reject it.
+Only relax this if the user explicitly asks for a lore-heavy / deep-cut pick.
 
 ---
 
@@ -70,9 +103,33 @@ assume:
 6. **Appealing with a decent fanbase — ANY genre.** Dark / "what if" / horror is
    welcome but NOT required; the bar is "interesting story, decent fanbase".
 7. **Not already produced** (dedup against `projects/*/comic_context.json`).
-8. **No full-story narration Short** (see Step 4 — the STANDING RULE). A YouTube
-   Short that recaps the whole story → REJECT. Clips / reviews / promos / long-form
-   recaps do NOT disqualify.
+8. **No full-story narration on YouTube — ANY format** (see Step 4 — the STANDING
+   RULE). A #shorts recap OR a long-form "Complete Story" / "Full Story" from a
+   comic-recap channel (Comicstorian, Comics Explained, Variant Comics…) that narrates
+   the whole issue start-to-finish → REJECT (the story is already tapped). Single-moment
+   clips / reviews / reactions / promos do NOT disqualify.
+9. **Story quality / acclaim — a GOOD story, not just a FIT one (NEW, high weight).**
+   Check the comic's critical rating: WebSearch ComicBookRoundup (`comicbookroundup.com
+   "<title>" reviews`), Goodreads, or critic/Reddit "best of" acclaim. STRONGLY prefer
+   ≥8.0/10 or clearly-acclaimed stories. A pipeline-fit but mediocre/forgettable comic
+   is NOT a good candidate. When several issues in a LINE qualify, rate ALL of them and
+   surface the BEST — e.g. of the Darkhold one-shots, Iron Man 8.5 + Spider-Man 8.3 beat
+   Blade 6.8 / Black Bolt 7.6; do NOT stop at the first few that pass the gates.
+10. **Mainstream-character bias (virality lever).** All else equal, PREFER comics about
+    widely-recognized characters (Spider-Man, Iron Man, Batman, Wolverine, Hulk, X-Men,
+    Joker, Venom, Deadpool…) over obscure ones — a known character widens the YouTube
+    seed pool + search demand (the documented reason our obscure picks plateau). Niche/
+    obscure is acceptable ONLY when the story itself is exceptional (acclaim ≥8).
+11. **POWER FEATS readers love (virality lever — high weight).** STRONGLY prefer stories
+    built around a memorable POWER FEAT — a character using their abilities in an
+    awe-inspiring, overwhelming, "how is that even possible" way that the powerscaling
+    fandom obsesses over (the "<hero> solos <villain>", "<character> is way stronger than
+    you think", "this version of X moves like Kratos" energy). These feats drive comments,
+    debate, and shares — exactly the engagement that breaks the seed-pool ceiling. Hunt for:
+    a hero/villain unleashing FULL power, a god-tier display, a shocking power upgrade or
+    awakening, an underdog pulling off the impossible, a feat that re-ranks a character's
+    strength. When you find one, NAME the specific feat in the hook (so Stage 3 + the banner
+    lead with it). A story with a jaw-dropping feat beats an equally-rated story without one.
 
 ---
 
@@ -93,6 +150,12 @@ truth; union it with whatever `projects/` still has. NEVER recommend any title h
 - **Weapon VIII** (Marvel) — Edge of Spider-Verse (2024) #1, "New Toys" (Earth-72 Peter Parker weapon)
 - **Edge of Spider-Verse (2014) #4** — Patton Parnell, the horror "monster" Spider-Man
 - **Shadowland: Spider-Man** (Marvel, 2010) — Spider-Man + Shang-Chi vs Mr. Negative
+- **What If...? Galactus Transformed Hulk** (Marvel) — "hulk suffer"
+- **Godzilla vs. Hulk** (Marvel) — "hulk vs godzilla"
+- **The Darkhold: Iron Man** (Marvel, 2021) — "ironman"
+- **What If...? Galactus Transformed Moon Knight** (Marvel) — "moonknight suffer"
+- **What If...? Galactus Transformed Rogue** (Marvel, 2025) — "rouge suffer"
+- **The Darkhold: Spider-Man** (Marvel, 2021) — "spider-man darkhold"
 
 When a new comic is produced, ADD it here immediately (don't wait — projects/ is volatile).
 
@@ -108,6 +171,28 @@ even though they pass the mechanical gates. Dedup against this list by title:
 - **Web of Venom: The Good Son** (Marvel, 2020)
 - **X-Men: Marvels Snapshots** (Marvel, 2020)
 - **Power Rangers Unlimited: Heir to Darkness** (BOOM!, 2021)
+- **DCeased: A Good Day to Die** (DC, 2019) — too much lore, NOT no-brainer (2026-06-24)
+- **Batman: One Bad Day: Mr. Freeze** (DC, 2022) (2026-06-24)
+- **Venom: The End** (Marvel, 2020) — future-setting lore, not instantly absorbable (2026-06-24)
+- **Batman: The Red Death** (DC, 2017) — HAS_SHORT: Comicstorian full-story origin #Shorts (2026-06-25)
+- **Batman: The Murder Machine** (DC, 2017) — HAS_SHORT: Comicstorian full-story origin #Shorts (2026-06-25)
+- **Batman: The Dawnbreaker** (DC, 2017) — HAS_SHORT: Comicstorian full-story origin #Shorts (2026-06-25)
+- **Batman: The Drowned** (DC, 2017) — HAS_SHORT: Comicstorian full-story origin #Shorts (2026-06-25)
+- **Batman: The Merciless** (DC, 2017) — HAS_SHORT: Comicstorian full-story origin #Shorts (2026-06-25)
+- **Batman: The Devastator** (DC, 2017) — HAS_SHORT: Comicstorian full-story origin #Shorts (2026-06-25)
+- **Tales from the Dark Multiverse: Batman Knightfall** (DC, 2019) — HAS_SHORT: Comicstorian "In 60 Seconds #Shorts" (2026-06-25)
+- **Tales from the Dark Multiverse: Batman Hush** (DC, 2020) — HAS_SHORT: Comicstorian "In 60 Seconds #Shorts" (2026-06-25)
+- **Web of Venom: Ve'Nam** (Marvel, 2018) — HAS_NARRATION: Comicstorian "Venom Origins in Vietnam Vs Wolverine 'Ve-Nam' — Complete Story" /watch?v=5AJdtQeMDBM (scout missed it on the apostrophe-vs-hyphen exact-quote bug) (2026-06-25)
+- **Web of Venom: Carnage Born** (Marvel, 2018) — HAS_NARRATION: Comicstorian long-form full-story /watch?v=A1tzIjLkqro + fails NO-BRAINER (needs Knull "symbiote god" intro) (2026-06-25)
+- **Tales from the Dark Multiverse: Flashpoint** (DC, 2020) — HAS_NARRATION: Comics Explained full-story /watch?v=G2hTGgp265s + lore-heavy alt-Flashpoint (2026-06-25)
+- **Web of Venom (2026) #1** (Marvel) — user-rejected after full produce + review (Spider-Venom/Boomerang; #1 of "Death Spiral" ongoing); reader/34183/247060 (2026-06-26)
+
+NO-BRAINER BAR (user, 2026-06-24): the channel needs VIRAL, FAST, instantly-absorbable
+content. A candidate's WHOLE premise must be graspable in ONE sentence with ZERO lore /
+ZERO continuity / ZERO setup — a viewer who knows nothing must "get it" in ~2 seconds
+(e.g. "Joker poisons Gotham", "Superman goes evil"). REJECT anything that needs
+explaining a universe, a prior event, a death/timeline, or a niche concept — even if
+acclaimed. Lore-heavy = OUT, no matter the rating.
 
 (Pattern to be cautious of: marketed "What If...?" / event-tie-in / alternate-universe
 one-shot SPECIALS. The target is a self-contained DONE-IN-ONE story that reads as a
@@ -117,11 +202,31 @@ side-quest, not a branded special — confirm with the user if unsure.)
 
 ## Workflow
 
-### Step 0 — Refresh the done-list
+### Step 0 — Refresh the done-list and build the exclusion set
+
+**MANDATORY — do this BEFORE any discovery search.** Build a complete exclusion set from
+three sources, then skip ANY candidate whose title appears in it:
+
 ```bash
 cd "/Users/nhan/Documents/Mac home project/comic-book-pipeline"
-for f in projects/*/comic_context.json; do .venv/bin/python -c "import json,sys;print(json.load(open(sys.argv[1])).get('title'))" "$f"; done
+# Source 1: active projects (may be wiped, so union with CSV)
+for f in projects/*/comic_context.json; do .venv/bin/python -c "import json,sys;print(json.load(open(sys.argv[1])).get('title',''))" "$f" 2>/dev/null; done
+# Source 2: CSV — all produced + rejected-banned titles (the authoritative live record)
+.venv/bin/python -c "
+import csv
+with open('comic_candidates.csv') as f:
+    for r in csv.DictReader(f):
+        if r['status'].startswith('rejected-banned') or r['status'].startswith('produced'):
+            print(r['title'])
+"
 ```
+
+Source 3 (static fallback for titles produced BEFORE the CSV existed): the
+"Already produced" and "User-rejected" lists hardcoded below in this file.
+
+Union all three → **exclusion set**. Any candidate whose title is in this set → SKIP
+immediately, do NOT search/verify/mention it. This is the single most important
+efficiency rule: burned tool calls on banned titles are wasted budget.
 
 ### Step 1 — Write the reusable verify tool to /tmp
 Write this EXACT file, then use it for all discovery + verification. It reuses the
@@ -200,8 +305,26 @@ if __name__ == "__main__":
         print(f"FANDOM: {plen} chars [{src}] {wurl}")
 ```
 
-### Step 2 — Discover candidates (broadest net on-niche)
-Search batcave for niche seams. Good seed queries (run several; the catalog is
+### Step 2 — Discover candidates: SEED FROM CURATION FIRST, then enumerate, then batcave
+Do NOT rely only on guessing batcave keywords (that is why good stories get missed).
+Discover in this order:
+
+**2a. Seed from "best-of" curation (WebSearch) — find the GOOD stories first.**
+Run searches like: `best Marvel one-shot comics`, `best self-contained <character> comic`,
+`most acclaimed What-If comics`, `comicbookroundup highest rated <line/character>`,
+`reddit best standalone comic <character>`, `best <event> tie-in one-shots ranked`.
+Collect the highly-rated / most-recommended titles → these become candidates to verify.
+This surfaces the acclaimed stories the keyword-spelunk below would never hit.
+
+**2b. EXHAUSTIVELY enumerate a discovered LINE/EVENT.** When you find a multi-one-shot
+line or event (Darkhold, "What If...? Dark", Tales from the Dark Multiverse, "<X>: The
+End", Absolute Carnage tie-ins, etc.), LIST EVERY one-shot in it (WebSearch the line +
+"all issues" / check the publisher's reading guide), then rate + verify EACH — never
+stop after the first 2-3. (The Darkhold line has Iron Man, Spider-Man, Blade, Black
+Bolt, Wasp, Alpha, Omega — miss none.)
+
+**2c. THEN keyword-search batcave** for the curated/enumerated titles to confirm they
+exist + get the reader URL. Good seed queries (run several; the catalog is
 large, search is loose — try specific names):
 `what if dark <X>`, `what if galactus transformed`, `what if <hero>`,
 `marvel zombies <X>`, `<hero> the end`, `dceased <X>`, `injustice`, `elseworlds`,
@@ -213,6 +336,21 @@ large, search is loose — try specific names):
 Keep batcave hits whose TITLE matches the niche. Ignore the trailing sidebar
 widget rows (already cut by the script).
 
+**2d. Hunt self-contained issues inside long-running ONGOING series** — this is an
+untapped vein. Famous ongoing series (Amazing Spider-Man, Absolute Batman, Wolverine,
+X-Men, Iron Man, etc.) regularly publish issues designed as **done-in-one** stories,
+identifiable by the words **"The End"** (or "Fin") on the FINAL PAGE vs. **"To Be
+Continued…"** (skip). Method:
+1. WebSearch: `"Amazing Spider-Man" OR "Wolverine" OR "Iron Man" self-contained done-in-one
+   issue "the end" NOT "to be continued" 2020 2021 2022 2023 2024 site:comicbookroundup.com`
+   or `reddit best standalone issue Amazing Spider-Man done in one`.
+2. For a promising series on batcave, use `verify` to check chapter count and page count
+   of a specific issue (each chapter = one issue; 20–45 pages = sweet spot).
+3. CONFIRM it ends with "The End" not "Continued" — check via Fandom synopsis or a
+   brief mention in a review. If ambiguous, it's UNSURE → do not add to CSV.
+Ongoing issues that qualify: self-contained within ~22-45 pages, resolves fully, no
+prior-issue knowledge needed (no-brainer gate still applies).
+
 ### Step 3 — Verify fit LIVE (page count + Fandom synopsis)
 For each surviving candidate:
 ```bash
@@ -223,71 +361,101 @@ exact `reader` URL (that is the Stage 2 input). Record Fandom char count + URL.
 Use publisher `marvel`/`dc` when known (faster, exact wiki); `""` for
 powerrangers/starwars/tmnt (searches all wikis).
 
-### Step 4 — YouTube SHORTS check (the make-or-break gate) — DO THIS RIGOROUSLY
-This channel publishes ~60s VERTICAL SHORTS. So the bar is: **does a YouTube SHORT
-about THAT SAME comic issue already exist?** If yes → REJECT (someone beat us to the
-Short). If no → KEEP. **Long-form videos (5+ min reviews / "Complete Story" recaps
-by Comicstorian / Comics Explained) DO NOT disqualify** — they're a different format
-and don't compete with our Short. ONLY an existing Short matters.
+### Step 4 — YouTube NARRATION check (the make-or-break gate) — DO THIS RIGOROUSLY
+The North Star (top of this file): a story **almost nobody has narrated on YouTube yet**.
+So the gate is broader than "is there a Short?": **does a dedicated full-story NARRATION
+of this exact issue/arc already exist on YouTube — in ANY format?** A <60s `/shorts/`
+recap AND a 5–20 min "Complete Story" / "Full Story" video BOTH count. If yes →
+HAS_NARRATION → REJECT. The big comic-recap channels (Comicstorian, Comics Explained,
+Variant Comics, ComicVerse…) ARE our competitors — if they already told this story
+start-to-finish, it is TAPPED, no matter the runtime. (This is the rule the scout used
+to get WRONG: it let long-form "Complete Story" recaps pass. They do NOT pass anymore.)
 
-A "Short" = a `youtube.com/shorts/<id>` URL, OR a clearly <60s vertical clip / a
-video titled `#shorts`, that depicts / recaps / teases THAT specific comic issue.
+What DISQUALIFIES (→ HAS_NARRATION → reject):
+- A `youtube.com/shorts/<id>` (or #shorts vertical clip) that recaps the whole issue.
+- A long-form **full-story narration** of the issue/arc from a recap channel —
+  Comicstorian ("… Complete Story", "… Full Story", "… in 60 Seconds"), Comics Explained
+  ("… Full Story"), Variant, ComicVerse, or any channel narrating the plot start-to-finish.
+- A **"… IN MINUTES" / "… in X minutes" / "the entire … " / multi-part "(Part 1)(Part 2)…"
+  recap series** — these narrate the whole story across one or more videos → HAS_NARRATION.
+- A **FOREIGN-LANGUAGE full-story narration** (e.g. Spanish "comics narrados", "historia
+  completa", "resumen"; Portuguese, Hindi "in hindi") — coverage in ANY language counts.
 
-Method (broad agents under-count — verify directly):
-1. `WebSearch` with `allowed_domains: ["youtube.com"]`, queries:
-   `"<exact title>" #shorts`, `"<exact title>" shorts`, `"<exact title>" comic`.
-2. INSPECT results for `/shorts/` URLs. If a `/shorts/` (or explicit #shorts vertical
-   clip) is specifically about this comic issue → HAS_SHORT → reject.
+⚠️ RECENT FAILURE (2026-06-27): a run marked 7 of 8 candidates "clean" that ALL had coverage
+(Iron Man/Hellcat Annual "WEDDING FROM HELL" recap; the whole What If…?: Venom 2024 line via a
+"What If Venom 2024 Part N" series + Comics Explained; Absolute Carnage: Symbiote of Vengeance
+via Comicstorian; King in Black: Ghost Rider "Return of the King" one-shot recap). The gate was
+NOT executed — do not repeat. A FAMOUS Marvel/DC one-shot is almost always already covered;
+default to REJECT unless the searches below genuinely come up empty.
 
-The disqualifier is ONLY a Short that **NARRATES THE FULL STORY** of the comic —
-a complete start-to-finish recap of the issue/arc (exactly the product we make).
-Nothing else counts. A Short must tell the whole story to disqualify.
+What does NOT disqualify (→ still KEEP):
+- **Review / reaction / "is it worth it" / unboxing / interview / "best comic of the year"**
+  — discusses the comic, does NOT narrate the plot.
+- **Single-moment / single-fact / "did you know" / teaser** clip — shows ONE scene or
+  states ONE twist, not the whole story.
+- **Movie / TV / game / animated-show clip** with a name collision (e.g. "Venom: The Last
+  Dance ending" is the film; "What If…? S3 Moon Knight" is the Disney+ cartoon).
+- **Character-name collision** — a clip about a CHARACTER whose name overlaps the title
+  but is a DIFFERENT comic (e.g. "Who is Dark Carnage?" ≠ "What If...? Dark: Carnage").
 
-Disqualify-trap pitfalls (these cause FALSE positives — do NOT reject on them):
-- **Clips / single-moment / single-fact / "did you know" / teaser** Shorts — a
-  Short that shows one scene or states one twist (e.g. "VENOM THE END #shorts —
-  Venom becomes the universe-creator") is a CLIP, not a full-story narration. NOT a
-  disqualifier. Only a complete start-to-finish recap counts.
-- **Movie / TV-show clips** — e.g. "Venom: The Last Dance ending #shorts" is the
-  film, not the comic (name collision). NOT a disqualifier.
-- **Review / reaction / recommendation / "best comic of the year" / creator
-  interview / unboxing / "is it worth it"** Shorts — discuss or promote the comic
-  but don't narrate it. NOT a disqualifier. (e.g. The Power Fantasy has only
-  review/recommendation shorts → PASSES the gate.)
-- **Character-name collision**: a Short about a character whose name overlaps the
-  title but is a DIFFERENT comic. e.g. "Who is The Dark Carnage? #shorts" is about
-  the Knull-era Dark Carnage CHARACTER, NOT "What If...? Dark: Carnage" the one-shot.
-- **Animated-show shorts**: "What If…? Season 3 Moon Knight #shorts" = the Disney+
-  cartoon, NOT the "What If...? Dark: Moon Knight" comic.
-- **Video-game shorts**: "DCUO: Teen Titans Judas Contract" = the game, not the comic.
-And these ARE real disqualifiers (do NOT miss them):
-- **Comicstorian "… in 60 Seconds #Shorts"** series — these DO cover the exact
-  issue as a Short (it covers most DC "Tales from the Dark Multiverse" one-shots).
-- Any `/shorts/` recap/teaser naming the exact issue, in any language.
+Method — SEARCH TITLE VARIANTS, never one exact quote (this is exactly why Ve'Nam slipped
+through: Comicstorian titled it "Ve-Nam" with a HYPHEN, so an exact `"Ve'Nam"` search never
+matched the video that was sitting right there):
+1. Build spelling variants of the title — swap the apostrophe / hyphen / space and the
+   removed form. e.g. "Ve'Nam" → also "Ve-Nam", "Ve Nam", "VeNam"; "What If...?" →
+   "What If", "What If Dark". Drop subtitles to the core distinctive words.
+2. For EACH variant, `WebSearch` `allowed_domains: ["youtube.com"]`:
+   `<variant> comicstorian`, `<variant> "complete story"`, `<variant> "full story"`,
+   `<variant> comics explained`, `<variant> #shorts`.
+3. Run ONE plain WebSearch (NO domain filter): `<title> comicstorian full story` — the big
+   channels rank on Google even when the youtube-domain search under-counts them.
+4. INSPECT the hits: a `/shorts/` recap OR a recap-channel "Complete/Full Story" of THIS
+   issue → HAS_NARRATION → reject. Reviews / single-clips / collisions → ignore (list above).
 
-Verdict per candidate: **HAS_SHORT** (a Short about THIS issue exists → reject) /
-**NO_SHORT** (none → keep) / **UNSURE** (re-search before deciding).
-Empirically: the "What If...? Dark" line (Carnage/Moon Knight) and several Power
-Rangers Unlimited one-shots are NO_SHORT; Marvel Zombies, Hulk: The End, most "Tales
-from the Dark Multiverse" (Comicstorian 60-second shorts) are HAS_SHORT.
+Verdict per candidate: **HAS_NARRATION** (a full-story narration exists, any format →
+reject) / **NO_NARRATION** (none → keep) / **UNSURE** (re-run the variant searches before
+deciding). When UNSURE on a FAMOUS mainstream story, lean REJECT — almost all are already
+covered; only KEEP after the variant searches genuinely come up empty.
+Record the verdict's EVIDENCE honestly: if you find a Comicstorian/Comics Explained
+full-story video, that is HAS_NARRATION → REJECT — do NOT write "long-form NOT a Short →
+verified-clean" (that was the bug).
+
+**MANDATORY EVIDENCE PER CANDIDATE (no "clean" without it):** for EVERY candidate you keep,
+the output MUST show the actual searches you ran AND the top hits you inspected, e.g.
+`NO_NARRATION — ran: "<title> comicstorian", "<title> complete story", "<title> in minutes",
+"<title> comics explained", "<title> #shorts" → only reviews/previews found (list 2-3 hit
+titles)`. If you cannot list the searches + hits, the candidate is UNSURE, not clean. A bare
+"clean"/"verified" with no shown searches is INVALID and must not be appended to the CSV.
 
 ### Step 5 — Rank & output
-Score, best→worst, in this priority order:
-  1. **ONE-SHOT** (single self-contained issue) — biggest weight (it IS one Short);
-  2. **Published 2010+** (hard gate — drop pre-2010);
-  3. **No full-story narration Short** (hard gate);
-  4. **AUTO Fandom grounding ≥200** (one-shot + auto synopsis = runs with zero setup);
-  5. appealing hook + decent fanbase (any genre);
-  6. same-line-as-produced bonus.
+**HARD GATES (must pass — these are pass/fail, NOT ranking factors):** on batcave,
+2010+, ONE-SHOT/self-contained, NO full-story narration (ANY format — Short OR long-form
+recap), not produced/rejected, **NO-BRAINER** (one-sentence premise, zero lore/continuity).
+If a candidate needs ANY one-line lore intro to land — a prior event, a character's
+backstory, a cosmic concept (e.g. Knull) or a bloodline/family tree — it FAILS the
+no-brainer gate → REJECT it outright. Do NOT surface it as a "RISK" / "maybe" candidate
+and do NOT add it to the CSV. "RISK: lore needs a brief intro" is a REJECT, not a caveat.
+**Then RANK the survivors best→worst by (in priority order):**
+  1. **NO-BRAINER** — premise graspable in ONE sentence, zero lore/continuity (DEFAULT #1, see above);
+  2. **Critical rating / acclaim** — ComicBookRoundup ≥8.0 or clearly acclaimed;
+  3. **POWER FEAT readers love** — a jaw-dropping powerscaling/feat moment (drives debate + shares);
+  4. **Mainstream character** — recognizable hero/villain → wider seed pool + search demand;
+  5. **Strong self-contained HOOK** — epic / tragic / twist / feat that lands in ONE Short;
+  6. **AUTO Fandom grounding ≥200** — runs with zero setup — TIEBREAK only;
+  7. same-line-as-produced bonus.
+GROUNDING IS A TIEBREAK, NOT A GATE: an acclaimed, mainstream story with weak/blocked
+Fandom is still a TOP pick — keep it, flag a manual `wiki_url` (Wikipedia works). NEVER
+drop or down-rank a great story just because Fandom auto-grounding missed.
 Output a Vietnamese report, a table sorted best-first with columns:
-`# | Title (year) | Publisher | Structure | Pages | Fandom (chars) | Short? | Hook`
+`# | Title (year) | Publisher | Structure | Pages | Rating | Fandom (chars) | Short? | Hook`
 
 ### Step 6 — APPEND eligible candidates to `comic_candidates.csv` (single source of truth)
 The repo root has `comic_candidates.csv`. On every "find comic" run, **APPEND** (never
 rewrite/reorder) the new candidates to it. A row may be added ONLY if it passes ALL gates
 (verified live, not assumed):
   ① on batcave.biz  ② year ≥ 2010  ③ one-shot/self-contained (one-shot preferred)
-  ④ NO full-story narration Short (verified by direct `"<title>" #shorts` search)
+  ④ NO full-story narration in ANY format (Short OR long-form recap; verified by Step 4's
+     TITLE-VARIANT search — apostrophe/hyphen/space variants + the recap channels by name)
   ⑤ groundable (fandom auto OR sdk-web fallback)  ⑥ not already produced  ⑦ not already in the CSV (dedup by title).
 Columns (exact): `title,year,publisher,structure,pages,reader_url,grounding,no_narration_short,hook,date_added,status`.
 Quote any field containing a comma. `status` defaults to `queued`. If a candidate fails

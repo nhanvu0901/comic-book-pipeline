@@ -19,10 +19,15 @@ class PanelInfo:
     cluster_ids: list[int] = field(default_factory=list)
     # cluster_id → name mapping is per-project, not per-panel; resolved during
     # Stage 5 scoring via projects/<name>/cluster_to_name.json
+    # All of this panel's text lives HERE (nested, 2026-06-27) — no separate page-level
+    # text_blocks. Each entry: {text, type, speaker, speaker_cluster_id, bbox}.
+    dialog: list = field(default_factory=list)
 
 
 @dataclass
 class TextBlock:
+    # Internal-only intermediate while assembling a page (no longer a top-level page
+    # field — dialog is nested under PanelInfo.dialog). Kept for the Magi/VLM bbox merge.
     panel_index: int                # which panel this text belongs to (-1 if unassigned)
     text: str
     type: str = "speech"            # speech | narration | sfx | caption
@@ -40,7 +45,11 @@ class PreprocessedPage:
     is_story_page: bool             # True only for page_type=="story" (used by Stage 3 narration)
     page_type: str = "story"        # "cover" | "story" | "skip"
     panels: list[PanelInfo] = field(default_factory=list)
-    text_blocks: list[TextBlock] = field(default_factory=list)
+    # DEPRECATED for comic Stage 2 — dialog now lives nested in PanelInfo.dialog (2026-06-27).
+    # The comic assembler leaves this empty; kept only because the art_pipeline (read-only on
+    # comic code) still constructs PreprocessedPage(text_blocks=[]). page_dialog()/panel_dialog()
+    # read panels[].dialog first, falling back to this for old cached pages.
+    text_blocks: list = field(default_factory=list)
     page_summary: str = ""
     issue_label: str = ""           # e.g. "#1", "chapter 5"
     vlm_model: str = ""
