@@ -12,6 +12,11 @@ Two flows:
   2. URL-direct — skip Stage 1 entirely. Paste a series URL + issues, OR
      a list of reader URLs. Auto-bootstraps a minimal comic_context.json,
      enriches it from wiki/fandom (silent), downloads, then preprocesses.
+     NOTE: if the resolved range covers >1 chapter (e.g. --issues "#1-3", or
+     2+ --reader-urls), enrichment automatically builds a per-issue arc
+     context (is_arc/issue_count/issues[]) — same as --saga. --saga differs
+     only in that it auto-discovers the chapter list for you (capped at
+     --max-issues) instead of requiring an explicit --issues range.
 
        # Series + range
        python -m stages.stage_2 --project venom \\
@@ -38,7 +43,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from .pipeline import preprocess_project
-from .url_mode import download_from_readers, download_from_series, download_saga
+from .url_mode import (
+    classify_url, download_from_readers, download_from_series, download_saga,
+    download_saga_from_readers,
+)
 
 
 def main():
@@ -59,6 +67,10 @@ def main():
           # URL-direct: multiple reader URLs
           python -m stages.stage_2 --project venom \\
               --reader-urls "https://batcave.biz/reader/6587/34073" "https://batcave.biz/reader/6587/34074"
+
+          # Crossover-saga: N reader URLs (one issue each) woven into one arc
+          python -m stages.stage_2 --project crossover \\
+              --saga "https://batcave.biz/reader/100/1" "https://batcave.biz/reader/100/2"
         """),
     )
     parser.add_argument("--project", required=True, help="Project name (folder under projects/)")
@@ -71,9 +83,11 @@ def main():
                            help="batcave.biz series URL — pairs with --issues")
     url_group.add_argument("--reader-urls", nargs="+", metavar="URL",
                            help="One or more batcave.biz reader URLs (each = 1 issue)")
-    url_group.add_argument("--saga", metavar="SERIES_URL",
-                           help="batcave.biz SERIES url → crossover-saga mode "
-                                "(≤--max-issues sequential issues woven into one Short)")
+    url_group.add_argument("--saga", metavar="URL", nargs="+",
+                           help="crossover-saga mode, woven into one arc context: "
+                                "ONE batcave.biz series URL (≤--max-issues sequential "
+                                "issues auto-resolved) OR multiple batcave.biz reader "
+                                "URLs (one issue per URL)")
 
     parser.add_argument("--issues", default="",
                         help="Issues range/list when --url is given (e.g. '#1-3', '#1,#3,#5')")
@@ -91,9 +105,21 @@ def main():
         if using_url_mode:
             enrich = not args.no_enrich
             if args.saga:
-                summary = download_saga(
-                    args.project, args.saga, max_issues=args.max_issues, progress=print,
-                )
+                # --saga now takes 1+ URLs (nargs="+"): a lone series URL keeps
+                # today's auto-resolve-≤max-issues behavior; N reader URLs route
+                # to the reader-URL twin (mirrors ui/bridge.py's saga dispatch).
+                kinds = {classify_url(u) for u in args.saga}
+                if len(args.saga) == 1 and "series" in kinds:
+                    summary = download_saga(
+                        args.project, args.saga[0], max_issues=args.max_issues, progress=print,
+                    )
+                elif kinds == {"reader"}:
+                    summary = download_saga_from_readers(
+                        args.project, args.saga, progress=print,
+                    )
+                else:
+                    raise ValueError(
+                        f"--saga needs ONE series URL or N reader URLs, got: {args.saga!r}")
                 print(f"  saga: {summary.get('issue_count', '?')} issue(s) ingested")
             elif args.url:
                 summary = download_from_series(

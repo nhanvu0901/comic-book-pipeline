@@ -36,6 +36,35 @@ _BACKMATTER_TAIL = 4
 # process the head one-by-one too. Covers a cover + a short cold open + the title page.
 _FRONTMATTER_HEAD = 8
 
+# Multi-issue (saga) equivalents of the two doc-level windows above: a saga flattens
+# N issues into one GLOBAL page list (see the flatten loop below), so issue 2..N's own
+# cover/recap and issue 1..N-1's own letters/ads sit MID-document, outside the doc-level
+# HEAD/TAIL windows, and get batched with running narrative state instead of processed
+# single-page — mislabel risk. Smaller than the doc-level 8/4 (cap VLM cost; only used
+# when a page's OWN issue actually needs the no-continuity-bias treatment).
+_ISSUE_FRONTMATTER_HEAD = 3
+_ISSUE_BACKMATTER_TAIL = 2
+
+
+def _page_state_issue_bounds(page_states: list[dict]) -> dict[str, tuple[int, int]]:
+    """Map issue label -> (first global pn, last global pn) among `page_states` (the
+    pre-VLM {"pn","label",...} records built by the flatten loop). Same idea as
+    _issue_page_ranges() below but keyed off page_states' field names, since this runs
+    BEFORE any final page dict exists."""
+    bounds: dict[str, tuple[int, int]] = {}
+    for s in page_states:
+        lo, hi = bounds.get(s["label"], (s["pn"], s["pn"]))
+        bounds[s["label"]] = (min(lo, s["pn"]), max(hi, s["pn"]))
+    return bounds
+
+
+def _is_near_own_issue_edge(pn: int, label: str, bounds: dict[str, tuple[int, int]]) -> bool:
+    """True when page `pn` sits within _ISSUE_FRONTMATTER_HEAD of its OWN issue's first page,
+    or within _ISSUE_BACKMATTER_TAIL of its OWN issue's last page — Fix 3's saga-aware
+    equivalent of the doc-level `i < _FRONTMATTER_HEAD or i >= n - _BACKMATTER_TAIL` gate."""
+    lo, hi = bounds.get(label, (pn, pn))
+    return pn - lo < _ISSUE_FRONTMATTER_HEAD or hi - pn < _ISSUE_BACKMATTER_TAIL
+
 # Description↔bbox verify gate (crop + look ground-truth check — see vlm_extract.
 # verify_page_descriptions). Default ON; DESC_VERIFY=0/false disables.
 DESC_VERIFY = os.getenv("DESC_VERIFY", "1").strip().lower() not in ("0", "false", "no", "")
@@ -116,6 +145,13 @@ def preprocess_project(
     log(f"[preprocess] cache: {cached_count}/{len(page_states)} pages have valid results — "
         f"{len(page_states) - cached_count} need VLM")
 
+    # Per-issue (start_pn, end_pn) bounds, keyed off page_states so Fix 3 below can tell
+    # whether page i sits near the start/end of ITS OWN issue. Single-issue projects get
+    # exactly one entry here, so `_multi_issue` is False and the per-issue window never
+    # fires — the loop below falls through to the original doc-level-only gate untouched.
+    _issue_bounds = _page_state_issue_bounds(page_states)
+    _multi_issue = len(_issue_bounds) > 1
+
     # ── Phase 2: walk pages in order, batching uncached runs ──
     # Overlap pattern: each batch carries the IMMEDIATELY PRIOR page (its full extracted
     # data + image) as context. The prior page is NOT re-processed (first-wins lock-in)
@@ -147,12 +183,21 @@ def preprocess_project(
         # outro). Single-page extract_page() has no continuity bias and is
         # verified to classify these correctly (credits -> skip/solicit_credits),
         # so we process the trailing pages one-by-one via the per-page path.
-        if i < _FRONTMATTER_HEAD or i >= n - _BACKMATTER_TAIL:
+        # Fix 3: a page near the START or END of ITS OWN issue (saga only — see
+        # _multi_issue above) gets the same no-continuity-bias single-page treatment as
+        # the doc-level head/tail, even though it sits mid-document globally.
+        _near_issue_edge = _multi_issue and _is_near_own_issue_edge(s["pn"], s["label"], _issue_bounds)
+        if i < _FRONTMATTER_HEAD or i >= n - _BACKMATTER_TAIL or _near_issue_edge:
             s = page_states[i]
             with Image.open(s["img"]) as im:
                 dims = im.size
             magi = detect_full(s["img"])
-            _where = "front-matter head" if i < _FRONTMATTER_HEAD else "back-matter tail"
+            if i < _FRONTMATTER_HEAD:
+                _where = "front-matter head"
+            elif i >= n - _BACKMATTER_TAIL:
+                _where = "back-matter tail"
+            else:
+                _where = "own-issue edge"
             log(f"[preprocess]   p{s['pn']:03d}: Magi → {len(magi['panels'])} panel(s) "
                 f"({_where} → single-page, no batch)")
             page_dict = _build_page_from_single(
@@ -315,18 +360,47 @@ def _resolve_clusters_after_preprocess(
         log(f"[preprocess]   cluster naming failed: {type(exc).__name__}: {exc}")
 
 
+def _issue_page_ranges(pages: list[dict]) -> dict[str, tuple[int, int]]:
+    """Map issue_label -> (first global page_number, last global page_number) among `pages`.
+    Feeds the multi-issue-aware guards below: each looks at a page's position within its OWN
+    issue's range instead of the whole flattened saga doc. A single-issue project has exactly
+    one label, so its range == the whole doc — callers gate on `len(ranges) > 1` to fall back
+    to the original doc-level-only behaviour unchanged (byte-identical)."""
+    ranges: dict[str, tuple[int, int]] = {}
+    for p in pages:
+        label = str(p.get("issue_label", "") or "")
+        pn = int(p.get("page_number", 0) or 0)
+        lo, hi = ranges.get(label, (pn, pn))
+        ranges[label] = (min(lo, pn), max(hi, pn))
+    return ranges
+
+
 def _reclassify_mid_doc_covers(
     pages: list[dict], project_root: Path, log: Callable[[str], None]
 ) -> None:
-    """A real cover sits at the edges of the issue. A page tagged 'cover' in the middle is almost always a misclassified splash — flip it to story so Narration can use it."""
+    """A real cover sits at the edges of the issue. A page tagged 'cover' in the middle is
+    almost always a misclassified splash — flip it to story so Narration can use it.
+
+    Multi-issue (saga) awareness: 'the edges' means the edges of the WHOLE flattened doc only
+    for a single issue. In a saga, issue 2..N each have their own legitimate front cover sitting
+    mid-document (global pn > 2) — the doc-level check flipped those real covers to story,
+    polluting the panel pool/cold-open. Fix: a cover within the first ~2 pages of ITS OWN
+    issue_label range is still legitimate; only a cover mid-ISSUE (the original bug) flips.
+    Single issue → one range == the whole doc → identical to the original check."""
     total = max((int(p.get("page_number", 0) or 0) for p in pages), default=0)
     if total < 5:
         return
+    ranges = _issue_page_ranges(pages)
+    multi_issue = len(ranges) > 1
     for p in pages:
         if p.get("page_type") != "cover":
             continue
         pn = int(p.get("page_number", 0) or 0)
-        if pn <= 2 or pn >= total:
+        if multi_issue:
+            issue_start, _issue_end = ranges.get(str(p.get("issue_label", "") or ""), (pn, pn))
+            if pn - issue_start <= 1 or pn >= total:
+                continue
+        elif pn <= 2 or pn >= total:
             continue
         log(f"[preprocess] mid-doc cover at p{pn:03d}/{total} → reclassifying to story (Option 1 heuristic)")
         p["page_type"] = "story"
@@ -383,6 +457,22 @@ _TERMINAL_BACKMATTER = {
 }
 
 
+def _demote_backmatter_tail_one(p: dict, project_root: Path, cut: int, log: Callable[[str], None]) -> None:
+    """Shared demotion body for `_demote_backmatter_tail`'s single-issue and per-issue paths."""
+    pn = int(p.get("page_number", 0) or 0)
+    log(f"[preprocess] back-matter tail after p{cut:03d} → demoting p{pn:03d} story→skip")
+    p["page_type"] = "skip"
+    p["is_story_page"] = False
+    p["skip_reason"] = "back_matter_tail"
+    p["panels"] = []
+    h = str(p.get("content_hash", "") or "")
+    if h:
+        try:
+            save_cached(project_root, pn, h, p)
+        except Exception as exc:
+            log(f"[preprocess]   ⚠ couldn't persist tail-demotion for p{pn}: {exc}")
+
+
 def _demote_backmatter_tail(
     pages: list[dict], project_root: Path, log: Callable[[str], None]
 ) -> None:
@@ -391,33 +481,52 @@ def _demote_backmatter_tail(
     terminal reason, no per-issue constants. The front story is never touched — a recap
     or credits page near the FRONT sits below the half-way cutoff and is ignored, so this
     only ever trims a genuine end-of-book tail (e.g. a G.I. Joe preview printed after the
-    letters page that the VLM mislabelled 'story')."""
+    letters page that the VLM mislabelled 'story').
+
+    Multi-issue (saga) awareness: a GLOBAL half-cutoff mis-fires on sagas. Simulated case
+    that shipped broken: a 5-issue saga at 18pp/issue (90 pages total), each issue ending
+    with its own "to be continued" terminal back-matter page — global half=45, so the FIRST
+    terminal page found anywhere past p45 (issue #3's own tail, ~p50) demoted every story
+    page after it, wiping issues #4 and #5 wholesale (51/85 story pages survived instead of
+    ~85). Fix: compute the half-cutoff and tail-demotion WITHIN each issue_label's own page
+    range, so issue #4/#5's own tails are found (and only THEIR own tails trimmed) instead
+    of inheriting issue #3's cutoff. Single issue → one range == the whole doc → runs the
+    untouched original algorithm (byte-identical)."""
     numbers = [int(p.get("page_number", 0) or 0) for p in pages]
     if not numbers:
         return
-    half = max(numbers) * 0.5
-    cut: int | None = None
-    for p in pages:
-        pn = int(p.get("page_number", 0) or 0)
-        if pn > half and str(p.get("skip_reason", "")) in _TERMINAL_BACKMATTER:
-            cut = pn if cut is None else min(cut, pn)
-    if cut is None:
+    ranges = _issue_page_ranges(pages)
+    if len(ranges) <= 1:
+        half = max(numbers) * 0.5
+        cut: int | None = None
+        for p in pages:
+            pn = int(p.get("page_number", 0) or 0)
+            if pn > half and str(p.get("skip_reason", "")) in _TERMINAL_BACKMATTER:
+                cut = pn if cut is None else min(cut, pn)
+        if cut is None:
+            return
+        for p in pages:
+            pn = int(p.get("page_number", 0) or 0)
+            if pn <= cut or not p.get("is_story_page"):
+                continue
+            _demote_backmatter_tail_one(p, project_root, cut, log)
         return
-    for p in pages:
-        pn = int(p.get("page_number", 0) or 0)
-        if pn <= cut or not p.get("is_story_page"):
+
+    for label, (lo, hi) in ranges.items():
+        issue_pages = [p for p in pages if str(p.get("issue_label", "") or "") == label]
+        half = lo + (hi - lo) * 0.5
+        cut: int | None = None
+        for p in issue_pages:
+            pn = int(p.get("page_number", 0) or 0)
+            if pn > half and str(p.get("skip_reason", "")) in _TERMINAL_BACKMATTER:
+                cut = pn if cut is None else min(cut, pn)
+        if cut is None:
             continue
-        log(f"[preprocess] back-matter tail after p{cut:03d} → demoting p{pn:03d} story→skip")
-        p["page_type"] = "skip"
-        p["is_story_page"] = False
-        p["skip_reason"] = "back_matter_tail"
-        p["panels"] = []
-        h = str(p.get("content_hash", "") or "")
-        if h:
-            try:
-                save_cached(project_root, pn, h, p)
-            except Exception as exc:
-                log(f"[preprocess]   ⚠ couldn't persist tail-demotion for p{pn}: {exc}")
+        for p in issue_pages:
+            pn = int(p.get("page_number", 0) or 0)
+            if pn <= cut or not p.get("is_story_page"):
+                continue
+            _demote_backmatter_tail_one(p, project_root, cut, log)
 
 
 def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:

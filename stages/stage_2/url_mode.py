@@ -100,10 +100,25 @@ def download_from_series(
         log=log,
     )
 
-    if enrich:
-        ctx = _enrich_context_silent(ctx, project_root=project_root, log=log)
+    chapters = resolve_chapters(series_url, issues)
+    if not chapters:
+        raise RuntimeError(f"No chapters resolved for issues={issues!r} at {series_url}")
+    log(f"[url-mode] resolved {len(chapters)} chapter(s)")
 
-    return _do_series_download(project_name, series_url, issues, ctx, log=log)
+    if enrich:
+        if len(chapters) > 1:
+            # >1 chapter downloaded here IS an arc, same as --saga — route through
+            # _enrich_issues (not the single-issue enrich) so Stage 3 gets
+            # is_arc/issue_count/issues[]. Without this, anyone using
+            # --url ... --issues "#1-3" (instead of --saga) silently lost all
+            # arc handling downstream.
+            for i, ch in enumerate(chapters, start=1):
+                ch["chapter_index"] = i
+            ctx = _enrich_issues(ctx, chapters, project_root=project_root, log=log)
+        else:
+            ctx = _enrich_context_silent(ctx, project_root=project_root, log=log)
+
+    return _run_downloads(project_name, project_root, chapters, log)
 
 
 # ─── Reader URLs form ───────────────────────────────────────────────────────
@@ -203,10 +218,18 @@ def download_from_readers(
         log=log,
         extra=extra,
     )
-    if enrich:
-        ctx = _enrich_context_silent(ctx, project_root=project_root, log=log)
 
-    return _do_reader_download(project_name, urls, log=log)
+    chapters = _reader_url_chapters(urls)
+    if enrich:
+        if len(urls) > 1:
+            # >1 reader URL IS an arc, same as --saga-from-readers — see
+            # download_from_series for why this must be _enrich_issues, not
+            # the single-issue enrich.
+            ctx = _enrich_issues(ctx, chapters, project_root=project_root, log=log)
+        else:
+            ctx = _enrich_context_silent(ctx, project_root=project_root, log=log)
+
+    return _run_downloads(project_name, project_root, chapters, log)
 
 
 # ─── Crossover-saga ingest ──────────────────────────────────────────────────
@@ -272,14 +295,7 @@ def download_saga_from_readers(
     meta = _chapter_meta_from_reader(urls[0], log)
     title_hint = (meta.get("title") or "").strip() or project_name.replace("_", " ").title()
 
-    chapters = []
-    for i, url in enumerate(urls, start=1):
-        m = _READER_URL_RE.match(url)
-        chap_id = int(m.group(2)) if m else i
-        chapters.append({
-            "label": f"#{i}", "number": float(i),
-            "reader_url": url, "chapter_id": chap_id, "chapter_index": i,
-        })
+    chapters = _reader_url_chapters(urls)
     log(f"[saga] '{title_hint}': {len(chapters)} reader URL(s) → per-issue arc")
 
     ctx = _write_minimal_context(
@@ -300,6 +316,20 @@ def _ensure_project_root(project_name: str) -> Path:
     project_root = get_project_dirs(project_name)["root"]
     project_root.mkdir(parents=True, exist_ok=True)
     return project_root
+
+
+def _reader_url_chapters(urls: list[str]) -> list[dict]:
+    """One chapter dict per reader URL — shared by download_from_readers and
+    download_saga_from_readers (both treat each reader URL as one issue)."""
+    chapters = []
+    for i, url in enumerate(urls, start=1):
+        m = _READER_URL_RE.match(url)
+        chap_id = int(m.group(2)) if m else i
+        chapters.append({
+            "label": f"#{i}", "number": float(i),
+            "reader_url": url, "chapter_id": chap_id, "chapter_index": i,
+        })
+    return chapters
 
 
 def _write_minimal_context(
@@ -516,46 +546,6 @@ def _enrich_issues(
         json.dumps(ctx, indent=2, ensure_ascii=False)
     )
     return ctx
-
-
-def _do_series_download(
-    project_name: str,
-    series_url: str,
-    issues: str,
-    ctx: dict,
-    *,
-    log: Callable[[str], None],
-) -> dict:
-    """Resolve chapters via discover_issues, download each."""
-    from .issue_resolver import resolve_chapters
-
-    project_root = get_project_dirs(project_name)["root"]
-    chapters = resolve_chapters(series_url, issues)
-    if not chapters:
-        raise RuntimeError(f"No chapters resolved for issues={issues!r} at {series_url}")
-    log(f"[url-mode] resolved {len(chapters)} chapter(s)")
-    return _run_downloads(project_name, project_root, chapters, log)
-
-
-def _do_reader_download(
-    project_name: str,
-    reader_urls: list[str],
-    *,
-    log: Callable[[str], None],
-) -> dict:
-    """Each reader URL = one chapter; no discover_issues call."""
-    project_root = get_project_dirs(project_name)["root"]
-    chapters = []
-    for i, url in enumerate(reader_urls, start=1):
-        m = _READER_URL_RE.match(url)
-        chap_id = int(m.group(2)) if m else i
-        chapters.append({
-            "label": f"#{i}",
-            "number": float(i),
-            "reader_url": url,
-            "chapter_id": chap_id,
-        })
-    return _run_downloads(project_name, project_root, chapters, log)
 
 
 def _run_downloads(
