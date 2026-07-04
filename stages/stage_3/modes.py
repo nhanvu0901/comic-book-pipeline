@@ -80,6 +80,14 @@ MODES: list[NarrationMode] = [
         "Power Ranking",
         "Analyze the feats shown to justify where the character ranks among their peers.",
     ),
+    NarrationMode(
+        "explore_answer",
+        "Explore Answer (Q&A)",
+        "INTERNAL — only used by the automated multi-comic Q&A research pipeline "
+        "(a trivia question answered as a countdown across several source comics). "
+        "Requires a pre-built answer_context.json; never propose this for a normal "
+        "single-comic retelling.",
+    ),
 ]
 
 

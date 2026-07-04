@@ -232,6 +232,38 @@ def download_from_readers(
     return _run_downloads(project_name, project_root, chapters, log)
 
 
+def download_readers_only(
+    project_name: str,
+    reader_urls: list[str],
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
+    """Download reader URLs as ordered chapters, WITHOUT any enrich step.
+
+    Built for explore_answer (Q&A) mode: the calling orchestrator has already
+    built comic_context.json itself (question + researched countdown items,
+    reader_urls in order) via stages.stage_1.answer_research.build_contexts.
+    Every other entry point in this module calls _enrich_issues /
+    _enrich_context_silent afterward, which OVERWRITES plot_summary/summary
+    with a single comic's wiki plot — that would clobber the researched
+    answer context (a Q&A digest has no single issue's "plot" to fetch, it
+    cites N different comics). This wrapper only downloads pages and writes
+    raw_comic/manifest.json; it never touches comic_context.json.
+    """
+    log = progress or print
+    urls = [u.strip() for u in reader_urls if u and u.strip()]
+    if not urls:
+        raise ValueError("download_readers_only: empty URL list")
+    for u in urls:
+        if classify_url(u) != "reader":
+            raise ValueError(f"Not a batcave.biz reader URL: {u}")
+
+    project_root = _ensure_project_root(project_name)
+    chapters = _reader_url_chapters(urls)
+    log(f"[url-mode] explore_answer: {len(urls)} reader URL(s), no enrich")
+    return _run_downloads(project_name, project_root, chapters, log)
+
+
 # ─── Crossover-saga ingest ──────────────────────────────────────────────────
 
 

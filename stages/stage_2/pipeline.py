@@ -581,6 +581,15 @@ def _run_identity_repair(
         ctx = json.loads(ctx_path.read_text())
     except json.JSONDecodeError:
         return
+    if ctx.get("plot_source") == "answer_research":
+        # explore_answer (Q&A) mode: comic_context.json's "plot" is a countdown
+        # digest across N different comics, built by Stage-1 web research, not
+        # this project's own pages. plot_agrees_with_pages() below compares
+        # proper-noun overlap against ONE issue's panels — a legitimate Q&A
+        # digest will share few nouns with any single cited issue, so the gate
+        # would false-trigger and clobber the researched answer with that one
+        # issue's plot. Skip identity repair entirely for this plot_source.
+        return
     if ctx.get("plot_source") == "panels" and not force_refresh:
         return
 

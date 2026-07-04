@@ -665,6 +665,18 @@ def write_script(
     if mode not in MODES_BY_KEY:
         raise ValueError(f"Unknown mode: {mode!r}. Valid: {sorted(MODES_BY_KEY)}")
 
+    # explore_answer is a wholly different writer path (deterministic beats from
+    # a Q&A research file, not an LLM-outlined single comic) — dispatch BEFORE any
+    # narrate-mode machinery runs so this mode never touches it. See
+    # EXPLORE_ANSWER_DESIGN.md.
+    if mode == "explore_answer":
+        from .explore_answer import write_explore_answer
+        return write_explore_answer(
+            comic_context, story_pages, mode, hook_hint,
+            all_pages=all_pages, model=model, progress=progress,
+            debug_dump=debug_dump, direction=direction,
+        )
+
     log = progress or (lambda _msg: None)
     dump = debug_dump if debug_dump is not None else {}
     direction = direction or {}
