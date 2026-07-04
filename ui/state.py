@@ -19,7 +19,8 @@ STAGE_NAMES = {
     3: "Preprocess Pages",
     4: "Narration Script",
     5: "TTS Audio",
-    6: "Final Video",
+    6: "Review & Edit",
+    7: "Final Video",
 }
 
 
@@ -53,7 +54,7 @@ class AppState:
     def mark_dirty(self, stage: int) -> None:
         self.dirty[str(stage)] = True
         # Cascade: all later stages are also dirty (output depends on this)
-        for s in range(stage + 1, 7):
+        for s in range(stage + 1, 8):
             if self.approved.get(str(s)):
                 self.dirty[str(s)] = True
 

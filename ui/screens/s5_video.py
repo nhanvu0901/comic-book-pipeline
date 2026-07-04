@@ -85,7 +85,7 @@ def build(
         status_text.color = SUCCESS
         _mount_video(p)
 
-        state.mark_approved(6)
+        state.mark_approved(7)
         save_state(state)
         page.update()
         on_state_change()
@@ -174,7 +174,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 6 OF 6", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 7 OF 7", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "1080×1920 9:16 H.264 MP4 with Ken Burns on panels, MrBeast-style "

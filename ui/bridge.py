@@ -294,6 +294,179 @@ def run_stage_5(project_name: str, log: Callable[[str], None]) -> str:
     return str(final)
 
 
+# ─── Stage 6: Review & Edit (storyboard) ───────────────────────────────────
+
+THUMB_WIDTH = 420
+
+
+def _pages_by_number(project_name: str) -> dict[int, dict]:
+    """Preprocessed pages keyed by page_number."""
+    out: dict[int, dict] = {}
+    for page in load_preprocessed(project_name):
+        pn = int(page.get("page_number", 0) or 0)
+        if pn:
+            out[pn] = page
+    return out
+
+
+def page_numbers(project_name: str) -> list[int]:
+    """Sorted story page numbers from preprocessed/."""
+    return sorted(_pages_by_number(project_name))
+
+
+def _shots(project_name: str) -> list[dict]:
+    p = PROJECTS_ROOT / project_name / "shots.json"
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return []
+
+
+def _first_shot_for_scene(project_name: str, scene_id: int) -> dict | None:
+    for s in _shots(project_name):
+        if int(s.get("scene_id") or 0) == scene_id:
+            return s
+    return None
+
+
+def ensure_panel_thumbs(project_name: str) -> dict[tuple[int, int], str]:
+    """Crop a ~420px-wide thumbnail (plain PIL crop — NO inpaint/mirror, so the
+    picker shows the real art) for every (page, panel_index) plus a whole-page thumb
+    (index -1) into projects/<name>/_panel_thumbs/. A crop is skipped when its PNG
+    already exists and is newer than the source page. Returns {(page, idx): abs_path}
+    (idx=-1 → whole page). Degrades gracefully: returns whatever it managed if PIL is
+    missing or a page image can't be read."""
+    thumbs: dict[tuple[int, int], str] = {}
+    try:
+        from PIL import Image
+    except ImportError:
+        return thumbs
+    tdir = PROJECTS_ROOT / project_name / "_panel_thumbs"
+    tdir.mkdir(parents=True, exist_ok=True)
+    for pn, page in _pages_by_number(project_name).items():
+        src_path = Path(page.get("source_image") or "")
+        if not src_path.exists():
+            continue
+        src_mtime = src_path.stat().st_mtime
+        # (idx, bbox): -1 = whole page, then one per panel.
+        specs: list[tuple[int, dict]] = [(-1, {})]
+        for idx, panel in enumerate(page.get("panels") or []):
+            specs.append((idx, panel.get("bbox") or {}))
+        im = None
+        for idx, bbox in specs:
+            name = f"p{pn:03d}_full.png" if idx < 0 else f"p{pn:03d}_{idx}.png"
+            out = tdir / name
+            if out.exists() and out.stat().st_mtime >= src_mtime:
+                thumbs[(pn, idx)] = str(out)
+                continue
+            try:
+                if im is None:
+                    im = Image.open(src_path).convert("RGB")
+                x, y = int(bbox.get("x", 0)), int(bbox.get("y", 0))
+                w, h = int(bbox.get("w", 0)), int(bbox.get("h", 0))
+                crop = im.copy() if (idx < 0 or w <= 0 or h <= 0) else im.crop((x, y, x + w, y + h))
+                crop.thumbnail((THUMB_WIDTH, 100000), Image.LANCZOS)
+                crop.save(out, "PNG")
+                thumbs[(pn, idx)] = str(out)
+            except (OSError, ValueError):
+                continue
+        if im is not None:
+            im.close()
+    return thumbs
+
+
+def panels_for_page(project_name: str, page: int) -> list[dict]:
+    """[{index, bbox, description, thumb_path}] for the panel picker grid."""
+    thumbs = ensure_panel_thumbs(project_name)
+    page_data = _pages_by_number(project_name).get(int(page)) or {}
+    out: list[dict] = []
+    for idx, panel in enumerate(page_data.get("panels") or []):
+        out.append({
+            "index": idx,
+            "bbox": panel.get("bbox") or {},
+            "description": str(panel.get("description") or ""),
+            "thumb_path": thumbs.get((int(page), idx), ""),
+        })
+    return out
+
+
+def render_scene_panel_path(project_name: str, scene: dict) -> str:
+    """Thumb path for a scene's CURRENT panel. Prefer the panel actually rendered
+    (shots.json bbox → matching panel index), else the scene's panel_ref index, else
+    the whole-page thumb."""
+    thumbs = ensure_panel_thumbs(project_name)
+    pages = _pages_by_number(project_name)
+
+    def _index_by_bbox(page: int, bbox: dict) -> int | None:
+        for idx, panel in enumerate((pages.get(int(page)) or {}).get("panels") or []):
+            pb = panel.get("bbox") or {}
+            if all(int(pb.get(k, 0)) == int(bbox.get(k, -1)) for k in ("x", "y", "w", "h")):
+                return idx
+        return None
+
+    # 1. Prefer shots.json — the panel actually rendered for this scene.
+    shot = _first_shot_for_scene(project_name, int(scene.get("scene_id") or 0))
+    if shot:
+        page = int(shot.get("page") or 0)
+        idx = _index_by_bbox(page, shot.get("panel_bbox") or {})
+        if idx is not None and (page, idx) in thumbs:
+            return thumbs[(page, idx)]
+    # 2. By the scene's panel_ref index.
+    page = int(scene.get("page_ref") or 0)
+    pref = scene.get("panel_ref")
+    pref = int(pref) if pref is not None else -1
+    if pref >= 0 and (page, pref) in thumbs:
+        return thumbs[(page, pref)]
+    # 3. Whole page.
+    return thumbs.get((page, -1), "")
+
+
+def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
+    """Re-render the ACCEPTED recipe as SUBPROCESSES (cannot run in-process: the Stage 5
+    PANEL_* knobs are module-level constants read at import, and Stage 4 must use
+    atempo 1.35). Streams each subprocess's stdout+stderr to `log`.
+      A: stage_4 --force --atempo 1.35
+      B (only if A exits 0): stage_5 --force with PANEL_RERANK=0 PANEL_COS_FLOOR=0.2
+         PANEL_ANCHOR_BONUS=8 (and CLAUDE_SDK_MODEL unset).
+    Returns the final.mp4 path on success; raises on a non-zero exit."""
+    import os
+    import subprocess
+    import sys
+
+    repo_root = PROJECTS_ROOT.parent
+    _py = repo_root / ".venv" / "bin" / "python"
+    py = str(_py) if _py.exists() else sys.executable
+
+    def _run(cmd: list[str], env: dict) -> None:
+        log("$ " + " ".join(cmd))
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=env, cwd=str(repo_root),
+        )
+        for line in proc.stdout or ():
+            log(_strip_ansi(line.rstrip()))
+        code = proc.wait()
+        if code != 0:
+            raise RuntimeError(f"{cmd[2]} exited with code {code}")
+
+    # Step A — Stage 4 TTS at atempo 1.35 (Carl voice runs slow at the default).
+    _run([py, "-m", "stages.stage_4", "--project", project_name,
+          "--force", "--atempo", "1.35"], dict(os.environ))
+
+    # Step B — Stage 5 render with the proven panel knobs; drop CLAUDE_SDK_MODEL.
+    env = {**os.environ, "PANEL_RERANK": "0", "PANEL_COS_FLOOR": "0.2",
+           "PANEL_ANCHOR_BONUS": "8"}
+    env.pop("CLAUDE_SDK_MODEL", None)
+    _run([py, "-m", "stages.stage_5", "--project", project_name, "--force"], env)
+
+    final = PROJECTS_ROOT / project_name / "final.mp4"
+    if not final.exists():
+        raise RuntimeError("Stage 5 finished but final.mp4 is missing")
+    return str(final)
+
+
 # ─── Error formatting ──────────────────────────────────────────────────────
 
 def format_exception(e: BaseException) -> str:

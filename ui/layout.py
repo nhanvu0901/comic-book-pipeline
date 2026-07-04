@@ -32,7 +32,7 @@ def stepper_nav(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
             padding=ft.padding.only(left=20, top=22, bottom=18),
         ),
     ]
-    for stage in range(1, 7):
+    for stage in range(1, 8):
         label, color = status_for(state, stage)
         active = stage == state.current_stage
         items.append(_step_row(stage, active, label, color, on_go, state))

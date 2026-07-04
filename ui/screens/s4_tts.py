@@ -425,7 +425,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 5 OF 6", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 5 OF 7", size=10, color=TEXT_MUTED),
         ft.Text("TTS Audio", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Cartesia TTS — voice + model selectable. Word-level timestamps.",
                 size=12, color=TEXT_MUTED),

@@ -194,7 +194,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 3 OF 6", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 3 OF 7", size=10, color=TEXT_MUTED),
         ft.Text("Preprocess Pages", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Detects panels with Magi and asks the vision LLM to extract text, "
