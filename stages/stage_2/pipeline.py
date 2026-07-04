@@ -7,7 +7,9 @@ Reads the download manifest written by download.py, then for each page:
 Sequential processing keeps things simple and well under OpenRouter's
 20 RPM / 50 RPD free-tier limits for a typical 22-page issue.
 """
+import difflib
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -16,10 +18,11 @@ from typing import Callable
 from PIL import Image
 
 from config import VLM_BATCH_SIZE, VLM_MODEL, get_project_dirs
+from .._panel_index import DIALOG_TRUTH
 from .cache import image_hash, load_cached, save_cached
 from .panel_detect import assign_to_panels, detect_full
 from .schema import PanelInfo, PreprocessedPage, TextBlock
-from .vlm_extract import extract_page, extract_pages_batch
+from .vlm_extract import extract_page, extract_pages_batch, verify_page_descriptions
 
 # The last N pages of an issue (covers/credits/ads/cliffhanger back-matter) are
 # processed single-page instead of batched — batching mislabels them.
@@ -32,6 +35,28 @@ _BACKMATTER_TAIL = 4
 # no continuity bias and classifies these correctly (title/credits -> cover/skip), so
 # process the head one-by-one too. Covers a cover + a short cold open + the title page.
 _FRONTMATTER_HEAD = 8
+
+# Description↔bbox verify gate (crop + look ground-truth check — see vlm_extract.
+# verify_page_descriptions). Default ON; DESC_VERIFY=0/false disables.
+DESC_VERIFY = os.getenv("DESC_VERIFY", "1").strip().lower() not in ("0", "false", "no", "")
+
+# Coverage guard: flag story pages where Magi's panel boxes cover suspiciously little of
+# the page (likely MISSED panels). Default ON; COVERAGE_GUARD=0/false disables.
+COVERAGE_GUARD = os.getenv("COVERAGE_GUARD", "1").strip().lower() not in ("0", "false", "no", "")
+
+# difflib SequenceMatcher ratio below which a panel's VLM `text` is judged NOT to match its
+# Magi OCR ground truth. Tuned to ~0.4: a garbled-but-genuine OCR of the same line ("PUNY
+# GOD" vs "PUNY G0D") ratios ~0.8, while a fabricated line ("WE'VE REACHED THE BIG BANG" vs
+# the real "SO NOW WHAT DO WE DO?") ratios <0.2 — so 0.4 flags fabrication without tripping
+# on OCR noise. Best-PAIR (max over line pairs): we only flag when NOTHING the VLM wrote
+# matches ANY OCR line, the strong signal of a wholly invented panel transcription.
+_DIALOG_MISMATCH_RATIO = 0.4
+
+# Magi typically boxes 80-95% of a Western story page. Below this fraction it likely MISSED
+# panels (splash bleed, low-contrast gutters). 0.5 is deliberately loose so a legitimately
+# sparse splash (one big panel still covering most of the page) does NOT fire — only a clear
+# under-detection does.
+_COVERAGE_MIN = 0.5
 
 
 def preprocess_project(
@@ -203,7 +228,11 @@ def preprocess_project(
                     page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
                     panels_raw=panels_raw, dimensions=dims, vlm_data=vlm_page,
                     content_hash=b["hash"], vlm_model_used=vlm_page.get("_vlm_model_used", model_used),
-                    magi_data=magi,
+                    magi_data=magi, log=log,
+                )
+                page_dict = _apply_desc_verify_gate(
+                    page_dict, image_path=b["img"], panels_raw=panels_raw, dimensions=dims,
+                    magi_data=magi, content_hash=b["hash"], story_context=story_context, log=log,
                 )
                 save_cached(project_root, b["pn"], b["hash"], page_dict)
                 results.append(page_dict)
@@ -224,11 +253,29 @@ def preprocess_project(
     story_count = sum(1 for r in results if r.get("is_story_page"))
     log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
 
+    # Free Magi (local vision model, ~3-4GB float32 on Mac) BEFORE embedding — otherwise it
+    # stays co-resident with the 8B Qwen embed server (~6GB) and OOMs a 16GB Mac at the embed
+    # step. Sequential (Magi → free → embed), NOT parallel. See panel_detect.release_model.
+    from .panel_detect import release_model
+    release_model()
+
     # Persist panel embeddings to Qdrant so Stage 5 matches against pre-computed
     # vectors instead of re-embedding every panel each run. Graceful no-op if
     # Qdrant/embeddings are unavailable (matcher falls back to in-memory embed).
     from .._panel_index import index_project
     index_project(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
+
+    # Feature A: ALSO embed the panel PIXELS into SigLIP's joint image-text space so Stage 5
+    # has a desc-FREE second matching signal — a fabricated VLM description can fake a high
+    # TEXT cosine but not the image cosine (see _img_index). Runs AFTER Magi's release_model()
+    # above so SigLIP loads into freed memory, and index_project_images frees SigLIP itself.
+    # Guarded by availability + PANEL_IMG_EMBED; any failure NEVER fails Stage 2 (the matcher
+    # simply falls back to today's text-only path).
+    try:
+        from .._img_index import index_project_images
+        index_project_images(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
+    except Exception as exc:
+        (log or print)(f"[img-index] skipped (error): {exc}")
 
     return results
 
@@ -442,21 +489,27 @@ def _looks_like_backmatter(corpus: str) -> bool:
 
 
 def _vlm_text_blocks_with_magi_bboxes(vlm_text_blocks, panel_texts, magi_texts_list):
-    """VLM gives clean TEXT but NO pixel bbox; Magi gives the text-region BBOXES plus a
-    geometric panel assignment (panel_texts = box-inside-panel). Pair them PER PANEL in
-    reading order so each VLM bubble regains a bbox for the inpaint mask — without it a
-    mirrored panel shows the comic's own dialogue BACKWARDS and the text-coverage penalty
-    reads 0. No VLM-string↔Magi-box CONTENT pairing is needed; the mask only needs WHERE
-    text is, and Magi already aligned that to the panel. Magi boxes with no VLM partner
-    are appended as bbox-only blocks (empty text → inert for embed/dialog) so the mask
-    still erases ALL detected text."""
-    magi_boxes_by_panel: dict[int, list[dict]] = {}
+    """VLM gives clean TEXT but NO pixel bbox; Magi gives the text-region BBOXES + its own
+    pixel OCR plus a geometric panel assignment (panel_texts = box-inside-panel). Pair them
+    PER PANEL in reading order so each VLM bubble regains a bbox for the inpaint mask —
+    without it a mirrored panel shows the comic's own dialogue BACKWARDS and the text-
+    coverage penalty reads 0. We ALSO carry each Magi region's OCR onto the paired block as
+    a `.ocr` attribute: that OCR is deterministic ground truth read from pixels, so
+    panel_embed_text can prefer it over the VLM `text` (which the batch VLM fabricates — see
+    _panel_index.DIALOG_TRUTH) and _apply_dialog_truth_gate can flag divergences. No VLM-
+    string↔Magi-box CONTENT pairing is needed; positional reading-order pairing is enough
+    (the gate compares SETS). Magi boxes with no VLM partner are appended as text-empty
+    blocks (still carrying their OCR + bbox) so the mask erases ALL detected text and their
+    OCR still counts as ground truth.
+    # ponytail: ocr rides as a dynamic attr on TextBlock — schema.py is not owned here, and
+    # the final stored dialog is a plain dict anyway. Upgrade path: add TextBlock.ocr field."""
+    magi_by_panel: dict[int, list[dict]] = {}
     for pi, t_idxs in (panel_texts or {}).items():
-        boxes = [magi_texts_list[ti].get("bbox") or {}
-                 for ti in t_idxs if 0 <= ti < len(magi_texts_list)]
-        boxes = [b for b in boxes if b.get("w") and b.get("h")]
-        boxes.sort(key=lambda b: (int(b.get("y", 0)), int(b.get("x", 0))))  # reading order
-        magi_boxes_by_panel[int(pi)] = boxes
+        regs = [magi_texts_list[ti] for ti in t_idxs if 0 <= ti < len(magi_texts_list)]
+        regs = [r for r in regs if (r.get("bbox") or {}).get("w") and (r.get("bbox") or {}).get("h")]
+        regs.sort(key=lambda r: (int((r.get("bbox") or {}).get("y", 0)),
+                                 int((r.get("bbox") or {}).get("x", 0))))  # reading order
+        magi_by_panel[int(pi)] = regs
 
     text_blocks: list[TextBlock] = []
     seen_per_panel: dict[int, int] = {}
@@ -464,20 +517,26 @@ def _vlm_text_blocks_with_magi_bboxes(vlm_text_blocks, panel_texts, magi_texts_l
         if not str(tb.get("text", "")).strip():
             continue
         pidx = int(tb.get("panel_index", -1))
-        boxes = magi_boxes_by_panel.get(pidx, [])
+        regs = magi_by_panel.get(pidx, [])
         k = seen_per_panel.get(pidx, 0)
         seen_per_panel[pidx] = k + 1
-        text_blocks.append(TextBlock(
+        reg = regs[k] if k < len(regs) else {}
+        block = TextBlock(
             panel_index=pidx,
             text=str(tb.get("text", "")),
             type=str(tb.get("type", "speech")),
             speaker=tb.get("speaker") or None,
-            bbox=(boxes[k] if k < len(boxes) else {}),
-        ))
-    # Leftover Magi boxes (more detected regions than VLM bubbles) → bbox-only mask entries.
-    for pi, boxes in magi_boxes_by_panel.items():
-        for b in boxes[seen_per_panel.get(pi, 0):]:
-            text_blocks.append(TextBlock(panel_index=pi, text="", type="magi_box", bbox=b))
+            bbox=(reg.get("bbox") or {}),
+        )
+        block.ocr = str(reg.get("ocr", "") or "")
+        text_blocks.append(block)
+    # Leftover Magi regions (more detected than VLM bubbles) → text-empty mask entries that
+    # still carry their OCR (ground truth) + bbox (mask).
+    for pi, regs in magi_by_panel.items():
+        for r in regs[seen_per_panel.get(pi, 0):]:
+            block = TextBlock(panel_index=pi, text="", type="magi_box", bbox=(r.get("bbox") or {}))
+            block.ocr = str(r.get("ocr", "") or "")
+            text_blocks.append(block)
     return text_blocks
 
 
@@ -492,6 +551,7 @@ def _assemble_page_dict(
     content_hash: str,
     vlm_model_used: str,
     magi_data: dict | None = None,
+    log: Callable[[str], None] | None = None,
 ) -> dict:
     """Combine VLM output + Magi (v3 full) outputs into a PreprocessedPage dict.
 
@@ -555,6 +615,10 @@ def _assemble_page_dict(
         magi_chars_list = (magi_data or {}).get("characters", [])
         magi_texts_list = (magi_data or {}).get("texts", [])
 
+        vlm_panel_map = _map_vlm_entries(
+            vlm_data.get("panels") or [], len(panels_raw),
+            page_number=page_number, log=log,
+        )
         panel_infos = []
         for i, p in enumerate(panels_raw):
             cluster_ids = []
@@ -563,11 +627,12 @@ def _assemble_page_dict(
                     cid = magi_chars_list[char_idx].get("cluster_id", -1)
                     if cid >= 0:
                         cluster_ids.append(cid)
+            entry = vlm_panel_map.get(i, {})
             panel_infos.append(PanelInfo(
                 index=i, bbox=p["bbox"],
-                description=_panel_field(vlm_data, i, "description"),
-                characters=_panel_field(vlm_data, i, "characters", default=[]),
-                dominant_emotion=_panel_field(vlm_data, i, "dominant_emotion"),
+                description=str(entry.get("description") or ""),
+                characters=entry.get("characters") or [],
+                dominant_emotion=str(entry.get("dominant_emotion") or ""),
                 cluster_ids=cluster_ids,  # NEW v5 Phase 2
             ))
 
@@ -580,6 +645,9 @@ def _assemble_page_dict(
             flat = _vlm_text_blocks_with_magi_bboxes(
                 vlm_text_blocks, panel_texts, magi_texts_list)
         elif magi_texts_list:
+            # No VLM transcription → Magi OCR IS the dialog. Store it under both `text`
+            # (rendered/captioned) and `.ocr` (ground truth) so the dialog-truth gate finds
+            # them identical (ratio 1.0 → never falsely flagged) and embedding uses the OCR.
             flat = []
             text_to_panel: dict[int, int] = {}
             for pi, t_idxs in panel_texts.items():
@@ -588,14 +656,16 @@ def _assemble_page_dict(
             for ti, tx in enumerate(magi_texts_list):
                 if not str(tx.get("ocr", "")).strip():
                     continue
-                flat.append(TextBlock(
+                block = TextBlock(
                     panel_index=text_to_panel.get(ti, -1),
                     text=str(tx.get("ocr", "")),
                     type=str(tx.get("type", "narration")),
                     speaker=None,  # Magi gives cluster, not name; resolved later if available
                     speaker_cluster_id=tx.get("speaker_cluster_id"),
                     bbox=tx.get("bbox", {}),
-                ))
+                )
+                block.ocr = str(tx.get("ocr", ""))
+                flat.append(block)
         else:
             flat = []
 
@@ -608,6 +678,7 @@ def _assemble_page_dict(
             dialog_by_panel.setdefault(tb.panel_index, []).append({
                 "text": tb.text, "type": tb.type, "speaker": tb.speaker,
                 "speaker_cluster_id": tb.speaker_cluster_id, "bbox": tb.bbox,
+                "ocr": getattr(tb, "ocr", ""),
             })
         for pinfo in panel_infos:
             pinfo.dialog = dialog_by_panel.get(pinfo.index, [])
@@ -628,7 +699,7 @@ def _assemble_page_dict(
                 pinfo.description = "Wordless transition/SFX panel"
         page_summary = str(vlm_data.get("page_summary", ""))
 
-    return PreprocessedPage(
+    result = PreprocessedPage(
         page_number=page_number,
         source_image=str(image_path.resolve()),
         image_dimensions={"width": width, "height": height},
@@ -639,6 +710,111 @@ def _assemble_page_dict(
         content_hash=content_hash, preprocessing_method="magi+vlm",
         skip_reason=skip_reason,
     ).to_dict()
+    # Deterministic, network-free flag gates on the finalized page (both no-op on skip
+    # pages / when their env kill-switch is off). Feature B: flag panels whose VLM dialog
+    # contradicts Magi OCR. Feature G: flag pages where Magi under-covered the panels.
+    _apply_dialog_truth_gate(result, log=log or print)
+    _apply_coverage_guard(result, log=log or print)
+    return result
+
+
+def _apply_desc_verify_gate(
+    page_dict: dict,
+    *,
+    image_path: Path,
+    panels_raw: list[dict],
+    dimensions: tuple[int, int],
+    magi_data: dict | None,
+    content_hash: str,
+    story_context: str,
+    log: Callable[[str], None],
+) -> dict:
+    """DESC_VERIFY gate: crop + look ground-truth check that each panel's description
+    matches its own bbox pixels (see vlm_extract.verify_page_descriptions) — catches
+    batch-shift/hallucinated descriptions before they poison Stage 3/5. Soft gate: on
+    mismatch, re-describe ONCE via the single-page path (no continuity bias) and verify
+    again; still failing → keep the result, flagged desc_verified=False. Never raises,
+    never loops (max 2 verify calls + 1 redo describe per page)."""
+    if not DESC_VERIFY or page_dict.get("page_type") not in ("cover", "story"):
+        return page_dict
+    pn = page_dict.get("page_number")
+    if verify_page_descriptions(page_dict, image_path, log=log):
+        page_dict["desc_verified"] = True
+        return page_dict
+    log(f"[desc-verify] p{pn:03d}: mismatch found — re-describing via single-page path")
+    vlm_data = extract_page(image_path, panels_raw, progress=log, story_context=story_context)
+    redone = _assemble_page_dict(
+        page_number=pn, issue_label=page_dict.get("issue_label", ""),
+        image_path=image_path, panels_raw=panels_raw, dimensions=dimensions,
+        vlm_data=vlm_data, content_hash=content_hash,
+        vlm_model_used=str(vlm_data.get("_vlm_model_used", "")),
+        magi_data=magi_data, log=log,
+    )
+    redone["desc_verified"] = verify_page_descriptions(redone, image_path, log=log)
+    if not redone["desc_verified"]:
+        log(f"[desc-verify] p{pn:03d}: still mismatched after redo — keeping best-effort result")
+    return redone
+
+
+def _norm_dialog_text(s: str) -> str:
+    """Normalize a dialog line for fuzzy comparison: uppercase, keep only alphanumeric
+    WORDS. Drops OCR/VLM punctuation + spacing noise ('WE WAIT.' vs 'WE WAIT') so only the
+    actual words drive the SequenceMatcher ratio."""
+    return " ".join(re.findall(r"[A-Z0-9]+", str(s).upper()))
+
+
+def _apply_dialog_truth_gate(page_dict: dict, *, log: Callable[[str], None] = print) -> dict:
+    """Feature B: flag panels whose VLM `text` does NOT match Magi's pixel OCR ground truth.
+    The batch VLM fabricates dialog from story flow (real case: doom-rocket-raccoon p28
+    panel 1 — pixels read 'SO NOW WHAT DO WE DO?' but the VLM wrote 'WE'VE REACHED THE BIG
+    BANG'), which poisons the panel embedding and mis-grounds Stage 3/5. Deterministic
+    (stdlib difflib, no network): for each panel that has BOTH a VLM transcription and Magi
+    OCR, take the best-pair SequenceMatcher ratio; below _DIALOG_MISMATCH_RATIO sets the
+    panel-level `dialog_mismatch = True` (contract consumed by Stage 5 _panel_untrusted;
+    absent = trusted). Flag-only — never rewrites/removes the VLM dialog content."""
+    if not DIALOG_TRUTH or page_dict.get("page_type") not in ("cover", "story"):
+        return page_dict
+    pn = page_dict.get("page_number", "?")
+    for panel in page_dict.get("panels") or []:
+        dialog = panel.get("dialog") or []
+        vlm_norm = [n for n in (_norm_dialog_text(d.get("text", "")) for d in dialog) if n]
+        ocr_norm = [n for n in (_norm_dialog_text(d.get("ocr", "")) for d in dialog) if n]
+        # Only judge when BOTH sides carry real words — a Magi-only or VLM-only (or pure
+        # SFX/punctuation) panel has nothing to cross-check.
+        if not vlm_norm or not ocr_norm:
+            continue
+        sim = max(difflib.SequenceMatcher(None, v, o).ratio()
+                  for v in vlm_norm for o in ocr_norm)
+        if sim < _DIALOG_MISMATCH_RATIO:
+            panel["dialog_mismatch"] = True
+            log(f"[dialog-truth] p{pn} panel {panel.get('index')}: "
+                f"VLM dialog does not match OCR — flagged")
+    return page_dict
+
+
+def _apply_coverage_guard(page_dict: dict, *, log: Callable[[str], None] = print) -> dict:
+    """Feature G: flag a story page where Magi's panel boxes cover suspiciously little of
+    the page — a sign it MISSED panels (which would silently drop story beats). Sum of panel
+    bbox areas / page area; below _COVERAGE_MIN (and >=1 panel) sets page-level
+    `panel_coverage_low = True`. Flag-only, no behaviour change. Overlapping panels only
+    inflate the fraction, so this can false-negative but never false-positive."""
+    if not COVERAGE_GUARD or page_dict.get("page_type") != "story":
+        return page_dict
+    panels = page_dict.get("panels") or []
+    dims = page_dict.get("image_dimensions") or {}
+    parea = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
+    if not panels or parea <= 0:
+        return page_dict
+    covered = sum(
+        int((p.get("bbox") or {}).get("w", 0) or 0) * int((p.get("bbox") or {}).get("h", 0) or 0)
+        for p in panels
+    )
+    frac = covered / parea
+    if frac < _COVERAGE_MIN:
+        page_dict["panel_coverage_low"] = True
+        log(f"[coverage-guard] p{page_dict.get('page_number', '?')}: panels cover only "
+            f"{frac * 100:.0f}% of page — possible missed panels")
+    return page_dict
 
 
 def _build_page_from_single(
@@ -677,17 +853,42 @@ def _build_page_from_single(
         panels_raw=panels_raw, dimensions=dimensions, vlm_data=vlm_data,
         content_hash=content_hash,
         vlm_model_used=str(vlm_data.get("_vlm_model_used", "")),
-        magi_data=magi_data,
+        magi_data=magi_data, log=log,
+    )
+    out = _apply_desc_verify_gate(
+        out, image_path=image_path, panels_raw=panels_raw, dimensions=dimensions,
+        magi_data=magi_data, content_hash=content_hash, story_context=story_context, log=log,
     )
     save_cached(project_root, page_number, content_hash, out)
     return out
 
 
-def _panel_field(vlm_data: dict, index: int, key: str, default=""):
-    panels = vlm_data.get("panels") or []
-    for p in panels:
-        if int(p.get("index", -1)) == index:
-            v = p.get(key)
-            if v is not None:
-                return v
-    return default
+def _map_vlm_entries(
+    entries: list[dict], n: int, *, id_key: str = "index",
+    page_number: int | None = None, log: Callable[[str], None] | None = None,
+) -> dict[int, dict]:
+    """Map a VLM-returned list of per-panel dicts back to panel slots by the echoed
+    `id_key` field — IDENTITY-based, never by list position. A dropped, reordered,
+    or duplicated entry from the model must not shift every later panel onto its
+    neighbor's data (the desc↔bbox misalignment this guards against): entries with
+    a missing/non-integer, out-of-range, or duplicate id are DROPPED (and logged)
+    instead of silently reassigned. Returns {panel_index: entry} — an index absent
+    from the result has no matching entry and the caller falls back to a default."""
+    log = log or (lambda _msg: None)
+    label = f"page {page_number} " if page_number is not None else ""
+    by_index: dict[int, dict] = {}
+    for entry in entries:
+        raw_idx = entry.get(id_key)
+        try:
+            idx = int(raw_idx)
+        except (TypeError, ValueError):
+            log(f"[vlm] {label}panel id={raw_idx!r}: missing/invalid {id_key} — dropped")
+            continue
+        if not (0 <= idx < n):
+            log(f"[vlm] {label}panel {idx}: {id_key} out of range [0,{n}) — dropped")
+            continue
+        if idx in by_index:
+            log(f"[vlm] {label}panel {idx}: duplicate {id_key} — keeping first, dropping duplicate")
+            continue
+        by_index[idx] = entry
+    return by_index

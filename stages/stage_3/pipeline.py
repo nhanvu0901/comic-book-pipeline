@@ -9,7 +9,7 @@ from typing import Callable
 
 from config import PROJECTS_ROOT, get_project_dirs
 from .propose_modes import propose_modes as _propose_modes
-from .write_script import write_script as _write_script
+from .write_script import write_script as _write_script, _load_direction
 from .schema import Narration
 
 _LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs" / "stage_4_runs"
@@ -72,10 +72,14 @@ def write_script(
     story = filter_story_pages(pages)
     log(f"[stage4] {len(pages)} preprocessed pages — {len(story)} story page(s) kept")
 
+    direction = _load_direction(project_name)
+    if direction:
+        log(f"[stage4] direction spec loaded: {sorted(direction.keys())}")
+
     debug_dump: dict = {"project": project_name, "mode": mode, "hook_hint": hook_hint}
     try:
         nar = _write_script(ctx, story, mode, hook_hint=hook_hint,
-                            all_pages=pages,
+                            all_pages=pages, direction=direction,
                             progress=progress, debug_dump=debug_dump)
         debug_dump["status"] = "ok"
     except Exception as exc:

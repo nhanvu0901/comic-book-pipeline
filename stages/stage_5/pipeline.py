@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Callable
 
 from config import BG_MUSIC_PATH, PROJECTS_ROOT
+from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
 from .captions import build_ass
 from .schema import AssemblyResult
 from .shots import build_shots, render_shot
+from .verify_frames import VERIFY_FRAMES, verify_frames
 
 
 FPS = 30
@@ -38,6 +40,8 @@ def assemble_project(
             raise FileNotFoundError(f"missing {req.name}: {req}. Run earlier stages first.")
 
     narration = json.loads(narration_path.read_text())
+    verify_narration_hash(root / "narration.tts.sha256", narration.get("scenes") or [], log=log,
+                          error_hint="Re-run Stage 4 with --force before Stage 5.")
     word_timestamps = json.loads(words_path.read_text())
     audio_duration = _wav_duration(audio_path)
     scene_timings_path = root / "scene_timings.json"
@@ -188,6 +192,14 @@ def assemble_project(
 
     duration = _probe_duration(final_path)
     log(f"[stage5] done: {final_path} ({duration:.2f}s)")
+
+    # Stage 5.5: spot-check the rendered frames against the narration (see
+    # verify_frames.py). A checker bug must never fail an otherwise-good render.
+    if VERIFY_FRAMES:
+        try:
+            verify_frames(project_name, log=log)
+        except Exception as exc:
+            log(f"[stage5] frame verification failed ({exc}); continuing (final.mp4 unaffected)")
 
     return AssemblyResult(
         final_path=str(final_path),

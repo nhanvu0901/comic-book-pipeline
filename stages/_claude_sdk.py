@@ -13,15 +13,18 @@ is missing, not logged in, errors, times out, or the output signals a usage limi
 — so a machine without the SDK still runs the pipeline. Never raises.
 """
 import json
+import os
 import threading
 import time
 from pathlib import Path
 
-# Sonnet 4.6 — Opus 4.8 reasoned >330s before the first token on the big write
-# prompt (measured), blowing every timeout; sonnet reasons far less (~90s on a
-# 22K prompt) so the SDK writer completes well within the deadline. Same Claude
-# subscription, good prose quality.
-CLAUDE_SDK_MODEL = "claude-sonnet-4-6"
+# Sonnet 4.6 — Opus 4.8 reasoned >330s before the first token on the big write prompt
+# (measured), blowing every timeout; sonnet reasons far less (~90s on a 22K prompt) so
+# the SDK writer completes well within the deadline. Same Claude subscription, good prose.
+# NOTE (2026-07-01): tried claude-sonnet-5 — the SDK calls worked, but it used more agentic
+# turns per completion and the glossary phase blew the max_turns cap; reverted to 4-6.
+# Retry later via `CLAUDE_SDK_MODEL=claude-sonnet-5` (raise the sdk_complete max_turns too).
+CLAUDE_SDK_MODEL = os.getenv("CLAUDE_SDK_MODEL", "claude-sonnet-4-6")
 # Hard wall-clock deadline per completion. MEASURED: Opus 4.8 spends ~135s of
 # reasoning BEFORE the first token on the complex narration WRITE task (then
 # streams the output in seconds) — a simple prompt is ~16s. 180s was too tight
@@ -76,6 +79,8 @@ def _collect(
             system_prompt=system or None,
             # thinking disabled → first token ~7s (adaptive thinking reasoned for
             # MINUTES and blew timeouts). Needs max_turns>=2; research needs more.
+            # (If switching to claude-sonnet-5, raise this — it uses more agentic turns
+            # per completion and blew the cap of 2 on the glossary phase.)
             thinking={"type": "disabled"},
             max_turns=max_turns,
             allowed_tools=allowed_tools if allowed_tools is not None else [],

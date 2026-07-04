@@ -1,6 +1,7 @@
 """
 Stage 4 orchestrator: load narration.json → Cartesia TTS → align → persist.
 """
+import hashlib
 import json
 import subprocess
 import wave
@@ -100,6 +101,28 @@ def _build_emotional_transcript(scenes: list[dict], base_emotion: str, log) -> s
     return " ".join(parts)
 
 
+def narration_hash(scenes: list[dict]) -> str:
+    """Stable sha256 over scene texts — written next to audio.wav so later
+    stages can detect a narration.json edit that the cached audio doesn't reflect."""
+    text = "\n".join(str(s.get("text", "")) for s in scenes)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def verify_narration_hash(sidecar_path: Path, scenes: list[dict], *, log=print,
+                           error_hint: str = "Re-run Stage 4 with --force.") -> None:
+    """Hard-fail if `sidecar_path` exists and no longer matches `scenes`' hash —
+    i.e. narration.json was edited after the cached audio was rendered. A missing
+    sidecar (old projects, before this guard existed) only warns, for backward compat."""
+    if not sidecar_path.exists():
+        log(f"[hash-guard] warning: {sidecar_path.name} missing — cannot verify narration "
+            f"matches cached audio (old project); proceeding")
+        return
+    if sidecar_path.read_text().strip() != narration_hash(scenes):
+        raise RuntimeError(
+            f"narration.json changed since audio.wav was rendered (hash mismatch). {error_hint}"
+        )
+
+
 def synthesize_project(
     project_name: str,
     *,
@@ -131,8 +154,11 @@ def synthesize_project(
     words_path = root / "word_timestamps.json"
     scenes_path = root / "scene_timings.json"
     captions_path = root / "caption_chunks.json"
+    hash_path = root / "narration.tts.sha256"
 
     if audio_path.exists() and words_path.exists() and not force:
+        verify_narration_hash(hash_path, scenes, log=print,
+                               error_hint="Re-run Stage 4 with --force to regenerate audio + timings.")
         print(f"[stage4] reusing existing audio.wav + word_timestamps.json "
               f"(pass --force to regenerate)")
         words = json.loads(words_path.read_text())
@@ -189,6 +215,7 @@ def synthesize_project(
                   f"{len(words)/duration:.2f} wps")
 
         words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))
+        hash_path.write_text(narration_hash(scenes))
         print(f"[stage4] saved audio: {audio_path} ({duration:.2f}s, {len(words)} words)")
 
     scene_timings = align_scenes_to_words(scenes, words)

@@ -80,6 +80,28 @@ def test_causal_antecedent_not_dropped(monkeypatch):
     assert 5 not in kept_ids   # unrelated low-impact beat still dropped
 
 
+def test_ubiquitous_name_does_not_trigger_false_veto(monkeypatch):
+    # "eddie" appears in nearly every beat (ubiquitous character name). Sharing ONLY
+    # that name with a kept beat's `cause` must NOT count toward the >=2-token veto
+    # threshold — else a name that's everywhere blocks almost every drop (C3a bug:
+    # a real run vetoed 4 of 5 proposed drops this way). "intervened" is genuinely
+    # distinctive (appears nowhere else), so on its own it must stay below threshold.
+    beats = [Beat(id=0, function="COLD_OPEN", name="hook", summary="eddie wakes up")]
+    for i in range(1, 9):
+        beats.append(Beat(id=i, function="ESCALATION", name=f"eddie beat {i}",
+                          summary=f"eddie does thing {i}"))
+    beats.append(Beat(id=9, function="ESCALATION", name="filler",
+                      summary="eddie intervened suddenly"))
+    beats.append(Beat(id=10, function="CLIMAX", name="final fight",
+                      summary="the eddie showdown", cause="because eddie intervened"))
+    beats.append(Beat(id=11, function="LANDING", name="landing", summary="eddie rests"))
+
+    _mock_chain(monkeypatch, [9])   # critic wants to drop the ordinary filler beat
+    kept_ids = {b.id for b in ws._critique_beats_for_impact(
+        beats, {"plot_summary": "p"}, model=None, progress=None)}
+    assert 9 not in kept_ids   # shares only the ubiquitous "eddie" — must NOT be vetoed
+
+
 def test_clarity_issues_are_soft_not_critical(monkeypatch):
     # a clarity directive must NOT be treated as a critical (fidelity-breaking) error
     def fake(*a, **k):

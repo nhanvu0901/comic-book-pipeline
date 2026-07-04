@@ -95,7 +95,8 @@ Output STRICT JSON only:
 
 def analyze_story(comic_context: dict, story_pages: list[dict], *,
                   model: str | None = None,
-                  progress: Callable[[str], None] | None = None) -> dict | None:
+                  progress: Callable[[str], None] | None = None,
+                  direction: dict | None = None) -> dict | None:
     """Advisory story map, or None (gated off / no plot / LLM fail / unparseable).
     Never raises."""
     if not ENABLE_STORY_ARCHITECT:
@@ -106,7 +107,7 @@ def analyze_story(comic_context: dict, story_pages: list[dict], *,
     if not plot:
         log("[stage4] story-architect: no plot — skipping")
         return None
-    from .write_script import _extract_json, _character_names
+    from .write_script import _extract_json, _character_names, _direction_block
     from config import FIDELITY_LLM_MODELS
 
     seen = sorted(_panel_character_index(story_pages))[:120]
@@ -118,7 +119,8 @@ def analyze_story(comic_context: dict, story_pages: list[dict], *,
             if d:
                 panel_descs.append(d)
     user = (
-        f"TITLE: {comic_context.get('title', '?')}\n"
+        _direction_block(direction or {})
+        + f"TITLE: {comic_context.get('title', '?')}\n"
         f"KNOWN CHARACTERS: {chars_hint}\n\n"
         f"PLOT (ground-truth for events):\n{plot[:3000]}\n\n"
         f"PANEL DESCRIPTIONS (ground-truth for what is drawn):\n"

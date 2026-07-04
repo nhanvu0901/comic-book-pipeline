@@ -1,5 +1,6 @@
 """Stage 3 narration writer: outline_beats -> build_glossary -> write_scenes -> validate."""
 import json
+import os
 import random
 import re
 import statistics
@@ -8,37 +9,53 @@ from typing import Callable
 
 from config import (CREATIVE_LLM_MODELS, ENABLE_LOGIC_CRITIC, ENABLE_LOOP_TEASE,
                     ENABLE_TITLE_BANNER, FIDELITY_LLM_MODELS, LOGIC_CRITIC_MIN_BEATS,
-                    OPENROUTER_MODEL)
+                    OPENROUTER_MODEL, PROJECTS_ROOT)
 from .modes import MODES_BY_KEY
 from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 from .._embedding import semantic_sim as _semantic_sim
+from .._panel_index import panel_embed_text as _panel_embed_text
 from .story_architect import render_story_map_block, _tokens
 
 
-# Calibrated for the user-chosen 1.1 atempo pace. MEASURED actual rate at 1.1:
-# ~2.88 wps (not the earlier 3.22 estimate). The teaser intro (~14-18 words) is
-# prepended on top of the body, so the body targets ~165-195 → final ~180-213
-# words → ~63-74s at 2.88 wps, landing inside the (54-95s) duration band and the
-# (187-320) benchmark word band — clearly snappier than the old ~90s/297w output.
+# CALIBRATED FROM 3 REAL RENDERS (Resemble Carl voice + the default --atempo 1.35,
+# which is what we actually ship — NOT the stale 1.1/2.88 figure). Measured:
+#   299 words → 84.5s  (3.54 wps)
+#   288 words → 87.1s  (3.31 wps)
+#   305 words → 87.2s  (3.50 wps)
+# → effective rate ≈ 3.4 words/sec. (The old 2.88 was the 1.1-atempo pace we no
+# longer use, so it under-estimated duration and let scripts run long.)
+#
+# LENGTH TARGET = the viral cluster. Verbatim mining of 23 competitor Shorts found
+# the hits cluster at 48-71s; an 86s lore-dense one flopped. We aim the FINISHED
+# audio at ~60-75s. The teaser intro (~14 words) is prepended on top of the body,
+# so at 3.4 wps: body 195-245 + ~14 intro = 209-259 final words → ~61-76s. That is
+# the band below. (60-75s ≈ 204-255 final words at 3.4 wps; minus the ~14-word
+# intro → 190-241 body → rounded to the 195-245 constants.)
 #
 # SINGLE SOURCE OF TRUTH for the word budget. Previously three places disagreed
 # (system prompt said 175-195, this user-message budget said 175-260, and the
 # validator demanded 230-290) — the validator won and pulled output to ~283
 # words of long, compound, multi-event sentences. All three now read these
 # constants / the validator band below.
-_TARGET_WORDS_MIN = 165
-_TARGET_WORDS_MAX = 220   # body ceiling (~76s at 2.88 wps). LOWERED 270→220 (Master, 2026-06-27: Doom ran 312w/104s — too long). With 1-panel-per-scene pacing we no longer need many scenes for panel variety. Was 270/230/195. Raised earlier to let
-                          # each TURN carry its grounded cause/why clause (causal
-                          # narration) — connected story beats one-event-per-scene
-                          # over a flat events list. Still trim flourish, not canon.
-_WORDS_PER_SEC = 2.88    # MEASURED 1.1 atempo pace (was 4.0 at the 1.3 benchmark pace)
+_TARGET_WORDS_MIN = 195   # body floor: 195 + ~14 intro = 209 final ≈ 61s at 3.4 wps.
+_TARGET_WORDS_MAX = 245   # body ceiling: 245 + ~14 intro = 259 final ≈ 76s at 3.4 wps —
+                          # the top of the 60-75s viral cluster. RAISED 220→245 (2026-07-03):
+                          # the 2.88-based 220 ceiling was calibrated to the wrong pace and
+                          # ran short of the cluster; retuned to the empirical 3.4 wps from the
+                          # 3 renders above. Trim still comes from MAIN-POINT FOCUS (rule 2.5),
+                          # NOT from dropping climax/ending beats.
+_WORDS_PER_SEC = 3.4     # MEASURED at the shipped --atempo 1.35 pace (3 renders above); was 2.88 at the unused 1.1 pace
 
 _SCENE_MIN_WORDS = 5     # punch sentences go as low as 5w ("Stating they would
                          # die anyway.") — floor must allow them, not block them.
-_SCENE_MAX_WORDS = 24    # was 17 — a CAUSAL scene carries one event + its grounded
-                         # 'why' clause (~24w). Punchiness is held by the median +
-                         # punch-count gates below, not a low per-scene ceiling.
+_SCENE_MAX_WORDS = 18    # HARD line cap (was 24): the accepted register averages
+                         # ~11 words/line; 17w+ lines were the #1 cause of blown
+                         # word budgets. A causal 'why' clause must fit inside 18.
+_FINALE_MAX_WORDS = 24   # headroom for the LAST TWO story lines only (rule 8.68):
+                         # the twist-unpack + thematic-mirror lines carry the story's
+                         # biggest idea and the approved register runs 22-24 words
+                         # (learned from a hand-fixed ending, 2026-07-03).
 _TARGET_SENT_LEN = 14    # channel-punchy median; used by median soft-validator
 _PUNCH_MAX_WORDS = 11    # a "punch" sentence: lands one beat hard
 _MIN_PUNCH_SCENES = 3    # enforce variance toward SHORT (the channel signature)
@@ -56,6 +73,55 @@ _CONNECTIVES = (
     "So", "With", "Instead", "Suddenly", "Just then", "That's when",
     "But", "However",
 )
+
+
+def _load_direction(project_name: str) -> dict:
+    """Load projects/<name>/direction.json — the human director's spec (POV,
+    naming policy, reveal placement, must-have beats). Free-form, all fields
+    optional; missing file or bad JSON -> {} (the spec is opt-in, never blocking)."""
+    if not project_name:
+        return {}
+    path = PROJECTS_ROOT / project_name / "direction.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _direction_block(direction: dict) -> str:
+    """Render the director's spec as a BINDING prompt block, "" when empty.
+    Prepended to a phase's USER message (never the system prompt) so it reads
+    as human instruction overriding this run's defaults."""
+    if not direction:
+        return ""
+    lines = [
+        "╔══ DIRECTOR'S SPEC (HUMAN — BINDING) ══╗",
+        "These are the human director's instructions. They OVERRIDE any "
+        "conflicting default rule in this prompt (naming conventions, reveal "
+        "placement, POV).",
+    ]
+    pov = str(direction.get("pov", "")).strip()
+    if pov:
+        lines.append(f"POV: {pov}")
+    naming = [str(n).strip() for n in (direction.get("naming") or []) if str(n).strip()]
+    if naming:
+        lines.append("NAMING:")
+        lines.extend(f"  - {n}" for n in naming)
+    reveal = str(direction.get("reveal", "")).strip()
+    if reveal:
+        lines.append(f"REVEAL: {reveal}")
+    beats = [str(b).strip() for b in (direction.get("must_have_beats") or []) if str(b).strip()]
+    if beats:
+        lines.append("MUST-HAVE BEATS:")
+        lines.extend(f"  - {b}" for b in beats)
+    notes = str(direction.get("notes", "")).strip()
+    if notes:
+        lines.append(f"NOTES: {notes}")
+    lines.append("╚═════════════════════════════════════╝")
+    return "\n".join(lines) + "\n\n"
 
 
 def _starts_with_connective(text: str) -> str | None:
@@ -148,29 +214,80 @@ def _intro_overlaps(intro_line: str, body_first_line: str) -> bool:
     return jac > 0.5
 
 
+_CAP_STOP = {"The", "Then", "Now", "And", "But", "With", "His", "Her", "When",
+             "After", "Before", "As", "So", "Inside", "Atop", "This", "That",
+             "Year", "Long", "Only", "Still", "Meanwhile", "Later", "Soon", "One",
+             "He", "She", "They", "It"}
+# NOTE: the PRESENTED identity is never flagged automatically — the hero is called
+# by it from the FIRST scenes, so it lands in the early set and can't be reveal-only.
+
+
+def _reveal_only_names(body_scenes: list[dict]) -> set[str]:
+    """Proper-noun names that surface in the LATE (reveal) portion of the narration
+    but are NOT established in the opening SETUP. Naming one in the intro/banner
+    spoils a concealed-identity twist (e.g. "Reed Richards" when the whole trick is
+    that he believes he is Doom) — including the case where the true name is dropped
+    once mid-story as a "vision he dismisses" (that still must not lead the hook).
+    Compared against the SETUP (first 2 scenes), not all earlier text, so a true name
+    revealed mid-story is still caught while names ESTABLISHED up front are safe.
+    General — derived from the narration itself, no per-comic hardcoding."""
+    kept = [s for s in (body_scenes or [])
+            if not s.get("is_intro") and not s.get("is_outro")]
+    if len(kept) < 4:
+        return set()
+    cut = max(1, round(len(kept) * 0.30))
+    setup = " ".join(str(s.get("text", "")) for s in kept[:2])
+    late = " ".join(str(s.get("text", "")) for s in kept[-cut:])
+    setup_names = set(re.findall(r"\b[A-Z][a-z]{2,}\b", setup))
+    late_names = set(re.findall(r"\b[A-Z][a-z]{2,}\b", late))
+    return {n for n in (late_names - setup_names) if n not in _CAP_STOP}
+
+
 _INTRO_SYSTEM = """You are HookWriter. You produce ONE short teaser intro sentence for a YouTube Short about a comic. It is the first thing the viewer hears — it must grab attention and tease the premise WITHOUT spoiling the ending.
 
-Pick the ONE hook archetype that makes THIS story most intriguing, then write the line. You MUST begin with the exact opener words shown for your chosen archetype, or the hook is rejected:
+BEST HOOK SHAPE (channel data — the 3 BIGGEST hits, 3.24M / 1.70M / 1.38M views, ALL used it): a concrete, ordinary moment + a "thought/believed [normal] ... until [dark turn]" contrast pivot. Picture a normal scene, then break it. PREFER this whenever the story allows.
+  ✓ "Nightwing thought he had the perfect life with the Titans, until it all fell apart."
+  ✓ "When Superman came home, Lois thought he'd been gone hours, until she learned the truth."
+  ✓ "The Flash thought he saved an innocent man, until he found out what he really wanted."
 
-  • interrogative  — a QUESTION. Begin with one of: "Ever wonder", "What if", "What would", "Why", "How", "Can", "Could", "Would". Ends with "?".
-        e.g. "What if Magik refused to be a hero and trained under Doctor Strange?"
-        e.g. "Could a girl who clawed out of hell ever feel safe again?"
-  • temporal-when  — a STATEMENT beginning with "When ". Ends with ".".
-        e.g. "When Illyana returned from Limbo seven years older, she wanted nothing to do with the X-Men."
+Pick the ONE archetype that fits THIS story, then write the line. You MUST begin with the exact opener words shown for your chosen archetype, or the hook is rejected:
+
+  • temporal-when  — a STATEMENT beginning with "When ". BEST for the pivot. Ends with ".".
+        e.g. "When Superman came home, Lois thought he'd been gone hours, until she learned the truth."
+  • character_action — a STATEMENT beginning with the hero's NAME + a verb (thought/believed/woke/found/broke/entered/stood/was/had). NAME-FIRST IS GOOD here — lead with the hero, then pivot. Ends with ".".
+        e.g. "Nightwing thought he had the perfect life, until it all fell apart."
+        e.g. "Peter woke in a body that was no longer his."
   • temporal-other — a STATEMENT beginning with "After", "While", "During", or "Once". Ends with ".".
-        e.g. "After Limbo broke her, Magik swore she would never be a weapon again."
+        e.g. "After one ordinary night, Illyana's whole world stopped making sense."
   • scenic         — a STATEMENT beginning with "In a <adjective> universe/reality/world" (or "In <year>"). Ends with ".".
         e.g. "In a broken reality, Magik turned her back on the X-Men for good."
-  • character_action — a STATEMENT that OPENS INSIDE THE SCENE: begin with the hero's name + an active verb (was/were/is/are/had/broke/entered/woke/fell/found/stands). No question, no "When/After". Ends with ".". Use when jumping straight into the action is the strongest hook.
-        e.g. "Peter woke in a body that was no longer his."
-        e.g. "Magik stood over the boy she once called her hero, blade drawn."
-
-VARIETY RULE (important): do NOT default to "Ever wonder" — it is only ONE of several interrogative options, and across many comics these openers must VARY. Prefer a different archetype/opener unless an "Ever wonder" question is clearly the strongest fit.
+  • interrogative  — LAST RESORT ONLY. A QUESTION beginning with "Ever wonder", "What if", "What would", "Why", "How", "Can", "Could", "Would". Ends with "?". ZERO of the channel's biggest hits opened with a question — use ONLY if no concrete scene + pivot can be built from this story.
+        e.g. "Could a girl who clawed out of hell ever feel safe again?"
 
 HARD RULES for the intro line:
   - 7-18 words, exactly ONE sentence.
+  - ZERO PRIOR KNOWLEDGE (BINDING): a viewer who has NEVER read this comic must fully
+    grasp the line. NO continuity/lore references — no event names, cosmic titles,
+    prior-series callbacks, or character history a newcomer wouldn't know. Lore-dense
+    hooks are the FLOP signature.
+      ✗ "Superman became King Omega due to the sacrifice of the Time Trapper." (lore soup — no newcomer parses it)
+      ✓ "Superman came home to a world that had already moved on without him." (plain, instant)
+  - PLAIN LANGUAGE (BINDING): use the simplest phrasing a 12-year-old gets INSTANTLY
+    on first listen. No abstract riddles, no literary wordplay, no double meanings.
+      ✓ "Doom woke up in a ruined future, unable to remember who he was."
+        (concrete situation, plain words — the register to aim for)
+      ✗ "What if the man who lost everything was the only one who could save it?"
+        (abstract riddle — no concrete image, nothing a viewer can picture)
+  - LEAD WITH VISCERAL, HUMAN-SCALE STAKES when the story offers one — a concrete image
+    beats an abstract one ("found a girl locked in a basement" >> "surrounded by angels
+    led by a young leader"). Pick the moment a viewer can feel.
   - Name the hero AND the premise so a viewer instantly grasps the stakes.
   - It is a TEASER, not a summary — do NOT reveal the ending/twist.
+  - CONCEALED IDENTITY: if the protagonist's TRUE name/identity is itself the twist —
+    they BELIEVE they are someone else and the real identity is disclosed only late —
+    you MUST refer to them by the BELIEVED identity, NEVER the true name. Naming who
+    they really are here spoils the whole story. (e.g. call him "Doctor Doom", the
+    identity he's convinced he is — not the real name revealed at the climax.)
   - No meta talk ("in this video", "today", "let's see"). No spoilers.
   - Begin with the EXACT opener words for your chosen archetype (above).
   - TEASE THE WHOLE STORY'S HOOK — the central premise, conflict, irony, or price
@@ -178,7 +295,7 @@ HARD RULES for the intro line:
     describes the opening event, so if your intro just restates that event the
     video says the same thing twice. Frame the broader stakes instead.
     ✗ (restates opening beat) "When Illyana returned from Limbo, she rejected the X-Men."
-    ✓ (teases the whole hook)  "What if surviving hell meant becoming the very monster you fled?"
+    ✓ (teases the whole hook)  "Magik survived hell, until she realized she'd become the very monster she fled."
   - BE TRUE TO THE PLOT above — never invent a framing it doesn't support: do NOT say
     a hero "took a darker path" / "turned evil" / "went rogue" unless the plot says so.
   - Do NOT use "What if" / "Ever wonder what if" ALTERNATE-REALITY framing for a
@@ -225,13 +342,35 @@ def _character_names(comic_context: dict) -> list[str]:
     return out
 
 
+_CONCRETE_EVENT_RE = re.compile(
+    r"\b(fall|falls|fell|fallen|die|dies|died|death|dead|kill|kills|killed|"
+    r"reveal|revealed|learn|learned|learns|name|window|thrown|threw|fight|"
+    r"fought|survive|survived|mask|armor|throne)\b", re.I)
+
+
+def _outro_is_concrete(line: str, comic_context: dict) -> bool:
+    """A thematic outro must contain something CONCRETE — a character name from
+    this comic, or a physical ending event — otherwise it's the abstract-wordplay
+    style the user rejects ('He spent everything becoming someone he had never
+    been.'). Code guard, because the LLM keeps self-grading its own abstraction
+    as 'concrete'."""
+    low = " " + line.lower() + " "
+    for nm in _character_names(comic_context):
+        for tok in nm.split():
+            if len(tok) > 2 and (" " + tok.lower()) in low:
+                return True
+    return bool(_CONCRETE_EVENT_RE.search(line))
+
+
 def generate_intro(
     comic_context: dict,
     *,
     avoid_text: str = "",
+    forbid_names: set[str] | None = None,
     model: str | None = None,
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
+    direction: dict | None = None,
 ) -> dict:
     """Dedicated pre-write LLM call: classify story type + craft the teaser intro
     line shown over the cover. Returns {"story_type", "intro_line"}; falls back to
@@ -257,12 +396,21 @@ def generate_intro(
             f"with DIFFERENT wording and a different angle:\n  \"{avoid_text.strip()}\"\n"
         )
 
+    forbid = {n for n in (forbid_names or set()) if n}
+    forbid_block = ""
+    if forbid:
+        forbid_block = ("\nFORBIDDEN — these are LATE-REVEAL spoilers (the hero's true "
+                        "identity is withheld until the climax); NEVER name them in the "
+                        "intro, refer to the hero by the identity he BELIEVES he is: "
+                        f"{', '.join(sorted(forbid))}\n")
     user = (
-        f"COMIC TITLE: {title}\n"
+        _direction_block(direction or {})
+        + f"COMIC TITLE: {title}\n"
         f"PUBLISHER: {comic_context.get('publisher','?')}\n"
         f"KEY CHARACTERS: {chars or '?'}\n\n"
         f"PREMISE / PLOT (ground truth):\n{plot[:1800]}\n"
-        f"{avoid_block}\n"
+        f"{avoid_block}"
+        f"{forbid_block}\n"
         f"Write the intro JSON now."
     )
 
@@ -277,6 +425,10 @@ def generate_intro(
             return False
         # Reject an intro that echoes the opening beat (forces the LLM to retry).
         if avoid_text.strip() and _intro_overlaps(line, avoid_text):
+            return False
+        # Reject an intro that spoils a concealed-identity reveal.
+        low = line.lower()
+        if any(n.lower() in low for n in forbid):
             return False
         return True
 
@@ -295,9 +447,9 @@ def generate_intro(
     except Exception as exc:
         # Deterministic fallback so the pipeline never blocks on the intro.
         hero = _fallback_hero(comic_context)
-        fallback = f"What happens when {hero} faces the battle of a lifetime?"
+        fallback = f"When {hero} woke up, the whole world had already turned against him."
         log(f"[stage4] intro LLM failed ({type(exc).__name__}); using fallback: {fallback!r}")
-        return {"story_type": "interrogative", "intro_line": fallback}
+        return {"story_type": "temporal-when", "intro_line": fallback}
 
 
 _OUTRO_SYSTEM = """You are OutroWriter. You write ONE short THEMATIC closing line for a YouTube Short retelling of a comic — the final sentence the viewer hears.
@@ -310,11 +462,23 @@ HARD RULES:
   - It is NOT a question. No meta talk ("in this video"). No hashtags.
   - Grounded in THIS story's actual theme (below) — never a generic platitude.
   - Punchy and shareable — the kind of line a viewer would quote or screenshot.
+  - SIMPLE, PLAIN language. Say it straight — no purple/grandiose phrasing, no
+    forced poetry. A clear line beats a fancy one.
+  - IELTS 6.5 / B2 PLAIN ENGLISH: state the actual ending FACT in short, common
+    words — not a riddle, wordplay, or a double meaning stacked on itself.
+      ✓ "Reed finally learned his name, right before he died." (concrete ending fact)
+      ✗ "The name he refused was the one that always fit." (too abstract — no
+        concrete fact, just wordplay)
+      ✗ "He spent everything becoming someone he had never been." (still abstract —
+        no person, no event)
+  - HARD REQUIREMENT: the line MUST contain at least one CONCRETE element from the
+    ending — a character's name, or a physical event (a fall, a death, a reveal).
+    A line with neither is rejected.
 
 Examples (for OTHER comics — match the TONE, not the words):
-  - "Sometimes the only monster you fear is the one you could become."
-  - "Power means nothing if it costs you everything you love."
-  - "Even a god can be undone by what he refuses to let go."
+  - "The scariest monster is the one you might become."
+  - "Power is worthless if it costs you everyone you love."
+  - "He lost everything trying to be someone he wasn't."
 
 Return ONLY JSON, no markdown: {"outro_line": "..."}"""
 
@@ -326,6 +490,7 @@ def generate_outro(
     model: str | None = None,
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
+    direction: dict | None = None,
 ) -> str:
     """Dedicated LLM call: craft a punchy THEMATIC closing line — the alternative
     to the factual 'The comic is X.' credit. Returns "" if unusable, so the caller
@@ -344,7 +509,8 @@ def generate_outro(
     )
 
     user = (
-        f"COMIC TITLE: {title}\n"
+        _direction_block(direction or {})
+        + f"COMIC TITLE: {title}\n"
         f"THEME / PLOT (ground truth):\n{plot[:1500]}\n\n"
         f"THE NARRATION (for tone + what the story covered):\n{body_text[:1200]}\n\n"
         f"Write the thematic outro JSON now."
@@ -391,6 +557,9 @@ HARD RULES:
   - It MUST NOT state a NEW fact that the plot below does not support (no invented sequel, no made-up detail). It teases what was ALREADY implied.
   - NOT a question. No meta talk, no hashtags, no "subscribe", no comic title.
   - Tone: ominous, resonant — matches a dark comic retelling.
+  - PLAIN, CONCRETE language (IELTS 6.5 / B2) — the intrigue comes from WHAT is
+    left unresolved, not from fancy wording. No poetic double meanings stacked
+    on the line.
 
 Examples (for OTHER comics — match the TONE, not the words):
   - "But what he became next, no one dares tell."
@@ -407,6 +576,7 @@ def generate_loop_tease(
     model: str | None = None,
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
+    direction: dict | None = None,
 ) -> str:
     """Craft a short forward-pointing tease appended after the outro closure.
     Returns "" if unusable (caller keeps the closure-only outro)."""
@@ -424,7 +594,8 @@ def generate_loop_tease(
     )
 
     user = (
-        f"COMIC TITLE: {title}\n"
+        _direction_block(direction or {})
+        + f"COMIC TITLE: {title}\n"
         f"PLOT (ground truth — do NOT go beyond it):\n{plot[:1500]}\n\n"
         f"THE NARRATION (for tone + what was covered):\n{body_text[:1200]}\n\n"
         f"Write the loop-tease JSON now."
@@ -488,6 +659,7 @@ def write_script(
     model: str | None = None,
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
+    direction: dict | None = None,
 ) -> Narration:
     """Run intro -> outline -> glossary -> write -> validate (+ retries)."""
     if mode not in MODES_BY_KEY:
@@ -495,6 +667,7 @@ def write_script(
 
     log = progress or (lambda _msg: None)
     dump = debug_dump if debug_dump is not None else {}
+    direction = direction or {}
 
     # Grounding guard: if Stage 1 / url-mode enrichment never grounded a plot
     # (e.g. DC Fandom Cloudflare-blocked AND the SDK web fallback failed), the
@@ -509,16 +682,19 @@ def write_script(
             "(re-run Stage 1 enrichment or hand-populate plot_summary) before trusting this draft.")
 
     from .story_architect import analyze_story
-    story_map = analyze_story(comic_context, story_pages, model=model, progress=progress)
+    story_map = analyze_story(comic_context, story_pages, model=model, progress=progress,
+                              direction=direction)
     dump["story_map"] = story_map
 
     log("[stage4] phase A0 — generating teaser intro…")
-    intro = generate_intro(comic_context, model=model, progress=progress, debug_dump=dump)
+    intro = generate_intro(comic_context, model=model, progress=progress, debug_dump=dump,
+                           direction=direction)
     cover_page = _find_cover_page(all_pages, story_pages)
 
     log(f"[stage4] phase A — outlining beats (mode={mode})…")
     beats, beats_model = outline_beats(comic_context, story_pages, mode, hook_hint=hook_hint, model=model,
-                                       progress=progress, debug_dump=dump, story_map=story_map)
+                                       progress=progress, debug_dump=dump, story_map=story_map,
+                                       direction=direction)
     log(f"[stage4] phase A done — {len(beats)} beat(s)")
 
     # Phase A2 — beat-impact critic: drop low-impact beats so the Short is tight +
@@ -535,7 +711,7 @@ def write_script(
     parsed, write_model = write_scenes(beats, glossary, comic_context, story_pages, mode,
                                        hook_hint=hook_hint, all_pages=all_pages,
                                        model=model, progress=progress, debug_dump=dump,
-                                       story_map=story_map)
+                                       story_map=story_map, direction=direction)
     # Deterministic anchoring: page_ref/panel_ref come from the page-sorted beats,
     # not the writer. 1 beat → 1 scene. This is the single source of truth for
     # which page each scene maps to (see the beat-anchoring design doc).
@@ -597,7 +773,7 @@ def write_script(
         #   4. fewest total issues, then shorter.
         _scenes = parsed.get("scenes") or []
         _words = sum(len(str(s.get("text", "")).split()) for s in _scenes)
-        complete = 1 if (9 <= len(_scenes) <= 22 and _words >= 130) else 0
+        complete = 1 if (9 <= len(_scenes) <= 22 and _words >= 155) else 0
         # words_ok: inside the HARD band (no +20 slack — the ceiling is the ceiling, so an
         # over-length draft is never marked ok and loses to a shorter one of equal fidelity).
         words_ok = 1 if _TARGET_WORDS_MIN <= _words <= _TARGET_WORDS_MAX else 0
@@ -624,7 +800,8 @@ def write_script(
             break
         log(f"[stage4]   retrying (pass {pass_num+1}/{MAX_PASSES})…")
         parsed = _retry_fix_with_wiki(parsed, errors, beats, comic_context,
-                                       model, progress, dump, story_map=story_map)
+                                       model, progress, dump, story_map=story_map,
+                                       direction=direction)
         # Re-anchor: the retry may rewrite prose / re-key beat_ids, but page_ref
         # and panel_ref stay deterministic so a retry can never re-break paging.
         parsed = _anchor_scenes_to_beats(parsed, beats, progress)
@@ -653,19 +830,41 @@ def write_script(
     # ("When Illyana returned from Limbo…") — the same event as the first body
     # scene, making the video say it twice. Now that the body is written, if the
     # intro echoes the opening line, regenerate it with that line as avoid_text.
+    # Reveal-only names (the withheld true identity) must not appear in the intro
+    # either — an opening line that names the twist kills the whole hook.
+    reveal_only = _reveal_only_names(body0)
     intro_line = (intro.get("intro_line") or "").strip()
     first_body_line = str(body0[0].get("text", "")).strip() if body0 else ""
-    if intro_line and first_body_line and _intro_overlaps(intro_line, first_body_line):
-        log("[stage4]   ⚠ intro echoes the opening narration — regenerating (avoid_text)")
+
+    def _intro_bad(line: str) -> bool:
+        if not line:
+            return True
+        if first_body_line and _intro_overlaps(line, first_body_line):
+            return True
+        low = line.lower()
+        return any(n.lower() in low for n in reveal_only)
+
+    if intro_line and _intro_bad(intro_line):
+        why = "spoils the reveal" if any(n.lower() in intro_line.lower() for n in reveal_only) \
+            else "echoes the opening narration"
+        log(f"[stage4]   ⚠ intro {why} — regenerating (avoid_text + forbid_names)")
         intro = generate_intro(comic_context, avoid_text=first_body_line,
-                               model=model, progress=progress, debug_dump=dump)
+                               forbid_names=reveal_only,
+                               model=model, progress=progress, debug_dump=dump,
+                               direction=direction)
         intro_line = (intro.get("intro_line") or "").strip()
-        if not intro_line or _intro_overlaps(intro_line, first_body_line):
-            # last-resort: a question hook never narrates a beat, so it can't echo
+        if _intro_bad(intro_line):
+            # last-resort: a question hook. If the fallback hero name IS the concealed
+            # identity (shares a name with reveal_only), naming it would spoil the
+            # twist — use a name-free hook instead.
             hero = _fallback_hero(comic_context)
-            intro_line = f"What if {hero}'s greatest enemy was the person they became?"
+            hero_is_spoiler = any(n.lower() in hero.lower() for n in reveal_only)
+            # Plain, concrete, name-free fallbacks (never the abstract-riddle style).
+            intro_line = ("He woke up with no memory. What he believed almost destroyed him."
+                          if hero_is_spoiler
+                          else f"When {hero} woke up, the whole world had already turned against him.")
             intro["intro_line"] = intro_line
-            log(f"[stage4]   ⚠ still echoed; using fallback question hook: {intro_line!r}")
+            log(f"[stage4]   ⚠ still bad; using fallback question hook: {intro_line!r}")
         else:
             log(f"[stage4]   ✓ intro regenerated: {intro_line!r}")
 
@@ -696,7 +895,15 @@ def write_script(
     outro_idx = next((i for i, s in enumerate(scenes_now) if s.get("is_outro")), -1)
     if outro_idx >= 0 and random.random() < 0.5:
         thematic = generate_outro(comic_context, scenes_now,
-                                  model=model, progress=progress, debug_dump=dump)
+                                  model=model, progress=progress, debug_dump=dump,
+                                  direction=direction)
+        # Concrete-guard: the LLM keeps producing abstract wordplay outros despite
+        # the prompt's plain-language rule. Accept the thematic line only if it
+        # contains something CONCRETE — a character name from this comic or a
+        # physical ending event — else keep the factual credit.
+        if thematic and not _outro_is_concrete(thematic, comic_context):
+            log(f"[stage4] outro: thematic REJECTED (no concrete element): {thematic!r}")
+            thematic = ""
         if thematic:
             scenes_now[outro_idx]["text"] = thematic
             log(f"[stage4] outro: thematic → {thematic!r}")
@@ -708,7 +915,14 @@ def write_script(
     # chosen closure so the ending invites a rewatch (closure is preserved).
     if outro_idx >= 0 and ENABLE_LOOP_TEASE:
         tease = generate_loop_tease(comic_context, scenes_now,
-                                    model=model, progress=progress, debug_dump=dump)
+                                    model=model, progress=progress, debug_dump=dump,
+                                    direction=direction)
+        # Same concrete-guard as the thematic outro — the tease slipped abstract
+        # wordplay past the prompt rules ("The stretching arms remember what the
+        # mind forgot"). No concrete element → skip the tease, keep clean closure.
+        if tease and not _outro_is_concrete(tease, comic_context):
+            log(f"[stage4] outro: loop tease REJECTED (no concrete element): {tease!r}")
+            tease = ""
         if tease:
             scenes_now[outro_idx]["text"] = _append_loop_tease(
                 scenes_now[outro_idx].get("text", ""), tease)
@@ -730,7 +944,8 @@ def write_script(
     if ENABLE_TITLE_BANNER:
         parsed["banner_title"] = generate_banner_title(
             comic_context, parsed.get("scenes") or [],
-            model=model, progress=progress, debug_dump=dump)
+            model=model, progress=progress, debug_dump=dump,
+            direction=direction)
 
     final_model = write_model or gloss_model or beats_model or (model or OPENROUTER_MODEL)
     nar = _to_narration(parsed, beats, glossary, mode, final_model)
@@ -754,6 +969,10 @@ HARD RULES:
   - Grounded in THIS story (below) — name the actual characters; never invent a beat.
   - NO emoji, NO hashtags, NO ending punctuation, NO surrounding quotes.
   - Title Case. Lead with the popular character (the draw).
+  - CONCEALED IDENTITY: if who the protagonist REALLY is is the story's late twist,
+    name them by the identity they BELIEVE / present as (that IS the recognizable draw
+    character), NEVER the hidden true name — revealing it in the banner spoils the
+    Short. (e.g. "Doctor Doom Woke Up With No Memory" — not the real name.)
 
 Examples (OTHER comics — match the concrete, descriptive shape):
   - Rogue Kissed Silver Surfer And Stole His Power
@@ -770,6 +989,7 @@ def generate_banner_title(
     model: str | None = None,
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
+    direction: dict | None = None,
 ) -> str:
     """Craft a 4-9 word catchy on-screen banner title (burned every frame in Stage 5).
     Returns "" if unusable (caller falls back to the working title)."""
@@ -779,15 +999,25 @@ def generate_banner_title(
     plot = str(comic_context.get("plot_summary", "")).strip()
     if not plot:
         plot = str((comic_context.get("summary") or {}).get("story_arc", "")).strip()
-    body_text = " ".join(
-        str(s.get("text", "")).strip()
-        for s in (body_scenes or [])
-        if not s.get("is_intro") and not s.get("is_outro")
-    )
+    kept = [s for s in (body_scenes or [])
+            if not s.get("is_intro") and not s.get("is_outro")]
+    # Reveal-only names must never appear in an every-frame banner — they spoil a
+    # concealed-identity twist. Feed the banner only the SETUP narration (reveal
+    # withheld) so it describes the wild premise, not the ending.
+    reveal_only = _reveal_only_names(body_scenes or [])
+    early_scenes = kept[:-max(1, round(len(kept) * 0.30))] if len(kept) >= 4 else kept
+    body_text = " ".join(str(s.get("text", "")).strip() for s in early_scenes)
+    forbid_block = ""
+    if reveal_only:
+        forbid_block = ("\nFORBIDDEN — these are LATE-REVEAL spoilers; NEVER put them in "
+                        f"the banner (use the identity the hero is PRESENTED as instead): "
+                        f"{', '.join(sorted(reveal_only))}\n")
     user = (
-        f"COMIC TITLE: {title}\n"
+        _direction_block(direction or {})
+        + f"COMIC TITLE: {title}\n"
         f"PLOT (ground truth — do NOT exceed it):\n{plot[:1200]}\n\n"
-        f"NARRATION (tone + what happens):\n{body_text[:1000]}\n\n"
+        f"NARRATION SETUP (tone + what happens — reveal withheld):\n{body_text[:1000]}\n"
+        f"{forbid_block}\n"
         f"Write the banner JSON now."
     )
 
@@ -798,7 +1028,12 @@ def generate_banner_title(
         except Exception:
             return False
         n = len(line.split())
-        return 4 <= n <= 9 and "#" not in line and not any(ord(c) >= 0x1F000 for c in line)
+        if not (4 <= n <= 9 and "#" not in line and not any(ord(c) >= 0x1F000 for c in line)):
+            return False
+        low = line.lower()
+        if any(name.lower() in low for name in reveal_only):  # rejects spoiler names → retry
+            return False
+        return True
 
     try:
         content, used = call_with_chain(
@@ -848,13 +1083,23 @@ MAIN FEATURE ONLY — one story, one thread:
   plain, recognizable terms, (2) HOW/WHY the central threat AROSE — the mechanism
   that gave the villain power, not merely that he "has" it, (3) what the hero must
   now do. The reader must grasp the setup before any fight starts.
+  EXCEPTION — HIDDEN-ORIGIN TWIST: if the origin itself is the story's concealed
+  twist — the protagonist's TRUE IDENTITY, how they really got here, WHO they
+  actually are, and neither the protagonist NOR the audience knows it yet — then that
+  backstory is NOT premise to front-load. It is the LATE REVEAL (see below): hold the
+  whole flashback until AFTER the climactic confrontation, then unspool it. Early
+  beats state only what the protagonist BELIEVES (e.g. "he woke certain he was Doom"),
+  never the buried truth.
 
 Each beat has:
 - function: COLD_OPEN | SETUP | COMPLICATION | ESCALATION | MIDPOINT | CLIMAX | LANDING
 - name: 3-7 words naming the beat ("Ben gets the symbiote")
 - page_refs: which input pages feed this beat
 - key_panels: 1-3 strongest visual moments [{"page": int, "panel": int}]
-- summary: ONE factual sentence of what happens (no narration voice yet)
+- summary: ONE factual sentence of what happens (no narration voice yet). Name only
+  entities a mainstream audience already knows; refer to an obscure, this-issue-only
+  entity (a local cult, a hired assassin) by a plain ROLE descriptor instead of its
+  proper name — the writer copies your wording.
 - cause: the wiki-grounded REASON/MOTIVE this beat happens — the "why" behind it
   (e.g. "Reed's experiment turned Ben into the Thing and he forgot the accident's
   anniversary" → why Ben resents Reed; "the symbiote marked Ben as its perfect
@@ -885,6 +1130,17 @@ REVEAL IN STORY ORDER — DON'T SPOIL A LATE TWIST EARLY (HARD RULE):
   plot mentions a twist out of order (e.g. "revealed later by…", "what the flashback
   withholds…"), STILL place your beat at the LATE reveal point — never at the early
   mention.
+- HELD BACKSTORY (when the origin IS the twist): if the flashback explains a concealed
+  identity/origin the protagonist doesn't know, do NOT scatter it early as "setup".
+  Order the beats: build-up (protagonist acting on the FALSE belief) → the climactic
+  CONFRONTATION/clash → THEN the flashback beats that reveal the true past → RETURN TO
+  THE PRESENT for the final on-panel image as LANDING. The past is unspooled only once
+  the confrontation forces it. Chronologically the flashback happened first, but
+  DRAMATICALLY it belongs late — emit it late so `_order_beats_canonical` keeps it there.
+  CRITICAL: the flashback's chronological end (how the present situation came to be) is
+  NOT the LANDING — after the flashback you MUST come back to the PRESENT and end on the
+  story's actual final image (the decisive defeat / fate / last panel), never trail off
+  on "and that is how things came to be". The last beat = the last thing shown on-page.
 
 Beats are in dramatic order (which is usually but not always chronological). The first beat is COLD_OPEN — the moment that should hook the viewer. The last beat is LANDING — the line that pays it off.
 
@@ -921,9 +1177,19 @@ Constraints:
   talky small-panel pages instead. Never skip a ★BIG SHOT (a transformation, a big
   reveal, a major clash) — these are the money shots that make the Short. Point that
   beat's key_panels at the ★BIG SHOT panel.
-- COLD_OPEN beat must contain a concrete visual action, not exposition.
+- COLD_OPEN beat must contain a concrete visual action, not exposition. But it must
+  NOT be the story's climactic reveal/final image: when the biggest ★BIG SHOT is the
+  ENDING twist (a hidden identity made visible, a final fate), that image is RESERVED
+  for the LANDING — do NOT spend it as the cold-open hook. Open on an early/mid
+  concrete action instead (the hero acting on his FALSE belief). Using the ending
+  image to open spoils the payoff and leaves the finale with nothing to land on.
 - LANDING = the DECISIVE RESOLUTION of the MAIN conflict (the villain's defeat / fate,
   the world restored) — a payoff, twist, or final image; never a CTA or question.
+  When the story is a held-reveal twist, the LANDING IS that final reveal image (the
+  concealed truth made visible on the last page — e.g. the plummeting man's powers
+  becoming visible) and it appears ONLY here, never earlier. Do NOT stop one beat
+  short of it (ending on "he throws him out the window" while omitting the visible
+  reveal that follows) — the last on-panel moment is the LANDING.
   Do NOT add a separate aftermath/epilogue beat AFTER it (a calm denouement, a
   hero-and-ally coda) even if the comic has those pages — it dilutes the ending.
   End on the decisive moment; the outro credit follows.
@@ -996,6 +1262,54 @@ def _dedupe_reveal_beats(beats: list[Beat], log: Callable[[str], None]) -> list[
     return beats
 
 
+# The outline system prompt already instructs the LLM to hold a hidden-origin
+# flashback until after the confrontation (see HELD BACKSTORY rule above), but the
+# LLM does not reliably obey it — this is the deterministic backstop.
+HOLD_FLASHBACK_LATE = os.getenv("HOLD_FLASHBACK_LATE", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _hold_flashback_beats_late(beats: list[Beat], log: Callable[[str], None]) -> list[Beat]:
+    """Move flashback beats to sit right before the final 2 non-flashback beats.
+
+    The outliner is told to hold a hidden-origin flashback until AFTER the climactic
+    confrontation, but sometimes emits it early anyway (present-day fight, THEN past
+    reveal is the desired dramatic order). Detects flashback beats by the outliner's
+    consistent "flashback" wording (no semantic guessing), removes them (preserving
+    their relative order), and re-inserts the block immediately before the 2nd-to-last
+    non-flashback beat — leaving the confrontation, then the reveal, then the final
+    beat(s) (e.g. the LANDING image) intact. A no-op if there are no flashback beats,
+    or if they already sit at/after that point."""
+    if not HOLD_FLASHBACK_LATE:
+        return beats
+    flash_ids = {b.id for b in beats
+                 if re.search(r"\bflash-?back\b", f"{b.summary or ''} {b.name or ''}", re.I)}
+    if not flash_ids:
+        return beats
+    flash = [b for b in beats if b.id in flash_ids]
+    non_flash = [b for b in beats if b.id not in flash_ids]
+    if not non_flash:
+        return beats
+
+    cut = 2 if len(non_flash) >= 2 else 1
+    target_count = len(non_flash) - cut
+
+    count_before = 0
+    for b in beats:
+        if b.id in flash_ids:
+            break
+        count_before += 1
+    if count_before >= target_count:
+        return beats  # already sits at/after the confrontation
+
+    orig_pos = {b.id: i + 1 for i, b in enumerate(beats)}
+    new_order = non_flash[:target_count] + flash + non_flash[target_count:]
+    new_pos = {b.id: i + 1 for i, b in enumerate(new_order)}
+    log(f"[stage4]   flashback-hold: moved {len(flash)} flashback beat(s) after the "
+        f"confrontation (positions {orig_pos[flash[0].id]}..{orig_pos[flash[-1].id]} "
+        f"→ {new_pos[flash[0].id]})")
+    return new_order
+
+
 def outline_beats(
     comic_context: dict,
     story_pages: list[dict],
@@ -1006,6 +1320,7 @@ def outline_beats(
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
     story_map: dict | None = None,
+    direction: dict | None = None,
 ) -> tuple[list[Beat], str]:
     log = progress or (lambda _msg: None)
     mode_info = MODES_BY_KEY[mode]
@@ -1056,9 +1371,21 @@ def outline_beats(
             f"(else you're truncating the climax)."
         )
 
+    # Director's must-have beats (if any) — reinforce inside the TASK instruction
+    # so the outliner treats them as required beats, not just a nice-to-have.
+    must_have = [str(b).strip() for b in (direction or {}).get("must_have_beats", []) if str(b).strip()]
+    must_have_line = ""
+    if must_have:
+        must_have_line = (
+            "MUST-HAVE BEATS (director's spec — EACH one below MUST get its own "
+            "dedicated beat; do not omit or merge them into another beat):\n"
+            + "\n".join(f"  - {b}" for b in must_have) + "\n\n"
+        )
+
     _smap = render_story_map_block(story_map)
     user = (
-        _smap
+        _direction_block(direction or {})
+        + _smap
         + canonical_block
         + f"COMIC METADATA:\n{_ctx_block(comic_context)}\n\n"
         # Multi-issue sagas have ~100 pages; the full per-panel block balloons the
@@ -1069,6 +1396,7 @@ def outline_beats(
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + page_range_hint + "\n\n"
+        + must_have_line
         + f"TASK: Extract 16-20 beats that COVER THE ENTIRE canonical story arc. "
         + f"USE THE CANONICAL WIKI PLOT ABOVE as the spine — each major event in "
         + f"the wiki MUST get its own beat. Then map each beat to the most fitting "
@@ -1150,6 +1478,17 @@ def outline_beats(
     # discloses it). Belt-and-suspenders to the REVEAL-IN-STORY-ORDER prompt rule.
     beats = _dedupe_reveal_beats(beats, log)
 
+    # Flashback-hold guard: present-day fight FIRST, past unspooled after (see
+    # HELD BACKSTORY rule in the outline prompt) — deterministic backstop for when
+    # the LLM emits the flashback too early despite the prompt rule.
+    beats = _hold_flashback_beats_late(beats, log)
+
+    # Ending-coverage gate: if the outline stops short of the plot's FINAL on-page
+    # event (the outliner sometimes ends on the flashback's chronological close), add
+    # a LANDING beat for it so the finale actually lands. Then re-apply bookends.
+    beats = _ensure_ending_coverage(beats, comic_context, story_pages, log)
+    beats = _order_beats_canonical(beats)
+
     # Visual grounding: replace the outliner's UNRELIABLE panel-index guess with a
     # content-matched pick (beat summary ↔ panel descriptions). Sets key_panels
     # (the VISUAL anchor); does NOT change narration order.
@@ -1175,12 +1514,14 @@ def _ground_beat_panels(
     log = progress or (lambda _msg: None)
     panels_by_page: dict[int, list[dict]] = {}
     area_by_page: dict[int, int] = {}
+    text_blocks_by_page: dict[int, list[dict]] = {}
     for p in story_pages or []:
         pn = int(p.get("page_number", 0) or 0)
         if pn:
             panels_by_page[pn] = p.get("panels") or []
             dims = p.get("image_dimensions") or {}
             area_by_page[pn] = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
+            text_blocks_by_page[pn] = p.get("text_blocks") or []
 
     def _is_big_shot(pg, idx) -> bool:
         pans = panels_by_page.get(pg) or []
@@ -1222,11 +1563,17 @@ def _ground_beat_panels(
         best: tuple[float, int, int] | None = None  # (score, page, panel_index)
         for pg in search_pages:
             dist_penalty = 0.0 if pg in ref_set else 0.04
+            page_tb = text_blocks_by_page.get(pg)
             for idx, panel in enumerate(panels_by_page.get(pg, [])):
-                desc = str(panel.get("description", "") or "").strip()
-                if not desc:
+                # Ground against the SAME rich signal Stage 5 matches on (description +
+                # characters + dominant_emotion + OCR dialog), not description alone —
+                # a panel's dialog often names the exact story moment (an unmasking
+                # line, a reveal) that the visual description misses, so grounding on
+                # description-only can disagree with Stage 5's later panel pick.
+                ptext = _panel_embed_text(panel, page_tb)
+                if not ptext:
                     continue
-                score = _semantic_sim(summary, desc) - dist_penalty
+                score = _semantic_sim(summary, ptext) - dist_penalty
                 # small nudge: a panel showing the beat's active characters
                 pchars = {str(c).split()[0].lower() for c in (panel.get("characters") or []) if c}
                 if active and (active & pchars):
@@ -1246,15 +1593,17 @@ def _ground_beat_panels(
 def _beat_anchor(beat: Beat) -> tuple[int, int]:
     """The deterministic (page_ref, panel_ref) a beat maps to.
 
-    Choice B (unified panel matching, 2026-06-17): Stage 3 commits only the PAGE.
-    `_ground_beat_panels` still corrects off-by-one page_refs, but the specific
-    panel is chosen by Stage 5 (`_match_panels`) — the single panel authority.
-    So panel_ref is ALWAYS -1 ("whole page"); the retired honor-+15 rule (R3) no
-    longer has a committed panel to honor.
+    Choice B (unified panel matching, 2026-06-17), revised 2026-07-02 (C2): the
+    panel `_ground_beat_panels` content-matched now travels as a SOFT anchor —
+    Stage 5's `_match_panels` gives it a bonus in the cosine matrix but the
+    Hungarian/greedy assignment (plus VLM rerank) can still override it when the
+    embedding strongly disagrees. Beats without a grounded key_panel keep -1
+    ("whole page"; Stage 5 picks freely).
     """
     if beat.key_panels:
         kp = beat.key_panels[0]
-        return int(kp.get("page", 0) or 0), -1
+        panel = kp.get("panel")
+        return int(kp.get("page", 0) or 0), int(panel) if panel is not None else -1
     if beat.page_refs:
         return min(beat.page_refs), -1
     return 0, -1
@@ -1334,12 +1683,27 @@ def _anchor_scenes_to_beats(
     # raised the sonic gun") to a late beat, narrating it at the very end after the
     # character was already dead, or scrambled the climax. Position can't drift.
     matched: dict[int, dict] = {}
-    for i, beat in enumerate(beats):
-        if i < len(pool):
-            matched[beat.id] = pool[i]
-    if len(pool) != len(beats):
-        log(f"[stage4]   ⚠ writer emitted {len(pool)} story scenes for {len(beats)} "
-            f"beats — positional anchoring used the first {min(len(pool), len(beats))}")
+    n_beats, n_pool = len(beats), len(pool)
+    if n_pool <= n_beats:
+        # fewer/equal scenes → front-align; unmatched trailing beats become gaps.
+        for i, beat in enumerate(beats):
+            if i < n_pool:
+                matched[beat.id] = pool[i]
+    else:
+        # Writer emitted EXTRA scene(s) (split one beat into two). Front-only
+        # truncation drops the writer's LAST scene — which is the LANDING (plummet /
+        # final reveal), silently losing the payoff. Align BOTH ends instead: front
+        # beats → front scenes, back beats → back scenes, so the LANDING beat always
+        # keeps the writer's LAST scene; the surplus is dropped from the MIDDLE.
+        half = n_beats // 2
+        for i in range(half):
+            matched[beats[i].id] = pool[i]
+        for j in range(1, n_beats - half + 1):
+            matched[beats[n_beats - j].id] = pool[n_pool - j]
+    if n_pool != n_beats:
+        how = f"first {n_pool}" if n_pool < n_beats else "both-ends aligned; dropped middle surplus"
+        log(f"[stage4]   ⚠ writer emitted {n_pool} story scenes for {n_beats} "
+            f"beats — positional anchoring: {how}")
 
     anchored: list[dict] = []
     gaps: list[int] = []
@@ -1377,6 +1741,75 @@ def _anchor_scenes_to_beats(
     return parsed
 
 
+_ENDING_STOP = {
+    "the", "and", "that", "with", "his", "her", "their", "they", "them", "then",
+    "this", "into", "from", "onto", "when", "where", "which", "while", "would",
+    "could", "should", "have", "been", "were", "was", "are", "for", "but", "him",
+    "she", "had", "who", "whom", "both", "each", "over", "back", "down", "still",
+    "issue", "ends", "ending", "story", "comic", "final", "page", "panel", "left",
+    "one", "two", "all",
+}
+
+
+def _ending_tokens(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]{4,}", text.lower()) if w not in _ENDING_STOP}
+
+
+def _ensure_ending_coverage(
+    beats: list[Beat],
+    comic_context: dict,
+    story_pages: list[dict],
+    log: Callable[[str], None],
+) -> list[Beat]:
+    """Guarantee the outline COVERS the plot's FINAL on-page event.
+
+    The outliner sometimes stops at the flashback's chronological end (how the
+    present came to be) and drops the story's actual last image — e.g. the villain
+    hurling the hero out the window / the plummeting stretch reveal. The writer then
+    CANNOT recover it (1 scene per beat, retries only re-write existing beats). If
+    the final beats don't cover the plot_summary's closing event, append a LANDING
+    beat for it (grounded in plot_summary → no per-comic logic). LANDING is protected
+    from the beat-impact critic, so it survives to the writer."""
+    plot = str(comic_context.get("plot_summary", "")).strip()
+    if not plot or len(beats) < 6:
+        return beats
+    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", plot) if s.strip()]
+    if len(sents) < 3:
+        return beats
+    # ubiquitous tokens across beat summaries (recurring names/setting) prove nothing
+    beat_toks = [_ending_tokens(b.summary or "") for b in beats]
+    freq: dict[str, int] = {}
+    for ts in beat_toks:
+        for w in ts:
+            freq[w] = freq.get(w, 0) + 1
+    ubiq = {w for w, n in freq.items() if n >= max(3, int(0.34 * len(beats)))}
+    # CHECK the CLOSING IMAGE specifically — the last sentence, not the last-2 averaged
+    # (averaging let a covered "thrown out the window" mask an uncovered "plummets,
+    # stretch powers visible" payoff). Fall back to the prior sentence if the last is
+    # too thin to judge.
+    closing = _ending_tokens(sents[-1]) - ubiq
+    if len(closing) < 2:
+        closing = _ending_tokens(" ".join(sents[-2:])) - ubiq
+    if len(closing) < 2:
+        return beats  # closing image has no distinctive content to check
+    tail = set().union(*beat_toks[-2:]) if len(beat_toks) >= 2 else set()
+    covered = len(closing & tail) / len(closing)
+    if covered >= 0.5:
+        return beats  # the closing image already lands in the last beats
+    final_event = re.sub(r"^\s*the (?:issue|story|comic) ends with\s*", "",
+                         " ".join(sents[-2:]), flags=re.I).strip()
+    last_page = max((int(p.get("page_number", 0) or 0) for p in story_pages), default=0)
+    new_id = max((b.id for b in beats), default=0) + 1
+    beats.append(Beat(
+        id=new_id, function="LANDING", name="Final on-page image",
+        page_refs=[last_page] if last_page else [],
+        key_panels=[], summary=final_event, cause="", characters_active=[],
+    ))
+    log(f"[stage4]   ending-coverage: closing image only {covered:.0%} covered — "
+        f"appended LANDING beat: {final_event[:90]!r}")
+    return beats
+
+
 def _validate_outline(beats: list[Beat], max_gap: int = 5) -> list[str]:
     """Soft validation of outline. Returns issue strings; empty = OK."""
     issues: list[str] = []
@@ -1395,6 +1828,17 @@ def _validate_outline(beats: list[Beat], max_gap: int = 5) -> list[str]:
             issues.append(
                 f"beat {prev.id}→{nxt.id} page-gap {gap} "
                 f"(pages {prev_end+1}-{next_start-1} skipped — insert bridge)"
+            )
+
+    # A beat spanning too many pages swallows whatever happens on them (e.g. a
+    # multi-page confrontation eating the actual fight, leaving it unnarrated).
+    for b in beats:
+        span = len(set(b.page_refs))
+        if span > 4:
+            issues.append(
+                f"beat {b.id} covers {span} pages {sorted(set(b.page_refs))} — too "
+                f"broad; SPLIT into 2+ beats of 1-4 pages each (a multi-page "
+                f"confrontation must keep its FIGHT as its own beat)"
             )
     return issues
 
@@ -1425,15 +1869,18 @@ def _retry_outline_with_bridge(
         indent=2,
     )
     user = (
-        f"Your previous outline draft had page-coverage issues. Fix by INSERTING new "
-        f"BRIDGE beats that summarize the skipped pages so the narrative flows linearly.\n\n"
+        f"Your previous outline draft had page-coverage/structure issues. Fix by "
+        f"INSERTING new BRIDGE beats that summarize skipped pages so the narrative "
+        f"flows linearly. For a 'too broad' beat, SPLIT it into consecutive beats "
+        f"(e.g. confrontation + the fight/defeat), keeping ids unique.\n\n"
         f"ISSUES:\n{issue_block}\n\n"
         f"PRIOR OUTLINE:\n{prior}\n\n"
         f"STORY PAGES (for picking bridge content):\n{_pages_block_compact(story_pages)}\n\n"
-        f"Return the COMPLETE corrected outline (with bridge beats inserted in order) "
-        f"in the same JSON shape. KEEP every original beat and INSERT the bridge beats — "
-        f"do NOT drop, merge, or renumber away any existing beat (the total can only grow). "
-        f"Page-gap between consecutive beats MUST be ≤ 5."
+        f"Return the COMPLETE corrected outline (with bridge/split beats inserted in "
+        f"order) in the same JSON shape. KEEP every original beat and INSERT the new "
+        f"beats — do NOT drop, merge, or renumber away any existing beat (the total "
+        f"can only grow). Page-gap between consecutive beats MUST be ≤ 5, and no "
+        f"beat may cover more than 4 pages."
     )
 
     def _has_beats(c: str) -> bool:
@@ -1570,29 +2017,73 @@ _WRITE_SYSTEM = """You are PanelNarrator, writing short-form narration for YouTu
 
 This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
-1) HOOK FORMULA — MANDATORY "When [event], [twist]..." structure
+0) PLAIN-ENGLISH STYLE (BINDING — OVERRIDES ANY RULE BELOW THAT ENCOURAGES FANCY WORDING)
+   - Write at ~IELTS 6.5 / B2 level: short, common words; ONE event per sentence.
+   - LINE LENGTH IS THE WORD BUDGET'S MAIN LEVER: aim 8-14 words per scene line
+     (hard max 18; sole exceptions: the hook, and the two twist-landing closers of
+     rule 8.68 which may reach 24). Trim modifiers and sub-clauses first, never the
+     event itself.
+     A 20-scene script at ~11 words/line lands the total budget; 17-word lines blow it.
+   - NO ornate metaphors or literary flourishes ("a stranger's face clawed at his mind",
+     "the truth unspooled", "one name burned through the fog"). Say it plainly instead
+     ("kept haunting him", "then the truth came out").
+   - Each line must be understandable on FIRST LISTEN by a non-native speaker. If a
+     word or phrase needs a second read to parse, it is too fancy — replace it with a
+     simpler one.
+   - This rule governs WORD CHOICE only — it does not cancel the punch/rhythm/variety
+     rules elsewhere (3, 11a-11g); hit those beats using PLAIN words, never fancy ones.
+   - VISUAL-CLAIM DISCIPLINE: a scene line may only state what its own beat's panel
+     actually shows on screen. An off-panel fact (who sent someone, what's happening
+     elsewhere, what's above/behind something unseen) is NOT a visual claim — fold it
+     into a short grounded cause clause, or cut it. Never narrate an off-panel detail
+     as if the viewer can see it on the current panel.
 
-   Channel benchmark (66% of 219 analyzed @TheComicCivilian videos open with "When..."):
-     ✓ "When Miles Morales investigated a rooftop while being invisible, he came across..."
-     ✓ "When members of the Titans and Justice League were kidnapped, Wonder Woman..."
+1) HOOK FORMULA — CONCRETE ORDINARY MOMENT + CONTRAST PIVOT ("thought/believed X — until [dark turn]...")
+
+   PRIMARY SHAPE — this is what wins. Verbatim mining of 23 competitor Shorts: the
+   3 BIGGEST hits (3.24M / 1.70M / 1.38M views) ALL open on a concrete, ordinary
+   moment and then pivot with "thought/believed [normal] ... until [dark turn]".
+   Show a scene the viewer pictures instantly, then break it:
+     ✓ "Nightwing thought he was living the perfect life with the Titans, until one thing tore it all apart..." (3.24M)
+     ✓ "When Superman came home, Lois thought he'd only been gone a few hours, until she learned the truth..." (1.70M)
+     ✓ "The Flash thought he saved an innocent civilian, until he learned what the man really wanted..." (1.38M)
+   The umbrella framing "When [event], [twist]..." still works — the thought/until
+   pivot is just the PREFERRED way to fill it. Keep the older channel openers too:
      ✓ "When Frank Castle entered Valhalla, he couldn't find peace, so Odin..."
 
-   Acceptable but less common alternates:
-     ◐ "After [event happened], [character action]..." (~10% of channel)
-     ◐ "What if [question]?" (rare on this channel — used by other channels)
-
-   HARD BAN:
-     ✗ Starting with a character name as the first word ("The Goblin unleashes..." is WRONG)
+   NAME-FIRST IS ALLOWED when it leads into the pivot (channel data: several virals
+   open on the hero's name — "Nightwing thought...", "Spawn's body was just visiting...").
+     ✓ "Nightwing thought he was living the perfect life, until it all fell apart..."
+   STILL BANNED — a FLAT name-first ACTION opener (no pivot, no hook), and meta-talk:
+     ✗ "The Goblin unleashes his deadliest plan." (flat action, no contrast — not a hook)
      ✗ "In an alternate universe..." (different channel's signature, don't copy)
      ✗ "Today we're looking at..." / "In today's video" / any framing meta-talk
+
+   ZERO PRIOR-KNOWLEDGE RULE (HARD): the hook must be fully parseable by a viewer who
+   has NEVER read this comic. NO continuity/lore references — no event names, cosmic
+   titles, prior-series callbacks, or character history a newcomer wouldn't know.
+   Lore-dense hooks are the FLOP signature (these got <10k views):
+     ✗ "Superman became King Omega due to the sacrifice of the Time Trapper." (7.8k — lore soup)
+     ✗ "When Judas killed Spawn, the Mother of Existence descended..." (4.8k — needs backstory to parse)
+
+   LEAD WITH VISCERAL, HUMAN-SCALE STAKES when the story offers one — a concrete
+   image beats an abstract one every time (SAME character, opposite results):
+     ✓ Spawn "found a 20-year-old girl locked in a basement..." (1.99M — visceral, human)
+     ✗ Spawn "surrounded by angels led by a young leader..." (7.2k — abstract, no felt stakes)
+
+   QUESTION HOOKS ARE LAST RESORT. ZERO of the 15 analyzed virals opened with a
+   question ("What if...?", "Ever wonder...?"). Use one ONLY if no concrete scene +
+   pivot can be built from this story — never as your default.
 
    The hook MUST be 14-26 words and end with an open thread that pulls the viewer
    into scene 2 (use a comma + "..." or end with an unresolved promise). The hook
    is the ONE scene allowed to run long — every other scene stays punchy.
 
    HOOK = FIRST BEAT ONLY — NO PREVIEW OF LATER EVENTS.
-   The hook narrates ONLY the first beat's own moment. Do NOT pull an event from a
-   later beat into the opener — that creates a contradiction with the next scene.
+   The hook narrates ONLY the first beat's own moment. The "until [dark turn]" clause
+   must belong to the FIRST beat's own moment or its immediate tease — it does NOT
+   pull an event from a LATER beat into the opener (that contradicts the next scene).
+   Crack the door open; do not name the later payoff.
      ✗ "When the symbiote sat imprisoned, it was Ben who set it free..."  then next
         scene "But Ben discovered the caged symbiote." (he frees it, THEN finds the
         cage? — broken. "set it free" belongs to a LATER beat.)
@@ -1649,8 +2140,8 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
        A script with fewer than 3 punch sentences will be rejected and retried.
      • the rest are MEDIUM (12-17 words) — main flow
      • a CAUSAL scene (one event + its grounded 'why' clause, rule 6.7) MAY run to
-       ~24 words; the hook (scene 1) too. Plain scenes over 17w with no causal
-       clause are still rejected — don't pad.
+       the 18-word line cap; the hook (scene 1) too. Plain scenes over 14w with
+       no causal clause are still rejected — don't pad.
      • 1 outro credit "The comic is X" (5-8 words)
    - Punch examples (≤11w, hit hard — these LAND). VARY the opener — most punches do
      NOT start with "But":
@@ -1766,8 +2257,8 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    SET UP a motive before it pays off: if a later turn relies on an earlier motive
    (the symbiote choosing Ben as its perfect host), PLANT that motive in the
    COLD_OPEN / early scene using that beat's WHY, so the payoff feels earned.
-   A scene that carries a causal clause MAY run to ~24 words (others stay punchy,
-   ≤17). Never invent a cause not in the WHY/summary/wiki.
+   A scene that carries a causal clause MAY run up to the 18-word line cap
+   (others stay punchy, ≤14). Never invent a cause not in the WHY/summary/wiki.
 
 6.5) FACT-CHECK SELF-PASS — before returning JSON
    For EACH scene you write, mentally verify:
@@ -1778,21 +2269,18 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    If a phrase isn't grounded, REPLACE it with a grounded one or REMOVE it. Better to write a less colorful but accurate scene than a vivid but invented one.
    The user has rejected past drafts that twisted the story. Accuracy beats flourish.
 
-7) LENGTH BUDGET — TIGHT, PUNCHY SHORT (the finished video must stay ~55-75s)
+7) LENGTH BUDGET — TIGHT, PUNCHY SHORT (the finished video must stay ~60-75s)
    - **16-20 scenes** total (one per beat — cover the full arc incl. resolution). Keep
      scenes SHORT so more of them still fit the word ceiling (short scenes = more panels).
-   - **165-220 words TOTAL — this is a HARD CEILING, not a target to fill.** At the
-     channel's render pace that is ~58-72s in the finished video; going over makes the
-     Short drag. Aim for the LOWER end (≈170-195w) unless the arc genuinely needs more.
-   - Before returning JSON, COUNT your total words. If > 220, you MUST cut: drop
+   - **195-245 words TOTAL — this is a HARD CEILING, not a target to fill.** At the
+     MEASURED render pace (~3.4 words/sec at our shipped 1.35 atempo) that + the teaser
+     intro is ~61-76s finished — the top of the 48-71s viral cluster. Going over makes the
+     Short drag. Aim for the MIDDLE (≈210-225w) unless the arc genuinely needs more.
+   - Before returning JSON, COUNT your total words. If > 245, you MUST cut: drop
      adjectives, drop any clause that is NOT a grounded cause, and tighten each sentence —
-     keep ONE event (+ its 'why') per sentence. NEVER exceed 220. Keep all canonical beats.
-   - If < 165 → ADD a missing canonical/causal beat (never pad with empty adjectives).
-   - Sentence-by-sentence target distribution (16-20 scenes, 165-220 words):
-     • ≥3 PUNCH (≤11w)   ← REQUIRED, will be rejected if fewer
-     • most MEDIUM (12-17w)
-     • a few CAUSAL (≤24w: one event + its grounded 'why'); the hook may be ≤26w
-     • 1 OUTRO (5-8w)
+     keep ONE event (+ its 'why') per sentence. NEVER exceed 245. Keep all canonical beats.
+   - If < 195 → ADD a missing canonical/causal beat (never pad with empty adjectives).
+   - Sentence length distribution: see rule 3 (≥3 punch / mostly medium / few causal / 1 outro).
 
 8) BEAT TAGGING — you do NOT pick pages
    - Write EXACTLY ONE scene per beat, in the given beat order, and tag it with
@@ -1833,6 +2321,40 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      is "holding". If a visual detail does not move the story forward, drop it.
      Answer "what just happened and why", never "what does this panel look like".
 
+8.65) CONCEALED IDENTITY — NARRATOR NEVER ASSERTS THE FALSE NAME AS FACT
+   When the protagonist believes a false identity and their TRUE name is the story's
+   late reveal, the NARRATOR must never state the false identity as settled fact —
+   the comic is hiding this from the reader, so the narrator can't already know it.
+   Frame it as the CHARACTER's belief or his own words instead, until the beat where
+   the comic itself reveals the truth:
+     ✗ "He knew exactly who he was. He was Victor Von Doom."  (narrator asserts the
+        false identity as fact — this is the twist being told away)
+     ✓ "He believed he was Victor Von Doom."
+     ✓ "He kept repeating one name: Victor Von Doom."
+   The narrator may assert the TRUE identity as fact ONLY at the beat where the comic
+   discloses it — never before.
+
+8.68) TWIST LANDING — UNPACK THE REVEAL, THEN MIRROR IT (when the climax is a reveal/twist)
+   The reveal line states the FACT — that alone is not enough. The ending must land in
+   two moves, using the comic's own stated meaning (dialog / lore — rule 6 still holds):
+   - UNPACK: the scene after the reveal states in plain words what the twist MEANS for
+     the whole story — the full implication, not a flat reaction beat. If the beat is
+     "characters react/discuss", narrate the implication OVER that beat instead of the
+     reaction itself:
+       ✗ reveal: "That shard WAS the spark." → next: "His partner urged him to sit
+          with it."  (the twist's meaning is never stated — wasted scene)
+       ✓ reveal: "That stolen shard was the spark that lit the Big Bang." → next:
+          "The universe existed only to carry Doom to this moment, so his soul could
+          light the spark."  (the closed loop is now explicit)
+   - MIRROR: the FINAL story line (just before the outro credit) ties the twist back
+     to the protagonist's defining trait or wound from the setup — "went looking for
+     X, and found Y" shape, plain words, still what the final panel shows:
+       ✓ "Doom had gone looking for the face of creation, and found his own — a
+          universe masked, self-contained, and unknowable, made in his image."
+   - These TWO closing lines (unpack + mirror) may run up to 24 words when the idea
+     needs it — the only scenes besides the hook allowed past the 18-word cap. Do not
+     spend the headroom on modifiers; spend it on the idea.
+
 8.7) KEEP IT SIMPLE — ONE MAIN THREAD, EXPLAIN AS YOU GO
    - Tell ONLY the main event/conflict (the hero vs the central villain/threat).
      A confused viewer is worse than a thin one — drop side characters and subplots.
@@ -1852,9 +2374,6 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
        ✗ "the Penance Stare forced Vinnie to feel every sin"  (who is Vinnie?)
        ✓ "the Penance Stare forced the criminal to feel every sin"
 
-9) CONTINUITY
-   - Each scene continues the thread from the one before it — do not reset the subject or jump location without re-introducing it, so the narration flows scene to scene.
-
 10) FORBIDDEN
    - No em-dashes (—), no brackets, no parenthetical asides — this is spoken aloud.
    - No "what do you think in the comments", no "subscribe", no questions to viewer at the end.
@@ -1869,10 +2388,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
 11) VOICE & RHYTHM — channel-calibrated from 219 reference Shorts
 
-   11a. SENTENCE LENGTH VARIANCE — punchy, one event (+ optional why) each
-        See rule 3 above. ≥3 punch sentences (≤11w), most medium (12-17w), a few
-        causal (≤24w: one event + its grounded 'why'), 1 outro credit. ONE EVENT
-        per sentence (a cause/why clause is allowed; a second EVENT is not).
+   11a. SENTENCE LENGTH VARIANCE — see rule 3 for the punch/medium/causal distribution.
         Uniformity is the AI-tell; cramming two events into one sentence is the bug.
 
    11b. STORYTELLER VOICE — not panel-reader
@@ -1882,6 +2398,23 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
         Channel: "When Frank Castle entered Valhalla, he couldn't find peace.
         So, Odin returned his cosmic powers and turned him into Ghost Rider again."
         AVOID: "Reed Richards X... Reed Y... Reed Z..." every sentence (AI-tell).
+
+   11b-2. NAME FAMOUS CHARACTERS — don't over-describe them
+        Well-known characters (Doom, Spider-Man, Doctor Strange, Magik, Venom…) need
+        NO physical introduction — just NAME them, or a clean recognizable epithet
+        ("Doom, ruler of Latveria"). Do NOT stack odd/forced adjectives on them.
+        ✓ "Doom threw him from the window."   ✓ "the real Doom"
+        ✗ "the armored, Latverian Doom"   ✗ "Illyana, armored and defiant"
+        Keep the prose SIMPLE and plain. Never bend wording to chase rhythm/rhyme at
+        the cost of clarity or matching the panel.
+
+   11b-3. DON'T NAME OBSCURE ONE-ISSUE ENTITIES — use a ROLE descriptor instead
+        NAME only entities a mainstream comic audience already knows (major heroes/
+        villains). A minor, this-issue-only entity (a local cult, a hired assassin,
+        a one-off gadgeteer) must NOT be referred to by its proper name — use a
+        plain ROLE descriptor instead ("a doomsday cult", "a hired assassin", "a
+        scrap-tech inventor"). An unfamiliar proper name costs the viewer a beat of
+        confusion and adds nothing. The famous-name rule above (11b-2) still applies.
 
    11c. SHOW DON'T TELL — concrete actions over named emotions
         Channel: "Peter unmasked Hobgoblin and threatened to kill him." (concrete)
@@ -2007,6 +2540,7 @@ def write_scenes(
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
     story_map: dict | None = None,
+    direction: dict | None = None,
 ) -> tuple[dict, str]:
     log = progress or (lambda _msg: None)
     mode_info = MODES_BY_KEY[mode]
@@ -2033,7 +2567,8 @@ def write_scenes(
 
     _smap = render_story_map_block(story_map)
     user = (
-        _smap
+        _direction_block(direction or {})
+        + _smap
         + f"COMIC CONTEXT:\n{_ctx_block(comic_context)}\n\n"
         + (f"{wiki_block}\n\n" if wiki_block else "")
         + (f"{lore_block}\n\n" if lore_block else "")
@@ -2119,6 +2654,8 @@ def _is_critical_error(msg: str) -> bool:
         "repeat the same content",   # two consecutive scenes restate the same beat/phrase
         "narrates multiple events",  # single-event guard: >1 event in one sentence
         "coverage gap",              # writer dropped/merged beats → panels desync
+        "words over hard ceiling",   # draft blew way past the word budget
+        "over the line cap",         # a single scene line ran too long (blows the budget)
     )
     return any(marker in m for marker in critical_markers)
 
@@ -2207,13 +2744,20 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
     gaps = parsed.get("_coverage_gaps") or []
     pool_n = parsed.get("_anchor_pool_count")
     n_beats = len(valid_beat_ids)
-    if gaps or (pool_n is not None and n_beats and pool_n != n_beats):
+    if gaps or (pool_n is not None and n_beats and pool_n < n_beats):
         detail = (f"beat(s) {gaps} have no scene" if gaps
                   else f"got {pool_n} story scenes for {n_beats} beats")
         errors.append(
             f"coverage gap: {detail} — emit EXACTLY one story scene per beat, in beat "
             f"order (position is binding; a missing or extra scene desyncs every "
             f"following panel)")
+    elif pool_n is not None and n_beats and pool_n > n_beats:
+        # Writer over-emitted (split a beat into two) — `_anchor_scenes_to_beats`
+        # already recovered this by aligning both ends and dropping the middle
+        # surplus (gaps==[]), so this is NOT a coverage gap. Soft-report only.
+        errors.append(
+            f"scene surplus: got {pool_n} story scenes for {n_beats} beats "
+            f"(both-ends aligned; middle surplus dropped)")
 
     total_words = 0
     contrast_flags: list[bool] = []  # per body scene: opens with But/However/Yet?
@@ -2271,8 +2815,19 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         contrast_flags.append(first_word in ("but", "however", "yet"))
 
         floor = 8 if is_last else _SCENE_MIN_WORDS
-        if not (floor <= wc <= _SCENE_MAX_WORDS):
-            errors.append(f"scene {i} is {wc} words, want {floor}-{_SCENE_MAX_WORDS}")
+        # Twist-landing headroom (rule 8.68): the last two STORY lines (the scenes
+        # just before the outro credit) may run to _FINALE_MAX_WORDS — they carry
+        # the twist's implication + the thematic mirror. Everything else keeps the
+        # strict cap.
+        cap = _FINALE_MAX_WORDS if i >= len(scenes) - 2 else _SCENE_MAX_WORDS
+        if wc > cap:
+            # Over-long lines are the #1 cause of blown word budgets (prompt-only
+            # caps were ignored 3 runs straight) — enforce as CRITICAL so the retry
+            # loop forces a per-line rewrite.
+            errors.append(f"scene {i} is {wc} words — over the line cap "
+                          f"({cap}); trim modifiers/sub-clauses, keep the event")
+        elif wc < floor:
+            errors.append(f"scene {i} is {wc} words, want {floor}-{cap}")
 
     # Total-words band — single source of truth, calibrated DOWN from the old
     # 230..290 (which forced ~283-word, long, compound output). The body (this
@@ -2282,6 +2837,14 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         errors.append(
             f"total words {total_words} not in "
             f"{_TARGET_WORDS_MIN}..{_TARGET_WORDS_MAX + 20}"
+        )
+    # Hard ceiling — a bigger overshoot must force a retry, not just a soft warning
+    # that MAX_PASSES can ship anyway (the soft band message above never marks
+    # _is_critical_error, so a 300+w draft could still win best-draft).
+    if total_words > _TARGET_WORDS_MAX + 40:
+        errors.append(
+            f"words over hard ceiling: {total_words} exceeds "
+            f"{_TARGET_WORDS_MAX + 40} — must cut"
         )
 
     # Contrast-opener overuse guard — replaces the old "every scene MUST start with a
@@ -2518,14 +3081,24 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
     scenes: list[Scene] = []
     total_words = 0
     raw_scenes = parsed.get("scenes") or []
-    for i, s in enumerate(raw_scenes, start=1):
+    prev_toks: set[str] | None = None
+    for s in raw_scenes:
         text = str(s.get("text", "")).strip()
         if not text:
             continue
+        # Collapse a CONSECUTIVE near-identical scene: the writer occasionally emits
+        # the same sentence 2-3× in a row ("Doom vowed to kill any who claim his
+        # name" ×3), which would play as a stutter. Drop the repeat, keep the first.
+        toks = {w for w in re.findall(r"[a-z0-9]+", text.lower())}
+        if prev_toks and toks and not s.get("is_outro") and not s.get("is_intro"):
+            jac = len(toks & prev_toks) / len(toks | prev_toks)
+            if jac >= 0.9:
+                continue
+        prev_toks = toks
         wc = len(text.split())
         conn = s.get("connective")
         scenes.append(Scene(
-            scene_id=i,
+            scene_id=len(scenes) + 1,
             text=text,
             page_ref=int(s.get("page_ref", 0) or 0),
             panel_ref=int(s.get("panel_ref", -1) if s.get("panel_ref") is not None else -1),
@@ -3016,7 +3589,12 @@ complete-but-flabby one.
 DROP a beat when it is a side-detour, a redundant escalation, or world-building that the \
 main through-line does not need — and the story still reads cause->effect without it.
 NEVER drop: a COLD_OPEN, the CLIMAX, the LANDING, or any beat that a later kept beat \
-DEPENDS ON (its setup/cause). When unsure, KEEP it. Dropping nothing is a valid answer.
+DEPENDS ON (its setup/cause).
+
+LENGTH BUDGET IS BINDING: the caller gives you a MAX beat count the finished Short can fit. \
+If the outline is OVER budget you MUST drop the lowest-impact beats down to it — "dropping \
+nothing" is valid ONLY when the outline is already at or under budget. When choosing among \
+low-impact beats to cut, drop the most skippable first (a detour before a plot step).
 
 Return JSON ONLY: {"drop":[ids...],"reason":"one line"}."""
 
@@ -3041,11 +3619,29 @@ def _critique_beats_for_impact(
     if story_map and story_map.get("omit"):
         _omit_hint = ("\nSTORY MAP OMIT HINTS (subplots/details too minor for this recap): "
                       + "; ".join(story_map["omit"]) + "\n")
+    # Beat BUDGET — the finished Short must fit _TARGET_WORDS_MAX words (~16 words/scene, one
+    # scene per beat), so about _TARGET_WORDS_MAX//16 beats. When the outline exceeds that, the
+    # critic MUST trim down to it: the OLD keep-biased prompt gave no target, so a dense plot
+    # (Doom 2099: 16 beats) kept every beat and blew the ceiling (345 words). Never below the floor.
+    beat_budget = max(LOGIC_CRITIC_MIN_BEATS, _TARGET_WORDS_MAX // 16)
+    excess = len(beats) - beat_budget
+    if excess > 0:
+        budget_line = (
+            f"\nLENGTH BUDGET (BINDING): this Short fits ~{_TARGET_WORDS_MAX} words ≈ {beat_budget} beats. "
+            f"You have {len(beats)} — DROP the ~{excess} LOWEST-impact beats so about {beat_budget} remain. "
+            f"Cut side-detours / redundant escalations / world-building first; keep the cause->effect spine."
+        )
+    else:
+        budget_line = (
+            f"\nThis outline ({len(beats)} beats) already fits the ~{_TARGET_WORDS_MAX}-word budget — "
+            f"drop a beat ONLY if it is genuinely low-impact."
+        )
     user = (
         f"PLOT (ground truth):\n{plot}\n\n"
         f"BEAT OUTLINE ({len(beats)} beats):\n" + "\n".join(beat_lines)
         + _omit_hint
-        + "\n\nDrop ONLY low-impact beats; keep the story faithful + logically whole. "
+        + budget_line
+        + "\n\nKeep the story faithful + logically whole. "
         "Return JSON {\"drop\":[ids],\"reason\":\"...\"}."
     )
     log(f"[stage4] phase A2 — beat-impact critic ({len(beats)} beats)…")
@@ -3074,15 +3670,27 @@ def _critique_beats_for_impact(
     # ponytail: token-overlap proxy (cause is free prose, not beat-id refs); one
     # pass off the LLM's drop set — good enough, upgrade to a real dep-graph only
     # if beats ever carry structured prereqs.
+    # Ubiquitous tokens across ALL beats' name+summary (recurring character/setting
+    # names) prove nothing about a real cause->effect dependency — same pattern as
+    # _ensure_ending_coverage's `ubiq` set. Without this, a hero's name appearing in
+    # every beat made the veto fire on almost every drop.
+    _beat_ns_tokens = [set(_tokens(b.name)) | set(_tokens(b.summary)) for b in beats]
+    _freq: dict[str, int] = {}
+    for _ts in _beat_ns_tokens:
+        for _tok in _ts:
+            _freq[_tok] = _freq.get(_tok, 0) + 1
+    _ubiq_cut = max(3, int(0.34 * len(beats))) if beats else 1
+    ubiquitous = {t for t, n in _freq.items() if n >= _ubiq_cut}
+
     kept_cause_tokens: set[str] = set()
     for b in beats:
         if b.id not in drop_ids or str(b.function).upper() in protected:
-            kept_cause_tokens.update(_tokens(b.cause))
+            kept_cause_tokens.update(set(_tokens(b.cause)) - ubiquitous)
     vetoed: set[int] = set()
     if kept_cause_tokens:
         for b in beats:
             if b.id in drop_ids and str(b.function).upper() not in protected:
-                bt = set(_tokens(b.name)) | set(_tokens(b.summary))
+                bt = (set(_tokens(b.name)) | set(_tokens(b.summary))) - ubiquitous
                 if len(bt & kept_cause_tokens) >= 2:
                     vetoed.add(b.id)
     if vetoed:
@@ -3179,14 +3787,28 @@ def _wiki_cross_check(
     # Layer 2: code-side keyword post-verify. LLM Phase E often false-positives
     # "missing" beats that ARE in narration with different wording. Before
     # accepting a missing_beat claim, scan narration for keywords from the beat.
-    # If ANY keyword appears in narration → silently drop (false positive).
-    narration_text = " ".join(
-        str(s.get("text", "")) for s in scenes
-    ).lower()
+    #
+    # A missing-beat claim is a false positive only when a MAJORITY of the beat's
+    # DISTINCTIVE keywords are already present. Distinctive = significant tokens
+    # minus stop-words minus UBIQUITOUS tokens (words recurring across many scenes
+    # — character names, setting). The old "ANY single keyword present → suppress"
+    # let one shared "reed"/"doom" silently drop a genuinely-missing ENDING beat
+    # (Doom throws Reed out the window + stretch reveal) → the climax-cut bug.
+    import re
+    scene_texts = [str(s.get("text", "")).lower() for s in scenes]
+    narration_text = " ".join(scene_texts)
+    _scene_toks = [set(re.findall(r"\b[a-z]{4,}\b", t)) for t in scene_texts]
+    _ubiq_cut = max(3, int(0.34 * len(scene_texts))) if scene_texts else 1
+    _freq: dict[str, int] = {}
+    for _ts in _scene_toks:
+        for _tok in _ts:
+            _freq[_tok] = _freq.get(_tok, 0) + 1
+    _ubiquitous = {t for t, n in _freq.items() if n >= _ubiq_cut}
 
     def _keyword_present_in_narration(beat_text: str, llm_kws: list[str] | None) -> tuple[bool, str]:
-        """Return (is_present_in_narration, kw_that_matched). Uses both
-        LLM-claimed keywords_searched and code-extracted nouns/verbs from beat."""
+        """False-positive only when >=half the beat's DISTINCTIVE keywords appear
+        in narration. Distinctive drops stop-words + ubiquitous names/setting, so
+        one shared character name no longer suppresses a real missing beat."""
         # Words to skip — too generic, will false-match anything
         stop = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "with",
                 "his", "her", "their", "by", "for", "from", "as", "is", "was",
@@ -3197,22 +3819,24 @@ def _wiki_cross_check(
                 "down", "into", "than", "then", "now", "also", "but", "so",
                 "if", "not", "no", "yes", "him", "she", "he", "it", "they",
                 "we", "you", "i", "me", "my", "our", "your"}
-        # 1. LLM-provided keywords
         kws_to_check = set()
         if llm_kws:
             for k in llm_kws:
                 w = str(k).lower().strip(",.!?:;\"'")
                 if w and len(w) > 2 and w not in stop:
                     kws_to_check.add(w)
-        # 2. Extract from beat text too (catch case LLM didn't provide kws)
-        import re
         for tok in re.findall(r"\b[a-zA-Z]{4,}\b", beat_text.lower()):
             if tok not in stop:
                 kws_to_check.add(tok)
-        # Check each keyword
-        for kw in kws_to_check:
-            if kw in narration_text:
-                return True, kw
+        # distinctive = drop ubiquitous (recurring names/setting); if a beat is
+        # ALL common words, fall back to the full set so we don't over-flag.
+        distinctive = {k for k in kws_to_check if k not in _ubiquitous}
+        pool = distinctive or kws_to_check
+        if not pool:
+            return False, ""
+        present = [k for k in pool if k in narration_text]
+        if present and len(present) / len(pool) >= 0.5:
+            return True, present[0]
         return False, ""
 
     out: list[str] = []
@@ -3263,6 +3887,7 @@ def _retry_fix_with_wiki(
     progress: Callable[[str], None] | None,
     debug_dump: dict,
     story_map: dict | None = None,
+    direction: dict | None = None,
 ) -> dict:
     """Retry the writer with canonical wiki plot as PRIMARY ground truth.
     Used when wiki cross-check fails — the model needs to see the canonical story
@@ -3275,7 +3900,8 @@ def _retry_fix_with_wiki(
 
     _smap = render_story_map_block(story_map)
     user = (
-        _smap
+        _direction_block(direction or {})
+        + _smap
         + "Your previous narration draft failed canonical-story validation against the WIKI/FANDOM plot. "
         "Fix it. The wiki plot is GROUND TRUTH — your narration must match it factually.\n\n"
         + (f"CANONICAL STORY ARC:\n{arc}\n\n" if arc else "")

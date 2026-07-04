@@ -9,9 +9,19 @@ embedding backend is unavailable, index_project is a no-op and load_vectors retu
 """
 from __future__ import annotations
 
+import os
 import sys
 
 EMBED_DIM = 3072  # Azure text-embedding-3-large
+
+# DIALOG_TRUTH: use Magi's pixel-OCR (the `ocr` field on each dialog block) as the
+# AUTHORITATIVE dialog when embedding a panel — the batch VLM fabricates the `text`
+# field from story flow (real case: doom-rocket-raccoon p28 panel 1 pixels read
+# "SO NOW WHAT DO WE DO?" but the VLM wrote "WE'VE REACHED THE BIG BANG"), which
+# poisons the panel embedding and mis-grounds Stage 3/5. Default ON; DIALOG_TRUTH=0/
+# false/no reverts to VLM-text embedding. Old cached pages carry no `ocr`, so the flag
+# is a no-op for them regardless — their persisted Qdrant vectors stay valid.
+DIALOG_TRUTH = os.getenv("DIALOG_TRUTH", "1").strip().lower() not in ("0", "false", "no", "")
 
 
 def panel_dialog(panel: dict, page_text_blocks: list[dict] | None = None) -> list[dict]:
@@ -38,10 +48,28 @@ def page_dialog(page: dict) -> list[dict]:
     return out
 
 
+def _panel_dialog_text(panel: dict, page_text_blocks: list[dict] | None = None) -> str:
+    """A panel's dialog as ONE string for embedding. Magi's pixel-OCR (`ocr` on each
+    block) is deterministic ground truth and OVERRIDES the VLM's `text` field, which the
+    batch VLM fabricates from story flow. Per the DIALOG_TRUTH contract, prefer OCR
+    whenever ANY block on the panel carries it; fall back to the VLM `text` only when no
+    OCR exists for the panel (old cached pages have no `ocr` → identical to the prior
+    behaviour, so their persisted Qdrant vectors stay valid)."""
+    blocks = panel_dialog(panel, page_text_blocks)
+    if DIALOG_TRUTH:
+        ocr = " ".join(str(b.get("ocr", "")).strip() for b in blocks
+                       if str(b.get("ocr", "")).strip())
+        if ocr:
+            return ocr
+    return " ".join(str(b.get("text", "")).strip() for b in blocks
+                    if str(b.get("text", "")).strip())
+
+
 def panel_embed_text(panel: dict, page_text_blocks: list[dict] | None = None) -> str:
     """The text we embed for a panel — mirrors what the matcher matches against:
-    visual description + who is present + dominant emotion + the panel's dialog."""
-    dlg = " ".join(str(d.get("text", "")) for d in panel_dialog(panel, page_text_blocks)).strip()
+    visual description + who is present + dominant emotion + the panel's dialog
+    (Magi-OCR ground truth preferred over VLM transcription — see _panel_dialog_text)."""
+    dlg = _panel_dialog_text(panel, page_text_blocks)
     chars = " ".join(str(c) for c in (panel.get("characters") or []))
     emo = str(panel.get("dominant_emotion") or "")
     parts = [panel.get("description", "") or "", chars, emo, dlg]
@@ -146,11 +174,23 @@ def index_project(project: str, pages_by_number: dict[int, dict], *, log=print,
     return total
 
 
+def _dim_mismatch(vecs: dict, expected_dim: int) -> bool:
+    """True when `vecs` is non-empty and its vector length differs from
+    `expected_dim` — a project indexed under one embedding backend (e.g. Gemini
+    3072-dim) read back under a different live backend (e.g. Qwen 4096-dim) would
+    otherwise crash the matcher's np.dot. Pure/testable without a Qdrant client."""
+    if not vecs:
+        return False
+    got = len(next(iter(vecs.values())))
+    return got != expected_dim
+
+
 def load_vectors(project: str) -> dict[tuple[int, int], "object"]:
-    """Read persisted panel vectors as {(page, index): np.ndarray}. {} if unavailable."""
+    """Read persisted panel vectors as {(page, index): np.ndarray}. {} if unavailable
+    or if the persisted dim doesn't match the current embedding backend's dim."""
     try:
         import numpy as np
-        from . import _qdrant
+        from . import _embedding, _qdrant
         c = _qdrant.client()
         name = _qdrant.collection_name(project)
         if not c.collection_exists(name):
@@ -168,6 +208,13 @@ def load_vectors(project: str) -> dict[tuple[int, int], "object"]:
                 out[(int(pl.get("page", 0)), int(pl.get("index", 0)))] = np.asarray(vec, dtype="float32")
             if offset is None:
                 break
+        expected_dim = _embedding.embed_dim()
+        if _dim_mismatch(out, expected_dim):
+            got = len(next(iter(out.values())))
+            print(f"[panel-index] panel index dim {got} != current embed dim "
+                  f"{expected_dim} — ignoring persisted vectors, falling back to "
+                  f"in-memory embed")
+            return {}
         return out
     except Exception as exc:  # pragma: no cover
         print(f"[panel-index] load_vectors failed: {exc}", file=sys.stderr)

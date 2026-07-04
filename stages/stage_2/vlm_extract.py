@@ -30,6 +30,8 @@ _SYSTEM_PROMPT = """You are a comic book page analyst. You receive one page imag
 
 Use the STORY CONTEXT only to recognize and disambiguate entities by their canonical names. HARD RULE — CHARACTER NAMING: only use a name that appears in the STORY CONTEXT roster. If a visible figure is not clearly one of the roster characters, label them GENERICALLY — "a man", "a woman", "a figure", "a hero", "soldiers", "a crowd" — and NEVER guess a famous Marvel/DC character from visual resemblance. Do NOT write "the Thing", "Reed Richards", "Sue Storm", "Loki", "the Fantastic Four" (or any name) unless it is in the roster. Recognizing a character by how they LOOK and naming them when they are not in the roster is a HALLUCINATION that corrupts the panel match — a green muscular figure is "a hulking figure" (or the roster's Hulk if listed), NOT a guessed cameo. Do NOT predict events, invent dialog, or assume a character is on a panel they aren't visibly in. Every text block must come verbatim from the panel itself; every character listed for a panel must be visually present.
 
+CONSISTENCY RULE: once a roster character has been named on an earlier panel of this page, KEEP naming them on every later panel that shows them — never fall back to "a man" or "a generic figure" for a character already identified, even if a later panel is a damaged, costume-torn, or climactic shot of them. When TWO named roster characters interact (fight, confront, grapple), NAME BOTH explicitly ("Victor Von Doom hurls Reed Richards across the room"), never "two figures" or "the two men". Always lead the description with the concrete ACTION VERB — who does what to whom.
+
 STEP 1 — Classify the page into ONE of three types:
 
   • "cover"  — REQUIRES visible title text AND/OR issue-number text on the page itself
@@ -153,7 +155,7 @@ def _encode_image_with_panels(path: Path | str, panels: list[dict]) -> str:
     """Set-of-marks overlay: draw each Magi panel's NUMBERED box onto the page before
     sending it to the VLM, so the VLM's per-panel `index` is anchored to Magi's exact
     regions. Without this the VLM numbers panels by its OWN independent reading of the
-    page, and pipeline._panel_field then pairs description[i] with the WRONG bbox[i]
+    page, and pipeline._map_vlm_entries then pairs description[i] with the WRONG bbox[i]
     (the 'reduced to ash' panel got a 'Ghost Rider turns away' description, etc.).
     Returns base64 JPEG. Falls back to the plain image on any drawing error."""
     if not panels:
@@ -367,6 +369,151 @@ def extract_page(
     }
 
 
+# ─── Description↔bbox verification gate (ground-truth check) ─────────────────
+
+
+# Crops per page — must cover EVERY described panel of a normal page (same single VLM call
+# either way, just more image parts). Largest-3 sampling let a poisoned description sitting on
+# a SMALL panel skip verification entirely — it then wins Stage-3 grounding on text cosine and
+# anchor-binds the scene to a panel whose pixels show something else.
+_VERIFY_SAMPLE_K = 8
+
+
+_VERIFY_SYSTEM_PROMPT = """You are a QA checker for comic panel captions. You receive several
+numbered image crops, each paired with a CLAIMED description. For each crop, decide whether the
+description accurately describes THAT crop's own pixels — same characters, same action, same
+objects — not a neighboring panel's. A description that is generic, wrong, or clearly belongs to
+a different panel is a MISMATCH. Judge the description's PRIMARY claim: if the main setting,
+objects, or event it asserts are not visible in the crop, it is a MISMATCH — sharing only a
+background detail with the crop does not make it a match.
+
+Return ONLY a JSON array, one entry per crop:
+[{"index": 0, "match": true, "why": "short reason"}, {"index": 1, "match": false, "why": "..."}]
+
+No markdown fences, no prose outside the array."""
+
+
+def _select_verify_panels(panels: list[dict], k: int = _VERIFY_SAMPLE_K) -> list[dict]:
+    """Pick up to k panels to ground-truth-check: largest bbox area first (they dominate
+    the screen), skipping panels with no description (nothing to verify) or a degenerate bbox."""
+    candidates = [
+        p for p in panels
+        if str(p.get("description", "")).strip()
+        and int((p.get("bbox") or {}).get("w", 0)) > 0
+        and int((p.get("bbox") or {}).get("h", 0)) > 0
+    ]
+    return sorted(
+        candidates, key=lambda p: int(p["bbox"]["w"]) * int(p["bbox"]["h"]), reverse=True,
+    )[:k]
+
+
+def _extract_verify_array(raw: str) -> list:
+    """Pull a JSON array out of the verdict response; tolerant of markdown fences and
+    stray prose around the array (mirrors _extract_json's tolerance, for a list shape)."""
+    text = raw.strip()
+    m = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if m:
+        text = m.group(1).strip()
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        i, j = text.find("["), text.rfind("]")
+        if i == -1 or j == -1 or j <= i:
+            return []
+        try:
+            obj = json.loads(text[i : j + 1])
+        except json.JSONDecodeError:
+            return []
+    return obj if isinstance(obj, list) else []
+
+
+def _parse_verify_verdicts(raw: str, sampled_indexes: list[int]) -> dict[int, bool]:
+    """Parse the verdict array into {panel_index: match}, keyed by the ACTUAL panel index
+    (via position in `sampled_indexes`) rather than the crop's local 0..K-1 number. Fail-
+    closed: garbage/unparseable input, or a crop with no verdict at all, means False."""
+    by_crop: dict[int, bool] = {}
+    for item in _extract_verify_array(raw):
+        if not isinstance(item, dict):
+            continue
+        try:
+            i = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        by_crop[i] = bool(item.get("match"))
+    return {panel_idx: by_crop.get(crop_i, False) for crop_i, panel_idx in enumerate(sampled_indexes)}
+
+
+def verify_page_descriptions(
+    page_dict: dict, source_image_path: Path | str, *, log: Callable[[str], None] = print,
+) -> bool:
+    """Ground-truth check: crop the largest panels with a description and ask the VLM
+    whether each description matches its OWN crop, not a neighbor's. Catches batch-shift
+    and hallucinated descriptions before they poison Stage 3 grounding / Stage 5 matching.
+    Soft gate — returns True (pass) whenever there is nothing to check or the VLM/key is
+    unavailable; never raises."""
+    pn = page_dict.get("page_number", "?")
+    sampled = _select_verify_panels(page_dict.get("panels") or [])
+    if not sampled:
+        return True
+    if not OPENROUTER_API_KEY:
+        log("[desc-verify] no OPENROUTER_API_KEY — skipping verify gate")
+        return True
+
+    from PIL import Image
+    try:
+        img = Image.open(source_image_path).convert("RGB")
+    except Exception as exc:
+        log(f"[desc-verify] p{pn} couldn't open source image: {exc} — skipping verify")
+        return True
+
+    b64_crops: list[str] = []
+    sampled_indexes: list[int] = []
+    prompt_lines = ["Numbered crops with their claimed description — verify each:"]
+    for i, p in enumerate(sampled):
+        b = p.get("bbox") or {}
+        x, y, w, h = int(b.get("x", 0)), int(b.get("y", 0)), int(b.get("w", 0)), int(b.get("h", 0))
+        buf = io.BytesIO()
+        img.crop((x, y, x + w, y + h)).save(buf, format="JPEG", quality=90)
+        b64_crops.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
+        sampled_indexes.append(int(p.get("index", i)))
+        prompt_lines.append(f'Crop {i}: "{str(p.get("description", "")).strip()}"')
+
+    content: list[dict] = [{"type": "text", "text": "\n".join(prompt_lines)}]
+    for b64 in b64_crops:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+
+    try:
+        resp = _client().chat.completions.create(
+            model=VLM_MODEL, max_tokens=600, temperature=0,
+            messages=[
+                {"role": "system", "content": _VERIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:
+        log(f"[desc-verify] p{pn} VLM call failed: {type(exc).__name__} — skipping verify")
+        return True
+
+    verdicts = _parse_verify_verdicts(raw, sampled_indexes)
+    why_by_crop: dict[int, str] = {}
+    for item in _extract_verify_array(raw):
+        if not isinstance(item, dict):
+            continue
+        try:
+            why_by_crop[int(item.get("index"))] = str(item.get("why", ""))
+        except (TypeError, ValueError):
+            continue
+
+    all_ok = True
+    for crop_i, panel_idx in enumerate(sampled_indexes):
+        if not verdicts.get(panel_idx, False):
+            all_ok = False
+            log(f"[desc-verify] page {pn} panel {panel_idx}: MISMATCH — "
+                f"{why_by_crop.get(crop_i, 'no verdict returned')}")
+    return all_ok
+
+
 # ─── Multi-page batch extraction (Approach B + A) ─────────────────────────────
 
 
@@ -415,6 +562,8 @@ PRIOR PAGE OVERLAP RULE — when a PRIOR PAGE block is present in the user messa
 DO NOT invent events, dialog, or characters. Every fact must be derivable from the panel image. STORY CONTEXT, PRIOR PAGE, and RUNNING STATE are name-disambiguation aids only — not predictive prompts.
 
 HARD RULE — CHARACTER NAMING (most common corruption): only use a character name that appears in the STORY CONTEXT roster. If a visible figure is not clearly one of the roster characters, label them GENERICALLY — "a man", "a woman", "a figure", "a hero", "soldiers", "a crowd". NEVER guess a famous Marvel/DC name from visual resemblance: do NOT write "the Thing", "Reed Richards", "Sue Storm", "Loki", "the Fantastic Four" (or any off-roster name) just because a figure LOOKS like them. A green muscular figure is "a hulking figure" (or the roster's Hulk only if listed), a rocky figure is "a rocky man", a person on a rooftop is "a man" — never a guessed cameo. Recognizing-and-naming an off-roster character is a HALLUCINATION that makes the panel un-matchable to the narration.
+
+CONSISTENCY RULE (climax pages degrade to "a man"/"generic figure" most often — do NOT let this happen): once a roster character has been named anywhere earlier in this page, this batch, or the RUNNING STATE, KEEP naming them by that name on every later panel that shows them, even a damaged, costume-torn, or climactic shot — do not revert to a generic label for a character already identified. When TWO named roster characters interact (fight, confront, grapple), NAME BOTH explicitly in the description ("Victor Von Doom hurls Reed Richards across the room"), never "two figures" or "the two men". Always lead the description with the concrete ACTION VERB — who does what to whom.
 
 PER-PAGE STEPS (apply to each page independently for classification, but write descriptions with continuity):
 
@@ -577,6 +726,38 @@ def _format_batch_user_text(
         + "\n".join(pages_block_lines)
         + f"\n\nReturn JSON strictly in this shape:\n{_BATCH_RESPONSE_SCHEMA}"
     )
+
+
+def _map_batch_pages(
+    pages_out: list[dict], n: int, *, log: Callable[[str], None] | None = None,
+) -> list[dict] | None:
+    """Map the VLM's `pages` entries back to batch slots by their echoed `page_index`
+    field — IDENTITY-based, not positional. `len(pages_out) == n` alone is not proof
+    of alignment: the model can silently drop/merge one page and pad elsewhere,
+    keeping the count right while every later entry describes the WRONG page (the
+    desc↔bbox misalignment this guards against). Returns pages_out reordered into
+    slots [0..n) when every slot has exactly one entry; returns None — caller must
+    NOT trust ANY entry — if a slot is missing, duplicated, or a page_index is out
+    of range."""
+    log = log or (lambda _msg: None)
+    by_index: dict[int, dict] = {}
+    for entry in pages_out:
+        raw_idx = entry.get("page_index")
+        try:
+            idx = int(raw_idx)
+        except (TypeError, ValueError):
+            log(f"[vlm-batch]   page entry page_index={raw_idx!r} — invalid, dropped")
+            continue
+        if not (0 <= idx < n):
+            log(f"[vlm-batch]   page entry page_index={idx} out of range [0,{n}) — dropped")
+            continue
+        if idx in by_index:
+            log(f"[vlm-batch]   duplicate page_index={idx} — dropping the extra")
+            continue
+        by_index[idx] = entry
+    if len(by_index) != n:
+        return None
+    return [by_index[k] for k in range(n)]
 
 
 _BATCH_TIMEOUT_S = 90  # fail fast — free-tier providers can queue requests for hours otherwise
@@ -784,20 +965,20 @@ def _extract_pages_batch_once(
             log(f"[vlm-batch]   VLM also emitted prior page entry — dropping it (first-wins lock-in)")
             pages_out = pages_out[1:]
 
-        if len(pages_out) != n:
-            # Count mismatch = the pages[] array no longer lines up 1:1 with the
-            # input images. The VLM almost always drops a blank/back-matter page
-            # MID-batch (e.g. a near-empty page), which shifts every later entry
-            # onto the WRONG image — a credits page then inherits the prior page's
-            # story description and is mislabeled "story". Padding the tail does
-            # NOT fix a mid-batch shift, so we must NOT trust positional alignment.
-            # Abandon this model; if the whole chain mismatches, the caller falls
-            # back to per-page extract_page() (verified to classify each page
-            # correctly, including credits → skip/solicit_credits).
+        # Map entries back to batch slots by their echoed `page_index` — IDENTITY-based,
+        # not positional. The VLM almost always drops/merges a blank/back-matter page
+        # MID-batch (e.g. a near-empty page); that can shift every later entry onto the
+        # WRONG image even while padding keeps len(pages_out) == n, which a bare count
+        # check would miss entirely. Abandon this model on any mapping failure; if the
+        # whole chain mismatches, the caller falls back to per-page extract_page()
+        # (verified to classify each page correctly, including credits → skip).
+        mapped = _map_batch_pages(pages_out, n, log=log)
+        if mapped is None:
             log(f"[vlm-batch] ✗ {model} returned {len(pages_out)} pages, expected {n} "
-                f"— misaligned, NOT padding (falling back)")
-            errors.append(f"{model}: count_mismatch_{len(pages_out)}_vs_{n}")
+                f"— misaligned/unmapped, NOT padding (falling back)")
+            errors.append(f"{model}: page_index_mismatch_{len(pages_out)}_vs_{n}")
             continue
+        pages_out = mapped
 
         for p in pages_out:
             p["_vlm_model_used"] = model
