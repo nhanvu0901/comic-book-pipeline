@@ -113,6 +113,14 @@ def preprocess_project(
     total_chapters = len(manifest)
     log(f"[preprocess] project={project_name} — {total_chapters} chapter(s) from manifest")
 
+    # Identity Hook 0: catch a wrong-comic plot_summary BEFORE it can bias VLM
+    # extraction (see stages/stage_2/identity_check.py module docstring). Never
+    # raises Stage 2 — a bad ctx read/write here just skips the pre-check.
+    try:
+        _run_identity_precheck(project_root, log)
+    except Exception as exc:
+        log(f"[identity]   pre-check crashed unexpectedly: {type(exc).__name__}: {exc}")
+
     story_context = _load_story_context(project_root, log)
 
     # Flatten manifest into a single ordered list of (page_number, label, path).
@@ -297,6 +305,14 @@ def preprocess_project(
 
     story_count = sum(1 for r in results if r.get("is_story_page"))
     log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
+
+    # Identity Hook 2: authoritative repair, runs regardless of --no-enrich — the
+    # safety net that replaces the human hand-fix from the Moon Knight #9 incident
+    # (see identity_check module docstring). Never raises Stage 2.
+    try:
+        _run_identity_repair(project_root, results, log, force_refresh=force_refresh)
+    except Exception as exc:
+        log(f"[identity]   repair hook crashed unexpectedly: {type(exc).__name__}: {exc}")
 
     # Free Magi (local vision model, ~3-4GB float32 on Mac) BEFORE embedding — otherwise it
     # stays co-resident with the 8B Qwen embed server (~6GB) and OOMs a 16GB Mac at the embed
@@ -529,6 +545,65 @@ def _demote_backmatter_tail(
             _demote_backmatter_tail_one(p, project_root, cut, log)
 
 
+def _run_identity_precheck(project_root: Path, log: Callable[[str], None]) -> None:
+    """Hook 0 (wiring only — decision logic lives in identity_check.py): flag a
+    plot_summary that shares no names with the user's own identification prompt.
+    Sets ctx['identity_suspect'] and persists it; the actual rebuild happens in
+    _run_identity_repair() once real page_summaries exist to rebuild FROM."""
+    ctx_path = project_root / "comic_context.json"
+    if not ctx_path.exists():
+        return
+    try:
+        ctx = json.loads(ctx_path.read_text())
+    except json.JSONDecodeError:
+        return
+    from .identity_check import prompt_disagrees_with_plot
+    if not prompt_disagrees_with_plot(ctx):
+        return
+    ctx["identity_suspect"] = True
+    log("[identity] ⚠ plot_summary shares no names with the user prompt — "
+        "suspect wrong comic; will rebuild from panels after preprocess")
+    ctx_path.write_text(json.dumps(ctx, indent=2, ensure_ascii=False))
+
+
+def _run_identity_repair(
+    project_root: Path, results: list[dict], log: Callable[[str], None],
+    *, force_refresh: bool = False,
+) -> None:
+    """Hook 2 (wiring only): trigger identity_check.rebuild_plot_from_panels when the
+    plot looks suspect, missing, weak, or disagrees with the pages. Idempotent — a
+    plot already rebuilt this way (plot_source == "panels") is skipped unless this is
+    a --force run, so a normal cached re-run doesn't re-spend an SDK call every time."""
+    ctx_path = project_root / "comic_context.json"
+    if not ctx_path.exists():
+        return
+    try:
+        ctx = json.loads(ctx_path.read_text())
+    except json.JSONDecodeError:
+        return
+    if ctx.get("plot_source") == "panels" and not force_refresh:
+        return
+
+    from .identity_check import plot_agrees_with_pages, rebuild_plot_from_panels
+    story_pages = [p for p in results if p.get("is_story_page")]
+    weak_plot = (
+        not ctx.get("wiki_url") and not ctx.get("plot_source")
+        and len(str(ctx.get("plot_summary", "") or "")) < 300
+    )
+    agrees = plot_agrees_with_pages(ctx, story_pages)
+    if not (ctx.get("identity_suspect") or ctx.get("plot_status") == "MISSING"
+            or weak_plot or agrees is False):
+        return
+
+    log(f"[identity] triggering panel-sourced plot rebuild "
+        f"(suspect={ctx.get('identity_suspect', False)}, "
+        f"plot_status={ctx.get('plot_status')!r}, weak_plot={weak_plot}, agrees={agrees})")
+    if not rebuild_plot_from_panels(ctx, story_pages, log=log):
+        return
+    ctx.pop("identity_suspect", None)
+    ctx_path.write_text(json.dumps(ctx, indent=2, ensure_ascii=False))
+
+
 def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:
     ctx_path = project_root / "comic_context.json"
     if not ctx_path.exists():
@@ -538,6 +613,14 @@ def _load_story_context(project_root: Path, log: Callable[[str], None]) -> str:
         ctx = json.loads(ctx_path.read_text())
     except json.JSONDecodeError:
         log("[preprocess] comic_context.json unreadable — VLM runs without story context")
+        return ""
+    if ctx.get("identity_suspect"):
+        # A flagged plot_summary means the roster below it is likely from the WRONG
+        # comic (see identity_check module docstring) — feeding it to the VLM would
+        # bias every page_summary toward the wrong cast. Cold-read: extract with NO
+        # story context; Hook 2 rebuilds plot_summary from the honest results after.
+        log("[preprocess] identity_suspect set — VLM runs COLD (no story context) "
+            "until plot_summary is rebuilt from panels")
         return ""
     summary = ctx.get("summary") or {}
     if not summary:
