@@ -137,14 +137,14 @@ SNAP_WINDOW_SECONDS = 0.5
 PRE_UPSCALE_FACTOR = int(os.getenv("PRE_UPSCALE_FACTOR", "4"))
 # Push-in amplitude over ONE shot: calm 1.00→1.10, action/intro 1.00→1.15. With the shorter
 # sub-shots below this lands at the competitors' ~6-10%/s feel. NEVER near-static (freeze).
-ZOOM_AMPLITUDE = float(os.getenv("ZOOM_AMPLITUDE", "0.10"))
-ZOOM_AMPLITUDE_ACTION = float(os.getenv("ZOOM_AMPLITUDE_ACTION", "0.15"))
+ZOOM_AMPLITUDE = float(os.getenv("ZOOM_AMPLITUDE", "0.06"))
+ZOOM_AMPLITUDE_ACTION = float(os.getenv("ZOOM_AMPLITUDE_ACTION", "0.13"))
 assert ZOOM_AMPLITUDE >= 0.06 and ZOOM_AMPLITUDE_ACTION >= 0.06, \
     "zoom amplitude < 0.06 reads as a frozen frame — raise ZOOM_AMPLITUDE(_ACTION)"
 # Any shot longer than this is split into ~SUBSHOT_TARGET_SECONDS hard-cut sub-shots on the
 # SAME panel (competitor cadence). Sub-shots sum EXACTLY to the original so scene_timings /
 # -shortest audio-sync (pipeline.assemble) is untouched.
-MAX_SHOT_SECONDS = float(os.getenv("MAX_SHOT_SECONDS", "2.6"))
+MAX_SHOT_SECONDS = float(os.getenv("MAX_SHOT_SECONDS", "9999"))  # Master 2026-07-05: giữ pacing cũ — split OFF by default (set ~2.6 to re-enable competitor pacing)
 SUBSHOT_TARGET_SECONDS = float(os.getenv("SUBSHOT_TARGET_SECONDS", "1.6"))
 # Sub-shot framing cadence on the same panel: each hard cut steps to a TIGHTER framing
 # (wide establish → face/upper-third → detail), all push-in so energy builds; a periodic
@@ -159,7 +159,7 @@ _SUBSHOT_DETAIL_ZOOM, _SUBSHOT_DETAIL_YC = 1.8, 0.46
 # letterboxing shrinks the subject — the measured mid-video defect). Only a MORE extreme strip
 # (where a centered cover-crop would show a meaningless sliver) or a >2.5× blow-up falls back
 # to contain+blur. Env-tunable: lower it to letterbox more wide panels (keep more context).
-LANDSCAPE_COVER_MAX_ASPECT = float(os.getenv("LANDSCAPE_COVER_MAX_ASPECT", "2.2"))
+LANDSCAPE_COVER_MAX_ASPECT = float(os.getenv("LANDSCAPE_COVER_MAX_ASPECT", "1.2"))  # Master 2026-07-05: old contain+blur look by default (2.2 = cover-fill mode)
 
 # ── Pure-vector matcher (2026-06-26, validated: cosine on the richer panel embed beats
 # the lexical hybrid — the embed already encodes chars/dialog/emotion, so lexical

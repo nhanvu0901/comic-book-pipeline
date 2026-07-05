@@ -75,17 +75,17 @@ def test_calm_zoom_in_amplitude():
     # MOTION CORE 2026-07-04: calm push raised 0.05 → 0.10 (5% total read as a freeze),
     # smoothstep easing kept.
     out = _zoompan_expr("zoom_in", 60, action=False)
-    assert "z='1+0.1*pow(on/60,2)*(3-2*(on/60))'" in out
+    assert "z='1+0.06*pow(on/60,2)*(3-2*(on/60))'" in out
 
 
 def test_action_zoom_in_is_stronger_and_faster():
     out = _zoompan_expr("zoom_in", 60, action=True)
-    assert "1+0.15*" in out          # bigger push than calm (0.15 vs 0.10)
+    assert "1+0.13*" in out          # bigger push than calm (0.13 vs 0.06)
     assert "(1-pow(1-on/60,2))" in out   # ease-OUT punch, not smoothstep
 
 
 def test_action_zoom_out_and_pan_scale_up():
-    assert "1.15-0.15*" in _zoompan_expr("zoom_out", 60, action=True)
+    assert "1.13-0.13*" in _zoompan_expr("zoom_out", 60, action=True)
     # Pan amplitude (pamt) unchanged by the MOTION CORE zoom overhaul.
     assert "iw*0.06" in _zoompan_expr("pan_right", 60, action=True)
     assert "iw*0.03" in _zoompan_expr("pan_right", 60, action=False)

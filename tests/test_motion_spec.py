@@ -12,6 +12,15 @@ import re
 import pytest
 
 from stages.stage_5 import shots as S
+
+# Master 2026-07-05: default pacing reverted to the OLD look (split OFF via MAX_SHOT_SECONDS=9999,
+# amplitude 0.06/0.13). The split MECHANISM stays and is tested with the competitor cap pinned.
+_SPLIT_CAP = 2.6
+
+
+@pytest.fixture()
+def split_on(monkeypatch):
+    monkeypatch.setattr(S, "MAX_SHOT_SECONDS", _SPLIT_CAP)
 from stages.stage_5.shots import (
     _split_shot_durations, _zoompan_expr, _build_shots_per_chunk,
     MAX_SHOT_SECONDS, ZOOM_AMPLITUDE, ZOOM_AMPLITUDE_ACTION, _SUBSHOT_FRAMINGS,
@@ -19,23 +28,28 @@ from stages.stage_5.shots import (
 
 
 # ── sub-shot split ───────────────────────────────────────────────────────────
-def test_long_shot_splits_into_capped_subshots():
+def test_long_shot_splits_into_capped_subshots(split_on):
     durs = _split_shot_durations(5.4)
     assert len(durs) == 3                              # ~1.8s each
-    assert all(1.2 <= d <= MAX_SHOT_SECONDS for d in durs), durs
+    assert all(1.2 <= d <= _SPLIT_CAP for d in durs), durs
     assert abs(sum(durs) - 5.4) < 1e-9                 # EXACT sum → audio sync preserved
 
 
-def test_short_shot_is_untouched():
+def test_short_shot_is_untouched(split_on):
     assert _split_shot_durations(2.0) == [2.0]
-    assert _split_shot_durations(MAX_SHOT_SECONDS) == [MAX_SHOT_SECONDS]  # threshold: no split
+    assert _split_shot_durations(_SPLIT_CAP) == [_SPLIT_CAP]  # threshold: no split
 
 
-def test_split_never_exceeds_cap_and_sums_exact():
+def test_default_pacing_never_splits():
+    # Master 2026-07-05: with the shipped defaults a 7s hold stays ONE shot (old pacing).
+    assert _split_shot_durations(7.0) == [7.0]
+
+
+def test_split_never_exceeds_cap_and_sums_exact(split_on):
     for dur in (2.7, 3.0, 4.9, 7.0, 8.0, 12.3):
         durs = _split_shot_durations(dur)
         assert len(durs) >= 2
-        assert all(d <= MAX_SHOT_SECONDS + 1e-9 for d in durs), (dur, durs)
+        assert all(d <= _SPLIT_CAP + 1e-9 for d in durs), (dur, durs)
         assert abs(sum(durs) - dur) < 1e-9, (dur, durs)
 
 
@@ -73,6 +87,7 @@ def _shots_by_scene(monkeypatch):
 
 
 def test_story_scene_splits_into_subshots_same_scene_diff_framings(monkeypatch):
+    monkeypatch.setattr(S, "MAX_SHOT_SECONDS", _SPLIT_CAP)
     by_scene = _shots_by_scene(monkeypatch)
     story = by_scene[2]
     assert len(story) == 3                                   # 5.4s → 3 sub-shots
@@ -114,7 +129,8 @@ def test_zoom_family_amplitude_never_near_static():
 
 
 def test_amplitude_defaults_match_spec():
-    assert ZOOM_AMPLITUDE == pytest.approx(0.10)
-    assert ZOOM_AMPLITUDE_ACTION == pytest.approx(0.15)
-    assert _push_amplitude(_zoompan_expr("zoom_in", 30)) == pytest.approx(0.10)
-    assert _push_amplitude(_zoompan_expr("zoom_in", 30, action=True)) == pytest.approx(0.15)
+    # Master 2026-07-05: old-look amplitudes (0.06 = old 0.05 raised to the freeze-floor; 0.13 action).
+    assert ZOOM_AMPLITUDE == pytest.approx(0.06)
+    assert ZOOM_AMPLITUDE_ACTION == pytest.approx(0.13)
+    assert _push_amplitude(_zoompan_expr("zoom_in", 30)) == pytest.approx(0.06)
+    assert _push_amplitude(_zoompan_expr("zoom_in", 30, action=True)) == pytest.approx(0.13)

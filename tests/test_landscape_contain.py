@@ -21,10 +21,13 @@ def _make_wide(path, w, h, edge=100):
     im.save(path)
 
 
-def test_moderate_landscape_cover_fills(tmp_path):
-    # 1600x900 (aspect 1.78, below the 2.2 extreme line) -> COVER-crop fills the frame:
-    # the blue middle fills edge-to-edge and the red/green side edges are cropped away.
-    assert 1600 / 900 < LANDSCAPE_COVER_MAX_ASPECT
+def test_moderate_landscape_cover_fills(tmp_path, monkeypatch):
+    # COVER-crop MECHANISM check with the competitor-mode threshold pinned (2.2).
+    # Master 2026-07-05: shipped default is back to 1.2 (old contain+blur look) —
+    # see test_default_moderate_landscape_contains below.
+    import stages.stage_5.shots as S
+    monkeypatch.setattr(S, "LANDSCAPE_COVER_MAX_ASPECT", 2.2)
+    assert 1600 / 900 < 2.2
     src, out = tmp_path / "wide.png", tmp_path / "frame.png"
     _make_wide(src, 1600, 900)
     _prepare_panel_frame(src, out)
@@ -65,3 +68,18 @@ def test_portrait_splash_still_cover_fills(tmp_path):
         # cover-fill means every pixel comes from the panel color ~ (10,20,30).
         px = f.getpixel((5, 5))
     assert abs(px[0] - 10) < 40 and abs(px[1] - 20) < 40, f"portrait splash not cover-filled: {px}"
+
+
+def test_default_moderate_landscape_contains(tmp_path):
+    # Shipped default (LANDSCAPE_COVER_MAX_ASPECT=1.2): a 1.78-aspect panel goes back to
+    # the old contain+blur look — the side edges (red) survive inside the frame.
+    src, out = tmp_path / "wide_default.png", tmp_path / "frame_default.png"
+    _make_wide(src, 1600, 900)
+    _prepare_panel_frame(src, out)
+    with Image.open(out) as f:
+        assert f.size == (OUTPUT_W, OUTPUT_H)
+        ycenter = OUTPUT_H // 2
+        left = f.getpixel((2, ycenter))
+    # contain keeps the full panel width → the left edge of the panel area is red-ish or blurred bg,
+    # NOT the pure blue center that cover-cropping would put there.
+    assert not (left[2] > 150 and left[0] < 100), f"left edge is pure blue → unexpectedly cover-cropped: {left}"

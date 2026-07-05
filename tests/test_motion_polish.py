@@ -17,11 +17,12 @@ class FakeShot:
 
 
 def test_new_knob_defaults():
-    assert config.FLASH_ACCENTS is True
+    # Master 2026-07-05: old pacing/look kept by default — polish features are OPT-IN knobs.
+    assert config.FLASH_ACCENTS is False
     assert config.FLASH_ACCENTS_MAX == 3
-    assert config.CAPTION_POP is True
-    assert config.MIRROR_PANELS is False  # flipped OFF: see project CLAUDE.md note
-    assert config.TITLE_BANNER_HOOK_ONLY is True
+    assert config.CAPTION_POP is False
+    assert config.MIRROR_PANELS is False  # stays OFF: backwards-lettering slop risk
+    assert config.TITLE_BANNER_HOOK_ONLY is False
 
 
 # ── title banner: hook-window only ───────────────────────────────────────────
