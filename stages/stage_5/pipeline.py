@@ -130,21 +130,27 @@ def assemble_project(
         if corner_logo is None:
             log(f"[stage5] corner logo unavailable ({CHANNEL_LOGO_PATH}); skipping overlay")
 
-    # Persistent title banner — a small white-box catchy line burned on every shot
-    # (the outro card is built separately, so it never gets the banner).
-    from config import ENABLE_TITLE_BANNER
+    # Title banner — a small white-box catchy line burned on the HOOK shots only
+    # (is_intro / cold-open). Competitor autopsy: a banner pinned for the whole
+    # video eats vertical space the whole way through; the hook window is where a
+    # scroller's attention actually needs the extra nudge. TITLE_BANNER_HOOK_ONLY=false
+    # restores the old always-on behavior. The outro card is built separately, so
+    # it never gets the banner either way.
+    from config import ENABLE_TITLE_BANNER, TITLE_BANNER_HOOK_ONLY
     banner_text = str(narration.get("banner_title", "")).strip() if ENABLE_TITLE_BANNER else ""
     if banner_text:
-        log(f"[stage5] title banner: {banner_text!r}")
+        log(f"[stage5] title banner: {banner_text!r} "
+            f"({'hook-only' if TITLE_BANNER_HOOK_ONLY else 'every shot'})")
 
     shot_paths: list[Path] = []
     for s in shots:
         sp = shots_dir / f"shot_{s.shot_id:03d}.mp4"
+        shot_banner = _shot_banner_text(s, banner_text, TITLE_BANNER_HOOK_ONLY)
         if sp.exists() and not force:
             log(f"[stage5] reusing {sp.name}")
         else:
             render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log,
-                        corner_logo=corner_logo, banner_text=banner_text)
+                        corner_logo=corner_logo, banner_text=shot_banner)
         shot_paths.append(sp)
 
     # Debug log: record every shot's panel selection (page, bbox, image path,
@@ -308,6 +314,15 @@ def _resolve_bgm(
     return None
 
 
+def _shot_banner_text(shot, banner_text: str, hook_only: bool) -> str:
+    """Which banner string to burn on this shot: the full banner on every shot
+    when hook_only is False (legacy always-on), or only on the hook (is_intro)
+    shot(s) when hook_only is True — everything after the hook gets no banner."""
+    if not banner_text:
+        return ""
+    return banner_text if (not hook_only or getattr(shot, "is_intro", False)) else ""
+
+
 def _group_shots_by_scene(shots, shot_paths):
     """Group parallel (shot, path) lists by scene_id, order preserved.
     Returns [(scene_id, [paths], total_scene_dur)]."""
@@ -333,65 +348,181 @@ def _xfade_offsets(scene_durs: list[float]) -> list[float]:
 
 
 def _xfade_label() -> str:
-    from config import XFADE_DURATION, XFADE_TRANSITION
+    from config import XFADE_DURATION, XFADE_TRANSITION, XFADE_SOFT_EDGES
+    transition = str(XFADE_TRANSITION).strip().lower()
+    if transition == "cut":
+        return f"cut+soft-edges {XFADE_DURATION}s" if XFADE_SOFT_EDGES else "cut"
     return f"{XFADE_TRANSITION} {XFADE_DURATION}s" if float(XFADE_DURATION) > 0 else "off"
 
 
 def _assemble_video(shots, shot_paths, out_path: Path,
                     outro_card: Path | None = None, outro_dur: float = 0.0) -> Path:
-    """Scene-grouped assembly: hard-cut within a scene, dissolve between scenes.
-    Falls back to a plain hard-cut concat when disabled, single-scene, or on error."""
-    from config import XFADE_DURATION, XFADE_TRANSITION
-    from .shots import FPS as _SHOTS_FPS
-    x = float(XFADE_DURATION)
-    groups = _group_shots_by_scene(shots, shot_paths)
-    if x <= 0 or len(groups) < 2:
-        # hard-cut path: concat shots, then the card (if any)
-        if outro_card is not None:
-            return _concat(list(shot_paths) + [outro_card], out_path)
-        return _concat(shot_paths, out_path)
-    try:
-        ff = _require_ffmpeg()
-        tmp = out_path.parent / "_scene_clips"
-        tmp.mkdir(parents=True, exist_ok=True)
-        clips = [_concat(paths, tmp / f"scene_{i:03d}.mp4")
-                 for i, (_sid, paths, _d) in enumerate(groups)]
-        durs = [d for (_sid, _p, d) in groups]
-        if outro_card is not None:
-            clips.append(outro_card)
-            durs.append(float(outro_dur))
-        offs = _xfade_offsets(durs)
+    """Scene-grouped assembly.
 
-        inputs: list[str] = []
-        for c in clips:
-            inputs += ["-i", str(c)]
-        # normalize + tail-pad every clip except the last (pad absorbs the overlap)
-        chains = []
-        last = len(clips) - 1
-        for i in range(len(clips)):
-            pad = "" if i == last else f",tpad=stop_mode=clone:stop_duration={x}"
-            chains.append(f"[{i}:v]settb=AVTB,fps={FPS}{pad}[v{i}]")
-        prev = "v0"
-        for k in range(1, len(clips)):
-            out = f"x{k}"
-            chains.append(
-                f"[{prev}][v{k}]xfade=transition={XFADE_TRANSITION}:"
-                f"duration={x}:offset={offs[k-1]}[{out}]")
-            prev = out
-        filter_complex = ";".join(chains)
-        cmd = [ff, "-y", *inputs,
-               "-filter_complex", filter_complex,
-               "-map", f"[{prev}]",
-               "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-               "-pix_fmt", "yuv420p", "-r", str(FPS),
-               str(out_path)]
-        _run(cmd)
+    XFADE_TRANSITION == "cut" (default): hard-cut every scene boundary — optionally
+    softened at just the two outer edges (XFADE_SOFT_EDGES) and/or spiced with a
+    white flash-frame accent at action-classified cuts (FLASH_ACCENTS). Any other
+    XFADE_TRANSITION value is the legacy opt-in: dissolve EVERY scene boundary.
+    Falls back to a plain hard-cut concat on single-scene input or any ffmpeg/IO error.
+    """
+    from config import (XFADE_DURATION, XFADE_TRANSITION, XFADE_SOFT_EDGES,
+                        FLASH_ACCENTS, FLASH_ACCENTS_MAX)
+    x = float(XFADE_DURATION)
+    transition = str(XFADE_TRANSITION).strip().lower()
+    groups = _group_shots_by_scene(shots, shot_paths)
+
+    if transition != "cut" and x > 0 and len(groups) >= 2:
+        try:
+            tmp = out_path.parent / "_scene_clips"
+            tmp.mkdir(parents=True, exist_ok=True)
+            clips = [_concat(paths, tmp / f"scene_{i:03d}.mp4")
+                     for i, (_sid, paths, _d) in enumerate(groups)]
+            durs = [d for (_sid, _p, d) in groups]
+            if outro_card is not None:
+                clips.append(outro_card)
+                durs.append(float(outro_dur))
+            return _xfade_chain(clips, durs, out_path, x, transition)
+        except Exception as exc:  # any ffmpeg/IO failure → never block a render
+            print(f"[stage5] xfade assembly failed ({exc}); falling back to hard-cut concat")
+
+    # Hard-cut path. Flash accents first (pure bookkeeping — no ffmpeg call unless
+    # at least one boundary qualifies), then the soft-edges variant if requested.
+    flash_clip = None
+    flash_boundaries: set[int] = set()
+    soft_edges = bool(XFADE_SOFT_EDGES) and x > 0 and len(groups) >= 2
+    if FLASH_ACCENTS and len(groups) >= 2:
+        try:
+            flash_clip = _build_flash_clip(out_path.parent / "_flash_accent.mp4")
+            scene_action = _scene_action_flags(shots)
+            # the intro→scene1 edge is a dissolve when soft_edges is on, not a hard
+            # cut — a flash has nothing to land on there.
+            exclude = {0} if soft_edges else set()
+            flash_boundaries = _pick_flash_boundaries(
+                groups, scene_action, exclude=exclude, cap=int(FLASH_ACCENTS_MAX))
+        except Exception as exc:
+            print(f"[stage5] flash-accent setup failed ({exc}); shipping without flashes")
+            flash_clip = None
+
+    if soft_edges:
+        try:
+            return _hard_cut_soft_edges(groups, outro_card, outro_dur, out_path, x,
+                                        flash_clip=flash_clip, flash_boundaries=flash_boundaries)
+        except Exception as exc:
+            print(f"[stage5] soft-edge assembly failed ({exc}); falling back to plain hard-cut concat")
+
+    paths = _interleave_flashes(groups, flash_boundaries, flash_clip)
+    if outro_card is not None:
+        return _concat(paths + [outro_card], out_path)
+    return _concat(paths, out_path)
+
+
+def _xfade_chain(clips: list[Path], durs: list[float], out_path: Path,
+                 x: float, transition: str) -> Path:
+    """Chain `clips` with an xfade `transition` of `x` seconds at every boundary.
+    Each non-last clip is tail-padded by `x` (the pad absorbs the overlap) so the
+    net duration == sum(durs) — preserving scene_timings / audio sync."""
+    ff = _require_ffmpeg()
+    offs = _xfade_offsets(durs)
+    inputs: list[str] = []
+    for c in clips:
+        inputs += ["-i", str(c)]
+    chains = []
+    last = len(clips) - 1
+    for i in range(len(clips)):
+        pad = "" if i == last else f",tpad=stop_mode=clone:stop_duration={x}"
+        chains.append(f"[{i}:v]settb=AVTB,fps={FPS}{pad}[v{i}]")
+    prev = "v0"
+    for k in range(1, len(clips)):
+        out = f"x{k}"
+        chains.append(
+            f"[{prev}][v{k}]xfade=transition={transition}:"
+            f"duration={x}:offset={offs[k-1]}[{out}]")
+        prev = out
+    filter_complex = ";".join(chains)
+    cmd = [ff, "-y", *inputs,
+           "-filter_complex", filter_complex,
+           "-map", f"[{prev}]",
+           "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+           "-pix_fmt", "yuv420p", "-r", str(FPS),
+           str(out_path)]
+    _run(cmd)
+    return out_path
+
+
+def _hard_cut_soft_edges(groups, outro_card, outro_dur, out_path: Path, x: float, *,
+                         flash_clip: Path | None = None,
+                         flash_boundaries: set[int] | None = None) -> Path:
+    """Hard-cut every inter-scene boundary except the two outer edges (intro→scene1,
+    last-story→outro card), which get a small `x`-second dissolve. A flat hard cut on
+    those two specific joins read as an abrupt slap in review; every other cut in
+    between stays a hard cut (unaffected)."""
+    flash_boundaries = flash_boundaries or set()
+    tmp = out_path.parent / "_scene_clips"
+    tmp.mkdir(parents=True, exist_ok=True)
+    intro_paths, intro_dur = groups[0][1], groups[0][2]
+    body_groups = groups[1:]
+    # flash_boundaries indexes the FULL groups list (boundary i sits between
+    # groups[i] and groups[i+1]); shift into body_groups' own 0-based indexing.
+    body_flash = {b - 1 for b in flash_boundaries if b >= 1}
+    body_paths = _interleave_flashes(body_groups, body_flash, flash_clip)
+    body_dur = sum(d for _sid, _p, d in body_groups)
+    intro_clip = _concat(list(intro_paths), tmp / "intro.mp4")
+    body_clip = _concat(body_paths, tmp / "body.mp4")
+    clips, durs = [intro_clip, body_clip], [intro_dur, body_dur]
+    if outro_card is not None:
+        clips.append(outro_card)
+        durs.append(float(outro_dur))
+    return _xfade_chain(clips, durs, out_path, x, "dissolve")
+
+
+def _scene_action_flags(shots) -> dict[int, bool]:
+    """scene_id -> True if any shot's spoken caption in that scene reads as an
+    action/impact beat (reuses shots.py's impact-verb check — a fight scene is a
+    fight scene whether we're choosing camera motion or choosing a flash cut)."""
+    from .shots import _is_action_text
+    flags: dict[int, bool] = {}
+    for s in shots:
+        sid = s.scene_id
+        flags[sid] = flags.get(sid, False) or _is_action_text(getattr(s, "caption_text", ""))
+    return flags
+
+
+def _pick_flash_boundaries(groups, scene_action: dict[int, bool],
+                           exclude: set[int], cap: int) -> set[int]:
+    """Boundary i (the cut INTO groups[i+1]) qualifies when the incoming scene is
+    action-classified. Capped, preferring the LATEST qualifying boundaries — fights
+    cluster toward the climax, and a flash near the top of a video reads as noise."""
+    candidates = [i for i in range(len(groups) - 1)
+                  if i not in exclude and scene_action.get(groups[i + 1][0], False)]
+    return set(sorted(candidates, reverse=True)[:max(0, cap)])
+
+
+def _interleave_flashes(groups, flash_boundaries: set[int],
+                        flash_clip: Path | None) -> list[Path]:
+    """Flatten scene groups into an ordered clip list, splicing `flash_clip` at the
+    given boundary indices (between groups[i] and groups[i+1])."""
+    paths: list[Path] = []
+    last = len(groups) - 1
+    for i, (_sid, ps, _d) in enumerate(groups):
+        paths.extend(ps)
+        if flash_clip is not None and i in flash_boundaries and i < last:
+            paths.append(flash_clip)
+    return paths
+
+
+def _build_flash_clip(out_path: Path) -> Path:
+    """A single white frame at output resolution — spliced at a cut as a flash
+    accent. Encoded to match shot output params (h.264/yuv420p/same fps) so the
+    concat demuxer's stream-copy doesn't choke on a mismatched stream."""
+    if out_path.exists():
         return out_path
-    except Exception as exc:  # any ffmpeg/IO failure → never block a render
-        print(f"[stage5] xfade assembly failed ({exc}); falling back to hard-cut concat")
-        if outro_card is not None:
-            return _concat(list(shot_paths) + [outro_card], out_path)
-        return _concat(shot_paths, out_path)
+    ff = _require_ffmpeg()
+    from .shots import OUTPUT_W, OUTPUT_H
+    cmd = [ff, "-y", "-f", "lavfi", "-i", f"color=c=white:s={OUTPUT_W}x{OUTPUT_H}:r={FPS}",
+           "-frames:v", "1", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           "-pix_fmt", "yuv420p", str(out_path)]
+    _run(cmd)
+    return out_path
 
 
 def _concat(shot_paths: list[Path], out_path: Path) -> Path:

@@ -23,13 +23,22 @@ Style: ComicsUnlocked,Anton,84,&H00FFFFFF,&H00000000,&H00000000,&H00000000,1,0,0
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
+# Entrance pop for a chunk's first frame on screen: scale 100% -> 108% -> 100% over
+# ~120ms (60ms up, 60ms down). Prepended only to the FIRST word-event of a chunk —
+# the karaoke-fill events that follow (as the voice advances word by word) don't
+# re-pop. \t timing is relative to that event's own Start, so this is safe per-event.
+_POP_TAG = r"{\fscx100\fscy100\t(0,60,\fscx108\fscy108)\t(60,120,\fscx100\fscy100)}"
 
-def build_ass(word_timestamps: list[dict], total_duration: float) -> str:
+
+def build_ass(word_timestamps: list[dict], total_duration: float,
+             caption_pop: bool | None = None) -> str:
     """Build an .ass subtitle string with karaoke-fill highlighting: within each
     3-word chunk, every word starts white and turns yellow as the voice reaches
     it (already-spoken words stay yellow). One Dialogue event per word — each
     spans from that word's onset to the next word's onset, so the fill advances
-    with no gap or flicker."""
+    with no gap or flicker. caption_pop=None reads config.CAPTION_POP."""
+    if caption_pop is None:
+        from config import CAPTION_POP as caption_pop
     events: list[str] = []
     for chunk in _chunk_words(word_timestamps):
         words = chunk["words"]  # [{"text","start","end"}], display-normalized, non-empty
@@ -44,6 +53,8 @@ def build_ass(word_timestamps: list[dict], total_duration: float) -> str:
             if seg_end <= seg_start:
                 seg_end = seg_start + MIN_CHUNK_DURATION
             text = _colorize(words, k)
+            if caption_pop and k == 0:
+                text = _POP_TAG + text
             events.append(
                 f"Dialogue: 0,{_fmt_time(seg_start)},{_fmt_time(seg_end)},ComicsUnlocked,,"
                 f"0,0,0,,{text}"

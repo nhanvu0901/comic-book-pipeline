@@ -50,11 +50,15 @@ INPAINT_BUBBLE_TEXT = True
 # The mirror reverses any on-art text the bubble-inpaint did not fully remove.
 # That is safe for a TIGHT single panel (its 1-2 bubbles get cleaned), but NOT for
 # a WHOLE-PAGE render (many panels + heavy dialogue the inpaint can't all clear →
-# the whole page renders with BACKWARDS lettering). So the mirror stays ON, but
-# `no_mirror` is set for whole-page / no-panel renders (see render_shots), for panels
-# whose art carries readable text (_panel_has_critical_text), and UNCONDITIONALLY for
-# the cold-open (is_intro) — frame 1 is too retention-critical to risk backwards text.
-MIRROR_PANELS = True
+# the whole page renders with BACKWARDS lettering). `no_mirror` is still set for
+# whole-page / no-panel renders (see render_shots), for panels whose art carries
+# readable text (_panel_has_critical_text), and UNCONDITIONALLY for the cold-open
+# (is_intro). DEFAULT IS NOW OFF (config.MIRROR_PANELS, 2026-07-05): the competitor
+# pixel autopsy caught OUR mid-video frames with backwards lettering the guards
+# missed — the mirror's dedup value no longer outweighs its AI-slop risk. Kept as a
+# plain module attribute so art_pipeline/tests can still runtime-override
+# `shots.MIRROR_PANELS` directly.
+from config import MIRROR_PANELS  # noqa: F401  (env MIRROR_PANELS=true re-enables)
 # Hints (in a panel's VLM description) that the art contains story-critical
 # readable text baked into the image — a gravestone, a sign, a nameplate. Mirroring
 # such a panel reverses the letters and breaks the reveal (e.g. the 'PETER'
@@ -117,6 +121,45 @@ SHOT_TARGET_SECONDS = 3.0   # ~1 panel / 3s — cuts were racing AHEAD of the na
 SHOT_MIN_SECONDS = 0.6         # caption-chunk mode: ~0.5-2s per shot
 SILENCE_GAP_THRESHOLD = 0.2
 SNAP_WINDOW_SECONDS = 0.5
+
+# ── MOTION CORE (2026-07-04 overhaul) ────────────────────────────────────────
+# Driven by a competitor pixel-autopsy (1.4M-3.2M-view channels) + our renderer probe:
+#   • their avg shot is 1.2-1.8s, push-in ~8-12%/s, ONE panel FILLS the 9:16 frame;
+#   • ours HELD 4-6s at 5% total zoom (<1%/s ≈ freeze) and mid-video frames often showed
+#     a whole page / letterbox → tiny subjects.
+# Fixes: pre-upscale 4× (probe: cuts zoompan velocity jitter ±33%→±14%, 2.3× smoother,
+# +~0.5s/shot), zoom amplitude 5%→10-15%, and SUB-SHOT SPLIT (a long hold becomes several
+# ~1.5s hard-cut sub-shots on the SAME panel with tightening framings).
+
+# zoompan rounds the crop x/y to whole pixels every frame; on a 2× pre-scale that jitter
+# is ±33% of velocity, and 2.3× smoother at 4× (probe-measured). The 4× frame also keeps
+# the tighter push_top/push_detail sub-shot framings sharp (source region stays > output).
+PRE_UPSCALE_FACTOR = int(os.getenv("PRE_UPSCALE_FACTOR", "4"))
+# Push-in amplitude over ONE shot: calm 1.00→1.10, action/intro 1.00→1.15. With the shorter
+# sub-shots below this lands at the competitors' ~6-10%/s feel. NEVER near-static (freeze).
+ZOOM_AMPLITUDE = float(os.getenv("ZOOM_AMPLITUDE", "0.10"))
+ZOOM_AMPLITUDE_ACTION = float(os.getenv("ZOOM_AMPLITUDE_ACTION", "0.15"))
+assert ZOOM_AMPLITUDE >= 0.06 and ZOOM_AMPLITUDE_ACTION >= 0.06, \
+    "zoom amplitude < 0.06 reads as a frozen frame — raise ZOOM_AMPLITUDE(_ACTION)"
+# Any shot longer than this is split into ~SUBSHOT_TARGET_SECONDS hard-cut sub-shots on the
+# SAME panel (competitor cadence). Sub-shots sum EXACTLY to the original so scene_timings /
+# -shortest audio-sync (pipeline.assemble) is untouched.
+MAX_SHOT_SECONDS = float(os.getenv("MAX_SHOT_SECONDS", "2.6"))
+SUBSHOT_TARGET_SECONDS = float(os.getenv("SUBSHOT_TARGET_SECONDS", "1.6"))
+# Sub-shot framing cadence on the same panel: each hard cut steps to a TIGHTER framing
+# (wide establish → face/upper-third → detail), all push-in so energy builds; a periodic
+# pull-back breaks monotony on long holds. push_top/push_detail render (in _zoompan_expr)
+# as a higher base-zoom framing centered up (faces) / near-center (detail).
+_SUBSHOT_FRAMINGS = ("zoom_in", "push_top", "push_detail", "zoom_out", "push_top", "push_detail")
+# push_top / push_detail base zoom (how tight the CUT lands) + vertical center fraction
+# (faces sit high → push_top frames the upper third). Sharp because the frame is 4×-upscaled.
+_SUBSHOT_TOP_ZOOM, _SUBSHOT_TOP_YC = 1.5, 0.34
+_SUBSHOT_DETAIL_ZOOM, _SUBSHOT_DETAIL_YC = 1.8, 0.46
+# A landscape panel wider than this cover-crops to FILL the 9:16 frame (competitors fill it;
+# letterboxing shrinks the subject — the measured mid-video defect). Only a MORE extreme strip
+# (where a centered cover-crop would show a meaningless sliver) or a >2.5× blow-up falls back
+# to contain+blur. Env-tunable: lower it to letterbox more wide panels (keep more context).
+LANDSCAPE_COVER_MAX_ASPECT = float(os.getenv("LANDSCAPE_COVER_MAX_ASPECT", "2.2"))
 
 # ── Pure-vector matcher (2026-06-26, validated: cosine on the richer panel embed beats
 # the lexical hybrid — the embed already encodes chars/dialog/emotion, so lexical
@@ -379,9 +422,13 @@ def _build_shots_per_chunk(
     shots: list[Shot] = []
     shot_id = 0
     audit_whole = []
+    seq = 0   # per-UNIT motion-rotation counter — variety BETWEEN scenes for single shots
     for (scene, slice_members, _spoken), (panel, source_image) in zip(units, assigned):
         slice_dur = sum(m[2] for m in slice_members)
-        if panel is not None and panel.get("_whole_page") and not scene.get("is_intro"):
+        is_intro = bool(scene.get("is_intro"))
+        is_outro = bool(scene.get("is_outro"))
+        is_whole = bool(panel is not None and panel.get("_whole_page"))
+        if is_whole and not is_intro:
             audit_whole.append(int(scene.get("scene_id") or 0))
         text_bboxes: list[dict] = []
         if panel is None:
@@ -390,39 +437,55 @@ def _build_shots_per_chunk(
         else:
             bbox = panel.get("bbox") or {}
             text_bboxes = _panel_text_bboxes(panel, pages_by_number or {})
-        motion = _choose_motion(panel, slice_dur, seq=shot_id)
-        if scene.get("is_outro"):
-            # LOOP-CLOSE: the outro reuses the opening panel; zoom_out ENDS at z=1.0
-            # centered — the exact framing the cold-open zoom_in STARTS from.
-            motion = "zoom_out"
-        if panel is not None and panel.get("_whole_page"):
-            # Whole page: slow reveal of the full page; never a random pan, never static.
-            motion = "zoom_out"
-        shots.append(Shot(
-            shot_id=shot_id,
-            scene_id=int(scene.get("scene_id") or 1),
-            duration_seconds=max(0.4, slice_dur),
-            panel_bbox={"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
-                        "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))},
-            source_image=source_image,
-            motion=motion,
-            text_bboxes=text_bboxes,
-            caption_text=" ".join(str(m[0]) for m in slice_members).strip(),
-            # Skip the mirror when it would reverse legible text: a whole-page or a
-            # no-panel render shows uncleaned bubbles, and a panel whose art carries
-            # readable text (sign/monitor/nameplate) would flip into gibberish.
-            # The COLD-OPEN (is_intro) is ALWAYS un-mirrored, unconditionally: frame 1 is
-            # too retention-critical to risk backwards lettering, and _panel_has_critical_text
-            # provably misses small in-panel dialogue strips (the spider-man "ONE I'M SLYDE"
-            # opener rendered mirrored = instant AI-slop). A cold-open frame gains nothing
-            # from the flip's dedup purpose anyway (it opens the video; there is no earlier
-            # frame to differ from).
-            no_mirror=(panel is None or bool(panel.get("_whole_page"))
-                       or _panel_has_critical_text(panel)
-                       or bool(scene.get("is_intro"))),
-            is_intro=bool(scene.get("is_intro")),
-        ))
-        shot_id += 1
+        panel_bbox = {"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
+                      "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))}
+        caption_text = " ".join(str(m[0]) for m in slice_members).strip()
+        scene_id = int(scene.get("scene_id") or 1)
+        # Skip the mirror when it would reverse legible text: a whole-page or a no-panel
+        # render shows uncleaned bubbles, and a panel whose art carries readable text
+        # (sign/monitor/nameplate) would flip into gibberish. The COLD-OPEN (is_intro) is
+        # ALWAYS un-mirrored: frame 1 is too retention-critical to risk backwards lettering,
+        # and _panel_has_critical_text provably misses small in-panel dialogue strips (the
+        # spider-man "ONE I'M SLYDE" opener mirrored = instant AI-slop). A cold-open frame
+        # gains nothing from the flip's dedup purpose anyway (there is no earlier frame).
+        no_mirror = (panel is None or is_whole
+                     or _panel_has_critical_text(panel) or is_intro)
+
+        def _emit(dur: float, motion: str) -> None:
+            nonlocal shot_id
+            shots.append(Shot(
+                shot_id=shot_id, scene_id=scene_id, duration_seconds=dur,
+                panel_bbox=dict(panel_bbox), source_image=source_image, motion=motion,
+                text_bboxes=text_bboxes, caption_text=caption_text,
+                no_mirror=no_mirror, is_intro=is_intro,
+            ))
+            shot_id += 1
+
+        # Intro (cold-open hook, epic zoom_in), outro (LOOP-CLOSE — zoom_out ENDS at z=1.0
+        # centered on the opening panel), and whole-page (slow reveal) are each ONE deliberate
+        # framing: never sub-split, never reframed.
+        if is_intro or is_outro or is_whole:
+            _emit(max(0.4, slice_dur), "zoom_in" if is_intro else "zoom_out")
+            seq += 1
+            continue
+        if panel is None:
+            # No matched panel → rendering the scene's fallback bbox (often a whole page):
+            # don't split or reframe an unreliable region. One shot, rotating motion.
+            _emit(max(0.4, slice_dur), _choose_motion(panel, slice_dur, seq=seq))
+            seq += 1
+            continue
+
+        # Normal story shot: split a long hold into competitor-cadence sub-shots. They share
+        # scene_id, so _group_shots_by_scene hard-cuts between them (dissolve only BETWEEN
+        # scenes). Each sub-shot is a tightening framing on the same panel; durations sum
+        # EXACTLY to slice_dur so audio sync is unchanged.
+        sub_durs = _split_shot_durations(max(0.4, slice_dur))
+        multi = len(sub_durs) > 1
+        for k, sub_dur in enumerate(sub_durs):
+            motion = (_SUBSHOT_FRAMINGS[k % len(_SUBSHOT_FRAMINGS)] if multi
+                      else _choose_motion(panel, slice_dur, seq=seq))
+            _emit(sub_dur, motion)
+        seq += 1
     if audit_whole:
         print(f"[stage5] panel-match: {len(audit_whole)} scene(s) → whole-page "
               f"fallback (scene_ids {audit_whole})")
@@ -505,6 +568,23 @@ def _choose_motion(panel: dict | None, dur: float, seq: int = 0) -> str:
     if ar <= 1.15:         # wide or square → left↔right reveal reads
         cands.append("pan_right")
     return cands[seq % len(cands)]
+
+
+def _split_shot_durations(dur: float) -> list[float]:
+    """Competitor pacing (measured): a long held shot becomes several ~SUBSHOT_TARGET_SECONDS
+    hard-cut sub-shots (their avg shot 1.2-1.8s; ours held 4-6s). Each sub-shot is capped at
+    MAX_SHOT_SECONDS. Durations sum EXACTLY to `dur` (the last absorbs the remainder) so the
+    scene_timings totals and the -shortest audio-sync math in pipeline.assemble are untouched.
+    dur <= MAX_SHOT_SECONDS → a single shot (no split)."""
+    if dur <= MAX_SHOT_SECONDS:
+        return [dur]
+    n = max(2, round(dur / SUBSHOT_TARGET_SECONDS))
+    while dur / n > MAX_SHOT_SECONDS:       # keep every sub-shot under the cap
+        n += 1
+    step = round(dur / n, 3)
+    durs = [step] * (n - 1)
+    durs.append(dur - sum(durs))            # last sub-shot absorbs the remainder → exact sum
+    return durs
 
 
 def _render_adjust(panel: dict, page_text_blocks: list[dict] | None,
@@ -1321,12 +1401,14 @@ def render_shot(
     frames = max(1, int(round(duration * FPS)))
 
     # BUG #121 fix (shaking): zoompan rounds the crop x/y to whole pixels every
-    # frame. On an image already at output size with sub-pixel motion (zoom only
-    # 1.0→1.05), that rounding jitters the frame ("shake"). Pre-upscaling 2×
-    # makes each rounding step half an output pixel → smooth. Only for moving
-    # shots — static has no x/y motion, so skip the extra encode cost.
-    if shot.motion in ("zoom_in", "zoom_out", "pan_right", "pan_down", "pan_up"):
-        pre = f"scale={OUTPUT_W * 2}:{OUTPUT_H * 2}:flags=bicubic,"
+    # frame. On an image already at output size with sub-pixel motion, that rounding
+    # jitters the frame ("shake"). Pre-upscaling makes each rounding step a fraction of
+    # an output pixel → smooth. Probe: 2× left ±33% velocity jitter, 4× cut it to ±14%
+    # (2.3× smoother, +~0.5s/shot). 4× also keeps the tight push_top/push_detail sub-shot
+    # framings sharp (their source region stays larger than the 1080×1920 output). Only for
+    # moving shots — "static" (never emitted now) has no x/y motion, so skip the extra cost.
+    if shot.motion != "static":
+        pre = f"scale={OUTPUT_W * PRE_UPSCALE_FACTOR}:{OUTPUT_H * PRE_UPSCALE_FACTOR}:flags=bicubic,"
     else:
         pre = ""
     # Motion-comic: action/impact panels — and the cold-open hook shot — get a
@@ -1412,20 +1494,37 @@ def _drawtext_escape(text: str) -> str:
 
 
 def _zoompan_expr(motion: str, frames: int, action: bool = False) -> str:
-    """ffmpeg zoompan expression. CALM panels keep a subtle eased push (max 1.05,
-    smoothstep). ACTION panels (fights/impacts) get a stronger, faster push
-    (max ~1.13 with an ease-OUT 'punch' that hits fast then settles) so the moment
-    feels dynamic — the motion-comic feel. action=False reproduces the prior subtle
-    behavior byte-for-byte."""
+    """ffmpeg zoompan expression. CALM panels push 1.00→1.10 (smoothstep). ACTION panels
+    (fights/impacts) push 1.00→1.15 with an ease-OUT 'punch' (fast hit, then settle). The
+    push amplitude was raised from 5% (measured a near-freeze at <1%/s) to 10-15% — with the
+    shorter sub-shots this lands at the competitors' ~6-10%/s feel. push_top / push_detail are
+    the sub-shot framings: a higher BASE zoom (a tighter cut) centered up / near-center, plus
+    the same push — kept sharp by the 4× pre-upscale. Pan amplitude (pamt) is unchanged."""
     s = f"{OUTPUT_W}x{OUTPUT_H}"
     fps = FPS
     d = max(1, frames)
     if action:
-        zamt, hi, pamt = "0.13", "1.13", "0.06"
+        zamt, hi, pamt = f"{ZOOM_AMPLITUDE_ACTION:g}", f"{1 + ZOOM_AMPLITUDE_ACTION:g}", "0.06"
         ease = f"(1-pow(1-on/{d},2))"            # ease-out: fast hit, then settle (punch)
     else:
-        zamt, hi, pamt = "0.05", "1.05", "0.03"
+        zamt, hi, pamt = f"{ZOOM_AMPLITUDE:g}", f"{1 + ZOOM_AMPLITUDE:g}", "0.03"
         ease = f"pow(on/{d},2)*(3-2*(on/{d}))"   # smoothstep 0->1, eased ends
+    # Sub-shot framings: start ALREADY zoomed (a hard cut to a tighter shot), then push. y is
+    # clamped so the tight crop never runs off the top/bottom of the frame.
+    if motion == "push_top":
+        return (
+            f"zoompan=z='{_SUBSHOT_TOP_ZOOM:g}+{zamt}*{ease}':"
+            f"x='iw/2-(iw/zoom/2)':"
+            f"y='max(0,min(ih-ih/zoom,ih*{_SUBSHOT_TOP_YC:g}-(ih/zoom/2)))':"
+            f"d={frames}:s={s}:fps={fps}"
+        )
+    if motion == "push_detail":
+        return (
+            f"zoompan=z='{_SUBSHOT_DETAIL_ZOOM:g}+{zamt}*{ease}':"
+            f"x='iw/2-(iw/zoom/2)':"
+            f"y='max(0,min(ih-ih/zoom,ih*{_SUBSHOT_DETAIL_YC:g}-(ih/zoom/2)))':"
+            f"d={frames}:s={s}:fps={fps}"
+        )
     if motion == "zoom_in":
         return (
             f"zoompan=z='1+{zamt}*{ease}':"
@@ -1489,19 +1588,21 @@ def _prepare_panel_frame(panel_png: Path, out_path: Path) -> Path:
     BOTH are fixed by contain+blur: show the WHOLE panel sharp (capped at 2×
     upscale) centered over a blurred copy of itself filling the frame.
 
-    Triggers (either): (1) cover-scale > _BLUR_FALLBACK_SCALE, OR (2) a LANDSCAPE
-    panel (iw ≥ ih·1.2). A wide panel forced into the 1080×1920 PORTRAIT frame by
-    cover-crop chops its left/right off to a center sliver (e.g. the magik 0:53
-    p12 strip, 1.83:1 at 1.77× cover, showed only ~31% of its width = a disembodied
-    hand). Showing the whole panel on a blurred bg keeps the context. Portrait/tall
-    splashes (ih>iw) stay on cover-scale and fill the frame edge-to-edge."""
+    MOTION CORE 2026-07-04: competitors FILL the 9:16 frame — letterboxing (contain+blur)
+    shrinks the subject, the measured mid-video "tiny subject" defect. So a MODERATE landscape
+    now cover-crops to fill (centered = the panel's salient region), trading the old whole-panel
+    view for a full-frame subject. Triggers for contain+blur are now narrower (either):
+      (1) cover-scale > _BLUR_FALLBACK_SCALE (a small panel blown up >2.5× = blurry giant), OR
+      (2) an EXTREME strip, aspect ≥ LANDSCAPE_COVER_MAX_ASPECT, where a centered cover-crop
+          would show only a meaningless sliver (e.g. a 3.8:1 establishing strip).
+    Portrait/tall splashes (ih>iw) stay on cover-scale and fill the frame edge-to-edge."""
     with Image.open(panel_png) as im:
         im = im.convert("RGB")
         iw, ih = im.size
         cover = max(OUTPUT_W / iw, OUTPUT_H / ih)
 
-        is_landscape = iw >= ih * 1.2  # wide panel: cover-crop chops the sides
-        use_blur_bg = cover > _BLUR_FALLBACK_SCALE or is_landscape
+        aspect = iw / ih
+        use_blur_bg = cover > _BLUR_FALLBACK_SCALE or aspect >= LANDSCAPE_COVER_MAX_ASPECT
         if not use_blur_bg:
             # ── Cover-scale (original behavior) ──
             new_w = max(OUTPUT_W, int(round(iw * cover)))

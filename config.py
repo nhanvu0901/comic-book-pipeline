@@ -243,9 +243,42 @@ def _azure_embed_ready() -> bool:
 # ─── Stage 5: Video assembly ────────────────────────────────────────────────
 BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
 
-# Crossfade dissolve between SCENES. 0 = disabled → hard-cut concat (current behavior).
+# Crossfade dissolve between SCENES. XFADE_TRANSITION="cut" (default) bypasses the
+# xfade filter entirely (hard cut, plain concat) — competitor autopsy (1.4M-3.2M view
+# Shorts) measured 0.4-0.8 hard cuts/s and near-zero dissolves; our old default dissolved
+# EVERY scene boundary, which read as a slideshow. Set XFADE_TRANSITION to a real ffmpeg
+# xfade name (e.g. "dissolve") to opt back into a dissolve at every boundary; XFADE_DURATION
+# is then the dissolve length. XFADE_DURATION also doubles as the small edge-only dissolve
+# length used by XFADE_SOFT_EDGES below.
 XFADE_DURATION = float(os.getenv("XFADE_DURATION", "0.25"))
-XFADE_TRANSITION = os.getenv("XFADE_TRANSITION", "dissolve")
+XFADE_TRANSITION = os.getenv("XFADE_TRANSITION", "cut")
+
+# In hard-cut mode, still dissolve the two OUTER edges (intro→scene1, last-story→outro
+# card) for `XFADE_DURATION`s — a flat hard cut there read as an abrupt slap in review;
+# every scene-to-scene cut in between stays a hard cut. No effect when XFADE_TRANSITION
+# is not "cut".
+XFADE_SOFT_EDGES = os.getenv("XFADE_SOFT_EDGES", "true").lower() in ("true", "1", "yes")
+
+# ─── Stage 5: flash-accent cuts ─────────────────────────────────────────────
+# A single white flash frame (1 frame @30fps) at a hard cut into an action-classified
+# scene (reuses shots.py's _is_action_text impact-verb check) — competitor autopsy
+# counted 9-10 single-frame flashes per video at strong beats. Capped per video so it
+# stays an accent, not a strobe; prefers the LATEST qualifying cuts (fights cluster
+# toward the climax). No-op outside hard-cut assembly (flashes need a real cut to land on).
+FLASH_ACCENTS = os.getenv("FLASH_ACCENTS", "true").lower() in ("true", "1", "yes")
+FLASH_ACCENTS_MAX = int(os.getenv("FLASH_ACCENTS_MAX", "3"))
+
+# ─── Stage 5: caption entrance pop ──────────────────────────────────────────
+# Each caption chunk pops in via an ASS \t scale animation (100%→108%→100% over
+# ~120ms) the moment it first appears — competitor captions are themselves a motion
+# source, not a static overlay. Off → plain karaoke-fill (no scale animation).
+CAPTION_POP = os.getenv("CAPTION_POP", "true").lower() in ("true", "1", "yes")
+
+# ─── Stage 5: panel mirror ───────────────────────────────────────────────────
+# Read by stages/stage_5/shots.py (MIRROR_PANELS there). Default OFF: competitor
+# autopsy caught OUR mirror flipping mid-video lettering backwards (house-of-m
+# frames) — the dedup value of mirroring no longer outweighs the AI-slop risk.
+MIRROR_PANELS = os.getenv("MIRROR_PANELS", "false").lower() in ("true", "1", "yes")
 
 # ─── Stage 5: channel branding (Grimframe) ──────────────────────────────────
 CHANNEL_NAME = os.getenv("CHANNEL_NAME", "Grimframe")
@@ -275,6 +308,10 @@ COLD_OPEN = os.getenv("COLD_OPEN", "true").lower() in ("true", "1", "yes")
 # hook — the technique high-view comic Shorts use. Off → no banner.
 ENABLE_TITLE_BANNER = os.getenv("ENABLE_TITLE_BANNER", "true").lower() in ("true", "1", "yes")
 TITLE_BANNER_FONTSIZE = int(os.getenv("TITLE_BANNER_FONTSIZE", "40"))
+# Show the banner only on hook (is_intro) shots, not pinned for the whole video —
+# competitor autopsy flagged the always-on banner as wasted vertical space past
+# the opening seconds. false = restore the old always-on behavior.
+TITLE_BANNER_HOOK_ONLY = os.getenv("TITLE_BANNER_HOOK_ONLY", "true").lower() in ("true", "1", "yes")
 
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
