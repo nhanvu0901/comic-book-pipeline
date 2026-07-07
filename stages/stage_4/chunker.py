@@ -21,11 +21,16 @@ def align_scenes_to_words(
     """
     timings: list[SceneTiming] = []
     cursor = 0
-    for s in scenes:
+    for i, s in enumerate(scenes):
         wc = int(s.get("word_count", 0))
         if wc <= 0:
             wc = max(1, len(str(s.get("text", "")).split()))
         if cursor >= len(words):
+            # TTS returned fewer words than the narration counts — the remaining
+            # scenes would silently get NO timing (and never render). Say so loudly;
+            # the drop itself is unchanged (fabricating timings would desync audio).
+            print(f"[chunker] ⚠ word stream exhausted at scene {i + 1}/{len(scenes)} "
+                  f"(TTS words={len(words)}) — {len(scenes) - i} scene(s) have no timing")
             break
         end_idx = min(cursor + wc, len(words))
         start = float(words[cursor]["start"])

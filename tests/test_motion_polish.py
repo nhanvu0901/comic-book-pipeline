@@ -14,6 +14,7 @@ class FakeShot:
     duration_seconds: float
     caption_text: str = ""
     is_intro: bool = False
+    beat_id: int | None = None  # Q&A locked shots carry the real narration scene
 
 
 def test_new_knob_defaults():
@@ -72,12 +73,13 @@ def test_dissolve_mode_still_constructible(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "XFADE_SOFT_EDGES", False)
     monkeypatch.setattr(config, "FLASH_ACCENTS", False)
 
+    monkeypatch.setattr(config, "XFADE_ROTATE", "dissolve,slideleft,slideright")
     monkeypatch.setattr(P, "_concat", lambda paths, out: out)  # per-scene concat stub
     captured = {}
     monkeypatch.setattr(
         P, "_xfade_chain",
-        lambda clips, durs, out_path, x, transition: captured.update(
-            clips=clips, durs=durs, x=x, transition=transition) or out_path,
+        lambda clips, durs, out_path, x, transition, rotate=None: captured.update(
+            clips=clips, durs=durs, x=x, transition=transition, rotate=rotate) or out_path,
     )
 
     shots = [FakeShot(1, 2.0), FakeShot(2, 3.0), FakeShot(3, 1.5)]
@@ -88,6 +90,38 @@ def test_dissolve_mode_still_constructible(monkeypatch, tmp_path):
     assert captured["x"] == 0.25
     assert len(captured["clips"]) == 3
     assert captured["durs"] == [2.0, 3.0, 1.5]
+    # "more animation between scenes": recap scenes (beat_id None) are all real
+    # boundaries → the resolved per-boundary list cycles the XFADE_ROTATE set.
+    assert captured["rotate"] == ["dissolve", "slideleft"]
+
+
+def test_rotate_boundaries_qa_intra_beat_stays_dissolve():
+    """Q&A locked shots: unique scene_id per shot but beat_id = real answer item.
+    Boundaries WITHIN one item keep a plain dissolve; only item changes rotate.
+    The final boundary into the outro card is always a dissolve."""
+    rotate = ["dissolve", "slideleft", "slideright"]
+    # 5 shots, 2 real beats: shots 1-3 = item 1, shots 4-5 = item 2.
+    shots = [FakeShot(1, 2.0, beat_id=1), FakeShot(2, 2.0, beat_id=1),
+             FakeShot(3, 2.0, beat_id=1), FakeShot(4, 2.0, beat_id=2),
+             FakeShot(5, 2.0, beat_id=2)]
+    groups = [(s.scene_id, [Path(f"s{s.scene_id}.mp4")], s.duration_seconds) for s in shots]
+    per = P._rotate_boundaries(shots, groups, rotate, has_outro=True)
+    #        1-2        2-3        3-4 (item change)  4-5        →outro
+    assert per == ["dissolve", "dissolve", "dissolve", "dissolve", "dissolve"]
+    # item change at 3→4 consumes rotate[0]="dissolve"; force a visible check with
+    # a 3-beat layout: item changes at 2→3 and 4→5 cycle rotate in order.
+    shots2 = [FakeShot(1, 2.0, beat_id=1), FakeShot(2, 2.0, beat_id=1),
+              FakeShot(3, 2.0, beat_id=2), FakeShot(4, 2.0, beat_id=2),
+              FakeShot(5, 2.0, beat_id=3)]
+    groups2 = [(s.scene_id, [Path(f"s{s.scene_id}.mp4")], s.duration_seconds) for s in shots2]
+    per2 = P._rotate_boundaries(shots2, groups2, rotate, has_outro=True)
+    assert per2 == ["dissolve", "dissolve", "dissolve", "slideleft", "dissolve"]
+
+
+def test_rotate_boundaries_off_returns_none():
+    shots = [FakeShot(1, 2.0), FakeShot(2, 2.0)]
+    groups = [(1, [Path("a.mp4")], 2.0), (2, [Path("b.mp4")], 2.0)]
+    assert P._rotate_boundaries(shots, groups, None, has_outro=False) is None
 
 
 # ── flash accents ─────────────────────────────────────────────────────────

@@ -84,11 +84,9 @@ def detect_full(image_path: Path | str) -> dict:
     {x,y,w,h} format as panels.
     """
     model, processor = _load_model()
-
     img = Image.open(image_path).convert("RGB")
     img_array = np.array(img)
     page_w, page_h = img.size
-    page_area = page_w * page_h
 
     with torch.no_grad():
         results = model.predict_detections_and_associations([img_array], processor)
@@ -96,6 +94,50 @@ def detect_full(image_path: Path | str) -> dict:
 
     page_result = results[0] if results else {}
     page_ocr = ocr_results[0].get("ocr_texts", []) if ocr_results else []
+    return _parse_magi_page(page_result, page_ocr, page_w, page_h)
+
+
+def detect_full_batch(image_paths: list[Path | str], batch_size: int = 3,
+                      log=None) -> list[dict]:
+    """Same as detect_full() but for several pages at once. Magi's API already takes a
+    LIST of images and returns results in the SAME order, so we push `batch_size` pages
+    per forward pass (verified per-image ordering via results[k]/ocr_results[k]). This
+    cuts the number of local forward-pass launches — the dominant Stage 2 compute block —
+    with ZERO change to per-page output (same model, same parsing).
+
+    Chunked by `batch_size` so only that many images' activations are resident at once
+    (a 16GB Mac OOMs on a whole 40-page issue in one pass). Returns one dict per input
+    path, in order. batch_size <= 1 → one image per pass (== per-page detect_full)."""
+    model, processor = _load_model()
+    out: list[dict] = []
+    step = max(1, int(batch_size))
+    for start in range(0, len(image_paths), step):
+        # Per-chunk progress: a 74-page batch is ~20+ silent minutes otherwise —
+        # that silence was misread as a hang and a healthy run got killed.
+        if log:
+            log(f"[magi] batch-detect {min(start + step, len(image_paths))}/{len(image_paths)} pages…")
+        chunk = image_paths[start:start + step]
+        arrays, sizes = [], []
+        for p in chunk:
+            img = Image.open(p).convert("RGB")
+            arrays.append(np.array(img))
+            sizes.append(img.size)  # (w, h)
+        with torch.no_grad():
+            results = model.predict_detections_and_associations(arrays, processor)
+            ocr_results = model.predict_ocr(arrays, processor)
+        for k in range(len(chunk)):
+            page_result = results[k] if k < len(results) else {}
+            page_ocr = (ocr_results[k].get("ocr_texts", [])
+                        if k < len(ocr_results) else [])
+            page_w, page_h = sizes[k]
+            out.append(_parse_magi_page(page_result, page_ocr, page_w, page_h))
+    return out
+
+
+def _parse_magi_page(page_result: dict, page_ocr: list, page_w: int, page_h: int) -> dict:
+    """Parse ONE Magi page result (+ its OCR texts) into the detect_full() dict shape.
+    Shared by detect_full (single image) and detect_full_batch (many)."""
+    page_area = page_w * page_h
 
     # ── Panels ─────────────────────────────────────────────────────────
     panel_bboxes = page_result.get("panels", []) or []

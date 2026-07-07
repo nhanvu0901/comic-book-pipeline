@@ -244,8 +244,12 @@ def sdk_complete(
 # returned NOTHING — silently emptying the context for every comic that needs
 # this fallback (all DC, whose Fandom api.php is Cloudflare-blocked, + any
 # Fandom-miss Marvel). 28 leaves room for ~3-4 source reads + the write.
-_SDK_WEB_TIMEOUT_S = 540
-_SDK_WEB_MAX_TURNS = 28
+# Env-overridable: abstract "Why/How" research questions (Q&A archetype 2026-07-06)
+# need more search→read→reconcile turns than a concrete feats question — 28 ran out
+# mid-research. Raise per-run (SDK_WEB_MAX_TURNS=48 SDK_WEB_TIMEOUT_S=900) instead of
+# hardcoding a new global that slows every simpler call.
+_SDK_WEB_TIMEOUT_S = int(os.getenv("SDK_WEB_TIMEOUT_S", "540"))
+_SDK_WEB_MAX_TURNS = int(os.getenv("SDK_WEB_MAX_TURNS", "28"))
 
 
 def sdk_complete_web(

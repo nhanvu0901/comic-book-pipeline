@@ -285,7 +285,7 @@ def build(
 
     # Right column
     right = ft.Column([
-        ft.Text("STEP 4 OF 7", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 4 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Narration Script", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Pick one of three LLM-proposed angles, then edit the generated script. "

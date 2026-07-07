@@ -42,6 +42,8 @@ def main():
     parser.add_argument("--flat", action="store_true",
                         help="Disable per-scene emotion SSML — single base emotion for the whole video.")
     parser.add_argument("--force", action="store_true", help="Regenerate even if audio.wav exists")
+    parser.add_argument("--skip-review", action="store_true",
+                        help="Bypass the review gate (ignored for answer_research/Q&A projects)")
     args = parser.parse_args()
 
     if not (0.5 <= args.speed <= 2.0):
@@ -57,6 +59,7 @@ def main():
             voice_id=args.voice,
             model=args.model,
             force=args.force,
+            skip_review=args.skip_review,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as e:
         print(f"ERROR: {e}", file=sys.stderr)

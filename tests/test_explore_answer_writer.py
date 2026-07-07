@@ -90,7 +90,12 @@ def test_write_explore_answer_end_to_end(monkeypatch, project_dir):
     assert len(nar.scenes) == 5  # hook + 3 item scenes + outro
     assert nar.scenes[0].is_intro
     assert nar.scenes[-1].is_outro
-    assert "Full sources" in nar.scenes[-1].text  # deterministic factual credit (LLM calls raise above)
+    # Q&A outro is meaning-first only — never a "sources linked in the description"
+    # credit. With the LLM outro/tease helpers failing (stubbed to raise above), it
+    # falls back to the generic meaning line, NOT a credit.
+    assert "Full sources" not in nar.scenes[-1].text
+    assert "linked in the description" not in nar.scenes[-1].text
+    assert nar.scenes[-1].text.strip()  # never empty
 
     for scene, entity in zip(nar.scenes[1:4], ("Wolverine", "Deadpool", "Thanos")):
         assert entity.lower() in scene.text.lower()
@@ -129,3 +134,55 @@ if __name__ == "__main__":
     finally:
         shutil.rmtree(d, ignore_errors=True)
         mp.undo()
+
+
+# ─── Archetype dispatch (Why/How → explain mode) ────────────────────────────
+
+def test_question_archetype_detection():
+    from stages.question_archetype import question_archetype as qa
+    # explain family (Master's 2026-07-06 archetype)
+    assert qa("Why the Phoenix Force chose a broken host to rebuild the entire multiverse") == "explain"
+    assert qa("How Magneto built a mutant utopia on the ruins of a dead world") == "explain"
+    assert qa("The day Joker finally went sane and realized the horror he created") == "explain"
+    assert qa("The tragic reason Silver Surfer must keep his memories hidden") == "explain"
+    assert qa("The time Superman realized his greatest power was a curse") == "explain"
+    assert qa("What made Doctor Doom give up absolute godhood?") == "explain"
+    # list family stays list
+    assert qa("Who has survived Ghost Rider's Penance Stare?") == "list"
+    assert qa("4 villains who broke a hero's body") == "list"
+    assert qa("") == "list"
+
+
+def test_validator_explain_requires_answer_in_final_scene():
+    beats = [ea.Beat(id=1, function="COLD_OPEN", name="Jean", page_refs=[1]),
+             ea.Beat(id=2, function="LANDING", name="Scott", page_refs=[2])]
+    # final scene narrates an event but never answers → flagged
+    scenes = [{"text": "Jean hatches from the egg, broken and blank. " + "word " * 18},
+              {"text": "Scott hears her whisper and walks back into the school. " + "word " * 18}]
+    issues = ea._validate_explore_scenes(scenes, beats, "explain")
+    assert any("never states the ANSWER" in i for i in issues)
+    # same scenes pass in list mode (rule is explain-only)
+    assert not any("ANSWER" in i for i in ea._validate_explore_scenes(scenes, beats, "list"))
+    # causal marker in the final scene satisfies the guard
+    scenes[1]["text"] = ("That's why it had to be Scott — only a broken host could let him go. "
+                         + "word " * 12)
+    assert not any("ANSWER" in i for i in ea._validate_explore_scenes(scenes, beats, "explain"))
+
+
+def test_validator_explain_bans_list_language():
+    beats = [ea.Beat(id=1, function="COLD_OPEN", name="Jean", page_refs=[1])]
+    scenes = [{"text": "Jean is the last one on this list, because reasons. " + "word " * 15}]
+    issues = ea._validate_explore_scenes(scenes, beats, "explain")
+    assert any("list language" in i for i in issues)
+    assert not any("list language" in i for i in ea._validate_explore_scenes(scenes, beats, "list"))
+
+
+def test_build_hook_by_archetype():
+    ctx = {"answer_summary": "Because only the dead woman could let him go."}
+    h_list = ea._build_hook("Who survived X", ctx, "list")
+    h_explain = ea._build_hook("Why did the Phoenix choose a broken host", ctx, "explain")
+    assert "list" in h_list  # countdown tease kept for list questions
+    assert "list" not in h_explain  # no list language on explain hooks
+    # explain hook must NOT spoil the thesis (the answer lands at the END)
+    assert "dead woman" not in h_explain
+    assert h_explain.startswith("Why did the Phoenix choose a broken host?")

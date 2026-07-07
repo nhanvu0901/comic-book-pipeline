@@ -61,11 +61,27 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
     unusable research (SDK down, too few verified items, empty reader_url) —
     left to propagate so the caller reports status=fail with the real reason.
     """
+    if args.rebuild_contexts:
+        # Resume path: research already persisted to answer_context.json (possibly
+        # hand-edited to fill missing reader_urls) — rebuild comic_context from it
+        # instead of paying for a fresh SDK research call. The file's shape is a
+        # superset of research_answer()'s return, so it feeds build_contexts as-is.
+        from config import get_project_dirs
+        from stages.stage_1.answer_research import build_contexts
+
+        answer_path = get_project_dirs(args.project)["root"] / "answer_context.json"
+        research = json.loads(answer_path.read_text())
+        answer_path, _comic_path = build_contexts(
+            research.get("question", args.question), research, args.project,
+            researched_at=research.get("researched_at", ""), log=log)
+        return f"rebuilt from {answer_path.name} ({len(research.get('items') or [])} item(s))"
+
     if not args.question:
         raise ValueError("--question is required unless --skip-research")
     from stages.stage_1.answer_research import build_contexts, research_answer
 
-    research = research_answer(args.question, max_items=args.max_items, log=log)
+    research = research_answer(args.question, max_items=args.max_items,
+                               hint=getattr(args, "hint", ""), log=log)
     answer_path, _comic_path = build_contexts(
         args.question, research, args.project, log=log)
     return f"{len(research.get('items') or [])} item(s) -> {answer_path.name}"
@@ -94,12 +110,11 @@ def _step_download(args: argparse.Namespace, log: Callable[[str], None]) -> str:
     from stages.stage_2.url_mode import download_readers_only
 
     urls = _load_reader_urls(args.project)
-    # Preserve countdown order; drop an exact duplicate URL (two answer items
-    # citing the SAME issue) so batcave isn't scraped/downloaded twice for one
-    # comic — a repeated chapter would just duplicate pages for the matcher.
-    seen: set[str] = set()
-    ordered = [u for u in urls if not (u in seen or seen.add(u))]
-    result = download_readers_only(args.project, ordered, progress=log)
+    # Pass the FULL item-ordered list (duplicates included): download_readers_only
+    # dedups itself while keeping each URL's first-occurrence rank as its chapter
+    # label — a positional dedup here shifted later chapters' "#N" labels and broke
+    # the beat→item→panel-pool mapping (audit 2026-07-06).
+    result = download_readers_only(args.project, urls, progress=log)
     return f"{result.get('total_pages', 0)} page(s) across {result.get('chapters', 0)} chapter(s)"
 
 
@@ -121,7 +136,8 @@ def _step_narrate(args: argparse.Namespace, log: Callable[[str], None]) -> str:
 def _step_tts(args: argparse.Namespace, log: Callable[[str], None]) -> str:
     from stages.stage_4.pipeline import synthesize_project
 
-    result = synthesize_project(args.project, post_atempo=args.atempo, force=True)
+    result = synthesize_project(args.project, post_atempo=args.atempo, force=True,
+                                skip_review=args.skip_review)
     return f"audio {result.audio_duration_seconds:.1f}s"
 
 
@@ -136,9 +152,15 @@ def _step_render(args: argparse.Namespace, log: Callable[[str], None]) -> str:
     (ADDENDUM v2 in EXPLORE_ANSWER_DESIGN.md) — a branding outro card breaks
     that seamless loop, so it's off for this render only.
     """
+    # Panel selection for a Q&A project now happens INSIDE Stage 5: build_shots renders at
+    # caption-chunk granularity restricted to each beat's review-locked panels
+    # (shots._build_shots_per_chunk_locked, gated on plot_source == "answer_research" + locks).
+    # No pre-step is needed — the old headless sentence-match refinement is retired.
     env = dict(os.environ)
     env["ENABLE_OUTRO_CARD"] = "false"
     cmd = [sys.executable, "-m", "stages.stage_5", "--project", args.project, "--force"]
+    if args.skip_review:
+        cmd.append("--skip-review")
     proc = subprocess.run(cmd, cwd=str(_REPO_ROOT), env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"stage_5 subprocess exited {proc.returncode}")
@@ -172,12 +194,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--question", default="", help="The question to answer (required unless --skip-research).")
     parser.add_argument("--project", required=True, help="Project slug under projects/.")
     parser.add_argument("--max-items", type=int, default=5, help="Max countdown items to research. Default 5.")
+    parser.add_argument("--hint", default="", help=(
+        "Optional grounding hint for the research agent (e.g. the likely story/issue a "
+        "scout already identified). Verified against sources, not trusted blindly — "
+        "abstract 'Why/How' questions wander without one."))
     parser.add_argument("--atempo", type=float, default=1.35,
                         help="ffmpeg atempo for Stage 4 TTS (pitch-preserving speed-up). Default 1.35.")
+    parser.add_argument("--rebuild-contexts", action="store_true",
+                        help="Rebuild comic_context.json from the project's existing "
+                             "answer_context.json (e.g. after hand-filling reader_urls) "
+                             "instead of a fresh SDK research call.")
     parser.add_argument("--skip-research", action="store_true",
                         help="Skip research; reuse an existing comic_context.json/answer_context.json.")
     parser.add_argument("--skip-download", action="store_true",
                         help="Skip download; reuse an already-downloaded raw_comic/.")
+    parser.add_argument("--skip-review", action="store_true",
+                        help="Pass-through to Stage 4/5. NOTE: ignored for answer_research (Q&A) "
+                             "projects — Q&A panel choices must be reviewed (see review gate).")
     parser.add_argument("--stop-after", choices=STEPS, default=None,
                         help="Run through this step then stop (default: run all the way to render).")
     return parser.parse_args(argv)
@@ -195,6 +228,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             try:
                 detail = _run_step(step, args, print)
+            except SystemExit as exc:
+                # The review gate (ensure_reviewed) raises SystemExit when the Q&A
+                # project isn't approved yet — without this clause the process died
+                # WITHOUT the machine-parseable status line the module promises
+                # ("one status line per step"), so an agent driving this CLI saw
+                # nothing to parse. Q&A runs are EXPECTED to stop here: approve in
+                # the review UI between narrate and tts, then re-run.
+                print(f"[answer-pipeline] step={step} status=fail detail=ReviewGateBlocked: {exc}")
+                return 1
             except Exception as exc:  # noqa: BLE001 - report every failure mode uniformly, agent parses status=fail
                 print(f"[answer-pipeline] step={step} status=fail detail={type(exc).__name__}: {exc}")
                 return 1

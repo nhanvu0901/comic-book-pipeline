@@ -82,8 +82,13 @@ def _plan_scene_checks(narration: dict, scene_timings: list[dict]) -> list[dict]
 
 def _extract_frame(video_path: Path, timestamp: float, out_png: Path) -> bool:
     """Grab one frame from `video_path` at `timestamp` seconds via ffmpeg."""
-    ff = shutil.which("ffmpeg")
-    if not ff:
+    # Same resolver as the renderer (config.FFMPEG_BIN incl. the bundled binary) —
+    # a bare which("ffmpeg") silently disabled EVERY frame check when ffmpeg
+    # wasn't on PATH (checker reported 0/0 instead of failing loud).
+    try:
+        from .shots import _require_ffmpeg
+        ff = _require_ffmpeg()
+    except Exception:
         return False
     cmd = [ff, "-y", "-ss", f"{max(0.0, timestamp):.3f}", "-i", str(video_path),
            "-frames:v", "1", "-q:v", "4", str(out_png)]

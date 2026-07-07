@@ -135,6 +135,31 @@ def _fetch_data(url: str) -> dict[str, Any] | None:
         return None
 
 
+def _ajax_chapter_images(reader_url: str, news_id, chapter_id) -> list[str]:
+    """Fetch a chapter's image list via the reader's AJAX API.
+
+    Site update ~2026-07: reader pages ship an empty __DATA__.images and the Vue
+    app fetches them with sendAjax("reader/getChapterData") instead (libs.min.js
+    v1.2.8). Mirror that call. Returns [] on any failure."""
+    if not news_id or not chapter_id:
+        return []
+    sess = _get_session()
+    try:
+        r = sess.post(
+            f"{SITE_BASE}/engine/ajax/controller.php?mod=api&action=reader/getChapterData",
+            data={"news_id": news_id, "chapter_id": chapter_id},
+            headers={"X-Requested-With": "XMLHttpRequest", "Referer": reader_url},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            print(f"[scraper] getChapterData → status={r.status_code}")
+            return []
+        return (r.json().get("data") or {}).get("images") or []
+    except Exception as e:  # noqa: BLE001 — network/JSON errors both mean "no images"
+        print(f"[scraper] getChapterData failed: {e}")
+        return []
+
+
 # ─── Image download ──────────────────────────────────────────────────────────
 
 
@@ -191,13 +216,21 @@ def discover_issues(series_url: str, headless: bool | None = None) -> list[dict]
         chap_id = chap.get("id")
         if not chap_id:
             continue
-        title = (chap.get("title") or f"Issue #{int(chap.get('posi', 0))}").strip()
+        posi = chap.get("posi", 0)
+        title = (chap.get("title") or f"Issue #{int(posi)}").strip()
         reader_url = f"{SITE_BASE}/reader/{news_id}/{chap_id}{xhash}"
+        # `number` = the ACTUAL issue number parsed from the title, NOT batcave's posi.
+        # posi is a display slot and can disagree with the issue order (Planet Hulk 2015
+        # lists #5 at posi 4 and #4 at posi 5) — sorting by posi then swaps issues #4/#5
+        # in a saga ingest. Parse "#N" from the title (decimals kept: #33.1); fall back to
+        # posi only when the title has no number.
+        m = re.search(r"#\s*(\d+(?:\.\d+)?)", title)
+        number = float(m.group(1)) if m else float(posi or 0)
         issues.append({
             "title": title,
             "url": reader_url,
             "chapter_id": chap_id,
-            "number": chap.get("posi", 0),
+            "number": number,
             "date": chap.get("date", ""),
         })
 
@@ -232,23 +265,43 @@ def scrape_issue_pages(
 
     prefix = f"ch{chapter_index:02d}_"
     existing = sorted(raw_dir.glob(f"{prefix}page_*.jpg"))
-    if existing:
-        print(f"[scraper] Using cached pages: {len(existing)} pages in {raw_dir} ({prefix}*)")
-        return existing
 
     data = _fetch_data(reader_url)
     if not data:
+        # Offline / reader down: a cached set is better than nothing, but say so —
+        # we cannot verify completeness without the page list.
+        if existing:
+            print(f"[scraper] reader unreachable — using {len(existing)} cached page(s) "
+                  f"UNVERIFIED for completeness ({prefix}*)")
+            return existing
         return []
 
     raw_images = data.get("images") or []
+    if not raw_images and data.get("rdr_ajax"):
+        raw_images = _ajax_chapter_images(
+            reader_url, data.get("news_id"), data.get("chapter_id"))
     if not raw_images:
-        print(f"[scraper] __DATA__.images is empty. Keys: {list(data.keys())}")
-        return []
+        # Fail loud: a silent [] used to produce a 0-page manifest the rest of the
+        # pipeline happily "succeeded" on (status=ok, 0 pages).
+        raise RuntimeError(
+            f"no images for {reader_url} (rdr_ajax={data.get('rdr_ajax')!r}, "
+            f"pages={data.get('pages')!r}) — reader layout may have changed again"
+        )
 
     image_urls = [
         img if img.startswith("http") else SITE_BASE + img
         for img in (i.strip() for i in raw_images) if img
     ]
+    # Cache short-circuit ONLY when the chapter is COMPLETE. The old "any file
+    # exists → return" froze partially-downloaded chapters forever (a guard/network
+    # failure mid-chapter left 20/40 pages that every later run happily reused,
+    # silently shipping a comic with missing pages). The per-page loop below already
+    # skips files that exist, so an incomplete chapter resumes instead of re-fetching.
+    if len(existing) >= len(image_urls):
+        print(f"[scraper] Using cached pages: {len(existing)}/{len(image_urls)} in {raw_dir} ({prefix}*)")
+        return existing
+    if existing:
+        print(f"[scraper] cached {len(existing)}/{len(image_urls)} page(s) — resuming download of the rest")
     print(f"[scraper] Found {len(image_urls)} pages — downloading...")
 
     pages: list[Path] = []

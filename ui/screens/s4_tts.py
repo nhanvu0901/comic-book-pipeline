@@ -14,7 +14,7 @@ import flet as ft
 from flet_audio import Audio, AudioState
 
 from config import PROJECTS_ROOT, CARTESIA_MODEL, CARTESIA_VOICE_ID
-from ..bridge import format_exception, run_blocking, run_stage_4
+from ..bridge import format_exception, is_answer_project, run_blocking, run_stage_4
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
@@ -235,11 +235,16 @@ def build(
                 model or None,
                 push_log,
             )
-        except Exception as e:
+        except (Exception, SystemExit) as e:
+            # SystemExit included: the review gate (stages/review_gate.py ensure_reviewed)
+            # raises SystemExit when the project isn't approved / narration changed —
+            # `except Exception` missed it (BaseException), leaving the spinner stuck
+            # on "Calling Cartesia…" with no error anywhere.
             running.visible = False
-            status_text.value = "Failed — see log."
+            status_text.value = "Blocked by review gate — see log." if isinstance(e, SystemExit) \
+                else "Failed — see log."
             status_text.color = DANGER
-            push_log(format_exception(e))
+            push_log(str(e) if isinstance(e, SystemExit) else format_exception(e))
             page.update()
             return
 
@@ -362,10 +367,18 @@ def build(
         page.show_dialog(dialog)
 
     def approve_and_go(_e):
-        state.mark_approved(5)
-        state.current_stage = 6
+        state.mark_approved(6)
+        if is_answer_project(state.project_name):
+            # Q&A projects skip stage 7 (single-panel storyboard editor doesn't
+            # apply — panel choices already made in Review Beats).
+            state.mark_approved(7)
+            state.current_stage = 8
+            save_state(state)
+            on_go(8)
+            return
+        state.current_stage = 7
         save_state(state)
-        on_go(6)
+        on_go(7)
 
     # ─── Layout ────────────────────────────────────────────────────────────
     player_card = ft.Container(
@@ -425,7 +438,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 5 OF 7", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 6 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("TTS Audio", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Cartesia TTS — voice + model selectable. Word-level timestamps.",
                 size=12, color=TEXT_MUTED),
@@ -439,7 +452,7 @@ def build(
         secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=14),
         primary_button("Approve & Continue →", approve_and_go,
-                       disabled=not state.is_approved(5)),
+                       disabled=not state.is_approved(6)),
     ], spacing=10, expand=True)
 
     return three_col(

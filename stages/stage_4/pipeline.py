@@ -15,6 +15,7 @@ from config import (
     RESEMBLE_VOICE_UUID,
     TTS_PROVIDER,
 )
+from ..review_gate import ensure_reviewed
 from .chunker import align_scenes_to_words, build_caption_chunks, words_from_dicts
 from .schema import TTSResult
 
@@ -132,13 +133,18 @@ def synthesize_project(
     flat: bool = False,          # True → old single-emotion behavior, no per-scene SSML tags
     voice_id: str | None = None,
     model: str | None = None,
-    post_atempo: float = 1.1,  # ffmpeg atempo — pitch-preserving tempo boost.
-                                # 1.1 → calmer, more intelligible pace (user-chosen over
-                                # the 1.3 channel benchmark). ~3.2 wps. Keep narration near
-                                # ~225 words so a 1.1-paced video still lands under ~72s.
+    post_atempo: float = 1.35,  # ffmpeg atempo — pitch-preserving tempo boost.
+                                # 1.35 = the channel default (Carl voice reads slow; Stage 3's
+                                # word budget assumes ~3.4 wps AT 1.35). The old 1.1 default
+                                # survived here after every explicit caller moved to 1.35 — so
+                                # the UI's Synthesize button (which passed nothing) silently
+                                # shipped ~24%-overlong audio ("--force re-TTS reverts to 1.1").
+                                # Single source of truth: callers only override deliberately.
     force: bool = False,
+    skip_review: bool = False,
 ) -> TTSResult:
     """Load narration.json, synthesize audio + timings via Cartesia, save all artifacts."""
+    ensure_reviewed(project_name, skip_review)
     root = PROJECTS_ROOT / project_name
     narration_path = root / "narration.json"
     if not narration_path.exists():
@@ -156,14 +162,20 @@ def synthesize_project(
     captions_path = root / "caption_chunks.json"
     hash_path = root / "narration.tts.sha256"
 
-    if audio_path.exists() and words_path.exists() and not force:
-        verify_narration_hash(hash_path, scenes, log=print,
-                               error_hint="Re-run Stage 4 with --force to regenerate audio + timings.")
+    # Auto-force: narration.json edited since the cached audio was TTS'd → regenerate rather
+    # than ship stale audio under fresh captions (the recurring "forgot --force" bug). The sha
+    # sidecar written below IS the seam; a missing sidecar (old project) can't be compared.
+    stale = (audio_path.exists() and hash_path.exists()
+             and hash_path.read_text().strip() != narration_hash(scenes))
+    if audio_path.exists() and words_path.exists() and not force and not stale:
         print(f"[stage4] reusing existing audio.wav + word_timestamps.json "
               f"(pass --force to regenerate)")
         words = json.loads(words_path.read_text())
         duration = _wav_duration(audio_path)
     else:
+        if stale and not force:
+            print("[stage4] narration.json changed since audio.wav was rendered — "
+                  "auto-regenerating (kills stale-audio-under-new-captions)")
         base_emotion = (emotion or _base_emotion_for(narration)).strip().lower()
         if TTS_PROVIDER == "resemble":
             from .resemble_tts import synthesize as _synthesize, select_voice

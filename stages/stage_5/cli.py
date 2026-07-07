@@ -35,6 +35,8 @@ def main():
                         help="Override BGM path (env BG_MUSIC_PATH otherwise)")
     parser.add_argument("--no-music", action="store_true",
                         help="Disable BGM entirely; narration-only mix")
+    parser.add_argument("--skip-review", action="store_true",
+                        help="Bypass the review gate (ignored for answer_research/Q&A projects)")
     args = parser.parse_args()
 
     try:
@@ -43,6 +45,7 @@ def main():
             bg_music_path=args.bg_music,
             enable_music=not args.no_music,
             force=args.force,
+            skip_review=args.skip_review,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as e:
         print(f"ERROR: {e}", file=sys.stderr)

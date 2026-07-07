@@ -19,13 +19,15 @@ import base64
 import io
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
 from PIL import Image
 from openai import OpenAI
 
-from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, VLM_MODELS_BATCH
+from config import (OPENROUTER_API_KEY, OPENROUTER_BASE_URL, VLM_MODELS_BATCH,
+                    CLUSTER_NAME_WORKERS)
 
 
 def _vlm_client() -> OpenAI:
@@ -150,9 +152,13 @@ def resolve_cluster_names(
     chain = list(VLM_MODELS_BATCH)
     cluster_to_name: dict[int, str] = {}
 
-    for cluster_id, samples in sorted(by_cluster.items()):
-        if not samples:
-            continue
+    # Each cluster is an independent VLM call with no shared mutable state, so name them
+    # concurrently (CLUSTER_NAME_WORKERS threads). A comic with 8-10 characters was 8-10
+    # serial round-trips at the very end of Stage 2.
+    items = [(cid, samples) for cid, samples in sorted(by_cluster.items()) if samples]
+
+    def _name_cluster(item: tuple[int, list]) -> tuple[int, str]:
+        cluster_id, samples = item
         crops_b64 = [_crop_to_b64(p, bbox) for p, bbox in samples[:3]]
         prompt = (
             f"Identify which CANONICAL character appears in these {len(crops_b64)} "
@@ -177,7 +183,6 @@ def resolve_cluster_names(
                 "type": "image_url",
                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
             })
-
         name = "Unknown"
         for model in chain:
             try:
@@ -193,8 +198,17 @@ def resolve_cluster_names(
             except Exception as exc:
                 log(f"[cluster-namer] cluster_{cluster_id} via {model}: {type(exc).__name__}")
                 continue
-        cluster_to_name[cluster_id] = name
         log(f"[cluster-namer] cluster_{cluster_id} → {name!r}")
+        return cluster_id, name
+
+    if CLUSTER_NAME_WORKERS > 1 and len(items) > 1:
+        with ThreadPoolExecutor(max_workers=min(CLUSTER_NAME_WORKERS, len(items))) as ex:
+            for cid, name in ex.map(_name_cluster, items):
+                cluster_to_name[cid] = name
+    else:
+        for item in items:
+            cid, name = _name_cluster(item)
+            cluster_to_name[cid] = name
 
     # Persist mapping for downstream stages.
     out_path = project_root / "cluster_to_name.json"

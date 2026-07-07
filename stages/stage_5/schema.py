@@ -26,6 +26,12 @@ class Shot:
     # The cold-open / hook shot. Stage 5 renders it with a stronger, faster camera
     # push (energy in the first seconds) so the opening doesn't read as a slow hold.
     is_intro: bool = False
+    # The NARRATION scene this shot belongs to, when scene_id is synthetic. The Q&A
+    # locked builder gives every shot a unique scene_id (so the assembler dissolves
+    # between them) — beat_id preserves the real story boundary so effects that should
+    # only fire between beats (e.g. XFADE_ROTATE transition variety) don't fire between
+    # two panels of the SAME answer item. None (recap) = scene_id is already the beat.
+    beat_id: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

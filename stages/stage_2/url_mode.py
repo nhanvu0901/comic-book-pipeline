@@ -258,9 +258,27 @@ def download_readers_only(
         if classify_url(u) != "reader":
             raise ValueError(f"Not a batcave.biz reader URL: {u}")
 
+    # Dedup exact-duplicate URLs (two answer items citing the SAME issue) so batcave
+    # isn't scraped twice — but keep each unique URL's FIRST-OCCURRENCE rank as its
+    # chapter label/index. A positional relabel after dropping a duplicate would shift
+    # every later chapter's "#N" and break the beat→item→panel-pool mapping downstream
+    # (review_gate._beat_source / explore_answer.build_answer_beats key on "#N" = item N).
+    uniq: list[str] = []
+    ranks: list[int] = []
+    seen: set[str] = set()
+    for rank, u in enumerate(urls, start=1):
+        if u in seen:
+            continue
+        seen.add(u)
+        uniq.append(u)
+        ranks.append(rank)
+    if len(uniq) < len(urls):
+        log(f"[url-mode] {len(urls) - len(uniq)} duplicate reader URL(s) share a chapter — "
+            f"labels keep first-occurrence ranks {ranks} (items citing the same issue share its panels)")
+
     project_root = _ensure_project_root(project_name)
-    chapters = _reader_url_chapters(urls)
-    log(f"[url-mode] explore_answer: {len(urls)} reader URL(s), no enrich")
+    chapters = _reader_url_chapters(uniq, ranks=ranks)
+    log(f"[url-mode] explore_answer: {len(uniq)} reader URL(s), no enrich")
     return _run_downloads(project_name, project_root, chapters, log)
 
 
@@ -328,7 +346,21 @@ def download_saga_from_readers(
     title_hint = (meta.get("title") or "").strip() or project_name.replace("_", " ").title()
 
     chapters = _reader_url_chapters(urls)
-    log(f"[saga] '{title_hint}': {len(chapters)} reader URL(s) → per-issue arc")
+    # Overwrite the positional labels (#1..#N) with each chapter's REAL issue
+    # number from its own reader metadata. Positional labels made _enrich_issues
+    # research the WRONG issues whenever the given readers aren't a series' first
+    # N chapters (real case: Bedford Falls #6-#10 was enriched with the plots of
+    # #1-#5 — the recap would have narrated the wrong half of the series).
+    # chapter_index stays positional (it drives the chNN_ page prefixes on disk).
+    for ch in chapters:
+        ch_meta = meta if ch["reader_url"] == urls[0] else _chapter_meta_from_reader(ch["reader_url"], log)
+        real = str(ch_meta.get("issues") or "").strip()
+        m_num = re.search(r"#\s*(\d+(?:\.\d+)?)", real)
+        if m_num:
+            ch["label"] = f"#{m_num.group(1)}"
+            ch["number"] = float(m_num.group(1))
+    log(f"[saga] '{title_hint}': {len(chapters)} reader URL(s) → per-issue arc "
+        f"({', '.join(c['label'] for c in chapters)})")
 
     ctx = _write_minimal_context(
         project_root=project_root, title_hint=title_hint,
@@ -350,16 +382,23 @@ def _ensure_project_root(project_name: str) -> Path:
     return project_root
 
 
-def _reader_url_chapters(urls: list[str]) -> list[dict]:
+def _reader_url_chapters(urls: list[str], ranks: list[int] | None = None) -> list[dict]:
     """One chapter dict per reader URL — shared by download_from_readers and
-    download_saga_from_readers (both treat each reader URL as one issue)."""
+    download_saga_from_readers (both treat each reader URL as one issue).
+
+    `ranks` (optional, same length as urls) pins each chapter's label/number/
+    chapter_index to the caller's ORIGINAL 1-based position instead of the list
+    position here. Q&A dedup needs this: dropping a duplicate URL must NOT shift
+    the labels of the URLs after it, or every beat→item lookup downstream
+    (issue_label "#N" → answer item N) goes off by one."""
     chapters = []
     for i, url in enumerate(urls, start=1):
+        rank = ranks[i - 1] if ranks else i
         m = _READER_URL_RE.match(url)
-        chap_id = int(m.group(2)) if m else i
+        chap_id = int(m.group(2)) if m else rank
         chapters.append({
-            "label": f"#{i}", "number": float(i),
-            "reader_url": url, "chapter_id": chap_id, "chapter_index": i,
+            "label": f"#{rank}", "number": float(rank),
+            "reader_url": url, "chapter_id": chap_id, "chapter_index": rank,
         })
     return chapters
 
@@ -589,7 +628,14 @@ def _run_downloads(
     """Shared download loop + manifest writer."""
     manifest: list[dict] = []
     total_pages = 0
-    for chapter_idx, chapter in enumerate(chapters, start=1):
+    for pos, chapter in enumerate(chapters, start=1):
+        # Honor the chapter's OWN chapter_index (falling back to list position).
+        # The Q&A dedup path hands us chapters whose index = the answer item's
+        # first-occurrence RANK (possibly sparse, e.g. [1,2,4]); naming the files
+        # positionally (ch03 for index 4) would desync the chNN filename prefix
+        # from the "#N" label and break issue_index_of_page → beat anchoring.
+        # Saga/reader callers pass dense 1..N indices, so nothing changes for them.
+        chapter_idx = int(chapter.get("chapter_index") or pos)
         log(f"[url-mode] ▶ {chapter['label']} ({chapter['reader_url']})")
         t0 = time.time()
         try:

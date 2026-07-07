@@ -15,9 +15,9 @@ from typing import Callable
 import flet as ft
 
 from ..bridge import (
-    ensure_panel_thumbs, format_exception, load_narration, page_numbers,
-    panels_for_page, render_scene_panel_path, run_blocking, run_stage6_render,
-    save_narration_edits,
+    ensure_panel_thumbs, format_exception, is_answer_project, load_narration,
+    page_numbers, panels_for_page, render_scene_panel_path, run_blocking,
+    run_stage6_render, save_narration_edits,
 )
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
@@ -56,6 +56,9 @@ def build(
     on_go: Callable[[int], None],
     on_state_change: Callable[[], None],
 ) -> ft.Control:
+    if state.project_name and is_answer_project(state.project_name):
+        return _skipped_for_qa(state, on_go)
+
     narration = load_narration(state.project_name) if state.project_name else None
 
     if not narration or not (narration.get("scenes") or []):
@@ -68,7 +71,7 @@ def build(
             alignment=ft.Alignment.CENTER, expand=True,
         )
         right = ft.Column([
-            ft.Text("STEP 6 OF 7", size=10, color=TEXT_MUTED),
+            ft.Text("STEP 7 OF 8", size=10, color=TEXT_MUTED),
             ft.Text("Review & Edit", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
             ft.Text("Nothing to review — generate a narration first.",
                     size=12, color=TEXT_MUTED),
@@ -296,14 +299,14 @@ def build(
 
     continue_btn = primary_button(
         "Continue → Final Video", lambda _e: _continue(),
-        icon=ft.Icons.ARROW_FORWARD, disabled=not state.is_approved(6),
+        icon=ft.Icons.ARROW_FORWARD, disabled=not state.is_approved(7),
     )
 
     def _continue():
-        state.mark_approved(6)
-        state.current_stage = 7
+        state.mark_approved(7)
+        state.current_stage = 8
         save_state(state)
-        on_go(7)
+        on_go(8)
 
     async def _render():
         _save()
@@ -326,7 +329,7 @@ def build(
         size_mb = p.stat().st_size / (1024 * 1024) if p.exists() else 0.0
         status_text.value = f"Rendered {p.name} ({size_mb:.1f} MB)."
         status_text.color = SUCCESS
-        state.mark_approved(6)
+        state.mark_approved(7)
         save_state(state)
         continue_btn.disabled = False
         page.update()
@@ -347,7 +350,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 6 OF 7", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 7 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Review & Edit", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Each card is the panel shown while that line is spoken. Edit any line, or "
@@ -370,6 +373,41 @@ def build(
         header_title="Review & Edit the Storyboard",
         header_subtitle="Fix a line or swap a panel, then re-render the Short.",
     )
+
+
+def _skipped_for_qa(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
+    """Q&A (answer_research) projects render multiple panels per scene — this
+    single-panel-per-scene storyboard editor doesn't apply, so jump straight
+    to Final Video."""
+    def _continue(_e=None):
+        state.mark_approved(7)
+        state.current_stage = 8
+        save_state(state)
+        on_go(8)
+
+    center = ft.Container(
+        content=ft.Column([
+            ft.Icon(ft.Icons.FACT_CHECK_OUTLINED, size=64, color=TEXT_MUTED),
+            ft.Text("Skipped for Q&A — panel choices are made in Review Beats.",
+                    size=13, color=TEXT_MUTED),
+        ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        alignment=ft.Alignment.CENTER, expand=True,
+    )
+    right = ft.Column([
+        ft.Text("STEP 7 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text("Review & Edit", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+        ft.Text(
+            "Q&A projects render multiple panels per scene (sub-shots), so this "
+            "single-panel storyboard editor doesn't apply. Panel choices were "
+            "already made in Review Beats.",
+            size=12, color=TEXT_MUTED,
+        ),
+        ft.Container(height=14),
+        primary_button("Continue → Final Video", _continue, icon=ft.Icons.ARROW_FORWARD),
+    ], spacing=8, expand=True)
+    return three_col(center, right, state=state, on_go=on_go,
+                      header_title="Review & Edit",
+                      header_subtitle="Skipped for Q&A — panel choices are made in Review Beats.")
 
 
 def _chip(label: str, color: str) -> ft.Control:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import BG_MUSIC_PATH, PROJECTS_ROOT
+from ..review_gate import ensure_reviewed
 from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
 from .captions import build_ass
@@ -25,10 +26,12 @@ def assemble_project(
     bg_music_path: str | None = None,
     enable_music: bool = True,
     force: bool = False,
+    skip_review: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> AssemblyResult:
     """Build the final 1080x1920 H.264 MP4 from narration + audio + panels."""
     log = progress or (lambda m: print(m))
+    ensure_reviewed(project_name, skip_review, log=log)
     _require_ffmpeg()
 
     root = PROJECTS_ROOT / project_name
@@ -366,9 +369,11 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     Falls back to a plain hard-cut concat on single-scene input or any ffmpeg/IO error.
     """
     from config import (XFADE_DURATION, XFADE_TRANSITION, XFADE_SOFT_EDGES,
-                        FLASH_ACCENTS, FLASH_ACCENTS_MAX)
+                        XFADE_ROTATE, FLASH_ACCENTS, FLASH_ACCENTS_MAX)
     x = float(XFADE_DURATION)
     transition = str(XFADE_TRANSITION).strip().lower()
+    # Curated transition rotation ("more animation between scenes"). Empty → uniform.
+    rotate = [t.strip().lower() for t in str(XFADE_ROTATE).split(",") if t.strip()] or None
     groups = _group_shots_by_scene(shots, shot_paths)
 
     if transition != "cut" and x > 0 and len(groups) >= 2:
@@ -378,10 +383,12 @@ def _assemble_video(shots, shot_paths, out_path: Path,
             clips = [_concat(paths, tmp / f"scene_{i:03d}.mp4")
                      for i, (_sid, paths, _d) in enumerate(groups)]
             durs = [d for (_sid, _p, d) in groups]
+            per_boundary = _rotate_boundaries(
+                shots, groups, rotate, has_outro=outro_card is not None)
             if outro_card is not None:
                 clips.append(outro_card)
                 durs.append(float(outro_dur))
-            return _xfade_chain(clips, durs, out_path, x, transition)
+            return _xfade_chain(clips, durs, out_path, x, transition, rotate=per_boundary)
         except Exception as exc:  # any ffmpeg/IO failure → never block a render
             print(f"[stage5] xfade assembly failed ({exc}); falling back to hard-cut concat")
 
@@ -416,11 +423,53 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     return _concat(paths, out_path)
 
 
+def _rotate_boundaries(shots, groups, rotate: list[str] | None,
+                       *, has_outro: bool) -> list[str] | None:
+    """Per-boundary transition list for the dissolve path ("more animation between
+    scenes"), or None (uniform `transition`) when rotation is off.
+
+    Rotation fires ONLY at REAL story boundaries. Recap groups are real narration
+    scenes already, so every boundary rotates. The Q&A locked builder gives every
+    shot a UNIQUE scene_id (each is its own group so the assembler dissolves between
+    them) — there, `Shot.beat_id` carries the real answer-item scene, and a boundary
+    between two groups of the SAME beat keeps a plain dissolve (a slide between two
+    panels of one answer reads as "next item", which it isn't). The final boundary
+    into the outro card is always a dissolve: a dark end-card sliding in sideways
+    reads as glitch, and whether it got one depended on group-count parity."""
+    if not rotate:
+        return None
+    sid_beat: dict = {}
+    for s in shots:
+        sid_beat.setdefault(getattr(s, "scene_id", None), getattr(s, "beat_id", None))
+    beats = [sid_beat.get(sid) for (sid, _p, _d) in groups]
+    out: list[str] = []
+    r = 0
+    for i in range(len(groups) - 1):
+        b1, b2 = beats[i], beats[i + 1]
+        if b1 is not None and b1 == b2:
+            out.append("dissolve")               # intra-beat sub-shot boundary
+        else:
+            out.append(rotate[r % len(rotate)])  # real scene/beat change
+            r += 1
+    if has_outro:
+        out.append("dissolve")                   # end card always fades in
+    return out
+
+
 def _xfade_chain(clips: list[Path], durs: list[float], out_path: Path,
-                 x: float, transition: str) -> Path:
-    """Chain `clips` with an xfade `transition` of `x` seconds at every boundary.
+                 x: float, transition: str, rotate: list[str] | None = None) -> Path:
+    """Chain `clips` with an xfade of `x` seconds at every boundary.
     Each non-last clip is tail-padded by `x` (the pad absorbs the overlap) so the
-    net duration == sum(durs) — preserving scene_timings / audio sync."""
+    net duration == sum(durs) — preserving scene_timings / audio sync.
+
+    `transition` is the default used at every boundary. `rotate`, when given, is the
+    RESOLVED per-boundary transition list from _rotate_boundaries (len == #boundaries;
+    boundary k uses rotate[k-1]); None → uniform `transition` everywhere (also the
+    case for the soft-edge intro/outro dissolves, which never rotate).
+
+    Preset is `veryfast` (not `medium`): this clip is re-encoded again by
+    _final_encode (slow/crf20), so its preset has no effect on final quality — only
+    on how long this intermediate pass takes."""
     ff = _require_ffmpeg()
     offs = _xfade_offsets(durs)
     inputs: list[str] = []
@@ -434,15 +483,16 @@ def _xfade_chain(clips: list[Path], durs: list[float], out_path: Path,
     prev = "v0"
     for k in range(1, len(clips)):
         out = f"x{k}"
+        trans = rotate[(k - 1) % len(rotate)] if rotate else transition
         chains.append(
-            f"[{prev}][v{k}]xfade=transition={transition}:"
+            f"[{prev}][v{k}]xfade=transition={trans}:"
             f"duration={x}:offset={offs[k-1]}[{out}]")
         prev = out
     filter_complex = ";".join(chains)
     cmd = [ff, "-y", *inputs,
            "-filter_complex", filter_complex,
            "-map", f"[{prev}]",
-           "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
            "-pix_fmt", "yuv420p", "-r", str(FPS),
            str(out_path)]
     _run(cmd)

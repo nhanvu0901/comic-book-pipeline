@@ -65,6 +65,54 @@ def _is_near_own_issue_edge(pn: int, label: str, bounds: dict[str, tuple[int, in
     lo, hi = bounds.get(label, (pn, pn))
     return pn - lo < _ISSUE_FRONTMATTER_HEAD or hi - pn < _ISSUE_BACKMATTER_TAIL
 
+
+def _prevlm_gate(
+    magi: dict, pn: int, label: str, bounds: dict[str, tuple[int, int]]
+) -> tuple[str, str, str] | None:
+    """Classify obvious cover/ad pages from Magi output ALONE, before any VLM call.
+
+    Rule A — cover: the FIRST page of its own issue (deterministic from the manifest).
+    Panel count can't tell a cover from a splash (both are one full-page box), position
+    can. Safety: >=2 panels or any speech balloon on that first page reads as a
+    cold-open story page (cover missing from the scan) → fall through to the VLM.
+    Rule B — non-story: no panels AND no character boxes AND no speech balloons is not
+    sequential art (house ad / letters / text page). All three must hold: whole-page
+    story renders exist with 0 panels, but Magi still sees characters or speech there.
+
+    Returns (page_type, skip_reason, page_summary), or None to proceed with the VLM.
+    """
+    texts = magi.get("texts") or []
+    has_speech = any(str(t.get("type", "")) == "speech" for t in texts)
+    n_panels = len(magi.get("panels") or [])
+    lo, _hi = bounds.get(label, (None, None))
+    if pn == lo and n_panels <= 1 and not has_speech:
+        return "cover", "", "Cover page"
+    if n_panels == 0 and not (magi.get("characters") or []) and not has_speech:
+        corpus = " ".join(str(t.get("ocr", "") or t.get("text", "")) for t in texts)
+        if _looks_like_ad(corpus):
+            return "skip", "advertisement", "Advertisement (pre-VLM gate)"
+        return "skip", "back_matter", "Non-story page (pre-VLM gate)"
+    return None
+
+
+def _prevlm_page(
+    *, page_number: int, issue_label: str, image_path: Path,
+    dimensions: tuple[int, int], content_hash: str,
+    page_type: str, skip_reason: str, page_summary: str,
+) -> dict:
+    """Materialise a _prevlm_gate verdict as a PreprocessedPage dict (no VLM fields)."""
+    width, height = dimensions
+    return PreprocessedPage(
+        page_number=page_number,
+        source_image=str(image_path.resolve()),
+        image_dimensions={"width": width, "height": height},
+        is_story_page=False, page_type=page_type, panels=[], text_blocks=[],
+        page_summary=page_summary, issue_label=issue_label,
+        vlm_model="", vlm_model_used="", content_hash=content_hash,
+        preprocessing_method="heuristic_skip", skip_reason=skip_reason,
+    ).to_dict()
+
+
 # Description↔bbox verify gate (crop + look ground-truth check — see vlm_extract.
 # verify_page_descriptions). Default ON; DESC_VERIFY=0/false disables.
 DESC_VERIFY = os.getenv("DESC_VERIFY", "1").strip().lower() not in ("0", "false", "no", "")
@@ -160,6 +208,31 @@ def preprocess_project(
     _issue_bounds = _page_state_issue_bounds(page_states)
     _multi_issue = len(_issue_bounds) > 1
 
+    # ── Phase 1.5: batch Magi panel-detection for all uncached pages ──
+    # Magi detection depends ONLY on the page image (independent of the running_state /
+    # prior-page continuity that the VLM-describe loop below threads), so precomputing it
+    # in one batched pass is safe and cuts local forward-pass launches — the biggest Stage 2
+    # compute block. Cached pages already carry their panels → skipped. Any failure leaves
+    # magi_by_pn empty and the per-page call sites fall back to detect_full() individually.
+    from config import MAGI_BATCH_SIZE
+    from .panel_detect import detect_full_batch
+    magi_by_pn: dict[int, dict] = {}
+    _uncached = [ps for ps in page_states if ps["cached"] is None]
+    if _uncached and MAGI_BATCH_SIZE > 1:
+        log(f"[preprocess] ▶ Magi batch-detect {len(_uncached)} uncached page(s) "
+            f"(batch={MAGI_BATCH_SIZE})")
+        try:
+            t_magi = time.time()
+            _magi_list = detect_full_batch([ps["img"] for ps in _uncached],
+                                           batch_size=MAGI_BATCH_SIZE, log=log)
+            for ps, m in zip(_uncached, _magi_list):
+                magi_by_pn[ps["pn"]] = m
+            log(f"[preprocess]   ✓ Magi batch-detect done in {time.time() - t_magi:.1f}s")
+        except Exception as exc:
+            log(f"[preprocess]   ✗ Magi batch-detect failed ({type(exc).__name__}: {exc}); "
+                f"falling back to per-page detection")
+            magi_by_pn = {}
+
     # ── Phase 2: walk pages in order, batching uncached runs ──
     # Overlap pattern: each batch carries the IMMEDIATELY PRIOR page (its full extracted
     # data + image) as context. The prior page is NOT re-processed (first-wins lock-in)
@@ -199,7 +272,7 @@ def preprocess_project(
             s = page_states[i]
             with Image.open(s["img"]) as im:
                 dims = im.size
-            magi = detect_full(s["img"])
+            magi = magi_by_pn.get(s["pn"]) or detect_full(s["img"])
             if i < _FRONTMATTER_HEAD:
                 _where = "front-matter head"
             elif i >= n - _BACKMATTER_TAIL:
@@ -208,6 +281,22 @@ def preprocess_project(
                 _where = "own-issue edge"
             log(f"[preprocess]   p{s['pn']:03d}: Magi → {len(magi['panels'])} panel(s) "
                 f"({_where} → single-page, no batch)")
+            gate = _prevlm_gate(magi, s["pn"], s["label"], _issue_bounds)
+            if gate is not None:
+                g_type, g_reason, g_summary = gate
+                log(f"[preprocess]   p{s['pn']:03d}: pre-VLM gate → {g_type}"
+                    f"{('/' + g_reason) if g_reason else ''} (VLM skipped)")
+                page_dict = _prevlm_page(
+                    page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
+                    dimensions=dims, content_hash=s["hash"],
+                    page_type=g_type, skip_reason=g_reason, page_summary=g_summary,
+                )
+                save_cached(project_root, s["pn"], s["hash"], page_dict)
+                results.append(page_dict)
+                # Deliberately NOT updating prev_page_dict — a cover/ad carries no
+                # story continuity for the next batch's prior-page context.
+                i += 1
+                continue
             page_dict = _build_page_from_single(
                 page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
                 panels_raw=magi["panels"], dimensions=dims, project_root=project_root,
@@ -233,63 +322,100 @@ def preprocess_project(
         log(f"[preprocess] ▶ VLM batch of {len(batch)} fresh page(s): {batch_pns}{overlap_note}")
 
         # Magi v3 full extraction: panels + characters (with cluster_id) + texts (with OCR + speaker)
-        batch_panels: list[list[dict]] = []
-        batch_dims: list[tuple[int, int]] = []
-        batch_magi: list[dict] = []  # full Magi outputs per page
+        # Each page then passes the pre-VLM gate: obvious covers/ads are materialised
+        # immediately from Magi output alone and EXCLUDED from the VLM batch.
+        batch_entries: list[dict] = []  # per page, in order: b/dims/magi/panels/gate
         for b in batch:
             t_panel = time.time()
             with Image.open(b["img"]) as im:
-                batch_dims.append(im.size)
-            magi = detect_full(b["img"])
+                dims = im.size
+            magi = magi_by_pn.get(b["pn"]) or detect_full(b["img"])
             panels_raw = magi["panels"]
             log(f"[preprocess]   p{b['pn']:03d}: Magi → {len(panels_raw)} panel(s), "
                 f"{len(magi['characters'])} char(s), {len(magi['texts'])} text(s) "
                 f"in {time.time() - t_panel:.1f}s")
-            batch_panels.append(panels_raw)
-            batch_magi.append(magi)
+            gate = _prevlm_gate(magi, b["pn"], b["label"], _issue_bounds)
+            if gate is not None:
+                log(f"[preprocess]   p{b['pn']:03d}: pre-VLM gate → {gate[0]}"
+                    f"{('/' + gate[1]) if gate[1] else ''} (VLM skipped)")
+            batch_entries.append(
+                {"b": b, "dims": dims, "magi": magi, "panels": panels_raw, "gate": gate})
 
-        # Call multi-image VLM with overlap. Returns None on total failure → fall back per-page.
-        t_vlm = time.time()
-        vlm_pages, new_state, model_used = extract_pages_batch(
-            [b["img"] for b in batch],
-            batch_panels,
-            progress=log,
-            story_context=story_context,
-            running_state=running_state,
-            prior_page=prev_page_dict,
-            prior_image_path=prev_image_path,
-        )
-        vlm_dt = time.time() - t_vlm
+        vlm_entries = [e for e in batch_entries if e["gate"] is None]
 
-        if vlm_pages is None:
-            log(f"[preprocess]   ✗ batch failed — falling back to per-page extract_page()")
-            for b, panels_raw, dims, magi in zip(batch, batch_panels, batch_dims, batch_magi):
+        # Call multi-image VLM with overlap (gated pages excluded). Returns None on
+        # total failure → fall back per-page.
+        vlm_pages, new_state, model_used = (None, None, "")
+        if vlm_entries:
+            t_vlm = time.time()
+            vlm_pages, new_state, model_used = extract_pages_batch(
+                [e["b"]["img"] for e in vlm_entries],
+                [e["panels"] for e in vlm_entries],
+                progress=log,
+                story_context=story_context,
+                running_state=running_state,
+                prior_page=prev_page_dict,
+                prior_image_path=prev_image_path,
+            )
+            vlm_dt = time.time() - t_vlm
+            if vlm_pages is not None:
+                log(f"[preprocess]   ✓ batch ok in {vlm_dt:.1f}s via {model_used}")
+                running_state = new_state or running_state
+            else:
+                log(f"[preprocess]   ✗ batch failed — falling back to per-page extract_page()")
+
+        vlm_iter = iter(vlm_pages or [])
+        # First pass (cheap, no network for the common assemble path): build each page's
+        # pre-verify dict and flag which ones need the DESC_VERIFY gate (a VLM round-trip).
+        # gated → save, no verify; assembled → save + verify; per-page fallback → neither
+        # save nor verify (matches prior behavior exactly).
+        pending: list[dict] = []
+        for e in batch_entries:
+            b, dims, magi, panels_raw = e["b"], e["dims"], e["magi"], e["panels"]
+            if e["gate"] is not None:
+                g_type, g_reason, g_summary = e["gate"]
+                page_dict = _prevlm_page(
+                    page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
+                    dimensions=dims, content_hash=b["hash"],
+                    page_type=g_type, skip_reason=g_reason, page_summary=g_summary,
+                )
+                pending.append({"b": b, "dims": dims, "magi": magi, "panels": panels_raw,
+                                "page_dict": page_dict, "gated": True, "save": True, "verify": False})
+                continue
+            vlm_page = next(vlm_iter, None) if vlm_pages is not None else None
+            if vlm_page is None:
+                # Whole-batch VLM failure, or the VLM returned fewer pages than sent
+                # (the old zip() silently DROPPED those pages) — per-page fallback.
                 page_dict = _build_page_from_single(
                     page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
                     panels_raw=panels_raw, dimensions=dims, project_root=project_root,
                     log=log, story_context=story_context, content_hash=b["hash"],
                     magi_data=magi,
                 )
-                results.append(page_dict)
-                prev_page_dict = page_dict
-                prev_image_path = b["img"]
-        else:
-            log(f"[preprocess]   ✓ batch ok in {vlm_dt:.1f}s via {model_used}")
-            running_state = new_state or running_state
-            for b, panels_raw, dims, vlm_page, magi in zip(batch, batch_panels, batch_dims, vlm_pages, batch_magi):
+                pending.append({"b": b, "dims": dims, "magi": magi, "panels": panels_raw,
+                                "page_dict": page_dict, "gated": False, "save": False, "verify": False})
+            else:
                 page_dict = _assemble_page_dict(
                     page_number=b["pn"], issue_label=b["label"], image_path=b["img"],
                     panels_raw=panels_raw, dimensions=dims, vlm_data=vlm_page,
                     content_hash=b["hash"], vlm_model_used=vlm_page.get("_vlm_model_used", model_used),
                     magi_data=magi, log=log,
                 )
-                page_dict = _apply_desc_verify_gate(
-                    page_dict, image_path=b["img"], panels_raw=panels_raw, dimensions=dims,
-                    magi_data=magi, content_hash=b["hash"], story_context=story_context, log=log,
-                )
+                pending.append({"b": b, "dims": dims, "magi": magi, "panels": panels_raw,
+                                "page_dict": page_dict, "gated": False, "save": True, "verify": True})
+
+        # DESC_VERIFY the assembled pages CONCURRENTLY — each is an independent VLM
+        # round-trip (no shared state), so serial-in-a-loop was pure added latency.
+        _verify_pending_concurrently(pending, story_context=story_context, log=log)
+
+        # Second pass: persist + order-preserving results + prior-context update.
+        for p in pending:
+            b, page_dict = p["b"], p["page_dict"]
+            if p["save"]:
                 save_cached(project_root, b["pn"], b["hash"], page_dict)
-                results.append(page_dict)
-                # The LAST page of this batch becomes prior-context for next batch.
+            results.append(page_dict)
+            if not p["gated"]:
+                # The LAST non-gated page of this batch becomes prior-context for the next.
                 prev_page_dict = page_dict
                 prev_image_path = b["img"]
 
@@ -917,6 +1043,34 @@ def _assemble_page_dict(
     _apply_dialog_truth_gate(result, log=log or print)
     _apply_coverage_guard(result, log=log or print)
     return result
+
+
+def _verify_pending_concurrently(pending: list[dict], *, story_context: str,
+                                 log: Callable[[str], None]) -> None:
+    """Run _apply_desc_verify_gate on the entries flagged verify=True, in parallel
+    (VLM_VERIFY_WORKERS threads). Each verify is an independent VLM round-trip with no
+    shared state, so a serial loop was pure added latency. Writes the (possibly
+    re-described) result back into p["page_dict"] in place. Serial when workers<=1 or
+    fewer than 2 pages need verifying."""
+    from config import VLM_VERIFY_WORKERS
+    todo = [p for p in pending if p.get("verify")]
+    if not todo:
+        return
+
+    def _run(p: dict) -> None:
+        b = p["b"]
+        p["page_dict"] = _apply_desc_verify_gate(
+            p["page_dict"], image_path=b["img"], panels_raw=p["panels"],
+            dimensions=p["dims"], magi_data=p["magi"], content_hash=b["hash"],
+            story_context=story_context, log=log)
+
+    if VLM_VERIFY_WORKERS > 1 and len(todo) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(VLM_VERIFY_WORKERS, len(todo))) as ex:
+            list(ex.map(_run, todo))
+    else:
+        for p in todo:
+            _run(p)
 
 
 def _apply_desc_verify_gate(

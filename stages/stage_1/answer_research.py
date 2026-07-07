@@ -19,7 +19,10 @@ from datetime import date
 from pathlib import Path
 
 from stages._claude_sdk import sdk_complete_web, sdk_available
+from stages.question_archetype import question_archetype
 from stages.stage_1.storage import save_comic_context, slugify
+from stages.stage_1.comicvine import verify_issue
+from utils.comic_scraper import discover_issues
 from config import get_project_dirs
 
 # Items below this can't make a countdown listicle (design format spec: 3-6 items).
@@ -96,13 +99,34 @@ def _extract_json(text: str) -> dict | None:
     if not text:
         return None
     m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            if isinstance(obj, dict) and obj:      # non-empty only
+                return obj
+        except Exception:
+            pass
+    # Greedy span failed (model wrapped the JSON in prose that itself contains a
+    # brace — first-{ .. last-} then spans garbage). Brace-matched fallback: try a
+    # strict decode from every '{' and take the first USABLE dict. Skip empty `{}`
+    # and prefer a dict carrying the payload keys, so a stray `{}` in the prose before
+    # the real object can't shadow it (would else raise "too few items" and swallow
+    # the diagnostic snippet).
+    dec = json.JSONDecoder()
+    first_nonempty = None
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _end = dec.raw_decode(text[i:])
+        except Exception:
+            continue
+        if isinstance(obj, dict) and obj:
+            if "items" in obj or "answer_summary" in obj:
+                return obj
+            if first_nonempty is None:
+                first_nonempty = obj
+    return first_nonempty
 
 
 def _clean_items(raw_items: list) -> list[dict]:
@@ -133,7 +157,163 @@ def _order_by_surprise(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda it: _SURPRISE_RANK.get(it["surprise_level"], 1))
 
 
-def research_answer(question: str, *, max_items: int = 6, log=print) -> dict:
+# ─── FIX C: batcave auto-resolve (no API key) ────────────────────────────────
+# The SDK is told to leave reader_url "" rather than guess a chapter id, so we
+# resolve it deterministically here: parse the cited issue, search batcave for
+# the series, discover its chapters, and take the one whose number matches.
+
+_YEAR_RE = re.compile(r"\((\d{4})")
+_ISSUE_RE = re.compile(r"#\s*(\d+(?:\.\d+)?)")
+
+
+def _parse_source_comic(source_comic: str) -> tuple[str, str, str]:
+    """'Thunderbolts (2013) #29' -> ('Thunderbolts', '2013', '29').
+
+    Returns (series_name, volume_year, issue_number); any part may be "" (a
+    one-shot has no '#N', an unnamed volume no '(YYYY)'). Series name is the text
+    before the first '(' or '#', stripped of the quotes research likes to add."""
+    s = (source_comic or "").strip()
+    year = m.group(1) if (m := _YEAR_RE.search(s)) else ""
+    issue = m.group(1) if (m := _ISSUE_RE.search(s)) else ""
+    name = re.split(r"[(#]", s, maxsplit=1)[0].strip().strip('"“”\'').strip()
+    return name, year, issue
+
+
+def _batcave_search(query: str, *, log=print) -> list[tuple[str, str, str]]:
+    """POST batcave's DLE search; return [(news_id, slug, series_url)] deduped.
+
+    Reuses the scraper's already-solved session (guard cookies) — url_mode.py
+    likewise imports the scraper's private helpers, so this follows precedent."""
+    from utils.comic_scraper.readcomiconline import _get_session, SITE_BASE
+    sess = _get_session()
+    r = sess.post(f"{SITE_BASE}/index.php?do=search",
+                  data={"do": "search", "subaction": "search", "story": query},
+                  timeout=25)
+    if r.status_code != 200:
+        log(f"[answer-resolve] batcave search {query!r} -> status={r.status_code}")
+        return []
+    hits: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for m in re.finditer(
+            r'href="(?:https?://(?:www\.)?batcave\.biz)?/(\d+)-([a-z0-9-]+)\.html"', r.text):
+        news_id, slug = m.group(1), m.group(2)
+        if news_id in seen:
+            continue
+        seen.add(news_id)
+        hits.append((news_id, slug, f"{SITE_BASE}/{news_id}-{slug}.html"))
+    return hits
+
+
+# Tokens that appear in half the slugs on the site — matching them says NOTHING
+# about the series identity. Real case: "FF Vol. 2 #16" tokenised to [ff, vol, 2]
+# and "the-unbeatable-squirrel-girl-VOL-2-2015" scored 2/3 on "vol"+"2" alone,
+# beating the correct "ff-2013" (whose slug has no vol/2) — the resolver then
+# downloaded a Squirrel Girl issue as Ant-Man's FF #16.
+_GENERIC_NAME_TOKENS = frozenset((
+    "the", "a", "an", "of", "and", "or", "in", "at",
+    "vol", "volume", "v", "book", "part", "no", "issue",
+    "comic", "comics", "series",
+))
+
+
+def _pick_series(hits: list[tuple[str, str, str]], series: str, year_hint: str) -> str:
+    """Best series URL: most DISTINCTIVE name-tokens present in the slug, +0.5
+    for a year match. Generic tokens (the/vol/2/…) and bare numbers are dropped
+    before scoring — they match half the slugs on the site and let an unrelated
+    series outscore the right one. Requires >= half the distinctive name to
+    appear so an unrelated search hit can't win."""
+    raw = [t for t in re.split(r"[^a-z0-9]+", series.lower()) if t]
+    name_tokens = [t for t in raw if t not in _GENERIC_NAME_TOKENS and not t.isdigit()]
+    if not name_tokens:
+        name_tokens = raw  # all-generic/numeric name (e.g. "2000 AD") — best effort
+    if not name_tokens:
+        return ""
+    best_url, best_score = "", 0.0
+    for _news_id, slug, url in hits:
+        slug_tokens = {t for t in slug.split("-") if t}
+        score = sum(1 for t in name_tokens if t in slug_tokens) / len(name_tokens)
+        if year_hint and year_hint in slug_tokens:
+            score += 0.5
+        if score > best_score:
+            best_score, best_url = score, url
+    return best_url if best_score >= 0.5 else ""
+
+
+def resolve_reader_url(source_comic: str, source_year: str = "", entity: str = "",
+                       *, log=print) -> str:
+    """Deterministically find the batcave reader URL for a Q&A item's cited issue.
+
+    'Thunderbolts (2013) #29' -> search 'Thunderbolts', pick the 2013 volume,
+    discover its chapters, return the one whose number==29. Returns "" (never
+    raises) if it can't be pinned — build_contexts then fails loud so a human
+    hand-fills it. `entity` is accepted for symmetry with verify_issue / future
+    disambiguation; unused today."""
+    name, year_hint, issue = _parse_source_comic(source_comic)
+    if not name:
+        return ""
+    year_hint = year_hint or (source_year[:4] if (source_year or "")[:4].isdigit() else "")
+    try:
+        hits = _batcave_search(name, log=log)
+    except Exception as exc:  # noqa: BLE001 - best-effort; empty -> fail-loud caller
+        log(f"[answer-resolve] search failed for {name!r}: {type(exc).__name__}: {exc}")
+        return ""
+    series_url = _pick_series(hits, name, year_hint)
+    if not series_url:
+        log(f"[answer-resolve] no series match for {source_comic!r} ({len(hits)} hit(s))")
+        return ""
+    # Volume-year cross-check (audit 2026-07-06): _pick_series can win on name tokens
+    # alone and land on the WRONG volume (e.g. Thanos 2019 when research verified 2016).
+    # If we KNOW the wanted year and the picked slug carries a DIFFERENT year, refuse —
+    # returning "" routes into the existing fail-loud hand-fill flow instead of silently
+    # downloading the wrong comic while answer_context still says "verified".
+    if year_hint:
+        m = re.search(r"-((?:19|20)\d{2})(?:-|\.|$)", series_url)
+        slug_year = m.group(1) if m else ""
+        if slug_year and abs(int(slug_year) - int(year_hint)) > 1:
+            log(f"[answer-resolve] volume-year mismatch for {source_comic!r}: "
+                f"batcave slug says {slug_year}, research says {year_hint} — refusing "
+                f"(hand-fill reader_url if the slug year is just mislabeled)")
+            return ""
+    try:
+        issues = discover_issues(series_url)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[answer-resolve] discover_issues failed for {series_url}: {type(exc).__name__}: {exc}")
+        return ""
+    if not issues:
+        return ""
+    # One-shot (no '#N', or the series has a single chapter) -> that chapter.
+    if not issue or len(issues) == 1:
+        return issues[0]["url"]
+    # Match by the ISSUE NUMBER in the chapter title ('… Issue #29'), NOT `number`:
+    # `number` is the chapter's list position (posi), which drifts off the issue #
+    # whenever the series has an extra chapter at the front (a #0 / point-one /
+    # special) — batcave's Thunderbolts (2013) does exactly this. Fall back to
+    # posi only when the title carries no '#N'.
+    want = float(issue)
+    for it in issues:
+        n = _chapter_issue_number(it)
+        if n is not None and n == want:
+            return it["url"]
+    log(f"[answer-resolve] issue #{issue} not among {len(issues)} chapter(s) at {series_url}")
+    return ""
+
+
+def _chapter_issue_number(chapter: dict) -> float | None:
+    """The chapter's real issue number: parse '#N' from its title, else fall back
+    to `number` (the list position posi, which can be off by the front specials)."""
+    m = _ISSUE_RE.search(chapter.get("title") or "")
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    try:
+        return float(chapter.get("number"))
+    except (TypeError, ValueError):
+        return None
+
+
+def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=print) -> dict:
     """Research a comic Q&A question into ordered, verified answer items.
 
     Returns {"question", "answer_summary", "source_engine", "items": [...]} with
@@ -147,23 +327,60 @@ def research_answer(question: str, *, max_items: int = 6, log=print) -> dict:
         raise RuntimeError("research_answer: Claude SDK unavailable — cannot research")
 
     system = _ANSWER_SYSTEM.format(max_items=max_items)
+    # Grounding hint (2026-07-06): abstract "Why/How <famous character> <paradox>"
+    # questions give the researcher no concrete anchor — it wanders the web and runs
+    # out of turns. A scout-supplied hint names the LIKELY story so the agent spends
+    # its turns VERIFYING it (and finding the reader URLs) instead of discovering it.
+    # Explicitly framed as verify-don't-trust so a wrong hint gets corrected, not echoed.
+    hint_block = (
+        f"RESEARCH HINT from a prior scout (VERIFY against real sources before using — "
+        f"if the sources disagree with the hint, follow the sources): {hint.strip()}\n\n"
+        if (hint or "").strip() else ""
+    )
+    # EXPLAIN (Why/How) questions research ONE story as an argument: items are the
+    # escalating stages of the answer and answer_summary must BE the causal answer
+    # (the writer speaks it as the video's final landing) — a tease there leaves the
+    # video with events but no answer. LIST questions keep the original contract.
+    if question_archetype(question) == "explain":
+        contract = (
+            f"This is a WHY/HOW question. Return 3 to {max_items} verified items that are "
+            "the ESCALATING STAGES of the answer — stages of one story, or instances from "
+            "several different comics, whichever the truth requires — ordered so the final "
+            "item is the revelation that IS the reason (not merely the last event). "
+            "answer_summary must be the actual one-sentence causal ANSWER to the question "
+            "(it becomes the video's spoken thesis — no teasing, no withholding)."
+        )
+        summary_spec = '<the one-sentence causal answer to the question>'
+    else:
+        contract = (
+            f"Return 3 to {max_items} verified items answering it, ordered by surprise "
+            "ascending (shock LAST)."
+        )
+        summary_spec = '<one sentence teasing the shock, not naming it>'
     user = (
         f"QUESTION: {question}\n\n"
-        f"Return 3 to {max_items} verified items answering it, ordered by surprise "
-        "ascending (shock LAST). STRICT JSON only, no prose around it:\n"
-        '{"answer_summary":"<one sentence teasing the shock, not naming it>",'
+        f"{hint_block}"
+        f"{contract} STRICT JSON only, no prose around it:\n"
+        '{"answer_summary":"' + summary_spec + '",'
         '"items":[{"entity":"","how_or_why":"","source_comic":"","source_year":"",'
         '"drawable_moment":"","verification_note":"","surprise_level":"low|medium|high",'
         '"reader_url":"https://batcave.biz/reader/<news_id>/<chapter_id> or empty"}]}'
     )
-    log(f"[answer-research] researching: {question!r} (<= {max_items} items) …")
+    log(f"[answer-research] researching: {question!r} (<= {max_items} items"
+        f"{', hinted' if hint_block else ''}) …")
     raw = sdk_complete_web(system, user, log=log)
     if not raw:
         raise RuntimeError("research_answer: SDK returned nothing")
 
     data = _extract_json(raw)
     if data is None:
-        raise RuntimeError("research_answer: could not parse JSON from SDK output")
+        # Include a head/tail snippet so the failure is diagnosable from the log —
+        # the raw text was previously discarded, leaving nothing to debug with.
+        head, tail = raw[:400], (raw[-400:] if len(raw) > 800 else "")
+        raise RuntimeError(
+            "research_answer: could not parse JSON from SDK output — raw head: "
+            f"{head!r}" + (f" … raw tail: {tail!r}" if tail else "")
+        )
 
     items = _order_by_surprise(_clean_items(data.get("items")))[:max_items]
     if len(items) < _MIN_ITEMS:
@@ -218,14 +435,34 @@ def build_contexts(
     year = (researched_at[:4] if researched_at[:4].isdigit() else str(date.today().year))
     slug = slugify(project_name)
 
-    # --- fail-loud on undownloadable items (the design's #1-risk mitigation (b)) ---
-    missing = [it["entity"] for it in items if not (it.get("reader_url") or "").strip()]
-    if missing:
-        raise ValueError(
-            "build_contexts: empty reader_url for item(s): "
-            + ", ".join(missing)
-            + " — pipeline cannot download these sources (re-research or hand-fill the URL)"
-        )
+    # --- FIX D then FIX C, per item (design order: verify -> resolve) ----------
+    # verify_issue (Comic Vine cross-check): confirm the issue is real + names the
+    #   character; FLAG it (verified/verify_note), never drop — a CV hiccup returns
+    #   ok=True/"unverified" and must not lose the research.
+    # resolve_reader_url (batcave): fill an EMPTY reader_url deterministically so
+    #   the fail-loud check below only trips on items we truly cannot download.
+    # Both are wrapped non-fatal (they already swallow their own errors).
+    for it in items:
+        name, _vol_year, issue_no = _parse_source_comic(it["source_comic"])
+        try:
+            v = verify_issue(name, issue_no, it.get("source_year", ""), it["entity"], log=log)
+        except Exception as exc:  # noqa: BLE001 - belt-and-suspenders; verify_issue is already graceful
+            v = {"ok": True, "note": f"unverified ({type(exc).__name__})"}
+        it["verified"] = bool(v.get("ok"))
+        it["verify_note"] = v.get("note", "")
+        log(f"[answer-research] {'✓ verified' if v.get('ok') else '⚠ FLAG'}: "
+            f"{it['entity']} — {it['source_comic']} :: {v.get('note', '')}")
+
+        if not (it.get("reader_url") or "").strip():
+            try:
+                url = resolve_reader_url(it["source_comic"], it.get("source_year", ""),
+                                         it["entity"], log=log)
+            except Exception as exc:  # noqa: BLE001
+                url = ""
+                log(f"[answer-research] reader-url resolve errored for {it['entity']}: {exc}")
+            if url:
+                it["reader_url"] = url
+                log(f"[answer-research] ↳ auto-resolved reader_url for {it['entity']}: {url}")
 
     # --- answer_context.json (presentation order; rank 1 first, shock last) ---
     answer_ctx = {
@@ -244,14 +481,31 @@ def build_contexts(
                 "drawable_moment": it["drawable_moment"],
                 "verification_note": it["verification_note"],
                 "surprise_level": it["surprise_level"],
+                # FIX D: Comic Vine cross-check result (flag for review; not a drop).
+                "verified": it.get("verified", True),
+                "verify_note": it.get("verify_note", ""),
             }
             for i, it in enumerate(items, 1)
         ],
     }
     root = get_project_dirs(slug)["root"]
+    root.mkdir(parents=True, exist_ok=True)
     answer_path = root / "answer_context.json"
     answer_path.write_text(json.dumps(answer_ctx, indent=2, ensure_ascii=False))
     log(f"[answer-research] wrote {answer_path}")
+
+    # --- fail-loud on undownloadable items (the design's #1-risk mitigation (b)) ---
+    # AFTER persisting answer_context.json: the research must survive the failure so a
+    # human can hand-fill the missing reader_url(s) there and resume with
+    # `--rebuild-contexts` (raising first would throw the whole research away).
+    missing = [it["entity"] for it in items if not (it.get("reader_url") or "").strip()]
+    if missing:
+        raise ValueError(
+            "build_contexts: empty reader_url for item(s): "
+            + ", ".join(missing)
+            + f" — hand-fill reader_url in {answer_path} then re-run with"
+            " --rebuild-contexts (or re-research)"
+        )
 
     # --- comic_context.json (saga-arc shape) ---
     # `issues` (list) is load-bearing: Stage 3's arc path iterates it as per-issue
@@ -331,6 +585,11 @@ if __name__ == "__main__":
     # here directly (an `import ... as mod` would patch a second module object).
     sdk_complete_web = lambda *a, **k: _FIXTURE           # noqa: F811,E731
     sdk_available = lambda: True                          # noqa: F811,E731
+    # Stub the two cross-check/resolve hooks build_contexts now calls, so this
+    # self-check stays network-free: verify_issue -> "unverified", and
+    # resolve_reader_url -> "" (so the fail-loud path below still trips).
+    verify_issue = lambda *a, **k: {"ok": True, "note": "unverified (self-check)"}  # noqa: F811,E731
+    resolve_reader_url = lambda *a, **k: ""               # noqa: F811,E731
 
     q = "Who has survived Ghost Rider's Penance Stare?"
     res = research_answer(q, log=lambda _m: None)
@@ -347,6 +606,7 @@ if __name__ == "__main__":
 
     assert [it["rank"] for it in a["items"]] == [1, 2, 3]
     assert a["items"][-1]["entity"] == "Man-Thing"  # shock stays last
+    assert all("verified" in it and "verify_note" in it for it in a["items"])
     assert a["researched_at"] == "2026-07-04"
     assert c["is_arc"] is True and c["issue_count"] == 3
     assert c["plot_source"] == "answer_research"
@@ -354,12 +614,19 @@ if __name__ == "__main__":
     assert c["reader_urls"] == [it["reader_url"] for it in res["items"]]
     assert isinstance(c["issues"], list) and c["issues"][0]["chapter_index"] == 1
 
-    # fail-loud on an empty reader_url
+    # fail-loud on an empty reader_url — but answer_context.json must SURVIVE the
+    # failure (it's the hand-fill target for --rebuild-contexts)
     res["items"][1]["reader_url"] = ""
-    try:
-        build_contexts(q, res, "gr_penance", log=lambda _m: None)
-        raise AssertionError("expected ValueError for empty reader_url")
-    except ValueError as e:
-        assert "Deadpool" in str(e)
+    with tempfile.TemporaryDirectory() as d:
+        get_project_dirs = lambda name: {"root": Path(d)}  # noqa: F811,E731
+        try:
+            build_contexts(q, res, "gr_penance", log=lambda _m: None)
+            raise AssertionError("expected ValueError for empty reader_url")
+        except ValueError as e:
+            assert "Deadpool" in str(e)
+        assert (Path(d) / "answer_context.json").exists(), \
+            "research must persist for hand-fill even when reader_urls are missing"
+        assert not (Path(d) / "comic_context.json").exists(), \
+            "comic_context must NOT be written with undownloadable reader_urls"
 
     print("answer_research self-check OK")

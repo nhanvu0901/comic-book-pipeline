@@ -252,6 +252,92 @@ def save_narration_edits(project_name: str, narration: dict) -> None:
     p.write_text(json.dumps(narration, indent=2, ensure_ascii=False))
 
 
+def is_answer_project(project_name: str) -> bool:
+    """True for a Q&A (answer_research) project — Stage 7's single-panel-per-scene
+    storyboard editor doesn't apply since Q&A renders multiple panels per scene
+    (sub-shots chosen in Review Beats instead). Mirrors stages/review_gate.py's
+    own _plot_source check; keyed on comic_context.plot_source, not a mode name."""
+    p = PROJECTS_ROOT / project_name / "comic_context.json"
+    if not p.exists():
+        return False
+    try:
+        ctx = json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return False
+    return str(ctx.get("plot_source", "") or "") == "answer_research"
+
+
+# ─── Review Gate: pre-TTS beat/panel review ────────────────────────────────
+# Reads/writes review/candidates.json and review/locks.json directly (JSON
+# contract shared with stages/review_gate.py, which produces candidates.json;
+# this UI never imports that module).
+
+def list_review_projects() -> list[str]:
+    """Projects that have a review/candidates.json ready to review."""
+    if not PROJECTS_ROOT.exists():
+        return []
+    return sorted(
+        d.name for d in PROJECTS_ROOT.iterdir()
+        if d.is_dir() and (d / "review" / "candidates.json").exists()
+    )
+
+
+def load_review_candidates(project_name: str) -> dict | None:
+    p = PROJECTS_ROOT / project_name / "review" / "candidates.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return None
+
+
+def load_review_locks(project_name: str) -> dict:
+    p = PROJECTS_ROOT / project_name / "review" / "locks.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {"approved": False, "approved_at": None, "narration_sha1": None, "locks": {}}
+
+
+def save_review_locks(project_name: str, locks_doc: dict) -> None:
+    p = PROJECTS_ROOT / project_name / "review" / "locks.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(locks_doc, indent=2, ensure_ascii=False))
+
+
+def narration_sha1(project_name: str) -> str | None:
+    p = PROJECTS_ROOT / project_name / "narration.json"
+    if not p.exists():
+        return None
+    import hashlib
+    return hashlib.sha1(p.read_bytes()).hexdigest()
+
+
+def review_thumb_path(project_name: str, rel_path: str) -> str:
+    """Resolve a candidate's "review/thumbs/..." path to an absolute path,
+    or "" if missing."""
+    if not rel_path:
+        return ""
+    full = PROJECTS_ROOT / project_name / rel_path
+    return str(full) if full.exists() else ""
+
+
+def review_thumb_b64(project_name: str, rel_path: str) -> str:
+    """Base64 of a candidate thumb, or "" if missing.
+
+    ft.Image(src=<absolute path>) only works in desktop mode — in web mode
+    the browser fetches from Flet's web server, which can't serve arbitrary
+    filesystem paths. Passing a base64 string as `src` instead embeds the
+    bytes directly, so it works in both.
+    """
+    import base64
+    full = review_thumb_path(project_name, rel_path)
+    return base64.b64encode(Path(full).read_bytes()).decode() if full else ""
+
+
 # ─── Stage 4 ────────────────────────────────────────────────────────────────
 
 def run_stage_4(
@@ -271,6 +357,7 @@ def run_stage_4(
             project_name,
             voice_id=voice_id or None,
             model=model or None,
+            post_atempo=1.35,  # explicit: the UI must never fall back to a slower pace
             force=True,
         )
     finally:

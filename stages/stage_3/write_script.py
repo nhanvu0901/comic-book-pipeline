@@ -2709,8 +2709,10 @@ def _detect_hallucinations(
         allowed.update(nm.lower().split())
         for ep in getattr(ch, "epithets", []) or []:
             allowed.update(str(ep).lower().split())
-    for c in comic_context.get("characters") or []:
-        allowed.update(str(c).lower().split())
+    # _character_names handles both list-of-str and list-of-dict shapes; the raw
+    # str(c) split stuffed "{'name':" garbage tokens into `allowed` for dict contexts.
+    for nm in _character_names(comic_context):
+        allowed.update(str(nm).lower().split())
     for loc in comic_context.get("locations") or []:
         allowed.update(str(loc).lower().split())
     for pg in story_pages:
@@ -2728,13 +2730,21 @@ def _detect_hallucinations(
 
     import re
     # Find tokens like "YuanfenOnline" or "FantasticFour" that mash capitals
-    # mid-word — strong hallucination signal.
+    # mid-word — strong hallucination signal. Real surnames match this shape too
+    # (McCoy, MacTaggert, DeSaad, LaSalle...), so a token is only flagged when it
+    # is neither in `allowed` (glossary/context/page character names) nor a common
+    # capitalised-surname-prefix pattern — flagging a CORRECT name is a critical
+    # error the writer cannot fix, which burned every retry pass.
+    _surname_prefix = re.compile(r"^(?:Mc|Mac|De|Del|Di|Da|La|Le|Van|Von|Fitz|O)[A-Z]")
     for s in scenes:
         text = str(s.get("text", ""))
         # Detect camelCase / PascalCase compounds (e.g. YuanfenOnline)
         for m in re.finditer(r"\b([A-Z][a-z]+[A-Z][a-z]+)\b", text):
+            tok = m.group(1)
+            if tok.lower() in allowed or _surname_prefix.match(tok):
+                continue
             errors.append(
-                f"hallucination: suspicious camelCase token {m.group(1)!r} in scene "
+                f"hallucination: suspicious camelCase token {tok!r} in scene "
                 f"{s.get('scene_id', '?')} — likely fabricated proper noun"
             )
 

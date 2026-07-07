@@ -121,6 +121,18 @@ VLM_MODELS_BATCH: list[str] = [
 ]
 VLM_BATCH_SIZE = int(os.getenv("VLM_BATCH_SIZE", "3"))  # pages per VLM call
 
+# ─── Stage 2 perf (2026-07-06) ──────────────────────────────────────────────
+# Magi panel-detection is a LOCAL model (Florence-2, float32 on Mac MPS) run once
+# per page — the biggest local-compute block of Stage 2. Its API already takes a
+# LIST of images, so we detect several pages per forward pass (a pre-pass before
+# the VLM-describe loop). Larger = fewer forward launches but more activations
+# resident at once → keep modest on a 16GB Mac (OOM risk). 1 = old per-page path.
+MAGI_BATCH_SIZE = int(os.getenv("MAGI_BATCH_SIZE", "3"))
+# Independent VLM round-trips run concurrently (network-bound, no shared state):
+# DESC_VERIFY within a describe-batch, and per-cluster naming at the end. 1 = serial.
+VLM_VERIFY_WORKERS = int(os.getenv("VLM_VERIFY_WORKERS", "3"))
+CLUSTER_NAME_WORKERS = int(os.getenv("CLUSTER_NAME_WORKERS", "6"))
+
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 _DEFAULT_FANDOM_CHAIN = (
@@ -151,6 +163,11 @@ CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "c961b81c-a935-4c17-bfb3-ba22
 # Which engine Stage 4 uses: "cartesia" (default) | "resemble". Switch freely via
 # the TTS_PROVIDER env var — no code change needed.
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "cartesia").strip().lower()
+
+# ─── Comic Vine (structured comic DB — issue/character cross-check) ──────────
+# Free API key (comicvine.gamespot.com/api). Used to VERIFY a Q&A answer item's exact
+# issue exists + names the right character before download. Empty → cross-check skipped.
+COMIC_VINE_API_KEY = os.getenv("COMIC_VINE_API_KEY", "")
 
 # ─── TTS (Resemble AI — Chatterbox) ─────────────────────────────────────────
 RESEMBLE_API_KEY = os.getenv("RESEMBLE_API_KEY", "")
@@ -253,6 +270,16 @@ BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
 XFADE_DURATION = float(os.getenv("XFADE_DURATION", "0.25"))
 XFADE_TRANSITION = os.getenv("XFADE_TRANSITION", "dissolve")  # Master 2026-07-05: old pacing kept; "cut" = competitor mode
 
+# Master 2026-07-06 "more animation between scenes": instead of the SAME dissolve at
+# every scene boundary (monotone), ROTATE through a small curated set of ffmpeg xfade
+# transitions — one per boundary — so scene changes feel varied/dynamic. Applies ONLY at
+# scene-group boundaries (sub-shots WITHIN a scene stay hard-cut, unchanged), i.e. the
+# "large" boundaries. Only active in the dissolve path (XFADE_TRANSITION != "cut"); the
+# outer intro/outro edges in cut mode keep a plain dissolve. Empty string = no rotation
+# (every boundary uses XFADE_TRANSITION verbatim = pre-2026-07-06 behavior). Any valid
+# ffmpeg xfade name works (slideup/slidedown, smoothleft, wipeleft, circleopen, radial…).
+XFADE_ROTATE = os.getenv("XFADE_ROTATE", "dissolve,slideleft,slideright")
+
 # In hard-cut mode, still dissolve the two OUTER edges (intro→scene1, last-story→outro
 # card) for `XFADE_DURATION`s — a flat hard cut there read as an abrupt slap in review;
 # every scene-to-scene cut in between stays a hard cut. No effect when XFADE_TRANSITION
@@ -286,7 +313,12 @@ CHANNEL_HANDLE = os.getenv("CHANNEL_HANDLE", "@grimframe")
 _LOGO_RAW = os.getenv("CHANNEL_LOGO_PATH", "assets/branding/grimframe_logo.jpg")
 CHANNEL_LOGO_PATH = _LOGO_RAW if os.path.isabs(_LOGO_RAW) else str(Path(__file__).parent / _LOGO_RAW)
 ENABLE_CORNER_LOGO = os.getenv("ENABLE_CORNER_LOGO", "true").lower() in ("true", "1", "yes")
-ENABLE_OUTRO_CARD = os.getenv("ENABLE_OUTRO_CARD", "true").lower() in ("true", "1", "yes")
+# Master 2026-07-07: the 3.5s branding OUTRO CARD is OFF by default for BOTH modes now.
+# A branding card at the end reads as "the video is over" and kills the replay — the
+# Shorts growth playbook (seamless loop = replay = view) wants the last narration shot
+# to cut straight back to the hook. Corner logo (subtle, per-frame) stays ON — it brands
+# without breaking the loop. Set ENABLE_OUTRO_CARD=true to bring the card back.
+ENABLE_OUTRO_CARD = os.getenv("ENABLE_OUTRO_CARD", "false").lower() in ("true", "1", "yes")
 OUTRO_CARD_SECONDS = float(os.getenv("OUTRO_CARD_SECONDS", "3.5"))
 
 # ─── Stage 5: motion-comic dynamics ─────────────────────────────────────────

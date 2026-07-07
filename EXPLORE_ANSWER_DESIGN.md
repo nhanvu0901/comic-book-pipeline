@@ -97,3 +97,69 @@ MUTED and must out-depth the silent mass format.
    standard artifacts (comic_context.json, narration.json, final.mp4 ...). Human-readable field names, no cryptic keys.
 3. **Reuse maximum, modify existing code minimally** (small touches allowed where unavoidable, e.g. a mode key).
 4. Panels-only (unchanged). Pilot: "Who has survived Ghost Rider's Penance Stare?".
+
+---
+
+# ADDENDUM 2026-07-05 — REVIEW GATE (blocks TTS + render until Master approves)
+
+## Why
+Q&A's #1 risk is fact→WRONG panel/issue (above). And the recurring stale-audio bug (edit
+narration.json, forget `--force`, ship old audio under new captions). The review gate makes
+the pipeline STOP after narration and force a human check of the narration text + the panel
+chosen for each beat before any TTS/render spend. General mechanism — it protects narrate-mode
+comics too, and is keyed on `comic_context.plot_source == "answer_research"` (no mode-name hacks).
+
+## Flow
+1. Run Stage 1→3 (or `answer_pipeline` up through `narrate`). narration.json exists.
+2. `python -m stages.review_gate --project X --build-candidates [--k 10]` → writes
+   `review/candidates.json` + cropped `review/thumbs/pXXX_Y.jpg`. Reuses the EXISTING Stage-5
+   matcher (`shots._match_panels` in candidates-only mode: same content+page-prior scores, no
+   VLM rerank, no assignment). **Needs the LM Studio Qwen embed backend up**, same as Stage 5.
+3. Master opens the review UI (separate `ui/`), reviews narration text + picks a panel per beat,
+   approves. The UI writes `review/locks.json`.
+4. Stage 4 (`synthesize_project`) and Stage 5 (`assemble_project`) call
+   `review_gate.ensure_reviewed(project, skip_review)` first → `SystemExit` with instructions
+   until `approved` is true AND the approval's `narration_sha1` still matches narration.json
+   (an edit after approval re-blocks). `--skip-review` bypasses for a normal comic; it is
+   IGNORED for answer_research (Q&A) projects.
+5. On render, `build_shots` calls `_apply_review_locks`: a lock for a scene overrides its
+   `(page_ref, panel_ref)` so the EXISTING `PANEL_ANCHOR_BIND` path binds Master's pick.
+   (Caveat: a lock on a DESC_VERIFY-untrusted page won't hard-bind — `ANCHOR_TRUST` still
+   routes it through content-match + the page-prior keeps it on the locked page.)
+
+Stage 4 also AUTO-FORCES when narration.json changed since the cached audio was TTS'd
+(compares the current scene hash against the `narration.tts.sha256` sidecar) — kills the
+stale-audio bug without needing `--force`. `REVIEW_GATE=0` disables the gate entirely.
+
+## Contract A — `review/locks.json` (the UI writes; the gate + Stage 5 read)
+```json
+{"approved": false, "approved_at": null, "narration_sha1": null,
+ "locks": {"<scene_id>": {"page": 12, "panel": 3, "source": "batcave"}}}
+```
+- `approved` / `approved_at` — set by the UI on approval; `narration_sha1` = sha1 of
+  narration.json bytes at approval time (staleness pin).
+- `locks` — keyed by string `scene_id`; `page`/`panel` are a pool key (global page number,
+  0-based panel index) straight from Contract B; `source` is provenance ("batcave").
+
+## Contract B — `review/candidates.json` (build_candidates writes; the UI reads)
+```json
+{"generated_at": "<iso>",
+ "beats": [{"scene_id": 2, "narration_text": "...", "page_ref": 10, "panel_ref": 0,
+            "source": {"title": "...", "issue": "...", "url": "...", "research_urls": ["..."]},
+            "candidates": [{"page": 10, "panel": 0, "score": 9.5,
+                            "thumb": "review/thumbs/p010_0.jpg",
+                            "desc": "...", "dialog": "BOOM"}]}]}
+```
+- One beat per STORY scene (intro/outro excluded — their panels are deterministic cold-open /
+  loop-close, not a matching decision). Candidates are the matcher's own top-`k` ranked panels.
+- `source` cites the beat's comic: per answer-item for Q&A (mapped by the `chNN_` page prefix),
+  else the single source comic from comic_context.
+
+## FUTURE — web-image fallback (when NO downloaded panel scores above the floor)
+Not built. Spec for when a beat's fact finds no batcave panel: fetch candidate web images →
+(1) **phash dedupe** to drop near-identical results; (2) reject anything with shorter side <700px
+(upscaling smears under render); (3) **VLM desc** each survivor + **SigLIP text↔image** score
+against the narration line (same joint space as the panel image-match blend); (4) run **Magi ONLY
+when the image is itself a comic page** (panel/bubble detection is meaningless on a photo/poster).
+Surface web-sourced candidates in Contract B with a distinct `source` so Master sees the
+provenance before locking. Copyright: keep panels-only preference — web images are a last resort.

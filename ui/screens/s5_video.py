@@ -70,11 +70,13 @@ def build(
         page.update()
         try:
             result_path = await run_blocking(run_stage_5, state.project_name, push_log)
-        except Exception as e:
+        except (Exception, SystemExit) as e:
+            # SystemExit: review gate block (ensure_reviewed) — see s4_tts.py note.
             running.visible = False
-            status_text.value = "Failed — see log."
+            status_text.value = "Blocked by review gate — see log." if isinstance(e, SystemExit) \
+                else "Failed — see log."
             status_text.color = DANGER
-            push_log(format_exception(e))
+            push_log(str(e) if isinstance(e, SystemExit) else format_exception(e))
             page.update()
             return
 
@@ -85,7 +87,7 @@ def build(
         status_text.color = SUCCESS
         _mount_video(p)
 
-        state.mark_approved(7)
+        state.mark_approved(8)
         save_state(state)
         page.update()
         on_state_change()
@@ -174,7 +176,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 7 OF 7", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 8 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "1080×1920 9:16 H.264 MP4 with Ken Burns on panels, MrBeast-style "

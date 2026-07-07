@@ -263,7 +263,7 @@ def build(
 
     # Right column
     right = ft.Column([
-        ft.Text("STEP 2 OF 7", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 2 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Download Comic", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Downloads comic pages from batcave.biz using the URL found in Stage 1. "

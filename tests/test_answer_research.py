@@ -44,10 +44,18 @@ def _fixture_json(items=None):
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
-    """Stub the SDK + redirect project dirs into tmp_path (no network, no real writes)."""
+    """Stub SDK + Comic Vine + project dirs (no network, no real writes).
+
+    build_contexts now cross-checks each item via verify_issue (Comic Vine) and
+    auto-resolves empty reader_urls via resolve_reader_url (batcave) — both would
+    hit the network, so stub them here. verify_issue -> a benign 'verified'; the
+    resolver isn't stubbed because every _ITEMS fixture already has a reader_url
+    (so it's never called) — tests that need it stub it themselves."""
     monkeypatch.setattr(mod, "sdk_available", lambda: True)
     monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: _fixture_json())
     monkeypatch.setattr(mod, "get_project_dirs", lambda name: {"root": tmp_path})
+    monkeypatch.setattr(mod, "verify_issue",
+                        lambda *a, **k: {"ok": True, "note": "verified"})
     return tmp_path
 
 
@@ -93,7 +101,9 @@ def test_answer_context_schema_exact_and_presentation_order(wired, monkeypatch):
     for it in a["items"]:
         assert set(it.keys()) == {"rank", "entity", "how_or_why", "source_comic",
                                   "source_year", "reader_url", "drawable_moment",
-                                  "verification_note", "surprise_level"}
+                                  "verification_note", "surprise_level",
+                                  "verified", "verify_note"}
+        assert it["verified"] is True and it["verify_note"] == "verified"
 
 
 def test_comic_context_saga_shape(wired):
@@ -122,6 +132,97 @@ def test_empty_reader_url_fails_loud_naming_item(wired, monkeypatch):
     items = [dict(it) for it in _ITEMS]
     items[1]["reader_url"] = ""  # Deadpool has no downloadable source
     monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: _fixture_json(items))
+    # Auto-resolve can't find it either -> the empty URL survives -> fail loud.
+    monkeypatch.setattr(mod, "resolve_reader_url", lambda *a, **k: "")
     res = mod.research_answer(QUESTION, log=lambda _m: None)
     with pytest.raises(ValueError, match="Deadpool"):
         mod.build_contexts(QUESTION, res, "gr_penance", log=lambda _m: None)
+
+
+def test_auto_resolve_fills_empty_reader_url(wired, monkeypatch):
+    """When the SDK left reader_url empty, resolve_reader_url fills it before the
+    fail-loud check — so a resolvable item does NOT raise."""
+    items = [dict(it) for it in _ITEMS]
+    items[1]["reader_url"] = ""  # Deadpool empty, but resolvable
+    monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: _fixture_json(items))
+    monkeypatch.setattr(mod, "resolve_reader_url",
+                        lambda *a, **k: "https://batcave.biz/reader/999/888")
+    res = mod.research_answer(QUESTION, log=lambda _m: None)
+    _, c_path = mod.build_contexts(QUESTION, res, "gr_penance", log=lambda _m: None)
+    c = json.loads(c_path.read_text())
+    assert c["reader_urls"][1] == "https://batcave.biz/reader/999/888"
+
+
+def test_resolve_reader_url_parses_series_year_issue(monkeypatch):
+    """resolve_reader_url parses 'Series (YEAR) #N', picks the year-matching series,
+    and returns the chapter whose number == N (discover_issues + search mocked)."""
+    captured = {}
+
+    def fake_search(query, *, log=print):
+        captured["query"] = query
+        return [
+            ("29797", "thunderbolts-2006", "https://batcave.biz/29797-thunderbolts-2006.html"),
+            ("29798", "thunderbolts-2013", "https://batcave.biz/29798-thunderbolts-2013.html"),
+        ]
+
+    def fake_discover(series_url, headless=None):
+        captured["series_url"] = series_url
+        # posi (`number`) is OFF BY ONE from the issue # here (a front special),
+        # exactly like the real batcave Thunderbolts (2013): the match must key on
+        # the '#N' in the title, so posi 29 ('Issue #28') must NOT win.
+        return [
+            {"number": 29.0, "title": "Thunderbolts (2013) Issue #28",
+             "url": "https://batcave.biz/reader/29798/209111"},
+            {"number": 30.0, "title": "Thunderbolts (2013) Issue #29",
+             "url": "https://batcave.biz/reader/29798/209112"},
+            {"number": 31.0, "title": "Thunderbolts (2013) Issue #30",
+             "url": "https://batcave.biz/reader/29798/209113"},
+        ]
+
+    monkeypatch.setattr(mod, "_batcave_search", fake_search)
+    monkeypatch.setattr(mod, "discover_issues", fake_discover)
+
+    url = mod.resolve_reader_url("Thunderbolts (2013) #29", "2014", "The Punisher",
+                                 log=lambda _m: None)
+    assert captured["query"] == "Thunderbolts"          # parsed series name
+    assert captured["series_url"].endswith("thunderbolts-2013.html")  # year_hint picked 2013
+    assert url == "https://batcave.biz/reader/29798/209112"           # matched title #29, not posi
+
+
+def test_resolve_reader_url_oneshot_takes_single_chapter(monkeypatch):
+    """A one-shot (no '#N') resolves to the series' single chapter."""
+    monkeypatch.setattr(mod, "_batcave_search", lambda q, *, log=print: [
+        ("500", "some-one-shot-2020", "https://batcave.biz/500-some-one-shot-2020.html")])
+    monkeypatch.setattr(mod, "discover_issues", lambda url, headless=None: [
+        {"number": 1.0, "url": "https://batcave.biz/reader/500/777"}])
+    url = mod.resolve_reader_url("Some One-Shot (2020)", "2020", log=lambda _m: None)
+    assert url == "https://batcave.biz/reader/500/777"
+
+
+def test_resolve_reader_url_no_series_match_returns_empty(monkeypatch):
+    """Unrelated search hits (name doesn't appear in any slug) -> "" (fail-loud upstream)."""
+    monkeypatch.setattr(mod, "_batcave_search", lambda q, *, log=print: [
+        ("1", "completely-different-comic", "https://batcave.biz/1-completely-different-comic.html")])
+    monkeypatch.setattr(mod, "discover_issues",
+                        lambda url, headless=None: pytest.fail("should not reach discover"))
+    assert mod.resolve_reader_url("Thunderbolts (2013) #29", "2014", log=lambda _m: None) == ""
+
+
+def test_parse_source_comic_shapes():
+    assert mod._parse_source_comic('Thunderbolts (2013) #29') == ("Thunderbolts", "2013", "29")
+    assert mod._parse_source_comic('"Ghost Rider" (1990) #12') == ("Ghost Rider", "1990", "12")
+    assert mod._parse_source_comic('"Deadpool" #33') == ("Deadpool", "", "33")
+    assert mod._parse_source_comic('Marvel Comics Presents (1988)') == ("Marvel Comics Presents", "1988", "")
+
+
+def test_pick_series_ignores_generic_tokens():
+    """'FF Vol. 2' must not lose to a slug that only matches 'vol'+'2' (real
+    mis-resolve: Ant-Man's FF #16 → a Squirrel Girl chapter, 2026-07-06)."""
+    from stages.stage_1.answer_research import _pick_series
+    hits = [("6087", "the-unbeatable-squirrel-girl-vol-2-2015", "USG"),
+            ("15010", "ff-2013", "FF")]
+    assert _pick_series(hits, "FF Vol. 2", "2014") == "FF"
+    # generic-only overlap alone can never clear the 0.5 threshold
+    assert _pick_series([hits[0]], "FF Vol. 2", "2014") == ""
+    # all-generic/numeric names still resolve via raw-token fallback
+    assert _pick_series([("1", "2000-ad", "AD")], "2000 AD", "") == "AD"

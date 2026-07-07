@@ -47,3 +47,31 @@ def test_synthesize_fills_hole_when_chunk_has_no_timestamps(monkeypatch):
         assert w["start"] >= prev - 1e-6
         assert w["start"] - prev < 1.0
         prev = w["end"]
+
+
+# ─── RMS chunk normalization (voice consistency across batches) ──────────────
+
+def test_rms_normalize_equalizes_chunk_loudness():
+    import numpy as np
+    from stages.stage_4.resemble_tts import _rms_normalize_chunks
+    def chunk(amp, n=4000):
+        return (np.sin(np.linspace(0, 50, n)) * amp).astype(np.int16).tobytes()
+    parts = [chunk(3000), chunk(12000), chunk(1500)]   # quiet / loud / quieter
+    joined = _rms_normalize_chunks(parts, 2)
+    a = np.frombuffer(joined, dtype=np.int16).astype(np.float32)
+    sizes = [len(p) // 2 for p in parts]
+    off, after = 0, []
+    for s in sizes:
+        seg = a[off:off + s]; after.append(float(np.sqrt(np.mean(seg ** 2)))); off += s
+    assert max(after) / min(after) < 1.15, f"chunks not equalized: {after}"
+    assert np.max(np.abs(a)) <= 32767, "normalization must never clip"
+
+
+def test_rms_normalize_passthrough_non_int16_and_silence():
+    from stages.stage_4.resemble_tts import _rms_normalize_chunks
+    # non-int16 width → untouched join
+    parts = [b"\x01\x02\x03", b"\x04\x05\x06"]
+    assert _rms_normalize_chunks(parts, 3) == b"".join(parts)
+    # all-silence chunks (no voiced RMS) → untouched join, no divide-by-zero
+    sil = (b"\x00\x00" * 100)
+    assert _rms_normalize_chunks([sil, sil], 2) == sil + sil

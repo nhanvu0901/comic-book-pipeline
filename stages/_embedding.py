@@ -192,19 +192,33 @@ def _azure_embed(texts: list[str]):
 
 def _openai_embed(texts: list[str]):
     """Batch-embed via an OpenAI-compatible /v1/embeddings server (local llama-server,
-    LM Studio, etc.). Returns normalized vectors or [] on any failure (graceful)."""
-    import json, urllib.request, config
-    try:
-        body = json.dumps({"model": config.EMBED_OPENAI_MODEL, "input": texts}).encode()
-        req = urllib.request.Request(
-            _OPENAI_URL, data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=600) as r:
-            resp = json.load(r)
-        data = sorted(resp["data"], key=lambda d: d.get("index", 0))
-        return [_normalize(d["embedding"]) for d in data]
-    except Exception as exc:
-        print(f"[embedding] OpenAI-compatible embed call failed: {exc}", file=sys.stderr)
-        return []
+    LM Studio, etc.). Returns normalized vectors or [] on any failure (graceful).
+
+    Uses a bounded per-call timeout with a couple of retries instead of one 600s wait:
+    LM Studio under memory pressure (16GB Mac) can leave a request STALLED, and a
+    10-minute urlopen block reads as a total hang. A ~90s cap + retry fails fast and
+    recovers from a transient stall; a genuinely dead backend still returns [] (the
+    caller's graceful fallback). Override the cap with EMBED_TIMEOUT if a huge batch
+    legitimately needs longer."""
+    import json, os, time, urllib.request, config
+    timeout = float(os.getenv("EMBED_TIMEOUT", "90"))
+    body = json.dumps({"model": config.EMBED_OPENAI_MODEL, "input": texts}).encode()
+    last_exc = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                _OPENAI_URL, data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                resp = json.load(r)
+            data = sorted(resp["data"], key=lambda d: d.get("index", 0))
+            return [_normalize(d["embedding"]) for d in data]
+        except Exception as exc:
+            last_exc = exc
+            print(f"[embedding] OpenAI-compatible embed call failed "
+                  f"(attempt {attempt + 1}/3, timeout={timeout}s): {exc}", file=sys.stderr)
+            time.sleep(2)
+    print(f"[embedding] giving up after 3 attempts: {last_exc}", file=sys.stderr)
+    return []
 
 
 def embed_batch(texts: list[str]) -> list:
