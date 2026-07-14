@@ -132,6 +132,10 @@ MAGI_BATCH_SIZE = int(os.getenv("MAGI_BATCH_SIZE", "3"))
 # DESC_VERIFY within a describe-batch, and per-cluster naming at the end. 1 = serial.
 VLM_VERIFY_WORKERS = int(os.getenv("VLM_VERIFY_WORKERS", "3"))
 CLUSTER_NAME_WORKERS = int(os.getenv("CLUSTER_NAME_WORKERS", "6"))
+# extract_page() (single-page front-matter/back-matter/issue-edge path) takes no
+# prior_page/running_state — each call is independent, so a contiguous group of these
+# pages runs concurrently too. 1 = old strictly-serial per-page loop.
+VLM_PAGE_WORKERS = int(os.getenv("VLM_PAGE_WORKERS", "4"))
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
@@ -258,8 +262,6 @@ def _azure_embed_ready() -> bool:
     return bool(k) and bool(e) and not k.startswith("<") and not e.startswith("<")
 
 # ─── Stage 5: Video assembly ────────────────────────────────────────────────
-BG_MUSIC_PATH = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
-
 # Crossfade dissolve between SCENES. XFADE_TRANSITION="cut" (default) bypasses the
 # xfade filter entirely (hard cut, plain concat) — competitor autopsy (1.4M-3.2M view
 # Shorts) measured 0.4-0.8 hard cuts/s and near-zero dissolves; our old default dissolved
@@ -286,6 +288,16 @@ XFADE_ROTATE = os.getenv("XFADE_ROTATE", "dissolve,slideleft,slideright")
 # is not "cut".
 XFADE_SOFT_EDGES = os.getenv("XFADE_SOFT_EDGES", "true").lower() in ("true", "1", "yes")
 
+# ─── Stage 5: whip-blur wipe transition (Comicz-style) ──────────────────────
+# At each SCENE boundary, a deterministic coin flip (seeded by
+# f"{project}:{scene_a}:{scene_b}" — stable across re-renders) decides whether that
+# boundary gets a ~TRANSITION_WHIP_SECONDS vertical whip-blur wipe bridge clip instead
+# of the normal transition (xfade dissolve or hard cut, whichever XFADE_TRANSITION
+# would otherwise use there). 0 = never (byte-identical old behavior); 1 = every
+# boundary whose two adjacent shots are both >= 0.6s long.
+TRANSITION_WHIP_PROB = float(os.getenv("TRANSITION_WHIP_PROB", "0.5"))
+TRANSITION_WHIP_SECONDS = float(os.getenv("TRANSITION_WHIP_SECONDS", "0.24"))
+
 # ─── Stage 5: flash-accent cuts ─────────────────────────────────────────────
 # A single white flash frame (1 frame @30fps) at a hard cut into an action-classified
 # scene (reuses shots.py's _is_action_text impact-verb check) — competitor autopsy
@@ -301,11 +313,28 @@ FLASH_ACCENTS_MAX = int(os.getenv("FLASH_ACCENTS_MAX", "3"))
 # source, not a static overlay. Off → plain karaoke-fill (no scale animation).
 CAPTION_POP = os.getenv("CAPTION_POP", "false").lower() in ("true", "1", "yes")
 
+# ─── Stage 5: caption style knobs (A/B only — defaults reproduce the current,
+# already-approved look byte-for-byte) ───────────────────────────────────────
+CAPTION_FONT_SIZE = int(os.getenv("CAPTION_FONT_SIZE", "84"))
+CAPTION_ALIGNMENT = int(os.getenv("CAPTION_ALIGNMENT", "2"))
+CAPTION_MARGIN_V = int(os.getenv("CAPTION_MARGIN_V", "300"))
+CAPTION_OUTLINE = float(os.getenv("CAPTION_OUTLINE", "8"))
+
 # ─── Stage 5: panel mirror ───────────────────────────────────────────────────
 # Read by stages/stage_5/shots.py (MIRROR_PANELS there). Default OFF: competitor
 # autopsy caught OUR mirror flipping mid-video lettering backwards (house-of-m
 # frames) — the dedup value of mirroring no longer outweighs the AI-slop risk.
 MIRROR_PANELS = os.getenv("MIRROR_PANELS", "false").lower() in ("true", "1", "yes")
+
+# ─── Stage 5: panel AI upscale (Real-ESRGAN) ────────────────────────────────
+# Panel crops are often 237-500px; _prepare_panel_frame's LANCZOS blow-up to fill
+# the 1080×1920 frame (up to 8× for a small panel) reads soft. Real-ESRGAN
+# (anime model, ~2s/panel measured) sharpens the crop BEFORE that blow-up.
+# Read by stages/stage_5/shots.py (_ai_upscale_panel). Any failure (binary
+# missing, timeout, bad exit) falls back to the un-upscaled crop — never fatal.
+PANEL_UPSCALE = os.getenv("PANEL_UPSCALE", "true").lower() in ("true", "1", "yes")
+REALESRGAN_BIN = os.getenv("REALESRGAN_BIN", str(Path(__file__).parent / "tools/realesrgan/realesrgan-ncnn-vulkan"))
+REALESRGAN_MODEL = os.getenv("REALESRGAN_MODEL", "realesrgan-x4plus-anime")
 
 # ─── Stage 5: channel branding (Grimframe) ──────────────────────────────────
 CHANNEL_NAME = os.getenv("CHANNEL_NAME", "Grimframe")
@@ -334,16 +363,12 @@ MOTION_COMIC = os.getenv("MOTION_COMIC", "true").lower() in ("true", "1", "yes")
 # Off → intro opens on the cover (prior behavior).
 COLD_OPEN = os.getenv("COLD_OPEN", "true").lower() in ("true", "1", "yes")
 
-# ─── Stage 5: persistent title banner ───────────────────────────────────────
-# A small white-box catchy title (narration.banner_title, generated in Stage 3)
-# burned at the top of EVERY narration frame so a scroller instantly gets the
-# hook — the technique high-view comic Shorts use. Off → no banner.
+# ─── Stage 3: banner title text ─────────────────────────────────────────────
+# A short catchy title (narration.banner_title) Stage 3 generates. 2026-07-13:
+# Stage 5 no longer burns it into the video (Master writes titles in CapCut);
+# Stage 5 exports it to <project>/title.txt instead. Gate kept for Stage 3's
+# generation call (write_script.py / micro_moment.py) — off skips the LLM call.
 ENABLE_TITLE_BANNER = os.getenv("ENABLE_TITLE_BANNER", "true").lower() in ("true", "1", "yes")
-TITLE_BANNER_FONTSIZE = int(os.getenv("TITLE_BANNER_FONTSIZE", "40"))
-# Show the banner only on hook (is_intro) shots, not pinned for the whole video —
-# competitor autopsy flagged the always-on banner as wasted vertical space past
-# the opening seconds. false = restore the old always-on behavior.
-TITLE_BANNER_HOOK_ONLY = os.getenv("TITLE_BANNER_HOOK_ONLY", "false").lower() in ("true", "1", "yes")
 
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)

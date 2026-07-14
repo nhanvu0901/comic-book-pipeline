@@ -23,7 +23,7 @@ def _make_wide(path, w, h, edge=100):
 
 def test_moderate_landscape_cover_fills(tmp_path, monkeypatch):
     # COVER-crop MECHANISM check with the competitor-mode threshold pinned (2.2).
-    # Master 2026-07-05: shipped default is back to 1.2 (old contain+blur look) —
+    # 2026-07-12 R3: shipped default is now 1.7 (a 1.78-aspect panel still contain+blurs) —
     # see test_default_moderate_landscape_contains below.
     import stages.stage_5.shots as S
     monkeypatch.setattr(S, "LANDSCAPE_COVER_MAX_ASPECT", 2.2)
@@ -71,8 +71,8 @@ def test_portrait_splash_still_cover_fills(tmp_path):
 
 
 def test_default_moderate_landscape_contains(tmp_path):
-    # Shipped default (LANDSCAPE_COVER_MAX_ASPECT=1.2): a 1.78-aspect panel goes back to
-    # the old contain+blur look — the side edges (red) survive inside the frame.
+    # Shipped default (LANDSCAPE_COVER_MAX_ASPECT=1.7): a 1.78-aspect panel is still >= 1.7,
+    # so it stays on the old contain+blur look — the side edges (red) survive inside the frame.
     src, out = tmp_path / "wide_default.png", tmp_path / "frame_default.png"
     _make_wide(src, 1600, 900)
     _prepare_panel_frame(src, out)

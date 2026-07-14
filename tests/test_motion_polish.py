@@ -1,5 +1,6 @@
 """Motion-polish layer: hard-cut default + soft edges, flash accents, caption pop.
 No rendering — only filtergraph/command construction and generated ASS text."""
+import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,27 +24,6 @@ def test_new_knob_defaults():
     assert config.FLASH_ACCENTS_MAX == 3
     assert config.CAPTION_POP is False
     assert config.MIRROR_PANELS is False  # stays OFF: backwards-lettering slop risk
-    assert config.TITLE_BANNER_HOOK_ONLY is False
-
-
-# ── title banner: hook-window only ───────────────────────────────────────────
-
-def test_shot_banner_text_hook_only_shows_on_intro_shot_only():
-    intro = FakeShot(1, 1.0, is_intro=True)
-    body = FakeShot(2, 1.0, is_intro=False)
-    assert P._shot_banner_text(intro, "HOOK LINE", hook_only=True) == "HOOK LINE"
-    assert P._shot_banner_text(body, "HOOK LINE", hook_only=True) == ""
-
-
-def test_shot_banner_text_legacy_always_on():
-    body = FakeShot(2, 1.0, is_intro=False)
-    assert P._shot_banner_text(body, "HOOK LINE", hook_only=False) == "HOOK LINE"
-
-
-def test_shot_banner_text_empty_banner_stays_empty():
-    intro = FakeShot(1, 1.0, is_intro=True)
-    assert P._shot_banner_text(intro, "", hook_only=True) == ""
-    assert P._shot_banner_text(intro, "", hook_only=False) == ""
 
 
 # ── _assemble_video: cut mode (default) vs dissolve mode (opt-in) ───────────
@@ -212,6 +192,34 @@ def test_caption_pop_none_defaults_from_config(monkeypatch):
     monkeypatch.setattr(config, "CAPTION_POP", False)
     ass = C.build_ass(_fixture_words(3), total_duration=10.0)  # caption_pop=None
     assert r"\t(" not in ass
+
+
+# ── caption style knobs (A/B via env, default = current approved look) ──────
+
+def test_ass_header_default_style_unchanged():
+    # Regression guard: knobs must reproduce the pre-existing hardcoded style.
+    assert config.CAPTION_FONT_SIZE == 84
+    assert config.CAPTION_ALIGNMENT == 2
+    assert config.CAPTION_MARGIN_V == 300
+    assert config.CAPTION_OUTLINE == 8
+    assert ("Style: ComicsUnlocked,Anton,84,&H00FFFFFF,&H00000000,&H00000000,"
+            "&H00000000,1,0,0,0,100,100,0,0,1,8,0,2,60,60,300,1") in C.ASS_HEADER
+
+
+def test_ass_header_honors_env_override(monkeypatch):
+    monkeypatch.setenv("CAPTION_FONT_SIZE", "120")
+    monkeypatch.setenv("CAPTION_ALIGNMENT", "5")
+    monkeypatch.setenv("CAPTION_MARGIN_V", "700")
+    monkeypatch.setenv("CAPTION_OUTLINE", "4")
+    importlib.reload(config)
+    importlib.reload(C)
+    try:
+        assert "Anton,120," in C.ASS_HEADER
+        assert ",4,0,5,60,60,700,1" in C.ASS_HEADER
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)
+        importlib.reload(C)
 
 
 def test_chunk_durations_within_target_band():

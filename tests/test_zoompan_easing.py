@@ -17,10 +17,13 @@ def test_zoom_out_eased_endpoints():
     assert "pow(on/30,2)" in e
 
 
-def test_pan_right_eased_x():
+def test_pan_right_linear_full_travel():
+    # Master 2026-07-11: pan sweeps the full excess (0 → iw-iw/zoom) LINEARLY, z held at
+    # PAN_ZOOM (1.15). No ease — constant velocity, lands on the far edge at the last frame.
     e = _zoompan_expr("pan_right", 30)
-    assert "pow(on/30,2)" in e   # x offset eased
-    assert "z='1.03'" in e
+    assert "x='(iw-iw/zoom)*(on/30)'" in e
+    assert "z='1.15'" in e
+    assert "pow(" not in e   # linear, not smoothstep
 
 
 def test_static_unchanged():

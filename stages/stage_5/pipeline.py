@@ -1,19 +1,21 @@
 """Stage 5 orchestrator: narration + audio + panels → final 9:16 MP4."""
 import json
+import math
 import os
+import random
 import shutil
 import subprocess
 import wave
 from pathlib import Path
 from typing import Callable
 
-from config import BG_MUSIC_PATH, PROJECTS_ROOT
+from config import PROJECTS_ROOT
 from ..review_gate import ensure_reviewed
 from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
-from .captions import build_ass
+from .panel_sheet import build_panel_sheet
 from .schema import AssemblyResult
-from .shots import build_shots, render_shot
+from .shots import build_shots, render_shot, OUTPUT_W, OUTPUT_H
 from .verify_frames import VERIFY_FRAMES, verify_frames
 
 
@@ -23,10 +25,9 @@ FPS = 30
 def assemble_project(
     project_name: str,
     *,
-    bg_music_path: str | None = None,
-    enable_music: bool = True,
     force: bool = False,
     skip_review: bool = False,
+    panels_only: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> AssemblyResult:
     """Build the final 1080x1920 H.264 MP4 from narration + audio + panels."""
@@ -54,12 +55,11 @@ def assemble_project(
 
     shots_dir = root / "shots"
     shots_dir.mkdir(parents=True, exist_ok=True)
-    captions_path = root / "captions.ass"
     silent_video_path = root / "video_silent.mp4"
     audio_mixed_path = root / "audio_mixed.wav"
     final_path = root / "final.mp4"
 
-    if final_path.exists() and not force:
+    if final_path.exists() and not force and not panels_only:
         log(f"[stage5] final.mp4 already exists ({final_path}); pass force=True to rebuild")
         duration = _probe_duration(final_path)
         return AssemblyResult(
@@ -67,14 +67,11 @@ def assemble_project(
             duration_seconds=round(duration, 3),
             shot_count=len(list(shots_dir.glob("shot_*.mp4"))),
             scene_count=len(narration.get("scenes") or []),
-            caption_path=str(captions_path) if captions_path.exists() else "",
+            caption_path="",  # ponytail: captions dropped 2026-07-10, captioning moved to CapCut
             silent_video_path=str(silent_video_path),
             audio_mixed_path=str(audio_mixed_path),
             shots_dir=str(shots_dir),
-            bgm_used=None,
         )
-
-    bgm = _resolve_bgm(bg_music_path, enable_music, log)
 
     # Load caption_chunks + preprocessed pages for caption-chunk shot strategy
     caption_chunks_path = root / "caption_chunks.json"
@@ -121,6 +118,30 @@ def assemble_project(
     silence_aligned = "silence-aligned" if scene_timings and word_timestamps else "even-split"
     log(f"[stage5] planning {len(shots)} shots across {len(narration.get('scenes') or [])} scenes ({silence_aligned} cuts)")
 
+    # RULE (Master): a contact sheet of every panel the render will use, built from
+    # the shot list BEFORE any ffmpeg render starts, for all 3 narration modes — a
+    # wrong/blurry panel pick should be caught here, not after a full encode.
+    panel_sheet_path = root / "panel_sheet.jpg"
+    try:
+        build_panel_sheet(shots, panel_sheet_path)
+        log(f"[stage5] panel sheet: {panel_sheet_path}")
+    except Exception as exc:
+        log(f"[stage5] panel sheet build failed ({exc}); continuing without it")
+
+    if panels_only:
+        _write_shots_log(shots, caption_chunks, shots_dir, root / "shots.json", log)
+        return AssemblyResult(
+            final_path="",
+            duration_seconds=0.0,
+            shot_count=len(shots),
+            scene_count=len(narration.get("scenes") or []),
+            caption_path="",
+            silent_video_path=str(silent_video_path),
+            audio_mixed_path=str(audio_mixed_path),
+            shots_dir=str(shots_dir),
+            shots=shots,
+        )
+
     # Item 8: corner channel logo, baked into each shot (the outro card is built
     # separately and is NOT a shot, so it never gets a double logo).
     from config import ENABLE_CORNER_LOGO, CHANNEL_LOGO_PATH
@@ -133,27 +154,14 @@ def assemble_project(
         if corner_logo is None:
             log(f"[stage5] corner logo unavailable ({CHANNEL_LOGO_PATH}); skipping overlay")
 
-    # Title banner — a small white-box catchy line burned on the HOOK shots only
-    # (is_intro / cold-open). Competitor autopsy: a banner pinned for the whole
-    # video eats vertical space the whole way through; the hook window is where a
-    # scroller's attention actually needs the extra nudge. TITLE_BANNER_HOOK_ONLY=false
-    # restores the old always-on behavior. The outro card is built separately, so
-    # it never gets the banner either way.
-    from config import ENABLE_TITLE_BANNER, TITLE_BANNER_HOOK_ONLY
-    banner_text = str(narration.get("banner_title", "")).strip() if ENABLE_TITLE_BANNER else ""
-    if banner_text:
-        log(f"[stage5] title banner: {banner_text!r} "
-            f"({'hook-only' if TITLE_BANNER_HOOK_ONLY else 'every shot'})")
-
     shot_paths: list[Path] = []
     for s in shots:
         sp = shots_dir / f"shot_{s.shot_id:03d}.mp4"
-        shot_banner = _shot_banner_text(s, banner_text, TITLE_BANNER_HOOK_ONLY)
         if sp.exists() and not force:
             log(f"[stage5] reusing {sp.name}")
         else:
             render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log,
-                        corner_logo=corner_logo, banner_text=shot_banner)
+                        corner_logo=corner_logo)
         shot_paths.append(sp)
 
     # Debug log: record every shot's panel selection (page, bbox, image path,
@@ -178,16 +186,12 @@ def assemble_project(
         log(f"[stage5] assembling {len(shot_paths)} shots → {silent_video_path.name} "
             f"(xfade={ _xfade_label() }, outro_card={'on' if outro_card else 'off'})")
         _assemble_video(shots, shot_paths, silent_video_path,
-                        outro_card=outro_card, outro_dur=outro_dur)
-
-    log(f"[stage5] generating captions.ass ({len(word_timestamps)} words)")
-    ass_text = build_ass(word_timestamps, audio_duration)
-    captions_path.write_text(ass_text)
+                        outro_card=outro_card, outro_dur=outro_dur, project=project_name)
 
     if audio_mixed_path.exists() and not force:
         log(f"[stage5] reusing {audio_mixed_path.name}")
     else:
-        mix_audio(audio_path, bgm, audio_mixed_path, progress=log)
+        mix_audio(audio_path, audio_mixed_path, progress=log)
         if outro_dur > 0:
             try:
                 _pad_audio_tail(audio_mixed_path, outro_dur, audio_mixed_path.with_suffix(".pad.wav"))
@@ -197,10 +201,11 @@ def assemble_project(
                 log(f"[stage5] audio pad failed ({exc}); shipping without the outro-card tail")
 
     log(f"[stage5] final encode → {final_path.name}")
-    _final_encode(silent_video_path, audio_mixed_path, captions_path, final_path)
+    _final_encode(silent_video_path, audio_mixed_path, final_path)
 
     duration = _probe_duration(final_path)
     log(f"[stage5] done: {final_path} ({duration:.2f}s)")
+    _write_title_file(root, narration)
 
     # Stage 5.5: spot-check the rendered frames against the narration (see
     # verify_frames.py). A checker bug must never fail an otherwise-good render.
@@ -215,11 +220,10 @@ def assemble_project(
         duration_seconds=round(duration, 3),
         shot_count=len(shots),
         scene_count=len(narration.get("scenes") or []),
-        caption_path=str(captions_path),
+        caption_path="",  # ponytail: captions dropped 2026-07-10, captioning moved to CapCut
         silent_video_path=str(silent_video_path),
         audio_mixed_path=str(audio_mixed_path),
         shots_dir=str(shots_dir),
-        bgm_used=str(bgm) if bgm else None,
         shots=shots,
     )
 
@@ -294,36 +298,12 @@ def _load_preprocessed_pages(project_root: Path) -> dict[int, dict]:
     return out
 
 
-def _resolve_bgm(
-    override: str | None, enable_music: bool, log: Callable[[str], None]
-) -> Path | None:
-    if not enable_music:
-        log("[stage5] music disabled — narration-only mix")
-        return None
-    candidates: list[Path] = []
-    if override:
-        candidates.append(Path(override))
-    env_path = BG_MUSIC_PATH
-    if env_path:
-        p = Path(env_path)
-        if not p.is_absolute():
-            p = Path(__file__).resolve().parent.parent.parent / p
-        candidates.append(p)
-    for c in candidates:
-        if c and c.exists():
-            log(f"[stage5] BGM: {c}")
-            return c
-    log("[stage5] no BGM file found — narration-only mix")
-    return None
-
-
-def _shot_banner_text(shot, banner_text: str, hook_only: bool) -> str:
-    """Which banner string to burn on this shot: the full banner on every shot
-    when hook_only is False (legacy always-on), or only on the hook (is_intro)
-    shot(s) when hook_only is True — everything after the hook gets no banner."""
-    if not banner_text:
-        return ""
-    return banner_text if (not hook_only or getattr(shot, "is_intro", False)) else ""
+def _write_title_file(root: Path, narration: dict) -> None:
+    """Export Stage 3's banner_title to <project>/title.txt — Stage 5 no longer
+    burns it into the video (Master writes titles in CapCut instead)."""
+    title = str(narration.get("banner_title", "")).strip()
+    if title:
+        (root / "title.txt").write_text(title + "\n")
 
 
 def _group_shots_by_scene(shots, shot_paths):
@@ -359,14 +339,41 @@ def _xfade_label() -> str:
 
 
 def _assemble_video(shots, shot_paths, out_path: Path,
-                    outro_card: Path | None = None, outro_dur: float = 0.0) -> Path:
-    """Scene-grouped assembly.
+                    outro_card: Path | None = None, outro_dur: float = 0.0,
+                    project: str = "") -> Path:
+    """Scene-grouped assembly — see _assemble_groups for the actual transition
+    logic (xfade dissolve / hard-cut / soft-edges / flash accents), unchanged.
+
+    `project` (non-empty) additionally rolls a deterministic per-boundary coin
+    flip (TRANSITION_WHIP_PROB, see _pick_whip_boundaries) for a whip-blur wipe
+    bridge at SOME scene boundaries, replacing whatever transition would have
+    landed there. Empty `project` (e.g. call sites/tests that don't pass one)
+    skips the whip step entirely — no stable seed possible, so no behavior change.
+    """
+    groups = _group_shots_by_scene(shots, shot_paths)
+    whip = _pick_whip_boundaries(project, shots) if project else {}
+    if not whip:
+        return _assemble_groups(shots, groups, out_path,
+                                outro_card=outro_card, outro_dur=outro_dur)
+    return _assemble_with_whips(shots, groups, whip, out_path, outro_card, outro_dur)
+
+
+def _assemble_groups(shots, groups, out_path: Path, *,
+                     outro_card: Path | None = None, outro_dur: float = 0.0,
+                     is_first_run: bool = True) -> Path:
+    """Core scene-transition assembly for one contiguous run of scene groups (the
+    whole video when there are no whip-transition splits — see _assemble_with_whips,
+    which calls this once per run and splices the runs together with bridge clips).
 
     XFADE_TRANSITION == "cut" (default): hard-cut every scene boundary — optionally
     softened at just the two outer edges (XFADE_SOFT_EDGES) and/or spiced with a
     white flash-frame accent at action-classified cuts (FLASH_ACCENTS). Any other
     XFADE_TRANSITION value is the legacy opt-in: dissolve EVERY scene boundary.
     Falls back to a plain hard-cut concat on single-scene input or any ffmpeg/IO error.
+
+    `is_first_run=False` means this run does NOT start at the true beginning of the
+    video (a whip bridge already handles the join into it) — the two-outer-edges-only
+    soft-edge dissolve must not also fire at this run's own start in that case.
     """
     from config import (XFADE_DURATION, XFADE_TRANSITION, XFADE_SOFT_EDGES,
                         XFADE_ROTATE, FLASH_ACCENTS, FLASH_ACCENTS_MAX)
@@ -374,7 +381,6 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     transition = str(XFADE_TRANSITION).strip().lower()
     # Curated transition rotation ("more animation between scenes"). Empty → uniform.
     rotate = [t.strip().lower() for t in str(XFADE_ROTATE).split(",") if t.strip()] or None
-    groups = _group_shots_by_scene(shots, shot_paths)
 
     if transition != "cut" and x > 0 and len(groups) >= 2:
         try:
@@ -396,14 +402,15 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     # at least one boundary qualifies), then the soft-edges variant if requested.
     flash_clip = None
     flash_boundaries: set[int] = set()
-    soft_edges = bool(XFADE_SOFT_EDGES) and x > 0 and len(groups) >= 2
+    soft_edges = (bool(XFADE_SOFT_EDGES) and x > 0 and len(groups) >= 2
+                  and (is_first_run or outro_card is not None))
     if FLASH_ACCENTS and len(groups) >= 2:
         try:
             flash_clip = _build_flash_clip(out_path.parent / "_flash_accent.mp4")
             scene_action = _scene_action_flags(shots)
             # the intro→scene1 edge is a dissolve when soft_edges is on, not a hard
             # cut — a flash has nothing to land on there.
-            exclude = {0} if soft_edges else set()
+            exclude = {0} if (soft_edges and is_first_run) else set()
             flash_boundaries = _pick_flash_boundaries(
                 groups, scene_action, exclude=exclude, cap=int(FLASH_ACCENTS_MAX))
         except Exception as exc:
@@ -413,7 +420,8 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     if soft_edges:
         try:
             return _hard_cut_soft_edges(groups, outro_card, outro_dur, out_path, x,
-                                        flash_clip=flash_clip, flash_boundaries=flash_boundaries)
+                                        flash_clip=flash_clip, flash_boundaries=flash_boundaries,
+                                        soft_intro=is_first_run)
         except Exception as exc:
             print(f"[stage5] soft-edge assembly failed ({exc}); falling back to plain hard-cut concat")
 
@@ -468,7 +476,7 @@ def _xfade_chain(clips: list[Path], durs: list[float], out_path: Path,
     case for the soft-edge intro/outro dissolves, which never rotate).
 
     Preset is `veryfast` (not `medium`): this clip is re-encoded again by
-    _final_encode (slow/crf20), so its preset has no effect on final quality — only
+    _final_encode (slow/crf18), so its preset has no effect on final quality — only
     on how long this intermediate pass takes."""
     ff = _require_ffmpeg()
     offs = _xfade_offsets(durs)
@@ -501,28 +509,264 @@ def _xfade_chain(clips: list[Path], durs: list[float], out_path: Path,
 
 def _hard_cut_soft_edges(groups, outro_card, outro_dur, out_path: Path, x: float, *,
                          flash_clip: Path | None = None,
-                         flash_boundaries: set[int] | None = None) -> Path:
+                         flash_boundaries: set[int] | None = None,
+                         soft_intro: bool = True) -> Path:
     """Hard-cut every inter-scene boundary except the two outer edges (intro→scene1,
     last-story→outro card), which get a small `x`-second dissolve. A flat hard cut on
     those two specific joins read as an abrupt slap in review; every other cut in
-    between stays a hard cut (unaffected)."""
+    between stays a hard cut (unaffected).
+
+    `soft_intro=False` (a whip-transition run that doesn't start at the true video
+    start) drops the intro-edge dissolve — groups[0] joins the body as a plain hard
+    cut — while keeping the outro-edge dissolve when outro_card is given."""
     flash_boundaries = flash_boundaries or set()
     tmp = out_path.parent / "_scene_clips"
     tmp.mkdir(parents=True, exist_ok=True)
-    intro_paths, intro_dur = groups[0][1], groups[0][2]
-    body_groups = groups[1:]
-    # flash_boundaries indexes the FULL groups list (boundary i sits between
-    # groups[i] and groups[i+1]); shift into body_groups' own 0-based indexing.
-    body_flash = {b - 1 for b in flash_boundaries if b >= 1}
+    if soft_intro:
+        intro_paths, intro_dur = groups[0][1], groups[0][2]
+        body_groups = groups[1:]
+        # flash_boundaries indexes the FULL groups list (boundary i sits between
+        # groups[i] and groups[i+1]); shift into body_groups' own 0-based indexing.
+        body_flash = {b - 1 for b in flash_boundaries if b >= 1}
+    else:
+        intro_paths, intro_dur = None, 0.0
+        body_groups = groups
+        body_flash = set(flash_boundaries)
     body_paths = _interleave_flashes(body_groups, body_flash, flash_clip)
     body_dur = sum(d for _sid, _p, d in body_groups)
-    intro_clip = _concat(list(intro_paths), tmp / "intro.mp4")
     body_clip = _concat(body_paths, tmp / "body.mp4")
-    clips, durs = [intro_clip, body_clip], [intro_dur, body_dur]
+    if soft_intro:
+        intro_clip = _concat(list(intro_paths), tmp / "intro.mp4")
+        clips, durs = [intro_clip, body_clip], [intro_dur, body_dur]
+    else:
+        clips, durs = [body_clip], [body_dur]
     if outro_card is not None:
         clips.append(outro_card)
         durs.append(float(outro_dur))
     return _xfade_chain(clips, durs, out_path, x, "dissolve")
+
+
+def _group_shots_only(shots) -> list[list]:
+    """Same grouping key as _group_shots_by_scene (consecutive equal scene_id) but
+    keeps the Shot objects instead of rendered paths — used by the whip-transition
+    picker/splicer to read boundary-adjacent shot durations. _group_shots_by_scene's
+    tested signature/return shape is left alone; this just mirrors its grouping."""
+    groups: list[list] = []
+    for s in shots:
+        if groups and groups[-1][0] == s.scene_id:
+            groups[-1][1].append(s)
+        else:
+            groups.append([s.scene_id, [s]])
+    return groups
+
+
+def _pick_whip_boundaries(project: str, shots) -> dict[int, float]:
+    """Deterministically choose which SCENE boundaries (index i = the join between
+    the i-th and (i+1)-th scene groups) get the whip-blur wipe instead of the normal
+    transition. One coin flip per boundary, seeded by f"{project}:{scene_a}:{scene_b}"
+    so re-renders of the same project pick the same boundaries. Never picks a
+    boundary whose adjacent shot (the one that would be trimmed) is under 0.6s.
+    Returns {boundary_index: whip_seconds}."""
+    from config import TRANSITION_WHIP_PROB, TRANSITION_WHIP_SECONDS
+    prob = float(TRANSITION_WHIP_PROB)
+    if prob <= 0:
+        return {}
+    groups = _group_shots_only(shots)
+    out: dict[int, float] = {}
+    for i in range(len(groups) - 1):
+        scene_a, shots_a = groups[i]
+        scene_b, shots_b = groups[i + 1]
+        rng = random.Random(f"{project}:{scene_a}:{scene_b}")
+        if rng.random() >= prob:
+            continue
+        if float(shots_a[-1].duration_seconds) < 0.6 or float(shots_b[0].duration_seconds) < 0.6:
+            continue
+        out[i] = float(TRANSITION_WHIP_SECONDS)
+    return out
+
+
+def _whip_borrowed_durations(shots, whip: dict[int, float]) -> list[float]:
+    """Per-shot durations after each chosen whip boundary borrows half its bridge
+    length from the last shot of the scene before it and the first shot of the scene
+    after — pure arithmetic (no ffmpeg). sum(result) + sum(whip.values()) ==
+    sum(original durations): the bridge clips exactly replace what was borrowed, so
+    total video duration (and audio sync) never changes."""
+    durs = [float(s.duration_seconds) for s in shots]
+    if not whip:
+        return durs
+    groups = _group_shots_only(shots)
+    starts, idx = [], 0
+    for _sid, gshots in groups:
+        starts.append(idx)
+        idx += len(gshots)
+    for bi, whip_secs in whip.items():
+        half = whip_secs / 2.0
+        durs[starts[bi + 1] - 1] -= half
+        durs[starts[bi + 1]] -= half
+    return durs
+
+
+def _trim_clip_tail(src: Path, out_path: Path, new_duration: float) -> Path:
+    """Re-encode `src` shortened to `new_duration`s (frame-accurate — a stream-copy
+    `-c copy -t` would snap to the nearest keyframe, off by up to a GOP)."""
+    ff = _require_ffmpeg()
+    cmd = [ff, "-y", "-i", str(src), "-t", f"{max(0.04, new_duration):.4f}",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+           "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", str(out_path)]
+    _run(cmd)
+    return out_path
+
+
+def _trim_clip_head(src: Path, out_path: Path, skip_seconds: float) -> Path:
+    """Re-encode `src` with its first `skip_seconds` removed (accurate seek via
+    re-encode, not a stream-copy `-ss`/keyframe snap)."""
+    ff = _require_ffmpeg()
+    cmd = [ff, "-y", "-i", str(src), "-ss", f"{max(0.0, skip_seconds):.4f}",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+           "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", str(out_path)]
+    _run(cmd)
+    return out_path
+
+
+def _build_whip_bridge(prev_clip: Path, next_clip: Path, out_path: Path,
+                       seconds: float) -> Path:
+    """Comicz-style vertical whip-blur wipe: the last frame of `prev_clip` slides up
+    and blurs away with a brief white flash (fast, easing IN — accelerating), then
+    the first frame of `next_clip` slides up into place from below while the blur
+    eases back to 0 (easing OUT — decelerating). Built as a PNG-frame sequence via
+    PIL — a single ffmpeg boxblur/crop filter instance can't vary its radius/offset
+    per frame, but each frame here needs a different blur+offset — then encoded to
+    match the pipeline's h.264/yuv420p/30fps output so it splices into the concat
+    chain cleanly."""
+    from PIL import Image
+    ff = _require_ffmpeg()
+    tmp = out_path.parent / f"_whip_frames_{out_path.stem}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    last_png, first_png = tmp / "a.png", tmp / "b.png"
+    _run([ff, "-y", "-sseof", "-0.08", "-i", str(prev_clip), "-frames:v", "1", str(last_png)])
+    _run([ff, "-y", "-i", str(next_clip), "-frames:v", "1", str(first_png)])
+    img_a = Image.open(last_png).convert("RGB").resize((OUTPUT_W, OUTPUT_H))
+    img_b = Image.open(first_png).convert("RGB").resize((OUTPUT_W, OUTPUT_H))
+
+    n_frames = max(2, math.ceil(seconds * FPS) + 1)  # +1 safety margin — ffmpeg's
+    half = max(1, n_frames // 2)                      # trailing -t trims to `seconds`
+    max_shift = int(OUTPUT_H * 0.5)
+    max_blur = 22.0
+
+    def _vertical_smear(img: "Image.Image", blur: float) -> "Image.Image":
+        if blur <= 0.3:
+            return img
+        small_h = max(4, int(OUTPUT_H / (1 + blur)))
+        return img.resize((OUTPUT_W, small_h)).resize((OUTPUT_W, OUTPUT_H), Image.BILINEAR)
+
+    def _shift_up(img: "Image.Image", px: int) -> "Image.Image":
+        canvas = Image.new("RGB", (OUTPUT_W, OUTPUT_H))
+        canvas.paste(img, (0, -px))
+        if px > 0:
+            edge = img.crop((0, OUTPUT_H - 1, OUTPUT_W, OUTPUT_H)).resize((OUTPUT_W, px))
+            canvas.paste(edge, (0, OUTPUT_H - px))
+        return canvas
+
+    def _shift_from_below(img: "Image.Image", px: int) -> "Image.Image":
+        canvas = Image.new("RGB", (OUTPUT_W, OUTPUT_H))
+        canvas.paste(img, (0, px))
+        if px > 0:
+            edge = img.crop((0, 0, OUTPUT_W, 1)).resize((OUTPUT_W, px))
+            canvas.paste(edge, (0, 0))
+        return canvas
+
+    def _flash(img: "Image.Image", alpha: float) -> "Image.Image":
+        if alpha <= 0:
+            return img
+        white = Image.new("RGB", img.size, (255, 255, 255))
+        return Image.blend(img, white, min(1.0, alpha))
+
+    frames = []
+    for i in range(half):
+        t = (i + 1) / half
+        ease = t * t                                  # accelerating (nhanh dần)
+        frame = _shift_up(img_a, int(ease * max_shift))
+        frame = _vertical_smear(frame, ease * max_blur)
+        frames.append(_flash(frame, 0.35 * ease))
+    for i in range(n_frames - half):
+        t = (i + 1) / (n_frames - half)
+        ease = 1.0 - (1.0 - t) ** 2                    # decelerating (chậm dần)
+        px = int((1.0 - ease) * max_shift)
+        frame = _shift_from_below(img_b, px)
+        frame = _vertical_smear(frame, (1.0 - ease) * max_blur)
+        frames.append(_flash(frame, 0.35 * (1.0 - ease)))
+
+    for idx, fr in enumerate(frames):
+        fr.save(tmp / f"f_{idx:03d}.png")
+    cmd = [ff, "-y", "-framerate", str(FPS), "-i", str(tmp / "f_%03d.png"),
+           "-t", f"{seconds:.4f}",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+           "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", str(out_path)]
+    _run(cmd)
+    shutil.rmtree(tmp, ignore_errors=True)
+    return out_path
+
+
+def _assemble_with_whips(shots, groups, whip: dict[int, float], out_path: Path,
+                         outro_card: Path | None, outro_dur: float) -> Path:
+    """Splits the scene-clip timeline at the chosen whip boundaries into independent
+    runs, assembles each run with the UNCHANGED _assemble_groups (same xfade/hard-cut/
+    soft-edges/flash logic as without whips), then splices the runs back together with
+    a whip bridge clip at each split point instead of whatever transition would have
+    landed there. Concat is associative for same-codec clips, so this produces the
+    same output as a single _assemble_groups call except at the whip boundaries."""
+    tmp = out_path.parent / "_whip_bridges"
+    tmp.mkdir(parents=True, exist_ok=True)
+    shot_groups = _group_shots_only(shots)
+    adjusted_durs = _whip_borrowed_durations(shots, whip)
+
+    groups = [[sid, list(paths), 0.0] for sid, paths, _dur in groups]
+    idx = 0
+    for gi, (_sid, gshots) in enumerate(shot_groups):
+        n = len(gshots)
+        groups[gi][2] = sum(adjusted_durs[idx: idx + n])
+        idx += n
+
+    bridges: dict[int, Path] = {}
+    for bi, whip_secs in whip.items():
+        half = whip_secs / 2.0
+        last_shot, first_shot = shot_groups[bi][1][-1], shot_groups[bi + 1][1][0]
+        last_path, first_path = groups[bi][1][-1], groups[bi + 1][1][0]
+        bridges[bi] = _build_whip_bridge(
+            last_path, first_path, tmp / f"bridge_{bi:03d}.mp4", whip_secs)
+        groups[bi][1][-1] = _trim_clip_tail(
+            last_path, tmp / f"trim_tail_{bi:03d}.mp4",
+            float(last_shot.duration_seconds) - half)
+        groups[bi + 1][1][0] = _trim_clip_head(
+            first_path, tmp / f"trim_head_{bi:03d}.mp4", half)
+
+    runs: list[list] = [[]]
+    run_boundaries: list[int] = []
+    for i, g in enumerate(groups):
+        runs[-1].append(tuple(g))
+        if i in whip:
+            run_boundaries.append(i)
+            runs.append([])
+
+    run_clips: list[Path] = []
+    n_runs = len(runs)
+    for ri, run_groups in enumerate(runs):
+        run_out = tmp / f"run_{ri:03d}.mp4"
+        is_last = ri == n_runs - 1
+        _assemble_groups(
+            shots, run_groups, run_out,
+            outro_card=outro_card if is_last else None,
+            outro_dur=outro_dur if is_last else 0.0,
+            is_first_run=(ri == 0),
+        )
+        run_clips.append(run_out)
+
+    final_list: list[Path] = []
+    for ri, clip in enumerate(run_clips):
+        final_list.append(clip)
+        if ri < len(run_boundaries):
+            final_list.append(bridges[run_boundaries[ri]])
+    return _concat(final_list, out_path)
 
 
 def _scene_action_flags(shots) -> dict[int, bool]:
@@ -569,7 +813,7 @@ def _build_flash_clip(out_path: Path) -> Path:
     ff = _require_ffmpeg()
     from .shots import OUTPUT_W, OUTPUT_H
     cmd = [ff, "-y", "-f", "lavfi", "-i", f"color=c=white:s={OUTPUT_W}x{OUTPUT_H}:r={FPS}",
-           "-frames:v", "1", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           "-frames:v", "1", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
            "-pix_fmt", "yuv420p", str(out_path)]
     _run(cmd)
     return out_path
@@ -647,23 +891,18 @@ def _pad_audio_tail(audio_path: Path, extra_seconds: float, out_path: Path) -> P
 
 
 def _final_encode(
-    silent_video: Path, audio_mixed: Path, captions: Path, out_path: Path
+    silent_video: Path, audio_mixed: Path, out_path: Path
 ) -> Path:
+    # No caption burn-in (Master 2026-07-10: captioning moved to CapCut, out of pipeline).
     ff = _require_ffmpeg()
-    fonts_dir = Path(__file__).resolve().parent.parent.parent / "fonts"
-    # ffmpeg libavfilter strict parser rejects quoted paths in `subtitles=...` —
-    # use explicit `filename=` key with backslash-escaped colons/special chars.
-    sub_filter = f"subtitles=filename={_ffmpeg_escape(str(captions))}"
-    if fonts_dir.exists():
-        sub_filter += f":fontsdir={_ffmpeg_escape(str(fonts_dir))}"
     cmd = [
         ff, "-y",
         "-i", str(silent_video),
         "-i", str(audio_mixed),
-        "-vf", sub_filter,
         "-c:v", "libx264",
+        # crf 18: intermediate must out-quality final (double-encode chain)
         "-preset", "slow",
-        "-crf", "20",
+        "-crf", "18",
         "-profile:v", "high",
         "-level", "4.1",
         "-pix_fmt", "yuv420p",
@@ -678,17 +917,6 @@ def _final_encode(
     ]
     _run(cmd)
     return out_path
-
-
-def _ffmpeg_escape(path: str) -> str:
-    """Escape a path for use inside an ffmpeg filter argument.
-
-    Inside -vf the chars `\\`, `'`, `:`, `[`, `]`, `,` and `;` are special and
-    must be backslash-escaped. Spaces are fine. See ffmpeg-filters(1) "Escaping".
-    """
-    for ch in ("\\", "'", ":", "[", "]", ",", ";"):
-        path = path.replace(ch, "\\" + ch)
-    return path
 
 
 def _wav_duration(path: Path) -> float:

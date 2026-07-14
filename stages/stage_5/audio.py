@@ -1,4 +1,4 @@
-"""Mix TTS narration with optional background music + sidechain ducking."""
+"""Loudness-normalize TTS narration for video mux."""
 import os
 import shutil
 import subprocess
@@ -6,44 +6,27 @@ from pathlib import Path
 from typing import Callable
 
 
-MIX_FILTER = (
-    "[1:a]volume=0.22,aloop=loop=-1:size=2e+09[bgm];"
-    "[bgm][0:a]sidechaincompress=threshold=0.04:ratio=8:attack=5:release=250[ducked];"
-    "[ducked][0:a]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
-    "[mixed]loudnorm=I=-14:TP=-1.0:LRA=9[out]"
-)
-
-
 def mix_audio(
     tts_wav: Path,
-    bgm_path: Path | None,
     out_path: Path,
     *,
     progress: Callable[[str], None] | None = None,
 ) -> Path:
-    """Mix narration + BGM (with ducking + loudnorm); fall back to a TTS-only copy."""
+    """Loudnorm the TTS narration to broadcast level and write out_path."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if bgm_path is None or not Path(bgm_path).exists():
-        if progress:
-            progress(f"[stage5] no BGM — copying TTS to {out_path.name}")
-        shutil.copyfile(tts_wav, out_path)
-        return out_path
 
     ff = _require_ffmpeg()
     cmd = [
         ff, "-y",
         "-i", str(tts_wav),
-        "-i", str(bgm_path),
-        "-filter_complex", MIX_FILTER,
-        "-map", "[out]",
+        "-af", "loudnorm=I=-14:TP=-1.0:LRA=9",
         "-ac", "2",
         "-ar", "48000",
         "-c:a", "pcm_s16le",
         str(out_path),
     ]
     if progress:
-        progress(f"[stage5] mixing TTS + BGM (sidechain duck + loudnorm) → {out_path.name}")
+        progress(f"[stage5] loudnorm TTS → {out_path.name}")
     _run(cmd)
     return out_path
 

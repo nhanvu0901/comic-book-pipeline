@@ -1,6 +1,8 @@
 """Generate Advanced SubStation Alpha (.ass) word-by-word captions."""
 import re
 
+from config import CAPTION_FONT_SIZE, CAPTION_ALIGNMENT, CAPTION_MARGIN_V, CAPTION_OUTLINE
+
 
 WORDS_PER_CHUNK = 3
 MIN_CHUNK_DURATION = 0.18
@@ -9,7 +11,9 @@ MIN_CHUNK_DURATION = 0.18
 _SPOKEN_COLOR = "&H00FFFF&"   # yellow  — words already reached by the voice
 _UNSPOKEN_COLOR = "&Hffffff&"  # white   — words not yet spoken
 
-ASS_HEADER = """[Script Info]
+# ponytail: outline formatted with :g so the default (8.0) prints as "8",
+# byte-identical to the header before these knobs were parameterized.
+ASS_HEADER = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
@@ -17,7 +21,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ComicsUnlocked,Anton,84,&H00FFFFFF,&H00000000,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,8,0,2,60,60,300,1
+Style: ComicsUnlocked,Anton,{CAPTION_FONT_SIZE},&H00FFFFFF,&H00000000,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,{CAPTION_OUTLINE:g},0,{CAPTION_ALIGNMENT},60,60,{CAPTION_MARGIN_V},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

@@ -587,7 +587,7 @@ def assemble_art_video(
     bgm = _resolve_bgm(bg_music_path, enable_music, log)
     mix_audio(root / "audio.wav", bgm, mixed, progress=log)
     log(f"[assemble] final encode → {final_path.name}")
-    _final_encode(silent, mixed, captions, final_path)
+    _final_encode(silent, mixed, final_path)
     duration = _probe_duration(final_path)
     log(f"[assemble] done: {final_path} ({duration:.2f}s)")
     return AssemblyResult(final_path=str(final_path),

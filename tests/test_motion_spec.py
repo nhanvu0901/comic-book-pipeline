@@ -3,7 +3,8 @@
 Covers the pacing + amplitude spec:
   • sub-shot SPLIT of a long hold into competitor-cadence clips (durations sum EXACTLY),
   • the tightening framing cadence emitted per sub-shot (same scene_id, different framings),
-  • intro / outro stay a SINGLE deliberate shot (no split), un-mirrored intro, zoom_out outro,
+  • intro / outro stay a SINGLE deliberate shot (no split), un-mirrored intro, one-directional
+    zoom_in outro (the loop-close zoom_out is applied later by _close_loop, tested separately),
   • zoom amplitude never near-static (>= 0.06).
 The landscape smart-cover-crop is covered pixel-level in test_landscape_contain.py.
 """
@@ -106,11 +107,49 @@ def test_intro_single_shot_unmirrored_zoom_in(monkeypatch):
     assert intro[0].no_mirror is True                        # frame 1 never mirrored
 
 
-def test_outro_single_shot_zoom_out(monkeypatch):
+def test_outro_single_shot_one_directional(monkeypatch):
     by_scene = _shots_by_scene(monkeypatch)
     outro = by_scene[3]
     assert len(outro) == 1                                   # loop-close never splits
-    assert outro[0].motion == "zoom_out"                     # ends at z=1.0 (loop framing)
+    # Master 2026-07-11: the BUILDER no longer emits zoom_out — the outro is a one-directional
+    # zoom_in. The loop-close zoom_out is applied only by _close_loop (see test_outro_loop).
+    assert outro[0].motion == "zoom_in"
+
+
+# ── one-direction rule (Master 2026-07-11): zoom_out ONLY from the loop-close ────────────────
+def test_subshot_framings_never_contain_zoom_out():
+    # (c) the same-panel sub-shot cadence only ever deepens — never widens back out.
+    assert "zoom_out" not in _SUBSHOT_FRAMINGS
+
+
+def test_choose_motion_never_returns_zoom_out():
+    from stages.stage_5.shots import _choose_motion
+    for w, h in [(300, 600), (600, 300), (300, 300), (1100, 1700), (0, 0)]:
+        panel = {"bbox": {"x": 0, "y": 0, "w": w, "h": h}}
+        for seq in range(12):
+            assert _choose_motion(panel, 3.0, seq=seq) != "zoom_out"
+
+
+def test_no_normal_builder_shot_gets_zoom_out(monkeypatch):
+    # (a) every shot the BUILDER emits (intro/body/outro/whole-page) is one-directional.
+    by_scene = _shots_by_scene(monkeypatch)
+    for shs in by_scene.values():
+        for sh in shs:
+            assert sh.motion != "zoom_out", (sh.scene_id, sh.motion)
+
+
+def test_full_build_only_loopclose_shot_is_zoom_out(monkeypatch):
+    # (a)+(b): with SEAMLESS_LOOP on (default), the ONLY zoom_out in a finished video is the
+    # loop-close — the last shot, whose visual _close_loop clones onto the cold-open panel.
+    panel, narration, caption_chunks, scene_timings = _fixture()
+    monkeypatch.setattr(S, "_match_panels",
+                        lambda units, *a, **k: [(panel, "page_1.png")] * len(units))
+    monkeypatch.setattr(S, "SEAMLESS_LOOP", True)
+    built = S.build_shots(narration, scene_timings=scene_timings,
+                          caption_chunks=caption_chunks, pages_by_number={})
+    zo = [i for i, sh in enumerate(built) if sh.motion == "zoom_out"]
+    assert zo == [len(built) - 1]          # exactly one zoom_out, and it is the last shot
+    assert built[-1].motion == "zoom_out"  # loop-close kept intact
 
 
 # ── amplitude: never a freeze ────────────────────────────────────────────────

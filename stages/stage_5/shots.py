@@ -60,6 +60,7 @@ INPAINT_BUBBLE_TEXT = True
 # plain module attribute so art_pipeline/tests can still runtime-override
 # `shots.MIRROR_PANELS` directly.
 from config import MIRROR_PANELS  # noqa: F401  (env MIRROR_PANELS=true re-enables)
+from config import PANEL_UPSCALE, REALESRGAN_BIN, REALESRGAN_MODEL
 # Hints (in a panel's VLM description) that the art contains story-critical
 # readable text baked into the image — a gravestone, a sign, a nameplate. Mirroring
 # such a panel reverses the letters and breaks the reveal (e.g. the 'PETER'
@@ -107,13 +108,26 @@ def _prepare_corner_logo(logo_src, out_png: Path, *, width: int, alpha: float) -
         return None
 
 
-MOTION_CYCLE = ("zoom_in", "pan_down", "zoom_out", "pan_up", "pan_right")
+MOTION_CYCLE = ("zoom_in", "pan_down", "pan_up", "pan_right")  # no zoom_out — one-direction only (Master 2026-07-11)
 
 # Two strategies:
 #   "scene"          — one continuous Ken-Burns per scene (ComicsUnlocked: 4-5 shots, 10-30s each)
 #   "caption_chunk"  — one shot per caption chunk (TheComicCivilian: 35-40 shots, ~1.5s each,
 #                      visual changes EVERY time the on-screen text changes)
 SHOT_STRATEGY = "caption_chunk"
+
+# Seamless loop (default ON, 2026-07-09: Master wants loop for BOTH recap + Q&A — replay =
+# view): make the video's LAST frame close back onto the OPENING (cold-open) panel so
+# YouTube's auto-replay reads as a continuous loop (the strongest verified retention lever).
+# The recap matcher already reuses the cold-open panel for the is_outro scene, but the Q&A
+# locked builder bookends intro/outro with DIFFERENT subject panels (loop never closes) and
+# a no-outro narration doesn't close at all. _close_loop (a mode-agnostic post-step run LAST
+# on the final Shot list, after any subject-panel outro assignment — see build_shots) points
+# the LAST shot's VISUAL at the FIRST shot's; the outro's zoom_out ends at z=1.0 — exactly
+# where the intro's zoom_in starts — so the seam frame matches. Only panel/framing changes:
+# duration, caption, audio-sync, word_timestamps and caption timing are all untouched. Set
+# SEAMLESS_LOOP=0 to restore the old non-looping behavior.
+SEAMLESS_LOOP = os.getenv("SEAMLESS_LOOP", "1").strip().lower() not in ("0", "false", "no", "")
 
 SHOTS_PER_SCENE = 1            # used when SHOT_STRATEGY == "scene"
 SHOT_TARGET_SECONDS = 3.0   # ~1 panel / 3s — cuts were racing AHEAD of the narration
@@ -149,16 +163,25 @@ ZOOM_AMPLITUDE = float(os.getenv("ZOOM_AMPLITUDE", "0.06"))
 ZOOM_AMPLITUDE_ACTION = float(os.getenv("ZOOM_AMPLITUDE_ACTION", "0.13"))
 assert ZOOM_AMPLITUDE >= 0.06 and ZOOM_AMPLITUDE_ACTION >= 0.06, \
     "zoom amplitude < 0.06 reads as a frozen frame — raise ZOOM_AMPLITUDE(_ACTION)"
+# Pan crop-zoom, HELD CONSTANT during a pan (Master 2026-07-11). At 1.15 the viewport is
+# iw/1.15 wide → ~13% of the panel is "excess" for the camera to sweep across, a real
+# one-directional pan (ComicCut/Cosmo autopsy) instead of the old 3-6% near-static nudge. The
+# sweep is LINEAR (constant velocity, on/d — no ease) and ends EXACTLY on the far edge at the
+# last frame. Lower it for a shorter sweep, raise it for more travel (and a tighter crop).
+PAN_ZOOM = float(os.getenv("PAN_ZOOM", "1.15"))
+assert PAN_ZOOM > 1.0, "PAN_ZOOM must exceed 1.0 or a pan has no excess region to travel"
 # Any shot longer than this is split into ~SUBSHOT_TARGET_SECONDS hard-cut sub-shots on the
 # SAME panel (competitor cadence). Sub-shots sum EXACTLY to the original so scene_timings /
 # -shortest audio-sync (pipeline.assemble) is untouched.
 MAX_SHOT_SECONDS = float(os.getenv("MAX_SHOT_SECONDS", "9999"))  # Master 2026-07-05: giữ pacing cũ — split OFF by default (set ~2.6 to re-enable competitor pacing)
 SUBSHOT_TARGET_SECONDS = float(os.getenv("SUBSHOT_TARGET_SECONDS", "1.6"))
 # Sub-shot framing cadence on the same panel: each hard cut steps to a TIGHTER framing
-# (wide establish → face/upper-third → detail), all push-in so energy builds; a periodic
-# pull-back breaks monotony on long holds. push_top/push_detail render (in _zoompan_expr)
-# as a higher base-zoom framing centered up (faces) / near-center (detail).
-_SUBSHOT_FRAMINGS = ("zoom_in", "push_top", "push_detail", "zoom_out", "push_top", "push_detail")
+# (wide establish → face/upper-third → detail), ALL push-in so energy only builds — NEVER a
+# zoom_out pull-back (Master 2026-07-11: competitors go one direction; a zoom-in-then-out on the
+# same panel reads as indecision). push_top/push_detail render (in _zoompan_expr) as a higher
+# base-zoom framing centered up (faces) / near-center (detail); the cycle alternates the two
+# tight framings so a long hold stays varied without ever widening back out.
+_SUBSHOT_FRAMINGS = ("zoom_in", "push_top", "push_detail", "push_top", "push_detail")
 # push_top / push_detail base zoom (how tight the CUT lands) + vertical center fraction
 # (faces sit high → push_top frames the upper third). Sharp because the frame is 4×-upscaled.
 _SUBSHOT_TOP_ZOOM, _SUBSHOT_TOP_YC = 1.5, 0.34
@@ -167,7 +190,29 @@ _SUBSHOT_DETAIL_ZOOM, _SUBSHOT_DETAIL_YC = 1.8, 0.46
 # letterboxing shrinks the subject — the measured mid-video defect). Only a MORE extreme strip
 # (where a centered cover-crop would show a meaningless sliver) or a >2.5× blow-up falls back
 # to contain+blur. Env-tunable: lower it to letterbox more wide panels (keep more context).
-LANDSCAPE_COVER_MAX_ASPECT = float(os.getenv("LANDSCAPE_COVER_MAX_ASPECT", "1.2"))  # Master 2026-07-05: old contain+blur look by default (2.2 = cover-fill mode)
+LANDSCAPE_COVER_MAX_ASPECT = float(os.getenv("LANDSCAPE_COVER_MAX_ASPECT", "1.7"))  # raised 1.2→1.7 2026-07-12, R3 — panel ngang ≤1.7 giờ cover-crop thay vì contain+blur; A/B preview đã duyệt
+
+# ── MICRO_MOMENT_V2 render knobs (env; default = OLD behavior, byte-identical) ───────────────
+# All four default to the pre-v2 behavior; only a caller (answer_pipeline/micro) that SETS the
+# env changes anything. The recap/Q&A render is unaffected unless the env is set.
+#
+# SHOT_MAX_SECONDS (default 0 = OFF): when > 0, any built shot longer than this is TIME-SPLIT
+# (post-build, EVERY builder path) into consecutive fragments on the SAME panel, each ≤ the cap,
+# cycling motion/crop-window (see _SUBSHOT_FRAMINGS) so a long hold reads as a moving cut, never
+# a freeze. Durations sum EXACTLY to the original — captions/audio ride word_timestamps, not the
+# shot count, so -shortest sync is untouched. Competitor autopsy: their shots are 2.5-3.8s; ours
+# held ~9s (freeze). Micro sets ~3.5.
+SHOT_MAX_SECONDS = float(os.getenv("SHOT_MAX_SECONDS", "0"))
+# When SHOT_MAX_SECONDS is active AND the loop is on, keep _close_loop's opening-panel echo to a
+# SHORT tail (this many seconds) instead of a full ≤cap hold — the seam is a quick replay-cue,
+# and the opening panel must not eat a chunk of a 35-60s micro Short (intro < ~15% runtime).
+LOOP_TAIL_SECONDS = float(os.getenv("LOOP_TAIL_SECONDS", "1.8"))
+# PANEL_FIT_MODE (default "contain" = OLD): "fill" cover-crops a LANDSCAPE panel to fill the 9:16
+# frame (center-weighted, sides cropped) instead of the contain+blur letterbox. Exceptions keep
+# contain: a panel with critical baked text (_panel_has_critical_text, threaded via Shot.keep_contain)
+# and a too-flat strip where the crop would discard > FILL_MAX_AREA_LOSS of the panel (logged).
+PANEL_FIT_MODE = os.getenv("PANEL_FIT_MODE", "contain").strip().lower()
+FILL_MAX_AREA_LOSS = float(os.getenv("FILL_MAX_AREA_LOSS", "0.60"))
 
 # ── Pure-vector matcher (2026-06-26, validated: cosine on the richer panel embed beats
 # the lexical hybrid — the embed already encodes chars/dialog/emotion, so lexical
@@ -287,6 +332,48 @@ def _apply_review_locks(narration: dict, project: str) -> None:
         print(f"[stage5] review-gate: applied {applied} panel lock(s) from review/locks.json")
 
 
+def _apply_micro_locks(narration: dict, locks: dict) -> None:
+    """Override micro_moment visual-beat PINS in-memory from review/locks.json, BEFORE the
+    (unchanged) _build_shots_per_chunk builder runs — so the writer-picks-panel flow simply
+    reads Master's approved (page, panel) via _vb_pin. Keys (review_gate.build_candidates):
+      • "<sid>:<frag_idx>" → set scene <sid>'s visual_beats[frag_idx] {"page","panel"}
+      • "<sid>"            → set EVERY dict fragment of scene <sid> to the lock's first panel
+    The "intro" key is handled by build_shots (→ narration.cold_open_lock), not here. Each lock
+    uses its FIRST panel (a micro fragment is a single-select). No-op on unmatched/empty keys."""
+    from ..review_gate import lock_panels
+    scenes = narration.get("scenes") or []
+    by_id = {int(s.get("scene_id") or i): s for i, s in enumerate(scenes, start=1)}
+    applied = 0
+    for key, lock in locks.items():
+        if key == "intro":
+            continue
+        panels = lock_panels(lock)
+        if not panels:
+            continue
+        pg, pn = int(panels[0]["page"]), int(panels[0]["panel"])
+        sid_s, _, frag_s = str(key).partition(":")
+        try:
+            sc = by_id.get(int(sid_s))
+        except ValueError:
+            continue
+        vbs = (sc or {}).get("visual_beats") or []
+        if frag_s:   # "<sid>:<frag_idx>" — one fragment
+            try:
+                fi = int(frag_s)
+            except ValueError:
+                continue
+            if 0 <= fi < len(vbs) and isinstance(vbs[fi], dict):
+                vbs[fi]["page"], vbs[fi]["panel"] = pg, pn
+                applied += 1
+        else:        # "<sid>" — whole scene: every dict fragment (rare; usually none)
+            for b in vbs:
+                if isinstance(b, dict):
+                    b["page"], b["panel"] = pg, pn
+                    applied += 1
+    if applied:
+        print(f"[stage5] review-gate: applied {applied} micro visual-beat lock(s) from review/locks.json")
+
+
 def build_shots(
     narration: dict,
     *,
@@ -306,33 +393,179 @@ def build_shots(
     """
     if project:
         _apply_review_locks(narration, project)
-    # Q&A (answer_research) WITH review locks: render at CAPTION-CHUNK granularity but restrict
-    # each chunk's candidate panels to its scene's Master-locked set (so all 2-5 locked panels
-    # per beat actually appear, spread across the beat's chunks). _qa_locks returns {} for every
-    # recap project and for a Q&A project with no locks → the paths below are unchanged (recap is
-    # byte-for-byte identical).
+    # Review locks reach the render mode-specifically (Master 2026-07-14 — review-lock is now a
+    # HARD GATE for ALL modes, panels chosen after narrate):
+    #   • Q&A (answer_research)     → the legacy chunk-locked builder (unchanged, via _qa_locks).
+    #   • recap WITH body locks     → the SAME chunk-locked builder so all 2-5 locked panels per
+    #                                 scene appear (its Q&A-only subject-bookend is auto-skipped).
+    #   • micro_moment WITH locks   → override the writer's visual-beat pins in-memory, then the
+    #                                 UNCHANGED per-chunk builder reads them via _vb_pin.
+    #   • "intro" lock (recap+micro) → narration.cold_open_lock, honored by the cold-open scorer.
+    # No locks → every path below is byte-for-byte identical to before (recap/micro unaffected).
+    mode = str(narration.get("mode") or "")
+    micro = mode == "micro_moment"
+    try:
+        from ..review_gate import _plot_source, lock_panels
+        qa = bool(project) and _plot_source(project) == "answer_research"
+    except Exception:
+        qa, lock_panels = False, None
     qa_locks = _qa_locks(project)
+    review_locks = _review_locks(project) if project else {}
+    if review_locks and not qa and lock_panels is not None:
+        intro_lock = lock_panels(review_locks.get("intro"))
+        if intro_lock:
+            narration["cold_open_lock"] = [int(intro_lock[0]["page"]), int(intro_lock[0]["panel"])]
+        if micro:
+            _apply_micro_locks(narration, review_locks)
+    recap_locked = bool(
+        review_locks and not micro and not qa
+        and caption_chunks and pages_by_number is not None and lock_panels is not None
+        and any(lock_panels(lk) for kk, lk in review_locks.items() if kk != "intro")
+    )
     if qa_locks and caption_chunks and pages_by_number is not None:
-        return _build_shots_per_chunk_locked(
+        shots = _build_shots_per_chunk_locked(
             narration, caption_chunks, pages_by_number, scene_timings or [],
             locks=qa_locks, cluster_to_name=cluster_to_name or {}, project=project,
+        )
+    elif recap_locked:
+        # recap with Master-locked panels: the "intro" key is ignored by the builder (no scene_id
+        # matches it) — it was already folded into cold_open_lock above.
+        shots = _build_shots_per_chunk_locked(
+            narration, caption_chunks, pages_by_number, scene_timings or [],
+            locks=review_locks, cluster_to_name=cluster_to_name or {}, project=project,
         )
     # (legacy) Q&A sentence path: when the headless sentence-match step has written
     # review/sentence_panels.json, drive one shot PER NARRATION SENTENCE from it. Kept as a
     # fallback for a Q&A project that somehow has that file but no locks; the chunk-locked path
     # above supersedes it for every approved Q&A project.
-    sentence_panels = _load_sentence_panels(project)
-    if sentence_panels is not None and pages_by_number is not None:
-        return _build_shots_per_sentence(
+    elif (sentence_panels := _load_sentence_panels(project)) is not None and pages_by_number is not None:
+        shots = _build_shots_per_sentence(
             narration, sentence_panels, pages_by_number, scene_timings or [],
             cluster_to_name=cluster_to_name or {}, project=project,
         )
-    if SHOT_STRATEGY == "caption_chunk" and caption_chunks and pages_by_number is not None:
-        return _build_shots_per_chunk(
+    elif SHOT_STRATEGY == "caption_chunk" and caption_chunks and pages_by_number is not None:
+        shots = _build_shots_per_chunk(
             narration, caption_chunks, pages_by_number, scene_timings or [],
+            word_timestamps=word_timestamps,
             cluster_to_name=cluster_to_name or {}, project=project,
         )
-    return _build_shots_per_scene(narration, scene_timings, word_timestamps)
+    else:
+        shots = _build_shots_per_scene(narration, scene_timings, word_timestamps)
+
+    # SHOT_MAX_SECONDS (micro_moment v2): cap held shots so no panel freezes. No-op (returns the
+    # list unchanged) when the knob is 0 → byte-identical to the old behavior. Runs BEFORE
+    # _close_loop so the loop-clone lands on the FINAL fragment (a short ~LOOP_TAIL_SECONDS tail).
+    #
+    # FRAGMENT/MICRO GATE (Master 2026-07-11, ComicCut autopsy): 1 beat = 1 panel = 1 CONTINUOUS
+    # shot — a panel is held up to ~5s with one-direction motion, NEVER hard-cut mid-panel. The
+    # fragment builder (_fragment_units) already emits one unit per clause at exactly that
+    # granularity, so time-splitting a held fragment would only re-chop it into sub-shots that
+    # SHARE the caption + panel ("1 scene hiện nhiều lần"). Force it off for micro_moment; every
+    # other mode still honors SHOT_MAX_SECONDS via env (recap/Q&A byte-identical when unset).
+    shots = _time_split_shots(shots, 0.0 if micro else SHOT_MAX_SECONDS,
+                              loop_tail=LOOP_TAIL_SECONDS if SEAMLESS_LOOP else 0.0)
+    if SEAMLESS_LOOP:
+        _close_loop(shots)
+    return shots
+
+
+def _plan_split_durations(dur: float, max_seconds: float, tail: float = 0.0) -> list[float]:
+    """Split `dur` into fragments each ≤ max_seconds, summing EXACTLY to `dur`.
+    `tail` > 0 reserves a final fragment of ~tail seconds (for the loop-close clone) and
+    even-splits the rest; tail == 0 → all fragments roughly equal (last absorbs rounding).
+    Returns [dur] when a single fragment already fits and no tail is requested."""
+    import math
+    if tail > 0.0 and dur > tail + 1e-6:
+        return _plan_split_durations(dur - tail, max_seconds) + [round(tail, 3)]
+    if dur <= max_seconds + 1e-6:
+        return [round(dur, 3)]
+    n = max(2, math.ceil(dur / max_seconds - 1e-6))
+    step = round(dur / n, 3)
+    durs = [step] * (n - 1)
+    durs.append(round(dur - step * (n - 1), 3))   # last absorbs the remainder → exact sum
+    return durs
+
+
+def _time_split_shots(shots: list[Shot], max_seconds: float, *, loop_tail: float = 0.0) -> list[Shot]:
+    """SHOT_MAX_SECONDS: split any shot longer than `max_seconds` into consecutive fragments on
+    the SAME panel (same page/bbox/source/text_bboxes/no_mirror/is_intro/beat_id), each ≤ the cap,
+    cycling motion through _SUBSHOT_FRAMINGS so the held panel never freezes. shot_ids are
+    renumbered contiguously (fragments would otherwise collide on shot_NNN.mp4). Fragments keep
+    the ORIGINAL scene_id so _group_shots_by_scene treats them as sub-shots (hard-cut between
+    them, transition only between scenes) — same mechanism as the existing MAX_SHOT_SECONDS
+    sub-shots. `loop_tail` > 0 makes the LAST shot's final fragment ~loop_tail seconds so the
+    subsequent _close_loop echo is a short tail. No-op (returns the input list unchanged) when
+    max_seconds <= 0 AND loop_tail <= 0 → byte-identical to the old behavior. When max_seconds
+    <= 0 but loop_tail > 0 (micro_moment + SEAMLESS_LOOP), no shot is time-split for length —
+    only the LAST shot is carved into [head, tail] on the SAME panel so the loop still gets its
+    short echo tail without re-chopping every held panel (see FRAGMENT/MICRO GATE above)."""
+    from dataclasses import replace
+    if max_seconds <= 0:
+        if loop_tail <= 0 or not shots:
+            return shots
+        last = shots[-1]
+        dur = float(last.duration_seconds)
+        if dur < 0.5:
+            return shots
+        tail_eff = round(min(loop_tail, dur * 0.6), 3)
+        head = round(dur - tail_eff, 3)
+        out = list(shots[:-1])
+        for k, d in enumerate((head, tail_eff)):
+            out.append(replace(
+                last, shot_id=len(shots) - 1 + k, duration_seconds=d,
+                panel_bbox=dict(last.panel_bbox),
+                text_bboxes=list(getattr(last, "text_bboxes", None) or []),
+            ))
+        return out
+    tail = min(loop_tail, max_seconds) if loop_tail > 0 else 0.0
+    out: list[Shot] = []
+    nid = 0
+    last_i = len(shots) - 1
+    for i, s in enumerate(shots):
+        want_tail = tail if (i == last_i and tail > 0.0) else 0.0
+        durs = _plan_split_durations(float(s.duration_seconds), max_seconds, want_tail)
+        for k, d in enumerate(durs):
+            motion = s.motion if len(durs) == 1 else _SUBSHOT_FRAMINGS[k % len(_SUBSHOT_FRAMINGS)]
+            out.append(replace(
+                s, shot_id=nid, duration_seconds=d, motion=motion,
+                panel_bbox=dict(s.panel_bbox),
+                text_bboxes=list(getattr(s, "text_bboxes", None) or []),
+            ))
+            nid += 1
+    return out
+
+
+def _close_loop(shots: list[Shot]) -> None:
+    """SEAMLESS_LOOP: point the final shot's VISUAL at the first (cold-open) shot's so the
+    video ends where it began → YouTube auto-replay reads as a seamless loop. Only the panel
+    /framing is cloned; the last shot keeps its own duration + caption (audio sync untouched).
+    Motion is forced to zoom_out, which ends at z=1.0 == the intro zoom_in's first frame → the
+    seam frame matches. No-op unless the first shot is the cold-open (is_intro) and there are
+    >=2 shots.
+
+    Call this AFTER the builder has fully assigned every shot (see build_shots: it runs as the
+    LAST step on the finished list) so it wins any earlier bookend assignment. In particular
+    the Q&A locked builder (_build_shots_per_chunk_locked) points the outro scene at a subject
+    panel (e.g. subject_seq[QA_INTRO_SUBJECT_PANELS], the "next unused" subject panel after the
+    intro's); with the loop on, this clone OVERWRITES that outro subject panel with the intro's
+    cold-open panel instead. That is the desired behavior, not a bug — the last frame must match
+    the first frame for the loop seam, so the subject-outro panel simply never renders when
+    SEAMLESS_LOOP is on.
+
+    ponytail: assumes the last shot is the outro/closing line (our writer always emits one); a
+    video with no outro + SEAMLESS_LOOP on would show the opening panel under its final line —
+    opt-in only, documented. 2026-07-13: the title banner no longer burns (moved to title.txt),
+    so the seam now matches the intro frame exactly."""
+    if len(shots) < 2 or not getattr(shots[0], "is_intro", False):
+        return
+    first, last = shots[0], shots[-1]
+    if first is last:
+        return
+    last.panel_bbox = dict(first.panel_bbox)
+    last.source_image = first.source_image
+    last.text_bboxes = list(getattr(first, "text_bboxes", None) or [])
+    last.no_mirror = getattr(first, "no_mirror", False)
+    last.motion = "zoom_out"
 
 
 def _build_shots_per_scene(
@@ -439,12 +672,35 @@ def _chunks_grouped_by_scene(
     return groups
 
 
+def _vb_text(b) -> str:
+    """A visual-beat's narration words. WRITER-PICKS-PANEL (micro_moment) beats are
+    {"text","page","panel"} dicts; recap/legacy beats are plain strings — either way return
+    the text."""
+    return str(b.get("text", "")).strip() if isinstance(b, dict) else str(b).strip()
+
+
+def _vb_pin(b) -> tuple[int, int] | None:
+    """The (page, panel) a visual-beat dict pins for WRITER-PICKS-PANEL, else None (string
+    beat / no pin / malformed). ONLY micro_moment emits dict beats with pins; recap/Q&A beats
+    are strings → always None → every unit flows through the matcher (byte-identical path)."""
+    if not isinstance(b, dict):
+        return None
+    pg, pn = b.get("page"), b.get("panel")
+    if pg is None or pn is None:
+        return None
+    try:
+        return int(pg), int(pn)
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_shots_per_chunk(
     narration: dict,
     caption_chunks: list[dict],
     pages_by_number: dict[int, dict],
     scene_timings: list[dict],
     *,
+    word_timestamps: list[dict] | None = None,
     cluster_to_name: dict[int, str] | None = None,
     project: str | None = None,
 ) -> list[Shot]:
@@ -459,39 +715,102 @@ def _build_shots_per_chunk(
     # ── Narration-driven panel matching ─────────────────────────────────────
     # Flatten the scenes into ordered narration UNITS (one per visual beat), then
     # match each unit to its best-content panel via _match_panels.
-    units: list[tuple[dict, list, str]] = []   # (scene, slice_members, match_text)
+    units: list[tuple[dict, list, str, tuple | None]] = []   # (scene, slice_members, match_text, pin)
     for scene, members in groups:
         scene_text = str(scene.get("text", "") or "")
         if scene.get("is_intro") or scene.get("is_outro"):
-            clause_texts, slices = [scene_text], [members]
+            clause_texts, slices, pins = [scene_text], [members], [None]
         else:
             # Panel changes track the narration's SEMANTIC subject, NOT audio time-slices.
             # A scene with real visual_beats (multiple drawn moments) → one panel per beat;
             # a single-subject scene → ONE panel held for the whole sentence (the design's
             # "hold-while-same-subject"). No time-split: a panel changing faster than the
             # narration outruns it (Master, Doom 2026-06-27).
-            beats = [str(c).strip() for c in (scene.get("visual_beats") or []) if str(c).strip()]
-            if len(beats) > 1:
-                buckets = _split_members_by_clause(members, beats)
-                pairs = [(c, b) for c, b in zip(beats, buckets) if b] or [(scene_text, members)]
-                clause_texts = [c for c, _ in pairs]
-                slices = [b for _, b in pairs]
+            # WRITER-PICKS-PANEL: a beat may be a {"text","page","panel"} dict (micro_moment)
+            # that pins the exact panel; recap/Q&A beats are strings → pin is None → matcher.
+            raw_beats = scene.get("visual_beats") or []
+            beats = [_vb_text(c) for c in raw_beats if _vb_text(c)]
+            beat_pins = [_vb_pin(c) for c in raw_beats if _vb_text(c)]
+            # PLAN A (micro_moment): when the writer PINNED a panel per beat AND word_timestamps
+            # are available, make each fragment its OWN unit — caption = the verbatim fragment,
+            # span = the fragment's word-timed slice. The old _split_members_by_clause path
+            # buckets ~7-word caption CHUNKS whose boundaries never fall on a clause edge, so a
+            # pinned quote gets torn across two panels; aligning to words restores the 1:1 map.
+            # Gate: fires only for dict beats carrying a page (micro) WITH word_timestamps →
+            # recap/Q&A (string beats) and any run without word_timestamps keep the old path.
+            frag_pinned = any(isinstance(b, dict) and b.get("page") for b in raw_beats)
+            if frag_pinned and word_timestamps and len(beats) > 1:
+                clause_texts, slices, pins = _fragment_units(
+                    beats, beat_pins, members, word_timestamps)
+            elif len(beats) > 1:
+                buckets = _split_members_by_clause(members, beats)   # takes clause TEXTS
+                triples = [(c, b, p) for c, b, p in zip(beats, buckets, beat_pins) if b] \
+                    or [(scene_text, members, None)]
+                clause_texts = [c for c, _b, _p in triples]
+                slices = [b for _c, b, _p in triples]
+                pins = [p for _c, _b, p in triples]
             else:
-                clause_texts, slices = [scene_text], [members]   # one held panel per scene
-        for ct, sl in zip(clause_texts, slices):
+                # one held panel per scene; a single pinned micro beat still pins that panel.
+                clause_texts, slices = [scene_text], [members]
+                pins = [_vb_pin(raw_beats[0]) if raw_beats else None]
+        for ct, sl, pin in zip(clause_texts, slices, pins):
             spoken = " ".join(str(m[0]) for m in sl).strip() or ct
-            units.append((scene, sl, spoken))
+            units.append((scene, sl, spoken, pin))
 
-    assigned = _match_panels(
-        [(sc, txt) for sc, _sl, txt in units],
-        pages_by_number or {}, cluster_to_name or {}, project=project,
-    )
+    # PIN-DUP MERGE (Master 2026-07-11): the writer occasionally PINS two CONSECUTIVE fragments to
+    # the SAME (page,panel) — two clauses about one drawn moment. Rendered as-is that is two
+    # back-to-back shots on an identical crop (a repeated panel; the ComicCut autopsy shows zero
+    # consecutive-repeat panels). Collapse each same-pin run into ONE unit (members + caption + dur
+    # joined) → one panel, one continuous shot. Fires ONLY for equal, NON-None pins in the SAME
+    # scene, so recap/Q&A units (pin=None) and any pin CHANGE are untouched — the matcher path is
+    # never involved.
+    if any(pin is not None for _s, _sl, _sp, pin in units):
+        merged_units: list = []
+        for u in units:
+            prev = merged_units[-1] if merged_units else None
+            if prev is not None and u[3] is not None and prev[3] == u[3] and prev[0] is u[0]:
+                merged_units[-1] = (prev[0], prev[1] + u[1],
+                                    f"{prev[2]} {u[2]}".strip(), prev[3])
+            else:
+                merged_units.append(u)
+        units = merged_units
+
+    # WRITER-PICKS-PANEL: a unit whose beat pinned a valid (page,panel) is assigned that panel
+    # DIRECTLY (the writer authored the 1:1 narration↔panel map, so skip the cosine matcher for
+    # it). Unpinned units — and a pin to a panel not in the pool — flow through the normal
+    # content matcher. Recap/Q&A beats are strings → every pin is None → matcher_units == units
+    # in original order → _match_panels sees exactly the old input → byte-identical output.
+    pool_by_key: dict | None = None
+    assigned: list = [None] * len(units)
+    matcher_idx: list[int] = []
+    matcher_units: list[tuple[dict, str]] = []
+    for idx, (scene, _sl, spoken, pin) in enumerate(units):
+        if pin is not None:
+            if pool_by_key is None:
+                pool_by_key = {key: (panel, src)
+                               for key, panel, src, _tb in _panel_pool(pages_by_number or {})}
+            hit = pool_by_key.get(pin)
+            if hit is not None:
+                assigned[idx] = hit
+                continue
+            print(f"[stage5] micro: visual-beat pin p{pin[0]}/{pin[1]} not in panel pool "
+                  f"— matcher fallback")
+        matcher_idx.append(idx)
+        matcher_units.append((scene, spoken))
+    if matcher_units:
+        matched = _match_panels(matcher_units, pages_by_number or {}, cluster_to_name or {},
+                                project=project, narration=narration)
+        for k, idx in enumerate(matcher_idx):
+            assigned[idx] = matched[k]
 
     shots: list[Shot] = []
     shot_id = 0
     audit_whole = []
     seq = 0   # per-UNIT motion-rotation counter — variety BETWEEN scenes for single shots
-    for (scene, slice_members, _spoken), (panel, source_image) in zip(units, assigned):
+    # micro_moment fills the 9:16 frame (cover-crop landscape) rather than contain+blur, gated by
+    # the narration's own mode — no env needed; guards live in _should_blur_bg.
+    fit_fill = str(narration.get("mode") or "") == "micro_moment"
+    for (scene, slice_members, _spoken, _pin), (panel, source_image) in zip(units, assigned):
         slice_dur = sum(m[2] for m in slice_members)
         is_intro = bool(scene.get("is_intro"))
         is_outro = bool(scene.get("is_outro"))
@@ -518,6 +837,7 @@ def _build_shots_per_chunk(
         # gains nothing from the flip's dedup purpose anyway (there is no earlier frame).
         no_mirror = (panel is None or is_whole
                      or _panel_has_critical_text(panel) or is_intro)
+        keep_contain = _panel_has_critical_text(panel)
 
         def _emit(dur: float, motion: str) -> None:
             nonlocal shot_id
@@ -525,15 +845,17 @@ def _build_shots_per_chunk(
                 shot_id=shot_id, scene_id=scene_id, duration_seconds=dur,
                 panel_bbox=dict(panel_bbox), source_image=source_image, motion=motion,
                 text_bboxes=text_bboxes, caption_text=caption_text,
-                no_mirror=no_mirror, is_intro=is_intro,
+                no_mirror=no_mirror, keep_contain=keep_contain, is_intro=is_intro,
+                fit_fill=fit_fill,
             ))
             shot_id += 1
 
-        # Intro (cold-open hook, epic zoom_in), outro (LOOP-CLOSE — zoom_out ENDS at z=1.0
-        # centered on the opening panel), and whole-page (slow reveal) are each ONE deliberate
-        # framing: never sub-split, never reframed.
+        # Intro (cold-open hook), outro, and whole-page (slow reveal) are each ONE deliberate
+        # framing: never sub-split, never reframed. All get a one-directional zoom_in — the
+        # loop-close zoom_out is applied ONLY by _close_loop (post-build), so no normal shot
+        # ever pulls back (Master 2026-07-11).
         if is_intro or is_outro or is_whole:
-            _emit(max(0.4, slice_dur), "zoom_in" if is_intro else "zoom_out")
+            _emit(max(0.4, slice_dur), "zoom_in")
             seq += 1
             continue
         if panel is None:
@@ -565,23 +887,40 @@ def _build_shots_per_chunk(
 # same-scene neighbor). Sub-1s hard-cut Ken-Burns shots read as "jump like crazy" (Master v3).
 QA_MIN_SHOT_SECONDS = float(os.getenv("QA_MIN_SHOT_SECONDS", "1.5"))
 
+# How many top-ranked subject panels the Q&A intro cycles through (multi-panel hook of
+# the QUESTION'S subject character). The outro then uses the next unused subject panel.
+QA_INTRO_SUBJECT_PANELS = max(1, int(os.getenv("QA_INTRO_SUBJECT_PANELS", "3")))
 
-def _qa_locks(project: str | None) -> dict:
-    """GATE for the Q&A chunk-level locked render. Returns the per-scene locks map
-    ({"<scene_id>": lock_dict}) ONLY for an answer_research (Q&A) project whose
-    review/locks.json carries >=1 locked panel. Every recap project, and a Q&A project
-    with no locks yet, returns {} → build_shots keeps its unchanged per-chunk / per-scene
-    path. Never raises (a missing/unreadable project → {})."""
+
+def _review_locks(project: str | None) -> dict:
+    """The per-key locks map ({"<key>": lock_dict}) from review/locks.json for ANY mode, or {}
+    when the project is missing / has no lock with >=1 panel. Keys are "<scene_id>" (recap/Q&A
+    scene rows), "<scene_id>:<frag_idx>" (micro fragment rows), or "intro" (cold-open row) — see
+    review_gate.build_candidates. Never raises. This is the mode-agnostic reader; _qa_locks is the
+    answer_research-only wrapper that gates the legacy Q&A locked path."""
     if not project:
         return {}
     try:
-        from ..review_gate import _plot_source, load_state, lock_panels
-        if _plot_source(project) != "answer_research":
-            return {}
+        from ..review_gate import load_state, lock_panels
         locks = (load_state(project) or {}).get("locks") or {}
     except Exception:
         return {}
     return locks if any(lock_panels(lk) for lk in locks.values()) else {}
+
+
+def _qa_locks(project: str | None) -> dict:
+    """GATE for the Q&A chunk-level locked render. Returns _review_locks ONLY for an
+    answer_research (Q&A) project (else {}), so the Q&A locked builder path is byte-identical to
+    before this became a wrapper — recap/micro never route through it. Never raises."""
+    if not project:
+        return {}
+    try:
+        from ..review_gate import _plot_source
+        if _plot_source(project) != "answer_research":
+            return {}
+    except Exception:
+        return {}
+    return _review_locks(project)
 
 
 def _qa_drawable_moments(project: str | None, pages_by_number: dict[int, dict],
@@ -752,6 +1091,60 @@ def _qa_subject_panels(locked_cands: dict) -> list[tuple]:
     return [(panel, src) for (_area, panel, src) in out]
 
 
+def _qa_subject_sequence(project: str | None, entry_by_key: dict,
+                         exclude: set) -> list[tuple]:
+    """Ranked subject panels from projects/<slug>/subject_panels.json (built at preprocess
+    from the question's derived subject), resolved to (panel, src) via the reading-order
+    pool, score-best first, SKIPPING any panel already locked to a body beat (no-reuse) and
+    any not present in the pool. [] when the file is missing/empty → the caller falls back
+    to _qa_subject_panels. Never raises. This is the PRE-RANKED source the Q&A bookends
+    prefer; _qa_subject_panels (recurring-name over locked panels) is the legacy fallback.
+
+    EXCEPTION to no-reuse: a row flagged `force_intro: true` (set by the money-shot funnel's
+    `_pin_money_intro` on the confirmed payoff panel) is NEVER dropped by `exclude`, even when
+    it's also locked to a body beat — the ComicCut hook formula: the money/payoff panel is
+    ALLOWED to spoiler the intro AND still play out in its body beat. `_pin_money_intro`
+    inserts that row FIRST, so it naturally comes out first here too.
+
+    FRAME-1 GATE (R2 2026-07-12): the returned order is force_intro-money > clean subject panels
+    > the rest, so the bookend (esp. the frame-1 pick, subject_seq[0]) is NEVER a wide letterboxed
+    strip or a tiny inset (batcave's manual row[0] p86/0 = 1920×860 aspect 2.23 → contain+blur
+    band was the measured 3s swipe-away opener). A `force_intro` money panel STAYS first (money-bind
+    beats the gate, matching _cold_open_panel's precedence); Master's manual ordering is preserved
+    WITHIN each group. When every subject panel would letterbox/is tiny, the original ranked order is
+    returned unchanged (byte-identical fallback). Gate here covers letterbox + tiny only (no page_tb
+    for the bubble check); use COLD_OPEN_LOCK to force a specific frame-1 regardless."""
+    if not project:
+        return []
+    try:
+        from ..subject_panels import load_subject_panels
+        ranked = (load_subject_panels(project) or {}).get("panels") or []
+    except Exception:
+        return []
+    forced: list[tuple] = []   # force_intro money panels (gate-exempt, keep front)
+    clean: list[tuple] = []    # gate-passing subject panels (good frame-1)
+    dirty: list[tuple] = []    # letterbox / tiny subject panels (last resort)
+    seen: set = set()
+    for row in ranked:
+        try:
+            key = (int(row["page"]), int(row["panel"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if key in seen or key not in entry_by_key:
+            continue
+        if key in exclude and not row.get("force_intro"):
+            continue
+        seen.add(key)
+        entry = entry_by_key[key]
+        if row.get("force_intro"):
+            forced.append(entry)
+        elif _cold_open_gate_ok(entry[0], int(entry[0].get("_page_area", 0) or 0)):
+            clean.append(entry)
+        else:
+            dirty.append(entry)
+    return forced + clean + dirty
+
+
 def _build_shots_per_chunk_locked(
     narration: dict,
     caption_chunks: list[dict],
@@ -807,21 +1200,45 @@ def _build_shots_per_chunk_locked(
     fb_scenes = [sc for sid, sc in scenes_by_id.items() if sid not in locked_cands]
     fb_units = [(sc, str(sc.get("text", "") or "")) for sc in fb_scenes]
     fb_assigned = (_match_panels(list(fb_units), pages_by_number or {},
-                                 cluster_to_name or {}, project=project) if fb_units else [])
+                                 cluster_to_name or {}, project=project, narration=narration)
+                   if fb_units else [])
     fb_pair = {int(sc.get("scene_id") or 0): pair for (sc, _t), pair in zip(fb_units, fb_assigned)}
 
-    # Intro/outro should feature the QUESTION'S subject (the villain/character the
-    # whole video is about — "Doctor Doom"), not whatever splash the free matcher liked
-    # (it kept picking a Storm spectacle panel). The subject is the name recurring across
-    # Master's locked panels (every answer beat shows it being beaten); bookend the video
-    # with the biggest subject-featuring LOCKED panel (Master-approved, on-subject).
-    subj_panels = _qa_subject_panels(locked_cands)
-    if subj_panels:
-        io_sids = sorted(sid for sid, sc in scenes_by_id.items()
-                         if sc.get("is_intro") or sc.get("is_outro"))
-        for i, sid in enumerate(io_sids):
-            panel, src = subj_panels[min(i, len(subj_panels) - 1)]
-            fb_pair[sid] = (panel, src)
+    # Intro/outro should feature the QUESTION'S subject (the character the whole video is
+    # about — "Juggernaut"), not whatever splash the free matcher liked. NEW path: the
+    # pre-ranked subject_panels.json (built at preprocess from the question's subject) →
+    # a MULTI-PANEL subject intro (top-N) + a subject outro. When that file is absent
+    # (old projects), fall back to the legacy single-panel bookend from the recurring-
+    # name-over-locked-panels pick — byte-identical to the pre-feature output. Exclude
+    # panels already locked to a body beat so a bookend never re-shows one (no-reuse).
+    #
+    # The subject bookend is a Q&A concept (the video is ABOUT one character). A recap routed
+    # through this same locked builder (Master 2026-07-14) has no "question subject", so it
+    # SKIPS the bookend entirely and keeps its intro/outro on the cold-open scorer /
+    # cold_open_lock via fb_pair — leaving the Q&A path byte-identical (qa_bookend True there).
+    qa_bookend = False
+    try:
+        from ..review_gate import _plot_source
+        qa_bookend = bool(project) and _plot_source(project) == "answer_research"
+    except Exception:
+        qa_bookend = False
+    body_locked_keys = {c[0] for cands in locked_cands.values() for c in cands}
+    subject_seq = _qa_subject_sequence(project, entry_by_key, exclude=body_locked_keys) if qa_bookend else []
+    intro_panels: list[tuple] = []
+    if subject_seq:
+        intro_panels = subject_seq[:QA_INTRO_SUBJECT_PANELS]          # multi-panel hook
+        outro_pair = subject_seq[min(QA_INTRO_SUBJECT_PANELS, len(subject_seq) - 1)]  # next unused
+        for sid, sc in scenes_by_id.items():
+            if sc.get("is_outro"):
+                fb_pair[sid] = outro_pair
+            # intro: handled specially in the loop below (multi-panel split)
+    elif qa_bookend:
+        subj_panels = _qa_subject_panels(locked_cands)                # legacy single-panel bookend
+        if subj_panels:
+            io_sids = sorted(sid for sid, sc in scenes_by_id.items()
+                             if sc.get("is_intro") or sc.get("is_outro"))
+            for i, sid in enumerate(io_sids):
+                fb_pair[sid] = subj_panels[min(i, len(subj_panels) - 1)]
 
     # Segment each beat into K contiguous time-groups (K bounded by #locked panels, #chunks, and
     # beat_dur/min so every shot lasts ≥ ~min), match each group to a DISTINCT locked panel
@@ -836,8 +1253,22 @@ def _build_shots_per_chunk_locked(
             is_intro = bool(scene.get("is_intro"))
             is_outro = bool(scene.get("is_outro"))
             cands = locked_cands.get(sid)
+            if is_intro and intro_panels:
+                # Multi-panel subject hook: split the intro beat into ≤N contiguous
+                # time-groups (K bounded by beat_dur/min like the body) and show a
+                # distinct top-ranked subject panel in each — a moving intro of the
+                # question's subject instead of one static splash.
+                beat_dur = sum(m[2] for m in members)
+                k = max(1, min(len(intro_panels), len(members),
+                               int(beat_dur / QA_MIN_SHOT_SECONDS) or 1))
+                for (text, _st, dur), (panel, src) in zip(
+                        _partition_chunks(members, k, QA_MIN_SHOT_SECONDS), intro_panels):
+                    segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
+                                 "text": text, "dur": max(0.0, dur),
+                                 "is_intro": True, "is_outro": False})
+                continue
             if not cands:
-                # Non-locked scene (or intro/outro): one held shot over the whole beat.
+                # Non-locked scene (or outro): one held shot over the whole beat.
                 pair = fb_pair.get(sid)
                 panel, src = pair if pair else (None, "")
                 segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
@@ -891,19 +1322,17 @@ def _build_shots_per_chunk_locked(
         panel, src = seg["panel"], seg["src"]
         is_intro, is_outro = seg["is_intro"], seg["is_outro"]
         is_whole = bool(panel is not None and panel.get("_whole_page"))
-        pb, src2, text_bboxes, no_mirror = _shot_fields(
+        pb, src2, text_bboxes, no_mirror, keep_contain = _shot_fields(
             panel, src, seg["scene"], is_intro, pages_by_number or {})
-        if is_intro:
-            motion = "zoom_in"
-        elif is_outro or is_whole:
-            motion = "zoom_out"
+        if is_intro or is_outro or is_whole:
+            motion = "zoom_in"   # loop-close zoom_out is applied only by _close_loop (no normal pull-back)
         else:
             motion = _choose_motion(panel, seg["dur"], seq=k)
         shots.append(Shot(
             shot_id=k, scene_id=k + 1, duration_seconds=max(0.4, seg["dur"]),
             panel_bbox=pb, source_image=src2, motion=motion,
             text_bboxes=text_bboxes, caption_text=seg["text"],
-            no_mirror=no_mirror, is_intro=is_intro,
+            no_mirror=no_mirror, keep_contain=keep_contain, is_intro=is_intro,
             beat_id=int(seg["sid"]),   # real narration scene → beat-boundary-only effects
         ))
     return shots
@@ -936,10 +1365,10 @@ def _load_sentence_panels(project: str | None) -> dict | None:
 
 
 def _shot_fields(panel: dict | None, source_image: str, scene: dict, is_intro: bool,
-                 pages_by_number: dict[int, dict]) -> tuple[dict, str, list[dict], bool]:
-    """The render fields (panel_bbox, source_image, text_bboxes, no_mirror) for a chosen
-    panel — the SAME derivation _build_shots_per_chunk uses, factored so the sentence
-    builder shares it verbatim. panel=None → render the scene's fallback bbox/source."""
+                 pages_by_number: dict[int, dict]) -> tuple[dict, str, list[dict], bool, bool]:
+    """The render fields (panel_bbox, source_image, text_bboxes, no_mirror, keep_contain) for a
+    chosen panel — the SAME derivation _build_shots_per_chunk uses, factored so the locked/
+    sentence builders share it verbatim. panel=None → render the scene's fallback bbox/source."""
     is_whole = bool(panel is not None and panel.get("_whole_page"))
     text_bboxes: list[dict] = []
     if panel is None:
@@ -952,7 +1381,8 @@ def _shot_fields(panel: dict | None, source_image: str, scene: dict, is_intro: b
                   "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))}
     no_mirror = (panel is None or is_whole
                  or _panel_has_critical_text(panel) or is_intro)
-    return panel_bbox, source_image, text_bboxes, no_mirror
+    keep_contain = _panel_has_critical_text(panel)
+    return panel_bbox, source_image, text_bboxes, no_mirror, keep_contain
 
 
 def _build_shots_per_sentence(
@@ -1000,7 +1430,7 @@ def _build_shots_per_sentence(
     # in one batch: it handles the cold-open, the outro loop-close, and content matching.
     fb_units = [(sc, str(sc.get("text", "") or "")) for sc in scenes if not _is_sentence_scene(sc)]
     fb_assigned = (_match_panels(list(fb_units), pages_by_number or {},
-                                 cluster_to_name or {}, project=project)
+                                 cluster_to_name or {}, project=project, narration=narration)
                    if fb_units else [])
     fb_panel: dict[int, tuple] = {}
     for (sc, _t), pair in zip(fb_units, fb_assigned):
@@ -1010,7 +1440,7 @@ def _build_shots_per_sentence(
 
     def _cold_open() -> tuple:
         if not _cold["done"]:
-            _cold["pair"] = _cold_open_panel(pages_by_number or {})
+            _cold["pair"] = _cold_open_panel(pages_by_number or {}, narration=narration, project=project)
             _cold["done"] = True
         return _cold["pair"]
 
@@ -1069,19 +1499,17 @@ def _build_shots_per_sentence(
         is_whole = bool(panel is not None and panel.get("_whole_page"))
         end = segments[k + 1]["start"] if k + 1 < n else seg["end"]
         dur = max(0.4, end - float(seg["start"]))
-        if is_intro:
-            motion = "zoom_in"
-        elif is_outro or is_whole:
-            motion = "zoom_out"
+        if is_intro or is_outro or is_whole:
+            motion = "zoom_in"   # loop-close zoom_out is applied only by _close_loop (no normal pull-back)
         else:
             motion = _choose_motion(panel, dur, seq=k)
-        pb, src, text_bboxes, no_mirror = _shot_fields(
+        pb, src, text_bboxes, no_mirror, keep_contain = _shot_fields(
             panel, seg["src"], seg["scene"], is_intro, pages_by_number or {})
         shots.append(Shot(
             shot_id=k, scene_id=seg["scene_id"], duration_seconds=dur,
             panel_bbox=pb, source_image=src, motion=motion,
             text_bboxes=text_bboxes, caption_text=seg["caption"],
-            no_mirror=no_mirror, is_intro=is_intro,
+            no_mirror=no_mirror, keep_contain=keep_contain, is_intro=is_intro,
         ))
     return shots
 
@@ -1120,6 +1548,74 @@ def _split_members_by_clause(members: list, clauses: list[str]) -> list[list]:
     return buckets   # ALIGNED to clauses (may include empty buckets)
 
 
+def _align_fragments_to_words(
+    fragments: list[str], words: list[dict]
+) -> list[tuple[float, float]]:
+    """Map each verbatim fragment to its (start, end) span by walking `words`
+    ([{word,start,end}], a scene's word_timestamps) with ONE linear pointer. The fragments are a
+    verbatim partition of the scene narration, so after normalizing away quotes/dashes/case and
+    punctuation on BOTH sides (the TTS glues .",/ onto tokens and emits stray punctuation-only
+    tokens the text lacks) the two token streams line up one-to-one. Returns one (start,end) per
+    fragment. If the streams DON'T line up (a rare tokenizer disagreement — hyphenated compound,
+    spelled-out number) it falls back to an EVEN split of the word window across the fragments.
+    Never raises."""
+    def _norm(s: str) -> str:
+        return re.sub(r"[^0-9a-z]+", "", str(s).lower())
+
+    cw = [(_norm(w.get("word", "")), float(w.get("start", 0.0)), float(w.get("end", 0.0)))
+          for w in (words or [])]
+    cw = [t for t in cw if t[0]]                    # drop punctuation-only / empty tokens
+
+    def _even() -> list[tuple[float, float]]:
+        n = max(1, len(fragments))
+        s0 = cw[0][1] if cw else 0.0
+        s1 = cw[-1][2] if cw else 0.0
+        step = (s1 - s0) / n if s1 > s0 else 0.0
+        return [(round(s0 + i * step, 3), round(s0 + (i + 1) * step, 3)) for i in range(n)]
+
+    if not cw:
+        return _even()
+    spans: list[tuple[float, float]] = []
+    ptr = 0
+    for frag in fragments:
+        ftoks = [t for t in (_norm(x) for x in str(frag).split()) if t]
+        if not ftoks or ptr + len(ftoks) > len(cw):
+            return _even()
+        start = ptr
+        for ft in ftoks:
+            if cw[ptr][0] != ft:
+                return _even()                      # streams diverged → split evenly, no raise
+            ptr += 1
+        spans.append((round(cw[start][1], 3), round(cw[ptr - 1][2], 3)))
+    return spans
+
+
+def _fragment_units(
+    fragments: list[str], pins: list, members: list, word_timestamps: list[dict]
+) -> tuple[list[str], list[list], list]:
+    """PLAN A (micro_moment): turn a scene's visual-beat fragments into one render UNIT each,
+    timed from word_timestamps. Returns (texts, slices, pins) in the SAME shape the
+    _split_members_by_clause path yields (slices = lists of (text,start,dur) members) so the
+    rest of _build_shots_per_chunk is unchanged — but here every slice is a SINGLE synthetic
+    member whose caption is the VERBATIM fragment. Fragment starts come from aligning the text to
+    the words; the outer edges are the scene's own [start, start+total], so the durations sum
+    EXACTLY to the scene total (first fragment absorbs any lead silence, last the trailing tail)
+    → global audio sync is byte-identical to the old path."""
+    seg_start = float(members[0][1]) if members else 0.0
+    seg_total = sum(float(m[2]) for m in members) if members else 0.0
+    seg_end = seg_start + seg_total
+    win = [w for w in (word_timestamps or [])
+           if float(w.get("end", 0.0)) > seg_start and float(w.get("start", 0.0)) < seg_end]
+    spans = _align_fragments_to_words(fragments, win or word_timestamps or [])
+    cuts = [seg_start]
+    for s, _e in spans[1:]:                          # internal cut points = fragment starts
+        cuts.append(min(max(float(s), cuts[-1]), seg_end))
+    cuts.append(seg_end)
+    slices = [[(frag, round(cuts[i], 3), max(0.0, round(cuts[i + 1] - cuts[i], 3)))]
+              for i, frag in enumerate(fragments)]
+    return list(fragments), slices, list(pins)
+
+
 def _panel_text_bboxes(panel: dict, pages_by_number: dict[int, dict]) -> list[dict]:
     """Return the page-coordinate bboxes of every text block (speech/narration)
     belonging to this panel — matched by panel_index on the panel's page. Used to
@@ -1156,7 +1652,10 @@ def _choose_motion(panel: dict | None, dur: float, seq: int = 0) -> str:
     if seq <= 0:
         return "zoom_in"
     ar = (h / w) if w else 1.0
-    cands = ["zoom_in", "zoom_out"]
+    # NEVER zoom_out on a normal shot (Master 2026-07-11): the only pull-back allowed is the
+    # loop-close (_close_loop), which ends at z=1.0 to match the intro's first frame. Variety
+    # here comes from zoom_in + the aspect-appropriate one-directional pans.
+    cands = ["zoom_in"]
     if ar >= 0.9:          # tall or square → up↕down reveal reads
         cands += ["pan_down", "pan_up"]
     if ar <= 1.15:         # wide or square → left↔right reveal reads
@@ -1283,7 +1782,117 @@ def _is_skip_page(page: dict) -> bool:
     return False
 
 
-def _cold_open_panel(pages_by_number, exclude_keys=None):
+# ── Cold-open frame-1 gates (R2 2026-07-12) ──────────────────────────────────────────────
+# Frame 1 is the single most retention-critical pixel; an audience audit found 50-60% of the
+# swipe-aways happen in the first 3s, and the batcave Q&A opened on a WIDE letterboxed strip
+# (aspect 2.23 → contain+blur band). These HARD-gate frame-1: a candidate the renderer would
+# LETTERBOX, a TINY panel (< min area frac of its page), or a BUBBLE-CHOKED panel is removed
+# from contention whenever ≥1 clean candidate exists; if NONE pass, the old scorer runs
+# unchanged (never crash / never None when panels exist). COLD_OPEN_MONEY_BIND gates the
+# subject_panels.json money-bind step. Defaults chosen from batcave's real area_frac spread
+# (median 0.13; the genuinely tiny insets cluster < 0.12, the hero portraits sit ~0.9).
+COLD_OPEN_MONEY_BIND = os.getenv("COLD_OPEN_MONEY_BIND", "1").strip() not in ("0", "false", "False", "")
+COLD_OPEN_MIN_AREA_FRAC = float(os.getenv("COLD_OPEN_MIN_AREA_FRAC", "0.12"))
+COLD_OPEN_MAX_BUBBLE_FRAC = float(os.getenv("COLD_OPEN_MAX_BUBBLE_FRAC", "0.15"))
+
+
+def _cold_open_bubble_frac(panel: dict, page_tb) -> float:
+    """Fraction of the panel's bbox area covered by its own speech/narration bboxes. Same
+    bubble-rect source `_choose_crop_offset`/`_panel_text_bboxes` use (panel_dialog → tb.bbox).
+    Overlapping bubbles double-count → a slight OVER-estimate, fine for a >15% reject. 0.0 when
+    a panel carries no bubble bbox data (old projects) → the bubble gate then never fires."""
+    bb = panel.get("bbox") or {}
+    px, py = int(bb.get("x", 0) or 0), int(bb.get("y", 0) or 0)
+    pw, ph = int(bb.get("w", 0) or 0), int(bb.get("h", 0) or 0)
+    parea = pw * ph
+    if parea <= 0:
+        return 0.0
+    covered = 0.0
+    for tb in panel_dialog(panel, page_tb):
+        b = tb.get("bbox") or {}
+        bw, bh = int(b.get("w", 0) or 0), int(b.get("h", 0) or 0)
+        if bw <= 0 or bh <= 0:
+            continue
+        tx, ty = int(b.get("x", 0) or 0), int(b.get("y", 0) or 0)
+        ix0, iy0 = max(px, tx), max(py, ty)
+        ix1, iy1 = min(px + pw, tx + bw), min(py + ph, ty + bh)
+        if ix1 > ix0 and iy1 > iy0:
+            covered += (ix1 - ix0) * (iy1 - iy0)
+    return min(1.0, covered / parea)
+
+
+def _cold_open_gate_ok(panel: dict, parea: int, page_tb=None) -> bool:
+    """Is `panel` an ACCEPTABLE frame-1? Rejects (a) a panel the renderer would LETTERBOX —
+    blurry-giant upscale (cover > _BLUR_FALLBACK_SCALE) OR a strip at/over LANDSCAPE_COVER_MAX_ASPECT,
+    the SAME predicate _prepare_panel_frame/_should_blur_bg use — (b) a TINY panel (< COLD_OPEN_MIN_AREA_FRAC
+    of its page area), and (c) a BUBBLE-CHOKED panel (> COLD_OPEN_MAX_BUBBLE_FRAC text coverage, only
+    when page_tb is supplied). Shared by _cold_open_panel's hard gate and the Q&A subject-intro bookend
+    order so both frame-1 selectors reject the wide-blur / tiny-inset opener."""
+    bb = panel.get("bbox") or {}
+    w, h = int(bb.get("w", 0) or 0), int(bb.get("h", 0) or 0)
+    if w <= 0 or h <= 0:
+        return False
+    aspect = w / h
+    cover = max(OUTPUT_W / w, OUTPUT_H / h)
+    if cover > _BLUR_FALLBACK_SCALE or aspect >= LANDSCAPE_COVER_MAX_ASPECT:
+        return False                                   # would letterbox (contain+blur band)
+    if parea > 0 and (w * h) / parea < COLD_OPEN_MIN_AREA_FRAC:
+        return False                                   # tiny inset
+    if page_tb is not None and _cold_open_bubble_frac(panel, page_tb) > COLD_OPEN_MAX_BUBBLE_FRAC:
+        return False                                   # bubble-choked
+    return True
+
+
+def _cold_open_money_panel(project, pages_by_number, exclude_keys):
+    """The VLM-confirmed MONEY panel to open on, from projects/<slug>/subject_panels.json: the
+    first row flagged `force_intro`/`money` (written by review_gate._pin_money_intro after the
+    money-shot VLM confirm) that resolves in the reading-order pool. A `force_intro` row bypasses
+    exclude_keys — it MAY double as a body beat (the ComicCut spoiler-hook: the payoff opens AND
+    plays out). Returns (panel, src) or None (no file / no money row / unresolved) → the caller
+    then falls through to the gated scorer. A MANUAL subject file carries no such flag, so a
+    hand-ordered file is NOT money-bound here — its ordering is honored by the Q&A subject-intro
+    path (_qa_subject_sequence) instead."""
+    try:
+        from ..subject_panels import load_subject_panels
+        rows = (load_subject_panels(project) or {}).get("panels") or []
+    except Exception:
+        return None
+    entry = {k: (p, s) for (k, p, s, _tb) in _panel_pool(pages_by_number or {})}
+    for row in rows:
+        if not (row.get("force_intro") or row.get("money")):
+            continue
+        try:
+            key = (int(row["page"]), int(row["panel"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if key not in entry:
+            continue
+        if key in (exclude_keys or set()) and not row.get("force_intro"):
+            continue
+        return entry[key]
+    return None
+
+
+def _cold_open_lock(narration: dict | None) -> tuple[int, int] | None:
+    """COLD_OPEN_LOCK knob: manually PIN the cold-open to an exact (page, panel) instead
+    of the scorer below — for the rare case where the right frame-1 is a specific payoff
+    panel discovered later in the story (e.g. so SEAMLESS_LOOP's _close_loop opens AND
+    closes the video on that exact panel). Priority: env COLD_OPEN_LOCK="page,panel" wins,
+    else narration.json's optional `cold_open_lock` field, accepting either "page,panel"
+    or [page, panel]. Returns None on anything missing/unparsable — the caller then falls
+    back to the normal scorer, so an unset knob is byte-identical to the old behavior."""
+    raw = os.environ.get("COLD_OPEN_LOCK") or (narration or {}).get("cold_open_lock")
+    if not raw:
+        return None
+    try:
+        page_s, panel_s = raw.split(",") if isinstance(raw, str) else raw
+        return int(page_s), int(panel_s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _cold_open_panel(pages_by_number, exclude_keys=None, narration: dict | None = None,
+                     project: str | None = None):
     """COLD-OPEN: pick a striking STORY panel to open the video on instead of the
     cover. Frame 1 is the single most retention-critical moment, so the pick is by a
     SCORE — not raw area. Largest-area alone landed on the two worst openers seen in
@@ -1291,13 +1900,30 @@ def _cold_open_panel(pages_by_number, exclude_keys=None):
     ~12 empty speech bubbles) that mismatches the hook, and (b) a LANDSCAPE strip that
     _prepare_panel_frame letterboxes into a thin blurred band. Both waste the 9:16 frame.
 
+    Frame-1 precedence: COLD_OPEN_LOCK (Master's hand-pin) > money-bind (the VLM-confirmed
+    money panel from subject_panels.json, COLD_OPEN_MONEY_BIND) > the gated scorer below.
+    COLD_OPEN_LOCK (see _cold_open_lock) bypasses everything when set and the locked (page,
+    panel) exists in the pool — used to hand-pick frame 1 (e.g. a hidden payoff panel). A lock
+    pointing nowhere logs a warning and falls through. Then, for a Q&A project whose funnel
+    confirmed a money panel, that panel opens the video (see _cold_open_money_panel).
+
+    HARD GATE (below): whenever ≥1 candidate is a clean frame-1 (not letterbox, not tiny, not
+    bubble-choked — see _cold_open_gate_ok), the scorer picks ONLY among those; a letterbox/
+    tiny candidate is removed from contention, not merely penalized. If NONE pass, the old
+    full-pool scorer runs unchanged, so an all-wide / all-tiny opening still returns a panel.
+
     Rank opening-third candidates by (all terms 0..1):
-        score = 0.45*area_frac      # still reward a big panel …
+        score = 0.40*area_frac      # still reward a big panel …
               + 0.35*aspect_fit     # … but a PORTRAIT/near-9:16 panel FILLS the frame;
                                      #   a landscape panel (letterboxed) scores ~0 here
-              + 0.15*has_character   # a face/figure opens stronger than empty scenery
-              - 0.25*dialog_load     # a CLEAN splash beats a bubble-cluttered panel on a
+              + 0.20*has_character   # a clear face/figure opens stronger than empty scenery
+              - 0.30*dialog_load     # a CLEAN splash beats a bubble-cluttered panel on a
                                      #   HELD opening frame (empty bubbles read as slop)
+              - 0.60*will_letterbox  # HARD penalty when _prepare_panel_frame would letterbox
+                                     #   this panel (contain+blur wide strip OR blurry-giant
+                                     #   upscale) — the shipped frame-1 defect. Uses the SAME
+                                     #   two triggers the renderer uses (general, not a magic
+                                     #   aspect constant)
 
     Skips cover/credits/ad pages, the final 2 story pages (no ending spoiler), and
     `exclude_keys` = (page, idx) panels already assigned to story scenes (the intro must
@@ -1305,7 +1931,20 @@ def _cold_open_panel(pages_by_number, exclude_keys=None):
     back to the largest-area candidate when nothing scores positively, so an all-wide /
     all-cluttered opening still returns a panel (never None when panels exist). Returns
     (panel, src) or (None, '')."""
+    lock = _cold_open_lock(narration)
+    if lock is not None:
+        page, idx = lock
+        entry = {k: (p, s) for (k, p, s, _tb) in _panel_pool(pages_by_number or {})}.get((page, idx))
+        if entry is not None:
+            print(f"[stage5] cold-open: locked p{page}/{idx}")
+            return entry
+        print(f"[stage5] cold-open: lock p{page}/{idx} not found in panel pool — falling back to scorer")
     exclude_keys = exclude_keys or set()
+    if COLD_OPEN_MONEY_BIND and project:
+        mb = _cold_open_money_panel(project, pages_by_number, exclude_keys)
+        if mb is not None:
+            print(f"[stage5] cold-open: money-bind p{mb[0].get('_page_number')}/{mb[0].get('index')}")
+            return mb
     story_pns = sorted(pn for pn, pg in (pages_by_number or {}).items()
                        if pg and not _is_skip_page(pg))
     if not story_pns:
@@ -1315,8 +1954,10 @@ def _cold_open_panel(pages_by_number, exclude_keys=None):
     # come from where the premise is established — not the globally-largest panel, which
     # was landing on a mid-story action splash unrelated to the opening line.
     opening = story_pns[:max(3, len(story_pns) // 3)]
-    best = None      # (score, panel_dict, src)
-    biggest = None   # (area, panel_dict, src) — fallback when nothing scores positively
+    best = None          # (score, panel_dict, src) — best over ALL candidates (old behavior)
+    biggest = None       # (area, panel_dict, src)  — old largest-area fallback
+    best_gated = None    # (score, panel_dict, src) — best among GATE-PASSING candidates
+    biggest_gated = None # (area, panel_dict, src)  — largest gate-passing (score-≤0 fallback)
     for pn in opening:
         if pn in ending:
             continue
@@ -1338,6 +1979,9 @@ def _cold_open_panel(pages_by_number, exclude_keys=None):
             pw["index"] = idx
             if biggest is None or area > biggest[0]:
                 biggest = (area, pw, src)
+            gate_ok = _cold_open_gate_ok(pw, parea, page_tb)
+            if gate_ok and (biggest_gated is None or area > biggest_gated[0]):
+                biggest_gated = (area, pw, src)
             area_frac = area / parea if parea > 0 else 0.0
             # aspect_fit: 1.0 for a portrait/square panel (cover-crops to fill 9:16),
             # decaying as it widens past square. A landscape panel (w/h ≳ 1.2) is exactly
@@ -1349,13 +1993,30 @@ def _cold_open_panel(pages_by_number, exclude_keys=None):
             # instant AI-slop. panel_dialog handles both schemas (nested + old page-level).
             dialog_load = min(len(panel_dialog(panel, page_tb)), 8) / 8.0
             has_char = 1.0 if (panel.get("characters") or []) else 0.0
-            score = (0.45 * area_frac + 0.35 * aspect_fit
-                     + 0.15 * has_char - 0.25 * dialog_load)
+            # Will _prepare_panel_frame LETTERBOX this frame-1 (contain+blur → tiny subject in
+            # a blurred band)? Same two triggers the renderer uses, on the panel's own bbox:
+            # a too-small panel blown up past _BLUR_FALLBACK_SCALE, OR a strip at/over
+            # LANDSCAPE_COVER_MAX_ASPECT. Penalized hard so a portrait, subject-filled panel
+            # wins; the biggest-area fallback still fires if EVERY opening panel would letterbox.
+            cover = max(OUTPUT_W / w, OUTPUT_H / h)
+            will_letterbox = cover > _BLUR_FALLBACK_SCALE or aspect >= LANDSCAPE_COVER_MAX_ASPECT
+            score = (0.40 * area_frac + 0.35 * aspect_fit
+                     + 0.20 * has_char - 0.30 * dialog_load
+                     - (0.60 if will_letterbox else 0.0))
             if best is None or score > best[0]:
                 best = (score, pw, src)
+            if gate_ok and (best_gated is None or score > best_gated[0]):
+                best_gated = (score, pw, src)
+    # Gate-passers win outright whenever ≥1 exists — a letterbox/tiny/bubble-choked candidate is
+    # REMOVED from contention, not just penalized (the frame-1 hard gate). biggest_gated is set
+    # whenever best_gated is, so a clean opening always resolves to a clean panel.
+    if best_gated is not None:
+        return (best_gated[1], best_gated[2]) if best_gated[0] > 0 else (biggest_gated[1], biggest_gated[2])
+    # No clean candidate at all (every opening panel would letterbox / is tiny) → OLD full-pool
+    # scorer, byte-identical to the pre-gate behavior (never crash / never None when panels exist).
     if best is not None and best[0] > 0:
         return best[1], best[2]
-    if biggest is not None:   # nothing scored well (all wide/cluttered) → old largest-area
+    if biggest is not None:
         return biggest[1], biggest[2]
     return None, ""
 
@@ -1593,7 +2254,8 @@ def _vlm_rerank(line: str, cands: list, *, log=print) -> int | None:
 
 def _match_panels(units: list, pages_by_number: dict, cluster_to_name: dict,
                   *, project: str | None = None,
-                  candidates_out: list | None = None, candidates_k: int = 12) -> list:
+                  candidates_out: list | None = None, candidates_k: int = 12,
+                  narration: dict | None = None) -> list:
     """Align the narration sequence to the panel sequence by ORDER-FREE content match:
     each unit takes its BEST-content panel independently (reuse allowed), with a per-unit
     PAGE-ANCHORED prior — a Gaussian bump centred on the unit's OWN page_ref (the Stage-3
@@ -1882,7 +2544,8 @@ def _match_panels(units: list, pages_by_number: dict, cluster_to_name: dict,
         # Exclude panels already assigned to story scenes — no duplicate opener.
         if i == 0 and scene.get("is_intro"):
             _story_keys = {pool[idxs[r]][0] for r in story_rows}
-            cp, csrc = _cold_open_panel(pages_by_number, exclude_keys=_story_keys)
+            cp, csrc = _cold_open_panel(pages_by_number, exclude_keys=_story_keys, narration=narration,
+                                        project=project)
             if cp is not None:
                 prev = (cp, csrc)
                 out.append((cp, csrc))
@@ -1993,7 +2656,6 @@ def render_shot(
     work_dir: Path | None = None,
     progress: Callable[[str], None] | None = None,
     corner_logo: Path | None = None,
-    banner_text: str = "",
 ) -> Path:
     """Render one Ken Burns shot to MP4."""
     ff = _require_ffmpeg()
@@ -2024,8 +2686,29 @@ def render_shot(
                     bx = gw - (ix1 - gl)
                 avoid.append({"x": bx, "y": iy0 - gt, "w": ix1 - ix0, "h": iy1 - iy0})
 
-    framed = _prepare_panel_frame(panel_png, panel_png.with_name(panel_png.stem + "_9x16.png"),
-                                  avoid_boxes=avoid)
+    # AI-upscale the crop BEFORE framing when it needs real magnification to fill
+    # the frame — _prepare_panel_frame's own `cover` formula picks the same panels
+    # its LANCZOS blow-up would otherwise soften. `avoid` was computed in the
+    # original crop's pixel coords, so it's rescaled by the ACTUAL output size
+    # (not an assumed ×4 — Real-ESRGAN's own rounding may differ slightly).
+    frame_src = panel_png
+    if PANEL_UPSCALE:
+        with Image.open(panel_png) as _pim:
+            piw, pih = _pim.size
+        if _needs_upscale(piw, pih):
+            up_path = _ai_upscale_panel(panel_png)
+            if up_path != panel_png:
+                with Image.open(up_path) as _uim:
+                    uiw, uih = _uim.size
+                rw, rh = uiw / piw, uih / pih
+                avoid = [{"x": b["x"] * rw, "y": b["y"] * rh,
+                          "w": b["w"] * rw, "h": b["h"] * rh} for b in avoid]
+                frame_src = up_path
+
+    framed = _prepare_panel_frame(frame_src, panel_png.with_name(panel_png.stem + "_9x16.png"),
+                                  avoid_boxes=avoid,
+                                  keep_contain=getattr(shot, "keep_contain", False),
+                                  fit_mode=("fill" if getattr(shot, "fit_fill", False) else None))
 
     duration = max(0.4, shot.duration_seconds)
     frames = max(1, int(round(duration * FPS)))
@@ -2051,7 +2734,7 @@ def render_shot(
         _is_action_text(getattr(shot, "caption_text", "")) or getattr(shot, "is_intro", False))
     zp = _zoompan_expr(shot.motion, frames, action=action)
 
-    # Build the filter chain: zoompan → [corner logo] → [title banner] → final.
+    # Build the filter chain: zoompan → [corner logo] → final.
     inputs = ["-framerate", "1", "-loop", "1", "-t", "1", "-i", str(framed)]
     segs = [f"[0:v]{pre}{zp}[vz]"]
     prev = "vz"
@@ -2060,20 +2743,6 @@ def render_shot(
         inputs += ["-i", str(corner_logo)]
         segs.append(f"[{prev}][1:v]overlay=W-w-36:36[vl]")
         prev = "vl"
-    if banner_text:
-        from config import TITLE_BANNER_FONTSIZE
-        font = Path(__file__).resolve().parent.parent.parent / "fonts" / "Anton-Regular.ttf"
-        fontfile = str(font).replace("\\", "/")
-        bt = _drawtext_escape(banner_text.upper())
-        # small white box, dark text, top-center on EVERY frame (captions sit at the
-        # bottom, the logo top-right — top-center stays clear of both).
-        segs.append(
-            f"[{prev}]drawtext=fontfile='{fontfile}':text='{bt}':"
-            f"fontcolor=black:fontsize={int(TITLE_BANNER_FONTSIZE)}:"
-            f"box=1:boxcolor=white@0.92:boxborderw=22:"
-            f"x=(w-text_w)/2:y=140[vb]"
-        )
-        prev = "vb"
     filter_complex = ";".join(segs)
 
     cmd = [
@@ -2083,8 +2752,9 @@ def render_shot(
         "-map", f"[{prev}]",
         "-frames:v", str(frames),
         "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
+        # crf 18: intermediate must out-quality final (double-encode chain)
+        "-preset", "medium",
+        "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-r", str(FPS),
         "-an",
@@ -2120,27 +2790,28 @@ def _is_action_text(text: str) -> bool:
     return False
 
 
-def _drawtext_escape(text: str) -> str:
-    """Escape text for an ffmpeg drawtext filter: backslash + colon, and a straight
-    apostrophe → curly (a straight ' breaks the single-quoted text='...' value)."""
-    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "’")
-
-
 def _zoompan_expr(motion: str, frames: int, action: bool = False) -> str:
     """ffmpeg zoompan expression. CALM panels push 1.00→1.10 (smoothstep). ACTION panels
     (fights/impacts) push 1.00→1.15 with an ease-OUT 'punch' (fast hit, then settle). The
     push amplitude was raised from 5% (measured a near-freeze at <1%/s) to 10-15% — with the
     shorter sub-shots this lands at the competitors' ~6-10%/s feel. push_top / push_detail are
     the sub-shot framings: a higher BASE zoom (a tighter cut) centered up / near-center, plus
-    the same push — kept sharp by the 4× pre-upscale. Pan amplitude (pamt) is unchanged."""
+    the same push — kept sharp by the 4× pre-upscale.
+
+    Pans (pan_right/pan_down/pan_up) hold zoom at PAN_ZOOM and sweep the viewport across the
+    WHOLE excess region (x: 0 → iw-iw/zoom, or the y equivalent) at CONSTANT velocity — linear
+    on/d, no ease — ending EXACTLY on the far edge at the last frame (Master 2026-07-11: go one
+    direction, full travel, land on the boundary when the scene cuts). No action variance on a
+    pan: the travel is fixed by the panel, the velocity by the shot's own duration."""
     s = f"{OUTPUT_W}x{OUTPUT_H}"
     fps = FPS
     d = max(1, frames)
+    lin = f"(on/{d})"                            # linear 0->1 (constant velocity) for pans
     if action:
-        zamt, hi, pamt = f"{ZOOM_AMPLITUDE_ACTION:g}", f"{1 + ZOOM_AMPLITUDE_ACTION:g}", "0.06"
+        zamt, hi = f"{ZOOM_AMPLITUDE_ACTION:g}", f"{1 + ZOOM_AMPLITUDE_ACTION:g}"
         ease = f"(1-pow(1-on/{d},2))"            # ease-out: fast hit, then settle (punch)
     else:
-        zamt, hi, pamt = f"{ZOOM_AMPLITUDE:g}", f"{1 + ZOOM_AMPLITUDE:g}", "0.03"
+        zamt, hi = f"{ZOOM_AMPLITUDE:g}", f"{1 + ZOOM_AMPLITUDE:g}"
         ease = f"pow(on/{d},2)*(3-2*(on/{d}))"   # smoothstep 0->1, eased ends
     # Sub-shot framings: start ALREADY zoomed (a hard cut to a tighter shot), then push. y is
     # clamped so the tight crop never runs off the top/bottom of the frame.
@@ -2170,27 +2841,30 @@ def _zoompan_expr(motion: str, frames: int, action: bool = False) -> str:
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )
+    # Horizontal pan: hold z=PAN_ZOOM, sweep x across the FULL excess (0 → iw-iw/zoom) linearly,
+    # landing on the right edge at the last frame. y stays centered.
     if motion == "pan_right":
         return (
-            f"zoompan=z='1.03':"
-            f"x='iw/2-(iw/zoom/2)+(iw*{pamt})*{ease}':"
+            f"zoompan=z='{PAN_ZOOM:g}':"
+            f"x='(iw-iw/zoom)*{lin}':"
             f"y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s={s}:fps={fps}"
         )
-    # Vertical pans — z=1.08 gives vertical room so the y travel stays inside the image
-    # (no black bars). pan_down sweeps TOP→BOTTOM, pan_up sweeps BOTTOM→TOP.
+    # Vertical pans — z=PAN_ZOOM gives vertical room so the y travel stays inside the image
+    # (no black bars). Full excess (0 → ih-ih/zoom) at constant velocity: pan_down sweeps
+    # TOP→BOTTOM, pan_up sweeps BOTTOM→TOP, each landing exactly on its far edge.
     if motion == "pan_down":
         return (
-            f"zoompan=z='1.08':"
+            f"zoompan=z='{PAN_ZOOM:g}':"
             f"x='iw/2-(iw/zoom/2)':"
-            f"y='(ih-ih/zoom)*{ease}':"
+            f"y='(ih-ih/zoom)*{lin}':"
             f"d={frames}:s={s}:fps={fps}"
         )
     if motion == "pan_up":
         return (
-            f"zoompan=z='1.08':"
+            f"zoompan=z='{PAN_ZOOM:g}':"
             f"x='iw/2-(iw/zoom/2)':"
-            f"y='(ih-ih/zoom)*(1-{ease})':"
+            f"y='(ih-ih/zoom)*(1-{lin})':"
             f"d={frames}:s={s}:fps={fps}"
         )
     # static — no motion, slight constant zoom to fill output frame cleanly
@@ -2252,8 +2926,80 @@ def _choose_crop_offset(new_w: int, new_h: int, out_w: int, out_h: int,
     return best if _covered(*best) <= 0.75 * center_cov else (cx0, cy0)
 
 
+def _should_blur_bg(iw: int, ih: int, *, keep_contain: bool = False,
+                    fit_mode: str | None = None) -> bool:
+    """contain+blur (True) vs cover-fill (False) for an iw×ih panel. Extracted from
+    _prepare_panel_frame so the PANEL_FIT_MODE branch is unit-testable without PIL/ffmpeg I/O.
+
+    Default fit_mode ("contain") reproduces the OLD rule EXACTLY: blur a small panel that
+    would upscale past _BLUR_FALLBACK_SCALE OR a landscape strip at/over LANDSCAPE_COVER_MAX_ASPECT.
+    "fill" instead cover-crops such a LANDSCAPE panel to fill the 9:16 frame — UNLESS keep_contain
+    (critical baked text a crop would slice off), a tiny panel fill would blow up into a blurry
+    giant (cover > _BLUR_FALLBACK_SCALE), or the crop would discard > FILL_MAX_AREA_LOSS of the
+    panel (too-flat strip → meaningless sliver). keep_contain is IGNORED in "contain" mode (a
+    blurred panel stays blurred), so the flag never changes the default output."""
+    cover = max(OUTPUT_W / iw, OUTPUT_H / ih)
+    aspect = iw / ih
+    blur = cover > _BLUR_FALLBACK_SCALE or aspect >= LANDSCAPE_COVER_MAX_ASPECT
+    if not blur:
+        return False
+    mode = fit_mode if fit_mode is not None else PANEL_FIT_MODE
+    if mode != "fill" or keep_contain:
+        return True
+    if cover > _BLUR_FALLBACK_SCALE:
+        return True                          # tiny panel → fill would be a blurry giant
+    visible = TARGET_ASPECT / aspect if aspect > TARGET_ASPECT else 1.0
+    if (1.0 - visible) > FILL_MAX_AREA_LOSS:
+        return True                          # too-flat strip → cover-crop shows a sliver
+    return False                             # fill: cover-crop to fill the frame
+
+
+# Panels below this real magnification (crop size vs the frame it fills, same
+# `cover` formula _should_blur_bg uses) are already big enough — skip the ~2s
+# Real-ESRGAN call entirely.
+_UPSCALE_MIN_MAGNIFICATION = 1.3
+
+
+def _needs_upscale(iw: int, ih: int) -> bool:
+    """True when an iw×ih crop needs more than _UPSCALE_MIN_MAGNIFICATION× cover-scale
+    to fill 1080×1920 — extracted from render_shot so the gate is unit-testable
+    without PIL/subprocess I/O (same rationale as _should_blur_bg)."""
+    return max(OUTPUT_W / iw, OUTPUT_H / ih) > _UPSCALE_MIN_MAGNIFICATION
+
+
+def _ai_upscale_panel(panel_png: Path) -> Path:
+    """AI-upscale a panel crop with Real-ESRGAN (config.PANEL_UPSCALE) before framing.
+    Crops are often 237-500px; _prepare_panel_frame's LANCZOS blow-up to fill
+    1080×1920 (up to 8× for a small panel) reads soft — Real-ESRGAN sharpens the
+    source first.
+
+    Cached as `<stem>_up4.png` next to the crop; reused while newer than the input
+    (the same panel crop reused across shots/re-renders shouldn't cost ~2s twice).
+    ANY failure (binary missing, timeout, bad exit, no output file) falls back to
+    the original crop — upscale is a quality bonus, never a hard requirement."""
+    up = panel_png.with_name(panel_png.stem + "_up4.png")
+    if up.exists() and up.stat().st_mtime >= panel_png.stat().st_mtime:
+        return up
+    model_dir = str(Path(REALESRGAN_BIN).parent / "models")
+    try:
+        subprocess.run(
+            [REALESRGAN_BIN, "-i", str(panel_png), "-o", str(up),
+             "-n", REALESRGAN_MODEL, "-m", model_dir, "-s", "4"],
+            check=True, capture_output=True, timeout=60,
+        )
+    except Exception as exc:
+        print(f"[stage5] Real-ESRGAN upscale failed ({exc}) — using original panel")
+        return panel_png
+    if not up.exists():
+        print("[stage5] Real-ESRGAN produced no output — using original panel")
+        return panel_png
+    return up
+
+
 def _prepare_panel_frame(panel_png: Path, out_path: Path,
-                         avoid_boxes: list[dict] | None = None) -> Path:
+                         avoid_boxes: list[dict] | None = None,
+                         *, keep_contain: bool = False,
+                         fit_mode: str | None = None) -> Path:
     """Fit the panel into 1080×1920.
 
     `avoid_boxes` — inpainted-bubble rects in the CROP's own pixel coords; the
@@ -2286,7 +3032,15 @@ def _prepare_panel_frame(panel_png: Path, out_path: Path,
         cover = max(OUTPUT_W / iw, OUTPUT_H / ih)
 
         aspect = iw / ih
-        use_blur_bg = cover > _BLUR_FALLBACK_SCALE or aspect >= LANDSCAPE_COVER_MAX_ASPECT
+        mode = fit_mode or PANEL_FIT_MODE
+        use_blur_bg = _should_blur_bg(iw, ih, keep_contain=keep_contain, fit_mode=mode)
+        # fill requested (env or micro fit_fill) but this landscape panel still letterboxes → say why.
+        if (mode == "fill" and not keep_contain and use_blur_bg
+                and aspect >= LANDSCAPE_COVER_MAX_ASPECT):
+            visible = TARGET_ASPECT / aspect if aspect > TARGET_ASPECT else 1.0
+            reason = ("blurry-giant upscale" if cover > _BLUR_FALLBACK_SCALE
+                      else f"would crop {1 - visible:.0%} of area > {FILL_MAX_AREA_LOSS:.0%}")
+            print(f"[stage5] fit=fill kept CONTAIN (panel {iw}x{ih}, aspect {aspect:.2f}: {reason})")
         if not use_blur_bg:
             # ── Cover-scale (original behavior; bubble-aware window) ──
             new_w = max(OUTPUT_W, int(round(iw * cover)))

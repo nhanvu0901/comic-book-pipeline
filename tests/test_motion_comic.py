@@ -37,17 +37,20 @@ def test_choose_motion_cold_open_always_zoom_in():
 def test_choose_motion_aspect_aware_pans():
     # After the cold open (seq>0) motions ROTATE through the moves that read on the
     # panel's shape: tall → vertical pans available, wide → horizontal, square → all.
-    tall = _panel(300, 600)        # ar 2.0 → [zoom_in, zoom_out, pan_down, pan_up]
-    assert _choose_motion(tall, 3.0, seq=2) == "pan_down"
-    assert _choose_motion(tall, 3.0, seq=3) == "pan_up"
+    # Master 2026-07-11: zoom_out is NO LONGER in the rotation (loop-close only) → the pools
+    # are [zoom_in, +pans] and the rotation indices shift accordingly.
+    tall = _panel(300, 600)        # ar 2.0 → [zoom_in, pan_down, pan_up]
+    assert _choose_motion(tall, 3.0, seq=1) == "pan_down"
+    assert _choose_motion(tall, 3.0, seq=2) == "pan_up"
     assert "pan_right" not in {_choose_motion(tall, 3.0, seq=s) for s in range(1, 6)}
-    wide = _panel(600, 300)        # ar 0.5 → [zoom_in, zoom_out, pan_right]
-    assert _choose_motion(wide, 3.0, seq=2) == "pan_right"
+    assert "zoom_out" not in {_choose_motion(tall, 3.0, seq=s) for s in range(0, 8)}
+    wide = _panel(600, 300)        # ar 0.5 → [zoom_in, pan_right]
+    assert _choose_motion(wide, 3.0, seq=1) == "pan_right"
     assert {_choose_motion(wide, 3.0, seq=s) for s in range(1, 6)}.isdisjoint(
-        {"pan_down", "pan_up"})
-    sq = _panel(300, 300)          # ar 1.0 → all five rotate
+        {"pan_down", "pan_up", "zoom_out"})
+    sq = _panel(300, 300)          # ar 1.0 → [zoom_in, pan_down, pan_up, pan_right]
     got = [_choose_motion(sq, 3.0, seq=i) for i in range(1, 6)]
-    assert got == ["zoom_out", "pan_down", "pan_up", "pan_right", "zoom_in"]
+    assert got == ["pan_down", "pan_up", "pan_right", "zoom_in", "pan_down"]
 
 
 def test_choose_motion_big_panels_not_all_zoom_in():
@@ -84,8 +87,18 @@ def test_action_zoom_in_is_stronger_and_faster():
     assert "(1-pow(1-on/60,2))" in out   # ease-OUT punch, not smoothstep
 
 
-def test_action_zoom_out_and_pan_scale_up():
+def test_action_zoom_out_scales_up():
+    # zoom_out (loop-close framing) still scales with action.
     assert "1.13-0.13*" in _zoompan_expr("zoom_out", 60, action=True)
-    # Pan amplitude (pamt) unchanged by the MOTION CORE zoom overhaul.
-    assert "iw*0.06" in _zoompan_expr("pan_right", 60, action=True)
-    assert "iw*0.03" in _zoompan_expr("pan_right", 60, action=False)
+
+
+def test_pan_is_full_travel_linear_same_for_action_and_calm():
+    # Master 2026-07-11: a pan now sweeps the WHOLE excess region (0 → iw-iw/zoom) at constant
+    # velocity (linear on/d, no ease), z held at PAN_ZOOM. No action variance — the old pamt
+    # nudge (iw*0.03 / iw*0.06) is gone.
+    for act in (False, True):
+        e = _zoompan_expr("pan_right", 60, action=act)
+        assert "z='1.15'" in e
+        assert "(iw-iw/zoom)*(on/60)" in e   # full travel, LINEAR
+        assert "pow(" not in e               # constant velocity, not smoothstep/ease
+        assert "iw*0.0" not in e             # old pamt nudge removed
