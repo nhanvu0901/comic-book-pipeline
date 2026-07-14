@@ -165,6 +165,7 @@ def test_qa_chunk_locked_gate_routes(monkeypatch):
     pages = {1: _pg([_panel(700, 1200)], "p1.png")}
     chunks = [{"text": "x", "start": 0.0, "end": 1.0}]
     calls = []
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)   # stub builders return [1], not Shots — skip the loop-tail carve
     monkeypatch.setattr(shots, "_build_shots_per_chunk_locked", lambda *a, **k: calls.append("locked") or [1])
     monkeypatch.setattr(shots, "_build_shots_per_chunk", lambda *a, **k: calls.append("chunk") or [1])
     monkeypatch.setattr(shots, "_load_sentence_panels", lambda project: None)
@@ -216,6 +217,7 @@ def test_qa_chunk_locked_segments_into_distinct_panels(tmp_path, monkeypatch):
     (→ the assembler dissolves between them)."""
     slug = _setup_qa(tmp_path, monkeypatch, _LOCK_3)
     monkeypatch.setattr(shots, "PANEL_RERANK", False)        # isolate segmentation from VLM
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)       # isolate from the loop-tail carve
     # one 2s chunk per subject → 3 groups, each ≥ min, one distinct panel apiece.
     words = ["punisher vomit", "deadpool punch", "carnage grin"]
     chunks = [{"text": w, "start": 2.0 * i, "end": 2.0 * (i + 1)} for i, w in enumerate(words)]
@@ -235,6 +237,7 @@ def test_qa_chunk_locked_duration_caps_shot_count(tmp_path, monkeypatch):
     floor(2/1.5)=1 → a single held shot (no sub-1.5s jump)."""
     slug = _setup_qa(tmp_path, monkeypatch, _LOCK_3)
     monkeypatch.setattr(shots, "PANEL_RERANK", False)
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)       # isolate from the loop-tail carve
     chunks = [{"text": "punisher", "start": 0.0, "end": 0.5},
               {"text": "vomit", "start": 0.5, "end": 1.0},
               {"text": "punisher", "start": 1.0, "end": 1.5},
@@ -256,6 +259,7 @@ def test_qa_chunk_locked_vlm_rerank_overrides_weak_cosine(tmp_path, monkeypatch)
     slug = _setup_qa(tmp_path, monkeypatch, _LOCK_3)
     monkeypatch.setattr(shots, "PANEL_RERANK", True)
     monkeypatch.setattr(shots, "PANEL_RERANK_COS_CEIL", 0.66)
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)       # isolate from the loop-tail carve
     # _vlm_rerank gets cands=[(idx, src, panel, tb), ...]; return idx 2 → locked panel (5,2).
     monkeypatch.setattr(shots, "_vlm_rerank", lambda line, cands, **k: 2)
     words = ["punisher vomit", "deadpool punch", "carnage grin"]

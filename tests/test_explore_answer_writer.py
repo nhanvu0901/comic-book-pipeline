@@ -106,6 +106,51 @@ def test_write_explore_answer_end_to_end(monkeypatch, project_dir):
     assert 10 <= body_words <= 60
 
 
+def test_write_explore_answer_explain_statement_lead_routes_to_explain_contract(monkeypatch, project_dir):
+    """Explainer lane (2026-07-10) regression: a STATEMENT-lead title ("This is
+    how...") used to be misclassified as "list" by question_archetype() — the
+    whole EXPLAIN writer/validator/hook contract silently never fired for it.
+    Asserts the writer is called with the EXPLAIN system prompt (not LIST) and
+    the hook keeps the statement register (no forced "?")."""
+    captured: dict = {}
+
+    def _writer_call(*, system, user, models=None, max_tokens=2000, progress=None,
+                      label="llm", validator=None):
+        captured["system"] = system
+        raw = json.dumps({"scenes": [
+            {"text": "Wolverine trains until his body forgets pain, sealed shut before Legacy #1 ends.",
+             "connective": None, "beat_id": 1},
+            {"text": "But that discipline turns cruel — Deadpool mocks the same ritual in Deadpool #2.",
+             "connective": None, "beat_id": 2},
+            {"text": "That's why Thanos endures it without flinching in Thanos #3 — the training "
+             "was never about pain.", "connective": None, "beat_id": 3},
+        ]})
+        if validator is not None:
+            assert validator(raw), "fixture scenes must pass the module's own coarse validator"
+        return raw, "fake-writer-model"
+
+    monkeypatch.setattr(ea, "call_with_chain", _writer_call)
+    monkeypatch.setattr(ws, "call_with_chain", _raising_call)
+
+    comic_context = {"title": "This is how Batman trains himself", "is_arc": True}
+    story_pages = [
+        _page(1, 1, 1), _page(2, 1, 2),
+        _page(3, 2, 1), _page(4, 2, 2),
+        _page(5, 3, 1), _page(6, 3, 2),
+    ]
+    debug_dump = {"project": _PROJECT}
+
+    nar = ws.write_script(comic_context, story_pages, "explore_answer", debug_dump=debug_dump)
+
+    # root-bug regression: the EXPLAIN system prompt was used, not the LIST one.
+    assert captured["system"] == ea._EXPLORE_WRITE_SYSTEM_EXPLAIN
+
+    hook = nar.scenes[0].text
+    assert hook.startswith("This is how Batman trains himself.")
+    assert "himself?" not in hook
+    assert any(hook.endswith(t) for t in ea._EXPLAIN_TEASE_POOL)
+
+
 def test_missing_answer_context_raises(monkeypatch):
     monkeypatch.setattr(ea, "call_with_chain", _fake_writer_call)
     monkeypatch.setattr(ws, "call_with_chain", _raising_call)
@@ -147,10 +192,30 @@ def test_question_archetype_detection():
     assert qa("The tragic reason Silver Surfer must keep his memories hidden") == "explain"
     assert qa("The time Superman realized his greatest power was a curse") == "explain"
     assert qa("What made Doctor Doom give up absolute godhood?") == "explain"
+    # explainer lane (2026-07-10): statement-lead titles, not real questions
+    assert qa("This is how Batman trains himself") == "explain"
+    assert qa("This is why Deadpool always breaks the fourth wall") == "explain"
+    assert qa("Here's how Wolverine really heals") == "explain"
+    assert qa("Here's why Joker never kills Batman") == "explain"
+    assert qa("Why does Batman always work alone") == "explain"
     # list family stays list
     assert qa("Who has survived Ghost Rider's Penance Stare?") == "list"
     assert qa("4 villains who broke a hero's body") == "list"
     assert qa("") == "list"
+
+
+def test_is_statement_lead():
+    from stages.question_archetype import is_statement_lead as isl
+    # statement register (explainer lane) — no "?" belongs at the end
+    assert isl("This is how Batman trains himself")
+    assert isl("Here's why Deadpool always breaks the fourth wall")
+    assert isl("The day Joker finally went sane")
+    assert isl("The tragic reason Silver Surfer hides his memories")
+    # real interrogatives are NOT statement leads
+    assert not isl("Why does Batman always work alone")
+    assert not isl("How did Magneto build a mutant utopia")
+    assert not isl("Who has survived Ghost Rider's Penance Stare?")
+    assert not isl("")
 
 
 def test_validator_explain_requires_answer_in_final_scene():
@@ -177,12 +242,86 @@ def test_validator_explain_bans_list_language():
     assert not any("list language" in i for i in ea._validate_explore_scenes(scenes, beats, "list"))
 
 
+# ─── No bare reveal fragments (2026-07-10 Master feedback: "'I AM BANE'
+# written across their chests. They are alive." read as a floating quote +
+# an unexplained one-line fragment) — the writer prompt now bans standalone
+# reveal fragments in BOTH archetype variants; consequence must be spelled
+# out in the same/next sentence, quoted in-art text introduced naturally.
+
+def test_writer_system_prompts_ban_bare_reveal_fragments():
+    for system in (ea._EXPLORE_WRITE_SYSTEM_LIST, ea._EXPLORE_WRITE_SYSTEM_EXPLAIN):
+        assert "complete subject-verb-object clause" in system
+        assert "fragment" in system
+        assert "They are alive." in system  # the banned-example is named, not just described
+
+
 def test_build_hook_by_archetype():
     ctx = {"answer_summary": "Because only the dead woman could let him go."}
-    h_list = ea._build_hook("Who survived X", ctx, "list")
-    h_explain = ea._build_hook("Why did the Phoenix choose a broken host", ctx, "explain")
-    assert "list" in h_list  # countdown tease kept for list questions
+    h_list = ea._build_hook("Who survived X", ctx, "list", "proj-a")
+    h_explain = ea._build_hook("Why did the Phoenix choose a broken host", ctx, "explain", "proj-a")
+    # tease is one of the pool's rotated variants, not a fixed sentence
+    assert any(h_list.endswith(t) for t in ea._LIST_TEASE_POOL)
+    assert any(h_explain.endswith(t) for t in ea._EXPLAIN_TEASE_POOL)
     assert "list" not in h_explain  # no list language on explain hooks
     # explain hook must NOT spoil the thesis (the answer lands at the END)
     assert "dead woman" not in h_explain
     assert h_explain.startswith("Why did the Phoenix choose a broken host?")
+
+
+def test_build_hook_statement_lead_keeps_statement_register():
+    # explainer lane (2026-07-10): "This is how X" is a STATEMENT, not a real
+    # question — forcing a "?" onto it ("...himself?") reads wrong.
+    ctx = {"answer_summary": "Because the ritual is really a punishment."}
+    h = ea._build_hook("This is how Batman trains himself", ctx, "explain", "proj-a")
+    assert h.startswith("This is how Batman trains himself.")
+    assert "himself?" not in h
+    assert any(h.endswith(t) for t in ea._EXPLAIN_TEASE_POOL)
+    # thesis never leaks into the hook (same guarantee as the interrogative case)
+    assert "punishment" not in h
+
+    # a real interrogative explain question is untouched by the statement branch
+    h2 = ea._build_hook("Why does Batman always work alone", ctx, "explain", "proj-a")
+    assert h2.startswith("Why does Batman always work alone?")
+
+
+def test_build_hook_tease_rotation_is_deterministic_per_project():
+    ctx = {"answer_summary": "x"}
+    # same project slug -> same tease, every call (retries must reproduce it)
+    a1 = ea._build_hook("Who survived X", ctx, "list", "project-alpha")
+    a2 = ea._build_hook("Who survived X", ctx, "list", "project-alpha")
+    assert a1 == a2
+    # across many different slugs, more than one pool variant gets picked
+    # (pool has 6 entries; a run of 12 distinct slugs landing on just 1 is
+    # astronomically unlikely with a uniform hash)
+    picks = {ea._pick_tease(ea._LIST_TEASE_POOL, f"project-{i}") for i in range(12)}
+    assert len(picks) > 1
+    picks_explain = {ea._pick_tease(ea._EXPLAIN_TEASE_POOL, f"project-{i}") for i in range(12)}
+    assert len(picks_explain) > 1
+
+
+# ─── Seconds-targeted band (2026-07-08: was a flat n_items*(22..46) multiply
+# with no runtime ceiling — a 3-item Q&A measured ~35.6s, too short of the
+# 45-65s Paddy Galloway completion sweet spot, while 6 items could run 81s+ of
+# body alone) ─────────────────────────────────────────────────────────────
+
+def test_exp_band_targets_seconds_not_flat_per_item():
+    overhead = ea._QA_INTRO_OUTRO_SEC
+    for n in (3, 4, 5, 6):
+        lo, hi = ea._exp_band(n)
+        assert lo <= hi
+        lo_total_sec = lo / ea._WORDS_PER_SEC + overhead
+        hi_total_sec = hi / ea._WORDS_PER_SEC + overhead
+        # floor is reached (within rounding slack) and ceiling is respected
+        # for every realistic item count, not just the old n=3 case. The band
+        # targets the seconds floor UNLESS n readable items (each at the
+        # _EXP_WORDS_PER_ITEM_MIN sanity floor) physically take longer — then that
+        # floor wins, so respect whichever is higher.
+        per_item_floor_sec = n * ea._EXP_WORDS_PER_ITEM_MIN / ea._WORDS_PER_SEC + overhead
+        assert lo_total_sec <= max(ea._QA_TARGET_MIN_SEC, per_item_floor_sec) + 5
+        assert hi_total_sec <= ea._QA_TARGET_MAX_SEC + 1
+    # very few items can't physically reach the floor once every scene is
+    # already maxed at the hard per-scene cap — degenerate guard collapses
+    # the band to that single achievable value instead of demanding the
+    # impossible.
+    lo2, hi2 = ea._exp_band(2)
+    assert lo2 == hi2 == 2 * ea._EXP_SCENE_MAX_WORDS

@@ -157,7 +157,9 @@ def _match_sentences(sentences: list[str], spans: list[tuple], scene: dict,
     precise VISUAL of the exact panel to draw) is blended into each sentence's query — for the
     text cosine AND the SigLIP text→ART image blend, both of which read this query text. The
     sentence-specific part still varies the row enough for the no-reuse Hungarian to spread
-    DISTINCT panels across the sentences."""
+    DISTINCT panels across the sentences. To stop the dm blend from washing out the one pair that
+    matters, the single strongest dm-FREE sentence↔panel match (over the floor) is PINNED before
+    the Hungarian — see the pin block below. No-op when dm=="" (legacy stays byte-identical)."""
     out = [{"text": s, "start": _f(spans[i][0]), "end": _f(spans[i][1]),
             "page": None, "panel": None, "score": None}
            for i, s in enumerate(sentences)]
@@ -191,6 +193,27 @@ def _match_sentences(sentences: list[str], spans: list[tuple], scene: dict,
     # stored image vector. `sim` (raw TEXT cosine) stays untouched so the floor keeps its
     # text semantics — same split the matcher relies on.
     _blend_image_content(content, cands, [(scene, q) for q in queries], project)
+
+    # PIN the strongest PURE-TEXT pair. `dm` is blended into EVERY query, so when dm describes one
+    # panel (its own splash) that column of `content` goes near-uniform across rows — Hungarian then
+    # splits it by margin noise and the sentence whose OWN words name the panel (the payoff) can lose
+    # it to an opening group (batcave-breach "I AM BANE" splash, 2026-07-09). Recompute a dm-FREE
+    # (sentence-only) sim matrix, and if its global-best cell clears the text floor, pin that (row,col)
+    # so the assignment keeps it. Guarded on dm != "": when dm=="" queries==sentences → this matrix
+    # equals `content`, so pinning would perturb the legacy result — skip it and stay byte-identical
+    # (recap path + old sentence path). Single pin only, so the rest of the distribution is untouched.
+    if dm:
+        text_vecs = embed_batch(sentences)
+        text_sim = np.zeros((n, m), dtype="float64")
+        for i in range(n):
+            for j, (key, panel, _src, page_tb) in enumerate(cands):
+                _sc, tsim = _panel_content_score(
+                    panel, panel_vecs.get(key), text_vecs[i], scene_vec, page_tb,
+                    chunk_text=sentences[i], scene_text=scene_text)
+                text_sim[i][j] = tsim
+        ri, cj = (int(v) for v in np.unravel_index(int(np.argmax(text_sim)), text_sim.shape))
+        if float(text_sim[ri][cj]) >= PANEL_COS_FLOOR:
+            content[ri][cj] += 1.0e9      # dominates argmax + Hungarian cost → (ri,cj) stays paired
 
     # Choose which panel each sentence shows. Default: DISTINCT panels within the scene
     # (Hungarian max-content 1:1) so the item doesn't repeat one panel; fall back to plain

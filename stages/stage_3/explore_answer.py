@@ -9,6 +9,7 @@ EXPLORE_ANSWER_DESIGN.md (root, addendum v2 is binding) for the full spec.
 Additive only — narrate mode never imports this file; write_script() dispatches
 here before any of its own machinery runs (see write_script.py's mode check).
 """
+import hashlib
 import json
 import random
 import re
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import CREATIVE_LLM_MODELS, ENABLE_LOOP_TEASE, OPENROUTER_MODEL, PROJECTS_ROOT
-from ..question_archetype import question_archetype
+from ..question_archetype import question_archetype, is_statement_lead
 from .schema import Beat, Glossary, Narration
 from ._llm import call_with_chain
 from .._arc import issue_index_of_page
@@ -30,6 +31,7 @@ from .write_script import (
     _SCENE_MAX_WORDS,
     _TARGET_WORDS_MAX,
     _TARGET_WORDS_MIN,
+    _WORDS_PER_SEC,
     generate_loop_tease,
     generate_outro,
 )
@@ -41,12 +43,46 @@ from .write_script import (
 # can have anywhere from 3 to 6+ answers.
 _EXP_SCENE_MAX_WORDS = 42
 _EXP_WORDS_PER_ITEM_MIN = 22
-_EXP_WORDS_PER_ITEM_MAX = 46
+
+# SECONDS-based soft target for the FINISHED VIDEO (hook + body + outro) — the
+# only real research we have (Paddy Galloway, 2023) puts Shorts completion at
+# its best around 50-60s; widened slightly for buffer. A flat per-item*n_items
+# band (above) has no ceiling on runtime: a measured 3-item Q&A landed ~35.6s
+# (too short, near the old floor) while a 6-item one can hit 81s+ of body alone
+# (way past the old ceiling). _exp_band() below converts this seconds target
+# into a body word band using the recap's MEASURED render pace, so it scales
+# with item count instead of hard-coding one question's numbers.
+_QA_TARGET_MIN_SEC = 40
+_QA_TARGET_MAX_SEC = 55
+# Rough combined runtime of the two pieces that bookend the body and this
+# module doesn't budget directly: the deterministic hook (_build_hook, capped
+# at _HOOK_MAX_WORDS=26) and the LLM outro (thematic 4-14w + optional loop
+# tease 3-14w, see write_script.py's _OUTRO_SYSTEM/_LOOP_TEASE_SYSTEM). Subtracted
+# from the target above so the BODY band actually lands the FULL video in range.
+_QA_INTRO_OUTRO_SEC = 10
 
 
 def _exp_band(n_items: int) -> tuple[int, int]:
-    """Total body word band for `n_items` countdown scenes (excludes intro/outro)."""
-    return n_items * _EXP_WORDS_PER_ITEM_MIN, n_items * _EXP_WORDS_PER_ITEM_MAX
+    """Total body word band for `n_items` countdown scenes (excludes intro/outro).
+
+    Derived from the seconds target above, not a flat per-item multiply: few
+    items (2-3) get MORE words each to reach the floor, many items (5-6) get
+    FEWER words each to stay under the ceiling. Still clamped to the per-item
+    sanity range — never below the old floor (_EXP_WORDS_PER_ITEM_MIN, a scene
+    needs enough words to name the entity + why) and never above what's
+    physically reachable (every scene maxed out at _EXP_SCENE_MAX_WORDS, the
+    hard per-scene cap enforced below in _validate_explore_scenes)."""
+    body_min_sec = max(_QA_TARGET_MIN_SEC - _QA_INTRO_OUTRO_SEC, 0)
+    body_max_sec = max(_QA_TARGET_MAX_SEC - _QA_INTRO_OUTRO_SEC, 0)
+    sec_min_words = round(body_min_sec * _WORDS_PER_SEC)
+    sec_max_words = round(body_max_sec * _WORDS_PER_SEC)
+    absolute_min = n_items * _EXP_WORDS_PER_ITEM_MIN
+    absolute_max = n_items * _EXP_SCENE_MAX_WORDS
+    band_min = max(absolute_min, min(sec_min_words, absolute_max))
+    band_max = max(absolute_min, min(sec_max_words, absolute_max))
+    if band_max < band_min:
+        band_max = band_min  # degenerate guard: very few items can't physically reach the floor
+    return band_min, band_max
 
 
 def _ordered_items(answer_context: dict) -> list[tuple[int, dict]]:
@@ -124,10 +160,13 @@ CONNECT THE ITEMS — this is the point of the format:
 
 HARD RULES:
   - Plain B2 English. Concrete, no purple prose, no riddles.
+  - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - EXACTLY one scene per item, in the SAME order given.
   - NEVER speak a countdown/rank number ("number five", "#3", "third place" — all banned).
   - Each scene is a short lead-in + one or two plain sentences; keep it under 42 words.
   - Total words across ALL scenes must land inside the WORD BUDGET given.
+  - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
+  - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
@@ -145,10 +184,13 @@ For EACH item, write exactly ONE scene: name who/what it is about, give the how/
 
 HARD RULES:
   - Plain B2 English. Concrete, no purple prose, no riddles.
+  - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - EXACTLY one scene per item, in the SAME order given.
   - This is ONE story, not a list: NEVER use list language ("this list", "the last one", "number three" — all banned).
   - Each scene is a short lead-in + one or two plain sentences; keep it under 42 words.
   - Total words across ALL scenes must land inside the WORD BUDGET given.
+  - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
+  - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
@@ -267,28 +309,75 @@ def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
     return issues
 
 
-def _build_hook(question: str, answer_context: dict, archetype: str = "list") -> str:
+# Tease-line pools for the deterministic hook below. Every video ended on the
+# exact same sentence ("The last one on this list shouldn't even be
+# possible.") regardless of question, which reads as repeated boilerplate
+# across a channel of Q&A Shorts (Master: vary it like a paraphrase, not a
+# fixed line). Rotated per-project (see _pick_tease) rather than per-call so
+# retries within one Stage 3 run stay stable. Keep every variant in the same
+# short/punchy register and, for LIST, avoid re-introducing a literal rank
+# word (banned by _LIST_LANGUAGE_RE-style rules used elsewhere in this file).
+_LIST_TEASE_POOL = (
+    "The last one on this list shouldn't even be possible.",
+    "And the final one shouldn't even exist.",
+    "Wait until you see who did it last.",
+    "The last name on this list makes no sense.",
+    "Number one breaks every rule.",
+    "You won't believe who pulled off the last one.",
+)
+_EXPLAIN_TEASE_POOL = (
+    "The answer is crueler than you think.",
+    "The real answer is worse than you'd guess.",
+    "Wait until you hear the actual reason.",
+    "The truth behind it is darker than it looks.",
+    "You won't like why it's true.",
+    "The reason is stranger than you'd expect.",
+)
+
+
+def _pick_tease(pool: tuple[str, ...], project_slug: str) -> str:
+    """Deterministic per-project pick from `pool`. hashlib (not the `random`
+    module) so a Stage 3 retry on the SAME project reproduces the SAME tease
+    — `random` would need a seed threaded through every retry path to get
+    that guarantee for free. Different projects usually land on different
+    indices so consecutive channel videos don't all close on one line."""
+    digest = hashlib.md5(project_slug.strip().encode("utf-8")).hexdigest()
+    return pool[int(digest, 16) % len(pool)]
+
+
+def _build_hook(question: str, answer_context: dict, archetype: str = "list",
+                project_slug: str = "") -> str:
     """Deterministic v1 hook template (no LLM): "X? [statement]. [tease]" —
     is_intro scene, ~14-26 words (format spec v2).
 
-    LIST questions keep the countdown tease. EXPLAIN questions get a
-    promise-the-answer tease instead, and NEVER speak the answer_summary — for
-    an explain video that summary IS the answer (the final scene's landing), so
-    putting it in the hook would spoil the whole argument in second two.
+    LIST questions keep the countdown tease (rotated from _LIST_TEASE_POOL).
+    EXPLAIN questions get a promise-the-answer tease instead (rotated from
+    _EXPLAIN_TEASE_POOL), and NEVER speak the answer_summary — for an explain
+    video that summary IS the answer (the final scene's landing), so putting
+    it in the hook would spoil the whole argument in second two.
+
+    An EXPLAIN question can be a STATEMENT lead ("This is how Batman trains
+    himself") rather than a real interrogative ("Why does Batman..."); forcing
+    a "?" onto the former reads wrong ("...himself?"), so that register keeps
+    its own punctuation (see `is_statement_lead`).
 
     ponytail: a real paraphrase of an arbitrary question needs grammar this
     template can't fake, so the "statement" clause is a generic placeholder
     unless Stage 1 supplied an explicit one-line summary. Upgrade to an LLM hook
     later (design doc addendum v2) if this reads too flat."""
     q = question.strip()
+    if archetype == "explain" and is_statement_lead(question):
+        if q and not re.search(r"[.!?]$", q):
+            q += "."
+        return " ".join((q, _pick_tease(_EXPLAIN_TEASE_POOL, project_slug)))
     if q and not q.endswith("?"):
         q += "?"
     if archetype == "explain":
-        return " ".join((q, "The answer is crueler than you think."))
+        return " ".join((q, _pick_tease(_EXPLAIN_TEASE_POOL, project_slug)))
     summary = str(answer_context.get("summary") or answer_context.get("answer_summary") or "").strip()
     statement = summary if summary else "Here's the answer"
     statement = statement.rstrip(".") + "."
-    tease = "The last one on this list shouldn't even be possible."
+    tease = _pick_tease(_LIST_TEASE_POOL, project_slug)
     hook = " ".join(part for part in (q, statement, tease) if part)
     if len(hook.split()) > _HOOK_MAX_WORDS:
         hook = " ".join(part for part in (q, tease) if part)  # drop the summary clause if it runs long
@@ -354,7 +443,7 @@ def write_explore_answer(
     parsed = _anchor_scenes_to_beats(parsed, beats, progress)
     body = parsed.get("scenes") or []
 
-    hook_text = _build_hook(question, answer_context, archetype)
+    hook_text = _build_hook(question, answer_context, archetype, project_name)
     hook_page = beats[0].page_refs[0] if beats[0].page_refs else 0
     intro_scene = {
         "text": hook_text, "page_ref": hook_page, "panel_ref": -1,

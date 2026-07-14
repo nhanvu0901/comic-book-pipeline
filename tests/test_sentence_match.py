@@ -151,6 +151,47 @@ def test_sentence_query_blends_drawable_moment(monkeypatch):
     assert any("He stood back up" in c for c in seen)  # sentence text kept
 
 
+def test_pin_keeps_payoff_sentence_on_its_panel(monkeypatch):
+    """PIN FIX (batcave-breach "I AM BANE" splash, 2026-07-09): the beat's drawable_moment describes
+    the splash, so once it is blended into EVERY query that splash column of `content` goes ~uniform
+    and the no-reuse Hungarian can hand the splash to the OPENING group while the payoff sentence
+    (whose own words name it) gets a filler panel. The dm-free pin must keep the strongest pure-text
+    pair — here (payoff group, splash) — so the LAST group wins the splash.
+
+    Numbers (fake score = min(0.9, 0.1*word-overlap)): the dm-blend `content` peaks the splash for the
+    opening group (0.9) over the payoff group (0.8), so the UNPINNED Hungarian optimum sends the splash
+    to group 0. Pure-text (dm removed) the splash's strongest cell is the payoff group (0.7) → pinned."""
+    def _bane_score(panel, pv, cv, sv, ptb, *, chunk_text, scene_text):
+        cw = set(re.findall(r"[a-z]+", (chunk_text or "").lower()))
+        dw = set(re.findall(r"[a-z]+", str(panel.get("description", "")).lower()))
+        sim = min(0.9, 0.1 * len(cw & dw))
+        return sim, sim
+
+    monkeypatch.setattr(_embedding, "embed_batch", lambda t: [None] * len(t))
+    monkeypatch.setattr(shots, "_panel_content_score", _bane_score)
+    monkeypatch.setattr(shots, "_blend_image_content", lambda *a, **k: None)
+
+    splash = ((77, 0), {"description": "nightwing red hood robin hanging dark bane terrify splash"}, "p77.png", [])
+    filler1 = ((50, 0), {"description": "bright batburger daytime restaurant"}, "p50.png", [])
+    filler2 = ((60, 0), {"description": "generic crowd on a street"}, "p60.png", [])
+    cands = [splash, filler1, filler2]                      # splash FIRST (its natural page is late)
+
+    groups = ["But Bane comes to terrify and steal",        # opening
+              "A bright batburger in daytime",              # filler middle
+              "Bane finds Nightwing Red Hood Robin hanging in the dark"]  # payoff (last)
+    spans = [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]
+    dm = "nightwing red hood robin hanging dark bane splash"
+
+    picks = sm._match_sentences(groups, spans, {"scene_id": 4, "text": " ".join(groups)}, cands,
+                                {}, "proj", log=lambda *a: None, drawable_moment=dm,
+                                always_assign=True)
+
+    assert (picks[2]["page"], picks[2]["panel"]) == (77, 0)     # payoff group wins the splash
+    assert (picks[0]["page"], picks[0]["panel"]) != (77, 0)     # NOT the opening group (the defect)
+    assert picks[2]["score"] >= shots.PANEL_COS_FLOOR          # pinned pick keeps a strong score
+    assert len({(p["page"], p["panel"]) for p in picks}) == 3  # still no-reuse (3 distinct panels)
+
+
 def test_no_lock_falls_back_to_scene_anchor(tmp_path, monkeypatch):
     """When a scene has NO lock but a real (page_ref, panel_ref) anchor, that panel is the
     single candidate (backward-compatible with the pre-multi-select world)."""

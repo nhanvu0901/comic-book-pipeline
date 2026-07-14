@@ -208,6 +208,60 @@ def test_resolve_reader_url_no_series_match_returns_empty(monkeypatch):
     assert mod.resolve_reader_url("Thunderbolts (2013) #29", "2014", log=lambda _m: None) == ""
 
 
+def test_resolve_reader_url_falls_through_slug_year_to_title_match(monkeypatch):
+    """Real 2026-07-09 batcave-breach repro: 'Batman (2016) #16' with two 'batman'
+    search hits — a legacy-ID slug with NO year at all ('561-batman.html', the real
+    correct series) and an unrelated, wrongly-dated slug that DOES carry a year
+    ('33758-batman-2025.html', a different Batman (2025) volume). Both tie on the
+    'batman' name-token score, and the old code took the wrong one, saw its year
+    baked into the slug didn't match, and refused outright.
+
+    The fix must not trust the slug year alone: it should try both candidates,
+    reading each one's own chapter TITLES (site's real label), and land on the
+    2016 volume because THAT series' issue #16 chapter is titled '(2016-)'."""
+    monkeypatch.setattr(mod, "_batcave_search", lambda q, *, log=print: [
+        ("33758", "batman-2025", "https://batcave.biz/33758-batman-2025.html"),
+        ("561", "batman", "https://batcave.biz/561-batman.html"),
+    ])
+
+    def fake_discover(series_url, headless=None):
+        if series_url.endswith("33758-batman-2025.html"):
+            # Wrong series: its own titles genuinely say 2025, not 2016.
+            return [{"number": 16.0, "title": "Batman (2025-) #16",
+                     "url": "https://batcave.biz/reader/33758/000"}]
+        if series_url.endswith("561-batman.html"):
+            # Right series: legacy slug has no year, but the chapter title does.
+            return [
+                {"number": 15.0, "title": "Batman (2016-) #15",
+                 "url": "https://batcave.biz/reader/561/111"},
+                {"number": 16.0, "title": "Batman (2016-) #16",
+                 "url": "https://batcave.biz/reader/561/112"},
+            ]
+        pytest.fail(f"unexpected series_url {series_url!r}")
+
+    monkeypatch.setattr(mod, "discover_issues", fake_discover)
+    url = mod.resolve_reader_url("Batman (2016) #16", "2016", "Bane", log=lambda _m: None)
+    assert url == "https://batcave.biz/reader/561/112"
+
+
+def test_resolve_reader_url_refuses_when_no_candidate_title_matches_year(monkeypatch):
+    """If NONE of the candidates' own chapter titles confirm the wanted year, the
+    original refuse-and-hand-fill guard must still fire (it once correctly caught a
+    genuinely wrong 2025 volume) — this must not regress into silently accepting
+    the top mismatched pick."""
+    monkeypatch.setattr(mod, "_batcave_search", lambda q, *, log=print: [
+        ("33758", "batman-2025", "https://batcave.biz/33758-batman-2025.html"),
+    ])
+    monkeypatch.setattr(mod, "discover_issues", lambda url, headless=None: [
+        {"number": 16.0, "title": "Batman (2025-) #16",
+         "url": "https://batcave.biz/reader/33758/000"},
+    ])
+    logs = []
+    url = mod.resolve_reader_url("Batman (2016) #16", "2016", log=logs.append)
+    assert url == ""
+    assert any("volume-year mismatch" in m for m in logs)
+
+
 def test_parse_source_comic_shapes():
     assert mod._parse_source_comic('Thunderbolts (2013) #29') == ("Thunderbolts", "2013", "29")
     assert mod._parse_source_comic('"Ghost Rider" (1990) #12') == ("Ghost Rider", "1990", "12")

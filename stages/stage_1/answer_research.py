@@ -216,27 +216,61 @@ _GENERIC_NAME_TOKENS = frozenset((
 ))
 
 
-def _pick_series(hits: list[tuple[str, str, str]], series: str, year_hint: str) -> str:
-    """Best series URL: most DISTINCTIVE name-tokens present in the slug, +0.5
-    for a year match. Generic tokens (the/vol/2/…) and bare numbers are dropped
+def _rank_series_candidates(hits: list[tuple[str, str, str]], series: str,
+                             year_hint: str) -> list[str]:
+    """All series URLs scoring >= 0.5 on name-token overlap (+0.5 for a slug year
+    match), best first. Generic tokens (the/vol/2/…) and bare numbers are dropped
     before scoring — they match half the slugs on the site and let an unrelated
     series outscore the right one. Requires >= half the distinctive name to
-    appear so an unrelated search hit can't win."""
+    appear so an unrelated search hit can't win.
+
+    Returns ALL qualifying candidates (not just the top one) so callers such as
+    `resolve_reader_url` can fall through to a runner-up when the top pick's slug
+    year turns out to be wrong — e.g. two same-named series where only one has a
+    year in its slug at all (batcave uses legacy numeric IDs for some series, the
+    year only ever shows up in the page/chapter TITLE)."""
     raw = [t for t in re.split(r"[^a-z0-9]+", series.lower()) if t]
     name_tokens = [t for t in raw if t not in _GENERIC_NAME_TOKENS and not t.isdigit()]
     if not name_tokens:
         name_tokens = raw  # all-generic/numeric name (e.g. "2000 AD") — best effort
     if not name_tokens:
-        return ""
-    best_url, best_score = "", 0.0
+        return []
+    scored: list[tuple[float, str]] = []
     for _news_id, slug, url in hits:
         slug_tokens = {t for t in slug.split("-") if t}
         score = sum(1 for t in name_tokens if t in slug_tokens) / len(name_tokens)
         if year_hint and year_hint in slug_tokens:
             score += 0.5
-        if score > best_score:
-            best_score, best_url = score, url
-    return best_url if best_score >= 0.5 else ""
+        if score >= 0.5:
+            scored.append((score, url))
+    scored.sort(key=lambda pair: -pair[0])  # stable: ties keep hit order (old tie-break)
+    return [url for _score, url in scored]
+
+
+def _pick_series(hits: list[tuple[str, str, str]], series: str, year_hint: str) -> str:
+    """Best series URL — see `_rank_series_candidates`. Kept as its own function
+    since it's the simple single-answer case other callers/tests want."""
+    candidates = _rank_series_candidates(hits, series, year_hint)
+    return candidates[0] if candidates else ""
+
+
+_SLUG_YEAR_RE = re.compile(r"-((?:19|20)\d{2})(?:-|\.|$)")
+
+
+def _slug_year(series_url: str) -> str:
+    """'.../561-batman.html' -> '' (legacy numeric ID, no year encoded);
+    '.../33758-batman-2025.html' -> '2025'."""
+    m = _SLUG_YEAR_RE.search(series_url)
+    return m.group(1) if m else ""
+
+
+def _titles_match_year(issues: list[dict], year_hint: str) -> bool:
+    """True if any chapter's title (the site's OWN label, e.g. 'Batman (2016-) #16')
+    carries the wanted year — either a closed '(YYYY)' or an ongoing '(YYYY-'.
+    Slugs are sometimes just legacy numeric IDs with no year in them at all, so the
+    title is the more trustworthy source of the volume's real year."""
+    pat = re.compile(r"\(" + re.escape(year_hint) + r"[-)]")
+    return any(pat.search(it.get("title") or "") for it in issues)
 
 
 def resolve_reader_url(source_comic: str, source_year: str = "", entity: str = "",
@@ -257,44 +291,55 @@ def resolve_reader_url(source_comic: str, source_year: str = "", entity: str = "
     except Exception as exc:  # noqa: BLE001 - best-effort; empty -> fail-loud caller
         log(f"[answer-resolve] search failed for {name!r}: {type(exc).__name__}: {exc}")
         return ""
-    series_url = _pick_series(hits, name, year_hint)
-    if not series_url:
+    candidates = _rank_series_candidates(hits, name, year_hint)
+    if not candidates:
         log(f"[answer-resolve] no series match for {source_comic!r} ({len(hits)} hit(s))")
         return ""
-    # Volume-year cross-check (audit 2026-07-06): _pick_series can win on name tokens
-    # alone and land on the WRONG volume (e.g. Thanos 2019 when research verified 2016).
-    # If we KNOW the wanted year and the picked slug carries a DIFFERENT year, refuse —
-    # returning "" routes into the existing fail-loud hand-fill flow instead of silently
-    # downloading the wrong comic while answer_context still says "verified".
-    if year_hint:
-        m = re.search(r"-((?:19|20)\d{2})(?:-|\.|$)", series_url)
-        slug_year = m.group(1) if m else ""
-        if slug_year and abs(int(slug_year) - int(year_hint)) > 1:
-            log(f"[answer-resolve] volume-year mismatch for {source_comic!r}: "
-                f"batcave slug says {slug_year}, research says {year_hint} — refusing "
-                f"(hand-fill reader_url if the slug year is just mislabeled)")
-            return ""
-    try:
-        issues = discover_issues(series_url)
-    except Exception as exc:  # noqa: BLE001
-        log(f"[answer-resolve] discover_issues failed for {series_url}: {type(exc).__name__}: {exc}")
+
+    # Volume-year cross-check (audit 2026-07-06, generalised 2026-07-09): the top
+    # name-token match can still be the WRONG volume (e.g. Thanos 2019 when research
+    # verified 2016). A slug year is a strong signal WHEN present, but many series on
+    # batcave use a legacy numeric ID with NO year in the slug at all (real case:
+    # Batman (2016) lives at "561-batman.html" while an unrelated "Batman (2025)" slug
+    # DOES carry a year and can outrank it on name tokens alone) — so a slug-year
+    # mismatch is only disqualifying if the series' own chapter TITLES also fail to
+    # back up the wanted year. Walk every candidate (not just the top one) and take
+    # the first that clears this bar; only refuse once none of them do.
+    worst_mismatch = ""
+    for series_url in candidates:
+        try:
+            issues = discover_issues(series_url)
+        except Exception as exc:  # noqa: BLE001
+            log(f"[answer-resolve] discover_issues failed for {series_url}: {type(exc).__name__}: {exc}")
+            continue
+        if not issues:
+            continue
+        if year_hint:
+            slug_year = _slug_year(series_url)
+            if slug_year and abs(int(slug_year) - int(year_hint)) > 1 \
+                    and not _titles_match_year(issues, year_hint):
+                worst_mismatch = worst_mismatch or slug_year
+                continue
+        # One-shot (no '#N', or the series has a single chapter) -> that chapter.
+        if not issue or len(issues) == 1:
+            return issues[0]["url"]
+        # Match by the ISSUE NUMBER in the chapter title ('… Issue #29'), NOT `number`:
+        # `number` is the chapter's list position (posi), which drifts off the issue #
+        # whenever the series has an extra chapter at the front (a #0 / point-one /
+        # special) — batcave's Thunderbolts (2013) does exactly this. Fall back to
+        # posi only when the title carries no '#N'.
+        want = float(issue)
+        for it in issues:
+            n = _chapter_issue_number(it)
+            if n is not None and n == want:
+                return it["url"]
+        log(f"[answer-resolve] issue #{issue} not among {len(issues)} chapter(s) at {series_url}")
         return ""
-    if not issues:
-        return ""
-    # One-shot (no '#N', or the series has a single chapter) -> that chapter.
-    if not issue or len(issues) == 1:
-        return issues[0]["url"]
-    # Match by the ISSUE NUMBER in the chapter title ('… Issue #29'), NOT `number`:
-    # `number` is the chapter's list position (posi), which drifts off the issue #
-    # whenever the series has an extra chapter at the front (a #0 / point-one /
-    # special) — batcave's Thunderbolts (2013) does exactly this. Fall back to
-    # posi only when the title carries no '#N'.
-    want = float(issue)
-    for it in issues:
-        n = _chapter_issue_number(it)
-        if n is not None and n == want:
-            return it["url"]
-    log(f"[answer-resolve] issue #{issue} not among {len(issues)} chapter(s) at {series_url}")
+
+    if worst_mismatch:
+        log(f"[answer-resolve] volume-year mismatch for {source_comic!r}: "
+            f"batcave slug says {worst_mismatch}, research says {year_hint} — refusing "
+            f"(hand-fill reader_url if the slug year is just mislabeled)")
     return ""
 
 
