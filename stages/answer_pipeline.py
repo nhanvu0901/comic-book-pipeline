@@ -50,6 +50,22 @@ STEPS = ["research", "download", "preprocess", "narrate", "tts", "render"]
 # by name (stages.answer_pipeline._step_research, etc.) without touching main().
 
 
+def _attach_money_target(answer_path: Path, log: Callable[[str], None]) -> None:
+    """MONEY SHOT funnel Phan 1: derive the one money-shot target from the just-written
+    answer_context.json and stash it there under `money_target`. Best-effort — a
+    failed derivation (no API key / both free models down / unparseable) leaves the
+    field simply absent (derive_money_target already returns None + logs why), so the
+    funnel downstream just skips money-shot scoring for this project."""
+    from stages.money_shot import derive_money_target
+
+    answer_ctx = json.loads(answer_path.read_text())
+    target = derive_money_target(answer_ctx, log=log)
+    if target is not None:
+        answer_ctx["money_target"] = target
+        answer_path.write_text(json.dumps(answer_ctx, indent=2, ensure_ascii=False))
+        log(f"[answer-pipeline] money_target: {target.get('money_event', '')!r}")
+
+
 def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
     """Web-research the answer and write comic_context.json + answer_context.json.
 
@@ -74,6 +90,7 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
         answer_path, _comic_path = build_contexts(
             research.get("question", args.question), research, args.project,
             researched_at=research.get("researched_at", ""), log=log)
+        _attach_money_target(answer_path, log)
         return f"rebuilt from {answer_path.name} ({len(research.get('items') or [])} item(s))"
 
     if not args.question:
@@ -84,6 +101,7 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
                                hint=getattr(args, "hint", ""), log=log)
     answer_path, _comic_path = build_contexts(
         args.question, research, args.project, log=log)
+    _attach_money_target(answer_path, log)
     return f"{len(research.get('items') or [])} item(s) -> {answer_path.name}"
 
 

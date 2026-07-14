@@ -23,6 +23,11 @@ class Scene:
     beat_id: int = 0               # links back to Beat.id from Phase A
     is_intro: bool = False         # teaser opener ("Ever wonder...?") shown over the cover
     is_outro: bool = False         # closing credit ("The comic is X.") over the final splash
+    visual_beats: list = field(default_factory=list)  # verbatim clause fragments of `text`;
+                                   # Stage 5 cuts one panel per beat instead of holding a single
+                                   # panel for the whole scene (empty = hold). recap: list[str].
+                                   # micro_moment (WRITER-PICKS-PANEL): list[{"text","page",
+                                   # "panel"}] — writer maps each fragment to the panel drawing it.
 
 
 @dataclass

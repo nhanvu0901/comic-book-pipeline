@@ -23,14 +23,14 @@ def test_thought_until_pivot_lands_in_allowed_archetype():
     assert _classify_hook(when_first) in _ALLOWED_HOOK_ARCHETYPES
 
 
-def test_length_band_targets_60_75s_at_measured_wps():
+def test_length_band_targets_45_57s_at_measured_wps():
     # Retuned from the empirical ~3.4 wps (Resemble Carl + shipped --atempo 1.35),
     # NOT the stale 2.88. Body band + a ~14-word teaser intro must land the FINAL
-    # audio inside the 60-75s cluster the viral mining found.
-    assert (_TARGET_WORDS_MIN, _TARGET_WORDS_MAX) == (195, 245)
+    # audio inside the ~45-57s attention budget (B4 retune, 2026-07-12).
+    assert (_TARGET_WORDS_MIN, _TARGET_WORDS_MAX) == (140, 180)
     assert _WORDS_PER_SEC == 3.4
     intro_words = 14  # typical teaser prepended on top of the body
     lo_sec = (_TARGET_WORDS_MIN + intro_words) / _WORDS_PER_SEC
     hi_sec = (_TARGET_WORDS_MAX + intro_words) / _WORDS_PER_SEC
-    assert 58 <= lo_sec <= 66, lo_sec   # ~61s floor
-    assert 72 <= hi_sec <= 78, hi_sec   # ~76s ceiling
+    assert 43 <= lo_sec <= 48, lo_sec   # ~45s floor
+    assert 54 <= hi_sec <= 60, hi_sec   # ~57s ceiling

@@ -4,8 +4,12 @@ CLI entry point for Stage 3: narration synthesis.
 Usage:
     python -m stages.stage_3 --project death_of_gwen_stacy
     python -m stages.stage_3 --project death_of_gwen_stacy --mode hot_take
+    python -m stages.stage_3 --project foo --mode micro-moment   # single-moment 30-50s Short
+                                                                 # (reads comic_context.json's
+                                                                 #  "target_moment" field)
 
 If --mode is omitted, the LLM proposes 3 modes and you pick one interactively.
+Hyphens in a mode name are accepted (micro-moment == micro_moment).
 """
 import argparse
 import sys
@@ -32,6 +36,7 @@ def main():
     parser.add_argument("--project", required=True)
     parser.add_argument(
         "--mode",
+        type=lambda s: s.strip().replace("-", "_"),  # accept micro-moment == micro_moment
         choices=sorted(MODES_BY_KEY.keys()),
         help="Skip mode proposal and use this mode directly.",
     )

@@ -88,6 +88,13 @@ MODES: list[NarrationMode] = [
         "Requires a pre-built answer_context.json; never propose this for a normal "
         "single-comic retelling.",
     ),
+    NarrationMode(
+        "micro_moment",
+        "Micro-Moment",
+        "INTERNAL — a 30-50s Short about ONE moment from a single issue plus what it "
+        "MEANS (statement-narrative, not a recap). Reads the comic_context.json "
+        "'target_moment' field; never propose this for a normal single-comic retelling.",
+    ),
 ]
 
 

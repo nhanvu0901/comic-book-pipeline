@@ -338,6 +338,15 @@ def review_thumb_b64(project_name: str, rel_path: str) -> str:
     return base64.b64encode(Path(full).read_bytes()).decode() if full else ""
 
 
+def image_b64(abs_path: str) -> str:
+    """Base64 of an image file at an ABSOLUTE path (for ft.Image src), or "" if
+    missing — used to preview an imported intro image whose jpg lives outside
+    review/thumbs."""
+    import base64
+    p = Path(abs_path or "")
+    return base64.b64encode(p.read_bytes()).decode() if p.exists() else ""
+
+
 # ─── Stage 4 ────────────────────────────────────────────────────────────────
 
 def run_stage_4(
