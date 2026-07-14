@@ -8,6 +8,7 @@ which loses Western color comic information; we skip that step.
 
 Device selection: CUDA > MPS > CPU. FP16 only on CUDA.
 """
+import os
 from pathlib import Path
 from functools import lru_cache
 
@@ -16,11 +17,35 @@ import torch
 from PIL import Image
 from transformers import AutoModelForCausalLM, AutoProcessor
 
+from .gutter_split import _gutter_split
+
 
 _HF_REPO = "ragavsachdeva/magiv3"
 
 MIN_AREA_RATIO = 0.01
 MAX_ASPECT_RATIO = 6.0
+
+# Auto-split oversized "whole-page" Magi boxes along white gutters (see gutter_split.py).
+# Default ON; ENABLE_GUTTER_SPLIT=0/false → exact pre-split behaviour (no-op even on splits).
+ENABLE_GUTTER_SPLIT = os.getenv("ENABLE_GUTTER_SPLIT", "1").strip().lower() not in ("0", "false", "no", "")
+
+
+def _apply_gutter_split(image, panels: list[dict], page_w: int, page_h: int,
+                        log=None, page_tag: str = "") -> list[dict]:
+    """Replace each oversized panel with its gutter-split sub-panels (>1) or keep it as-is.
+    Preserves every non-bbox field of the original panel dict."""
+    out: list[dict] = []
+    for idx, p in enumerate(panels):
+        subs = _gutter_split(image, p["bbox"], page_w, page_h)
+        if len(subs) > 1:
+            (log or print)(f"[gutter-split] page {page_tag} panel {idx} → {len(subs)} sub-panels")
+            for sb in subs:
+                child = dict(p)
+                child["bbox"] = sb
+                out.append(child)
+        else:
+            out.append(p)
+    return out
 
 
 def _pick_device() -> str:
@@ -94,7 +119,8 @@ def detect_full(image_path: Path | str) -> dict:
 
     page_result = results[0] if results else {}
     page_ocr = ocr_results[0].get("ocr_texts", []) if ocr_results else []
-    return _parse_magi_page(page_result, page_ocr, page_w, page_h)
+    return _parse_magi_page(page_result, page_ocr, page_w, page_h,
+                            image=img_array, page_tag=Path(image_path).name)
 
 
 def detect_full_batch(image_paths: list[Path | str], batch_size: int = 3,
@@ -130,13 +156,18 @@ def detect_full_batch(image_paths: list[Path | str], batch_size: int = 3,
             page_ocr = (ocr_results[k].get("ocr_texts", [])
                         if k < len(ocr_results) else [])
             page_w, page_h = sizes[k]
-            out.append(_parse_magi_page(page_result, page_ocr, page_w, page_h))
+            out.append(_parse_magi_page(page_result, page_ocr, page_w, page_h,
+                                        image=arrays[k], log=log,
+                                        page_tag=Path(chunk[k]).name))
     return out
 
 
-def _parse_magi_page(page_result: dict, page_ocr: list, page_w: int, page_h: int) -> dict:
+def _parse_magi_page(page_result: dict, page_ocr: list, page_w: int, page_h: int,
+                     image=None, log=None, page_tag: str = "") -> dict:
     """Parse ONE Magi page result (+ its OCR texts) into the detect_full() dict shape.
-    Shared by detect_full (single image) and detect_full_batch (many)."""
+    Shared by detect_full (single image) and detect_full_batch (many). When `image` is
+    given (the whole-page array) and ENABLE_GUTTER_SPLIT is on, oversized "whole-page"
+    panel boxes are re-split along white gutters (see gutter_split.py)."""
     page_area = page_w * page_h
 
     # ── Panels ─────────────────────────────────────────────────────────
@@ -155,6 +186,8 @@ def _parse_magi_page(page_result: dict, page_ocr: list, page_w: int, page_h: int
             "bbox": {"x": x1, "y": y1, "w": w, "h": h},
             "confidence": 1.0,
         })
+    if image is not None and ENABLE_GUTTER_SPLIT:
+        panels = _apply_gutter_split(image, panels, page_w, page_h, log=log, page_tag=page_tag)
     panels = sort_western_reading_order(panels)
 
     # ── Characters ─────────────────────────────────────────────────────

@@ -5,19 +5,26 @@ Reads the download manifest written by download.py, then for each page:
   SHA-256 cache check → Magi panel detect → VLM enrich → persist JSON.
 
 Sequential processing keeps things simple and well under OpenRouter's
-20 RPM / 50 RPD free-tier limits for a typical 22-page issue.
+20 RPM / 50 RPD free-tier limits for a typical 22-page issue. The one
+exception: the single-page front-matter/back-matter/issue-edge path (each
+extract_page() call is independent, no continuity state) runs a contiguous
+group of pages concurrently — see VLM_PAGE_WORKERS.
 """
 import difflib
 import json
 import os
 import re
+import shutil
+import signal
+import subprocess
 import time
+import urllib.request
 from pathlib import Path
 from typing import Callable
 
 from PIL import Image
 
-from config import VLM_BATCH_SIZE, VLM_MODEL, get_project_dirs
+from config import VLM_BATCH_SIZE, VLM_MODEL, VLM_PAGE_WORKERS, get_project_dirs
 from .._panel_index import DIALOG_TRUTH
 from .cache import image_hash, load_cached, save_cached
 from .panel_detect import assign_to_panels, detect_full
@@ -64,6 +71,22 @@ def _is_near_own_issue_edge(pn: int, label: str, bounds: dict[str, tuple[int, in
     equivalent of the doc-level `i < _FRONTMATTER_HEAD or i >= n - _BACKMATTER_TAIL` gate."""
     lo, hi = bounds.get(label, (pn, pn))
     return pn - lo < _ISSUE_FRONTMATTER_HEAD or hi - pn < _ISSUE_BACKMATTER_TAIL
+
+
+def _single_page_where(
+    i: int, n: int, s: dict, *, multi_issue: bool, issue_bounds: dict[str, tuple[int, int]]
+) -> str | None:
+    """Classify Phase 2 slot `i` as a single-page (no-continuity) site — front-matter head,
+    back-matter tail, or (saga only) own-issue edge — or None when it belongs to the batched
+    VLM path instead. Single source of truth for the condition so the main loop and its
+    contiguous-group collector (parallel single-page processing) can never disagree."""
+    if i < _FRONTMATTER_HEAD:
+        return "front-matter head"
+    if i >= n - _BACKMATTER_TAIL:
+        return "back-matter tail"
+    if multi_issue and _is_near_own_issue_edge(s["pn"], s["label"], issue_bounds):
+        return "own-issue edge"
+    return None
 
 
 def _prevlm_gate(
@@ -113,6 +136,106 @@ def _prevlm_page(
     ).to_dict()
 
 
+def _finish_single_page(
+    entry: dict, *, project_root: Path, log: Callable[[str], None], story_context: str,
+) -> dict:
+    """Second half of single-page Phase 2 processing — the part that calls extract_page()
+    (a VLM round-trip with no prior_page/running_state) and is therefore safe to run
+    concurrently across a contiguous group (see _single_page_where in the main loop):
+    materialise the pre-VLM gate verdict, or run the full _build_page_from_single() build.
+    `entry` is one item from the group collected by the sequential Magi-detect + gate pass
+    (carries s/dims/magi/gate — cheap, no network, so those logs stay in page order).
+    A group runs several independent pages CONCURRENTLY, so one page's unexpected crash is
+    caught here and downgraded to the same soft-fail shape extract_page() itself already
+    returns on total VLM exhaustion (page_type=skip/vlm_failure) — it must not take down its
+    already-running siblings, and the existing cache-invalidation guard (Phase 1 above, "if
+    cached.get('skip_reason') == 'vlm_failure': cached = None") retries it on the next run.
+    Returns {"page_dict", "gated", "image_path"} for the caller to persist in page order."""
+    s, dims, magi, gate = entry["s"], entry["dims"], entry["magi"], entry["gate"]
+    if gate is not None:
+        g_type, g_reason, g_summary = gate
+        log(f"[preprocess]   p{s['pn']:03d}: pre-VLM gate → {g_type}"
+            f"{('/' + g_reason) if g_reason else ''} (VLM skipped)")
+        page_dict = _prevlm_page(
+            page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
+            dimensions=dims, content_hash=s["hash"],
+            page_type=g_type, skip_reason=g_reason, page_summary=g_summary,
+        )
+        save_cached(project_root, s["pn"], s["hash"], page_dict)
+        return {"page_dict": page_dict, "gated": True, "image_path": s["img"]}
+    try:
+        page_dict = _build_page_from_single(
+            page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
+            panels_raw=magi["panels"], dimensions=dims, project_root=project_root,
+            log=log, story_context=story_context, content_hash=s["hash"],
+            magi_data=magi,
+        )
+    except Exception as exc:
+        log(f"[preprocess]   p{s['pn']:03d}: ✗ single-page build crashed: "
+            f"{type(exc).__name__}: {exc} — marking vlm_failure")
+        page_dict = _prevlm_page(
+            page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
+            dimensions=dims, content_hash=s["hash"],
+            page_type="skip", skip_reason="vlm_failure", page_summary="",
+        )
+        save_cached(project_root, s["pn"], s["hash"], page_dict)
+    return {"page_dict": page_dict, "gated": False, "image_path": s["img"]}
+
+
+def _collect_single_page_group(
+    page_states: list[dict], i: int, n: int, *,
+    magi_by_pn: dict[int, dict], issue_bounds: dict[str, tuple[int, int]],
+    multi_issue: bool, log: Callable[[str], None],
+) -> tuple[list[dict], int]:
+    """Collect the CONTIGUOUS run of single-page (no-continuity) slots starting at `i` —
+    front-matter head, back-matter tail, or (saga) own-issue edge — stopping at the first
+    cache hit or batched-path slot. Magi detect + the pre-VLM gate verdict are decided here,
+    SEQUENTIALLY (cheap, no network call), so those per-page logs stay in page order even
+    though the VLM-calling second half (_finish_single_page, via _process_single_page_group)
+    may run concurrently. Returns (group, next_i) — next_i is where the caller's `i` resumes."""
+    group: list[dict] = []
+    while i < n:
+        s = page_states[i]
+        if s["cached"] is not None:
+            break
+        where = _single_page_where(i, n, s, multi_issue=multi_issue, issue_bounds=issue_bounds)
+        if where is None:
+            break
+        with Image.open(s["img"]) as im:
+            dims = im.size
+        magi = magi_by_pn.get(s["pn"]) or detect_full(s["img"])
+        log(f"[preprocess]   p{s['pn']:03d}: Magi → {len(magi['panels'])} panel(s) "
+            f"({where} → single-page, no batch)")
+        gate = _prevlm_gate(magi, s["pn"], s["label"], issue_bounds)
+        group.append({"s": s, "dims": dims, "magi": magi, "gate": gate})
+        i += 1
+    return group, i
+
+
+def _process_single_page_group(
+    group: list[dict], *, project_root: Path, log: Callable[[str], None], story_context: str,
+) -> list[dict]:
+    """Run _finish_single_page over `group`: CONCURRENTLY (ThreadPoolExecutor) when
+    VLM_PAGE_WORKERS > 1 and the group has more than one page — extract_page() takes no
+    prior_page/running_state, so every entry is independent — otherwise strictly serial,
+    one page at a time, same as the original loop (VLM_PAGE_WORKERS=1 always takes this
+    branch). Returns per-page results in GROUP (page) ORDER regardless of thread completion
+    order, so the caller's results/prev_page_dict bookkeeping is byte-identical to serial."""
+    workers = min(VLM_PAGE_WORKERS, len(group))
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            return list(ex.map(
+                lambda e: _finish_single_page(
+                    e, project_root=project_root, log=log, story_context=story_context),
+                group,
+            ))
+    return [
+        _finish_single_page(e, project_root=project_root, log=log, story_context=story_context)
+        for e in group
+    ]
+
+
 # Description↔bbox verify gate (crop + look ground-truth check — see vlm_extract.
 # verify_page_descriptions). Default ON; DESC_VERIFY=0/false disables.
 DESC_VERIFY = os.getenv("DESC_VERIFY", "1").strip().lower() not in ("0", "false", "no", "")
@@ -134,6 +257,150 @@ _DIALOG_MISMATCH_RATIO = 0.4
 # sparse splash (one big panel still covering most of the page) does NOT fire — only a clear
 # under-detection does.
 _COVERAGE_MIN = 0.5
+
+# LM Studio sequencing knob: LM Studio serves the Qwen3-Embedding-8B model (:1234) as a
+# SEPARATE OS PROCESS — release_model() below only frees Magi, it can never touch LM
+# Studio. If LM Studio's JIT keep-alive (default 60min TTL) leaves the ~7-8GB embed
+# server loaded, it sits co-resident with Magi's ~3-4GB through the whole Phase 1.5
+# batch-detect below and pushes a 16GB Mac into swap. LMS_AUTO_UNLOAD=0 disables both
+# helpers (e.g. no LM Studio installed, or plenty of RAM to spare).
+LMS_AUTO_UNLOAD = os.getenv("LMS_AUTO_UNLOAD", "1").strip().lower() not in ("0", "false", "no", "")
+
+
+def _lms_relevant() -> bool:
+    """True only when the configured embedding backend actually IS LM Studio's
+    OpenAI-compatible server — no reason to touch LM Studio for Gemini/Azure/local."""
+    import config
+    return config.EMBED_BACKEND in ("qwen", "openai")
+
+
+def _lms_bin() -> str | None:
+    """Locate the `lms` CLI. None if LM Studio isn't installed on this machine."""
+    binary = shutil.which("lms")
+    if binary:
+        return binary
+    fallback = Path.home() / ".lmstudio" / "bin" / "lms"
+    return str(fallback) if fallback.exists() else None
+
+
+def _lms_unload_all(log: Callable[[str], None] = print) -> None:
+    """Unload every LM Studio-served model right before Stage 2's memory-heavy Magi
+    batch-detect phase, freeing the ~7-8GB Qwen3-Embedding-8B server process for Magi.
+    Best-effort: missing binary / non-zero exit / timeout are all logged and swallowed,
+    never raised — a machine without LM Studio (or on a non-qwen backend) runs
+    completely unaffected."""
+    if not LMS_AUTO_UNLOAD or not _lms_relevant():
+        return
+    binary = _lms_bin()
+    if not binary:
+        return
+    try:
+        subprocess.run([binary, "unload", "--all"], capture_output=True, timeout=20, check=False)
+    except Exception as exc:
+        log(f"[lms] unload --all skipped ({type(exc).__name__}: {exc})")
+        return
+    _lms_kill_zombie_nodes(log)
+
+
+_ZOMBIE_NODE_MARKER = ".lmstudio/.internal/utils/node"
+_ZOMBIE_RSS_FLOOR_KB = 3_000_000  # 3GB — LM Studio 0.4.18's known zombie sits at 5-7GB
+
+
+def _lms_kill_zombie_nodes(log: Callable[[str], None] = print) -> None:
+    """LM Studio 0.4.18 bug: after `unload --all`, the `.lmstudio/.internal/utils/node`
+    helper process occasionally survives as a zombie holding 5-7GB RAM even though
+    `lms ps` reports no loaded model -- enough to push a 16GB Mac into swap. Sweep it,
+    but only when `lms ps` confirms nothing is genuinely loaded/computing (a real,
+    in-use server must never be killed) and the process is fat enough to be the known
+    zombie rather than a fresh legitimate one. Best-effort: any failure is logged and
+    swallowed, same contract as _lms_unload_all above."""
+    binary = _lms_bin()
+    if not binary:
+        return
+    try:
+        time.sleep(2)
+        ps = subprocess.run([binary, "ps"], capture_output=True, timeout=15, check=False, text=True)
+        if any(tag in (ps.stdout or "") for tag in ("LOADED", "COMPUTING")):
+            return
+        procs = subprocess.run(
+            ["ps", "-axo", "pid,rss,command"], capture_output=True, timeout=15, check=False, text=True
+        )
+        for line in (procs.stdout or "").splitlines():
+            if _ZOMBIE_NODE_MARKER not in line:
+                continue
+            parts = line.split(None, 2)
+            if len(parts) < 2:
+                continue
+            try:
+                pid, rss_kb = int(parts[0]), int(parts[1])
+            except ValueError:
+                continue
+            if rss_kb <= _ZOMBIE_RSS_FLOOR_KB:
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                log(f"[lms] killed zombie node pid={pid} rss={rss_kb / 1_000_000:.1f}GB")
+            except Exception as exc:
+                log(f"[lms] zombie kill pid={pid} failed ({type(exc).__name__}: {exc})")
+    except Exception as exc:
+        log(f"[lms] zombie sweep skipped ({type(exc).__name__}: {exc})")
+
+
+def _ensure_embed_model_loaded(log: Callable[[str], None] = print) -> None:
+    """JIT-load LM Studio's embedding model back in right before index_project() needs
+    it — _lms_unload_all() above may just have evicted it, and JIT auto-load-on-request
+    is an LM Studio setting, not a guarantee. Best-effort: any failure here just falls
+    through to _embedding.py's own graceful degrade (down server -> None -> skipped)."""
+    if not LMS_AUTO_UNLOAD or not _lms_relevant():
+        return
+    binary = _lms_bin()
+    if not binary:
+        return
+    import config
+    model_key = config.EMBED_OPENAI_MODEL
+    models_url = config.EMBED_OPENAI_URL.rsplit("/", 1)[0] + "/models"
+    try:
+        with urllib.request.urlopen(models_url, timeout=5) as r:
+            loaded_ids = {m.get("id") for m in json.load(r).get("data", [])}
+        if model_key in loaded_ids:
+            return
+    except Exception as exc:
+        log(f"[lms] model-list probe failed ({type(exc).__name__}: {exc}); loading anyway")
+    try:
+        subprocess.run([binary, "load", model_key], capture_output=True, timeout=120, check=False)
+    except Exception as exc:
+        log(f"[lms] load {model_key!r} skipped ({type(exc).__name__}: {exc})")
+
+
+def _write_panel_viz(project_root: Path, results: list[dict], log: Callable[[str], None]) -> None:
+    """Draw each page's detected panel bboxes (green box, width 5 + black-bg green index
+    number) over the raw page image and save to <project>/panel_viz/page_NNN_panels.jpg —
+    same look as scripts/magi_panel_viz.py, but generated from the already-saved
+    preprocess results (no Magi re-run). Manual-QA output only."""
+    from PIL import ImageDraw, ImageFont
+    out_dir = project_root / "panel_viz"
+    out_dir.mkdir(exist_ok=True)
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 32)
+    except OSError:
+        font = ImageFont.load_default()
+    written = 0
+    for r in results:
+        src = r.get("source_image")
+        if not src or not Path(src).exists():
+            continue
+        img = Image.open(src).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        for i, p in enumerate(r.get("panels") or [], 1):
+            b = p.get("bbox") or {}
+            x1, y1 = b.get("x", 0), b.get("y", 0)
+            x2, y2 = x1 + b.get("w", 0), y1 + b.get("h", 0)
+            draw.rectangle([x1, y1, x2, y2], outline=(0, 255, 0), width=5)
+            draw.rectangle([x1, y1, x1 + 44, y1 + 44], fill=(0, 0, 0))
+            draw.text((x1 + 10, y1 + 6), str(i), fill=(0, 255, 0), font=font)
+        img.save(out_dir / f"page_{int(r.get('page_number', 0)):03d}_panels.jpg", quality=92)
+        written += 1
+    log(f"[panel-viz] {written} page overlay(s) → {out_dir}")
 
 
 def preprocess_project(
@@ -192,7 +459,7 @@ def preprocess_project(
     page_states: list[dict] = []  # parallel to flat; carries "cached" dict OR None
     for pn, label, img_path in flat:
         h = image_hash(img_path)
-        cached = None if force_refresh else load_cached(project_root, pn, h)
+        cached = None if force_refresh else load_cached(project_root, pn, h, img_path, log=log)
         if cached is not None and cached.get("skip_reason") == "vlm_failure":
             cached = None  # invalidate prior failures so we retry with batch
         page_states.append({"pn": pn, "label": label, "img": img_path, "hash": h, "cached": cached})
@@ -218,6 +485,10 @@ def preprocess_project(
     from .panel_detect import detect_full_batch
     magi_by_pn: dict[int, dict] = {}
     _uncached = [ps for ps in page_states if ps["cached"] is None]
+    if _uncached:
+        # Free LM Studio's embed server BEFORE Magi loads — only worth doing when Magi
+        # is actually about to run (all-cache-hit projects never touch Magi).
+        _lms_unload_all(log)
     if _uncached and MAGI_BATCH_SIZE > 1:
         log(f"[preprocess] ▶ Magi batch-detect {len(_uncached)} uncached page(s) "
             f"(batch={MAGI_BATCH_SIZE})")
@@ -267,46 +538,28 @@ def preprocess_project(
         # Fix 3: a page near the START or END of ITS OWN issue (saga only — see
         # _multi_issue above) gets the same no-continuity-bias single-page treatment as
         # the doc-level head/tail, even though it sits mid-document globally.
-        _near_issue_edge = _multi_issue and _is_near_own_issue_edge(s["pn"], s["label"], _issue_bounds)
-        if i < _FRONTMATTER_HEAD or i >= n - _BACKMATTER_TAIL or _near_issue_edge:
-            s = page_states[i]
-            with Image.open(s["img"]) as im:
-                dims = im.size
-            magi = magi_by_pn.get(s["pn"]) or detect_full(s["img"])
-            if i < _FRONTMATTER_HEAD:
-                _where = "front-matter head"
-            elif i >= n - _BACKMATTER_TAIL:
-                _where = "back-matter tail"
-            else:
-                _where = "own-issue edge"
-            log(f"[preprocess]   p{s['pn']:03d}: Magi → {len(magi['panels'])} panel(s) "
-                f"({_where} → single-page, no batch)")
-            gate = _prevlm_gate(magi, s["pn"], s["label"], _issue_bounds)
-            if gate is not None:
-                g_type, g_reason, g_summary = gate
-                log(f"[preprocess]   p{s['pn']:03d}: pre-VLM gate → {g_type}"
-                    f"{('/' + g_reason) if g_reason else ''} (VLM skipped)")
-                page_dict = _prevlm_page(
-                    page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
-                    dimensions=dims, content_hash=s["hash"],
-                    page_type=g_type, skip_reason=g_reason, page_summary=g_summary,
-                )
-                save_cached(project_root, s["pn"], s["hash"], page_dict)
-                results.append(page_dict)
-                # Deliberately NOT updating prev_page_dict — a cover/ad carries no
-                # story continuity for the next batch's prior-page context.
-                i += 1
-                continue
-            page_dict = _build_page_from_single(
-                page_number=s["pn"], issue_label=s["label"], image_path=s["img"],
-                panels_raw=magi["panels"], dimensions=dims, project_root=project_root,
-                log=log, story_context=story_context, content_hash=s["hash"],
-                magi_data=magi,
+        _where = _single_page_where(i, n, s, multi_issue=_multi_issue, issue_bounds=_issue_bounds)
+        if _where is not None:
+            # extract_page() takes no prior_page/running_state — every single-page slot is
+            # independent of every other, so a CONTIGUOUS run of them (e.g. the whole
+            # _FRONTMATTER_HEAD block) can run concurrently.
+            group, i = _collect_single_page_group(
+                page_states, i, n, magi_by_pn=magi_by_pn, issue_bounds=_issue_bounds,
+                multi_issue=_multi_issue, log=log,
             )
-            results.append(page_dict)
-            prev_page_dict = page_dict
-            prev_image_path = s["img"]
-            i += 1
+            finished = _process_single_page_group(
+                group, project_root=project_root, log=log, story_context=story_context,
+            )
+            # Persist results and update prior-context in PAGE ORDER, regardless of which
+            # thread finished first — byte-identical to running the old serial loop.
+            for f in finished:
+                results.append(f["page_dict"])
+                if f["gated"]:
+                    # Deliberately NOT updating prev_page_dict — a cover/ad carries no
+                    # story continuity for the next batch's prior-page context.
+                    continue
+                prev_page_dict = f["page_dict"]
+                prev_image_path = f["image_path"]
             continue
 
         # Collect a contiguous run of uncached pages up to VLM_BATCH_SIZE (never
@@ -432,6 +685,14 @@ def preprocess_project(
     story_count = sum(1 for r in results if r.get("is_story_page"))
     log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
 
+    # Panel-viz overlays (green box + index per detected panel) for manual QA of Magi
+    # detection → <project>/panel_viz/. ADDITIVE output only: nothing downstream reads
+    # these images, and any failure never fails Stage 2.
+    try:
+        _write_panel_viz(project_root, results, log)
+    except Exception as exc:
+        log(f"[panel-viz] skipped (error): {exc}")
+
     # Identity Hook 2: authoritative repair, runs regardless of --no-enrich — the
     # safety net that replaces the human hand-fix from the Moon Knight #9 incident
     # (see identity_check module docstring). Never raises Stage 2.
@@ -450,6 +711,7 @@ def preprocess_project(
     # vectors instead of re-embedding every panel each run. Graceful no-op if
     # Qdrant/embeddings are unavailable (matcher falls back to in-memory embed).
     from .._panel_index import index_project
+    _ensure_embed_model_loaded(log)
     index_project(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
 
     # Feature A: ALSO embed the panel PIXELS into SigLIP's joint image-text space so Stage 5
@@ -463,6 +725,20 @@ def preprocess_project(
         index_project_images(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
     except Exception as exc:
         (log or print)(f"[img-index] skipped (error): {exc}")
+
+    # Q&A subject-panel ranking: for an answer_research (Q&A) project ONLY, rank every
+    # panel by how strongly it features the QUESTION'S subject character, so Stage 5 can
+    # bookend the video (multi-panel intro / outro) with that subject instead of a free-
+    # matcher spectacle pick. Text-only + fast; recaps skip it; a hand-written
+    # subject_panels.json ("manual": true) is never overwritten. Never fails Stage 2.
+    try:
+        ctx = json.loads((project_root / "comic_context.json").read_text())
+        if str(ctx.get("plot_source") or "") == "answer_research":
+            from ..subject_panels import build_subject_panels
+            answer_ctx = json.loads((project_root / "answer_context.json").read_text())
+            build_subject_panels(project_name, answer_ctx, results, log=log)
+    except Exception as exc:
+        (log or print)(f"[subject-panels] skipped (error): {exc}")
 
     return results
 

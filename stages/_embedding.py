@@ -190,18 +190,10 @@ def _azure_embed(texts: list[str]):
         return []
 
 
-def _openai_embed(texts: list[str]):
-    """Batch-embed via an OpenAI-compatible /v1/embeddings server (local llama-server,
-    LM Studio, etc.). Returns normalized vectors or [] on any failure (graceful).
-
-    Uses a bounded per-call timeout with a couple of retries instead of one 600s wait:
-    LM Studio under memory pressure (16GB Mac) can leave a request STALLED, and a
-    10-minute urlopen block reads as a total hang. A ~90s cap + retry fails fast and
-    recovers from a transient stall; a genuinely dead backend still returns [] (the
-    caller's graceful fallback). Override the cap with EMBED_TIMEOUT if a huge batch
-    legitimately needs longer."""
-    import json, os, time, urllib.request, config
-    timeout = float(os.getenv("EMBED_TIMEOUT", "90"))
+def _openai_embed_one(texts: list[str], timeout: float):
+    """One /v1/embeddings request (with retry). Returns normalized vectors aligned
+    with `texts`, or None on failure after 3 attempts."""
+    import json, time, urllib.request, config
     body = json.dumps({"model": config.EMBED_OPENAI_MODEL, "input": texts}).encode()
     last_exc = None
     for attempt in range(3):
@@ -218,7 +210,30 @@ def _openai_embed(texts: list[str]):
                   f"(attempt {attempt + 1}/3, timeout={timeout}s): {exc}", file=sys.stderr)
             time.sleep(2)
     print(f"[embedding] giving up after 3 attempts: {last_exc}", file=sys.stderr)
-    return []
+    return None
+
+
+def _openai_embed(texts: list[str]):
+    """Batch-embed via an OpenAI-compatible /v1/embeddings server (local llama-server,
+    LM Studio, etc.). Returns normalized vectors aligned with `texts`, or [] on any
+    failure (graceful — the caller then leaves those entries as None).
+
+    Sub-batches the request: LM Studio / llama.cpp embedding servers WEDGE on a huge
+    single batch (a 300+ panel project pins the server in COMPUTINGEMBEDDING and every
+    request times out), while small chunks return fine. We split into EMBED_CHUNK-sized
+    requests and concatenate. Any chunk that fails after retries collapses the whole
+    call to [] (unchanged all-or-nothing contract vs embed_batch's len-check). Each
+    request still gets a bounded EMBED_TIMEOUT so a transient stall fails fast."""
+    import os
+    timeout = float(os.getenv("EMBED_TIMEOUT", "90"))
+    chunk = max(1, int(os.getenv("EMBED_CHUNK", "24")))
+    out: list = []
+    for i in range(0, len(texts), chunk):
+        vecs = _openai_embed_one(texts[i:i + chunk], timeout)
+        if vecs is None:
+            return []  # a chunk genuinely failed → graceful all-or-nothing
+        out.extend(vecs)
+    return out
 
 
 def embed_batch(texts: list[str]) -> list:
