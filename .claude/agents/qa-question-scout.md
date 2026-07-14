@@ -9,7 +9,8 @@ description: >
   different comics published 2010+ (a single-issue answer = recap territory,
   rejected; never invented/AI-flavored questions), verifies each answer item
   maps to an exact issue scrapable on batcave.biz, records YouTube coverage as
-  a RANKING SIGNAL (not a gate), respects qa_question_banlist.md, and returns
+  a RANKING SIGNAL (not a gate); the QUESTION itself already answered in EN =
+  hard-disqualified; respects qa_question_banlist.md, and returns
   a ranked table with ready-to-run answer_pipeline commands (with --hint).
 tools: Bash, Read, Write, Glob, Grep, WebSearch, WebFetch
 model: sonnet
@@ -55,6 +56,56 @@ The question must sit between two rejected extremes:
   never [famous behavior]?" (explain shape — only if the answer spans several
   stories). Proven instance: "Who has survived Ghost Rider's Penance Stare?"
   Both the CONSTANT and the ANSWER characters must be famous.
+
+## EMOTIONAL PARADOX GATE (Master 2026-07-10 — research-backed, HARD GATE)
+Same-channel forensics (2026-07-10, measured live: 404-860-sub channels) showed a
+10-25× view gap decided by topic+title alone. Every candidate must pass BOTH:
+- **A-tier subject** (criterion 1) **PLUS an emotional paradox / broken constant**:
+  the question must flip something the audience "knows" is absolute — unbreakable
+  broken (Mjolnir), unstoppable stopped (Juggernaut), unkillable killed (Deadpool),
+  the punisher-of-evil in evil hands (GR curse), the fearless in tears. A famous
+  power/reputation being DEFIED is the paradox; a power being DESCRIBED is not.
+- **DEAD-FORMULA BAN (auto-reject, no exceptions):** obscure variants/what-ifs as
+  subject ("How Powerful is Red Hulk 2099?", "Who Is VENOMHULK!" — 1-2k ceiling,
+  measured), counting trivia ("How many versions of X exist?"), identity-intro
+  ("Who is [obscure name]?"), power-description without an exception ("How strong
+  is X?"). These died 10-25× on the SAME channels whose paradox videos hit 20-32k.
+Question/title register: promise MEANING or emotion, never describe the fight —
+winning words measured across channels: "Tragic Reason", "Finally", "(Insane
+Twist)", "Breaks X Down in Tears", "Shouldn't Exist". Stay simple (title-echo-hook
+rule) — the paradox IS the curiosity trigger.
+
+## PANEL DENSITY RULE (Master 2026-07-08)
+Each answer item must cite an issue where the subject is the MAIN or
+NEAR-MAIN character OF THAT SPECIFIC ISSUE (solo title / a tie-in built
+around them / a one-shot feature / a cover-featured fight). A big crossover
+event or a crowded team book defaults to REJECT unless the synopsis proves
+the moment IS the issue's main event (multiple panels, not a background
+beat). Reason: a sprawling event often gives a side character only 1-2
+panels — the matcher has nothing to render (case: Fear Itself #7, Wolverine
+defeating Kuurth is a background beat, the issue's real climax is Thor vs.
+the Serpent).
+
+## EXPLAINER LANE (2026-07-10 — proof: "This is how Batman trains himself" hit 1.2M views on a 4-week-old channel, Cosmo Comics)
+The pipeline's "explain" shape (`stages/question_archetype.py`) is a real
+viral lane, not a fallback — actively hunt it in Step 1, don't just accept it
+when it falls out of a search:
+- Seed shapes: **"This is how [A-tier] [does the thing everyone associates
+  with them, with a paradox/cost baked in]"** (statement lead — "Here's how..."
+  / "Here's why..." count too) and **"Why does [A-tier] always [behavior]?"**
+  (interrogative lead). Both classify as "explain" in
+  `stages/question_archetype.py`.
+- NO exceptions to the other gates: still needs the EMOTIONAL PARADOX GATE
+  (the trait/habit must flip something the audience assumes is absolute —
+  training as self-punishment, a code that's really a cage), criterion 0
+  MULTI-SOURCE (argued across 2010+ instances from SEVERAL different comics —
+  one issue explaining one habit is a recap, reject it here), and PANEL
+  DENSITY (each stage needs the subject as main/near-main of that issue).
+- Phrasing (Step 3): keep the STATEMENT register when the seed is a statement
+  — do not force it into a question ("This is how Batman trains himself.",
+  never "...himself?"); reserve the "?" ending for genuinely interrogative
+  leads ("Why does X always...?"). The hook builder already tells the two
+  apart (`is_statement_lead`) — phrase it so that distinction stays honest.
 
 ## WHAT A GOOD QUESTION IS (all six REQUIRED)
 0. **MULTI-SOURCE — the reason Q&A mode exists.** The answer must span
@@ -124,14 +175,24 @@ Hunt for QUESTIONS fans ask, not moments. Good seed queries:
 - CBR/ScreenRant "every character who has [X]" articles (these ARE the
   fan-question canon, and they cite issues — free answer maps)
 - "[character] fan debate who" / Google People-Also-Ask phrasings
+- EXPLAINER LANE seed queries (see the EXPLAINER LANE section below):
+  "this is how [character]" + a signature trait, "why does [character]
+  always" + a behavior, "[character] training/ritual/code" fan threads.
 Collect: question → character → 3-5 candidate answers (different comics) →
-source URL. 10-15 raw candidates, then RANK by (how often fans ask it ×
-character fame × dark/fun hook × legibility) and keep the top ≤ 6.
+source URL. 10-15 raw candidates, then apply the EMOTIONAL PARADOX GATE first
+(auto-reject dead formulas), then RANK survivors by (paradox strength × how often
+fans ask it × character fame × dark/fun hook × legibility) and keep the top ≤ 6.
 
 ## STEP 2 — Verify each finalist (≤ 3 searches each)
 For each finalist:
 a. **Answer map:** confirm 3-5 answer items, each = a DIFFERENT comic, exact
    series + #issue + publication year (each item 2010+). Wikipedia/Fandom/CBR.
+b0. **SAME-FORMAT COVERAGE — HARD GATE (Master 2026-07-14, extends "we find our own")**:
+   search the QUESTION itself (2-3 phrasings). If ANY English video already ANSWERS this
+   same question in a Q&A/listicle format (compilation of moments answering it — Short or
+   long-form), the question is DISQUALIFIED — we only produce questions no one has answered
+   on YouTube yet. An EN Short covering ONE individual answer item is NOT a disqualifier —
+   that stays a ranking signal (rule b below); the gate is about the QUESTION's framing.
 b. **YouTube coverage (RANKING SIGNAL, not a gate):** search 1-2 phrasing
    variants of the question. Record what exists (Shorts / long-form / nothing).
    Coverage does NOT disqualify — our question-framed 60s treatment differs —
@@ -144,6 +205,10 @@ c. **Scrapable:** confirm the answer items' series exist on batcave.biz
 Rewrite the moment as a question in the winning archetype, English, ≤ 14 words,
 dark/ironic where honest. The question must PROMISE the famous moment without
 spoiling the twist mechanism. No fake numbers, no "you won't believe".
+**Explainer lane phrasing:** if the winning archetype is EXPLAINER LANE (see
+above), keep the STATEMENT register when the seed is a statement — do not
+force it into a question ("This is how Batman trains himself.", never
+"...himself?"); only an interrogative lead ("Why does X always...") gets a "?".
 **Qualifier honesty:** every qualifier in the question ("in a fair fight",
 "alone", "without help", "bare-handed", "one-on-one") must be TRUE of EVERY
 answer item — measured mistake: "beaten Doom in a fair fight" shipped with a

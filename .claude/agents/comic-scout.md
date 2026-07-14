@@ -148,9 +148,23 @@ assume:
 
 ## Already produced (DEDUP — never re-recommend) — PERSISTENT, AUTHORITATIVE
 
-`projects/` gets wiped/cleaned, so do NOT rely only on `projects/*/comic_context.json`
-for dedup — projects can disappear after a video is made. THIS list is the source of
-truth; union it with whatever `projects/` still has. NEVER recommend any title here again:
+**LIVE SOURCE OF TRUTH — read ALL THREE on every run, before any dedup decision**
+(this supersedes the old single-hardcoded-list approach):
+1. `qa_question_banlist.md` section "## Produced" — every row (its `Project` column
+   names the `projects/<slug>` folder; open that project's `comic_context.json` for the
+   exact comic title/series/issue actually used, since the row itself only shows the
+   question/moment text).
+2. `comic_candidates.csv` — every row whose `status` contains `produced-banned` or
+   `rejected-banned`.
+3. `ls projects/` — union with the above two (`projects/` gets wiped/cleaned, so a
+   title can be missing from disk but still be produced per source 1/2, and vice versa
+   a folder can exist that predates either file).
+
+The static list below is a BACKUP ONLY, for when all three live sources are
+unavailable. It was last synced 2026-07-14 and WILL drift — always check the 3 live
+sources first; if a title is produced per source 1/2/3 but missing below, still treat
+it as produced (do not re-add it to the CSV as new). NEVER recommend any title in
+EITHER the static list or the 3 live sources again:
 - **What If...? Dark: Venom** (Marvel, 2023)
 - **What If...? Dark: Loki** (Marvel, 2023)
 - **Power Rangers: Ranger Slayer** (2020)
@@ -169,8 +183,30 @@ truth; union it with whatever `projects/` still has. NEVER recommend any title h
 - **What If...? Galactus Transformed Moon Knight** (Marvel) — "moonknight suffer"
 - **What If...? Galactus Transformed Rogue** (Marvel, 2025) — "rouge suffer"
 - **The Darkhold: Spider-Man** (Marvel, 2021) — "spider-man darkhold"
+- **House of M (Secret Wars)** (Marvel/Secret Wars, 2015) — shipped 2026-07-04, multi-issue Grimframe saga
+- **The Superior Spider-Man Returns** (Marvel, 2023) — shipped 2026-07-03
+- **Doom** (Marvel, 2024) #1 — shipped 2026-06-27
+- **Doctor Doom and Rocket Raccoon** (Marvel, 2025) — shipped 2026-07-03
+- **Doom 2099** (Marvel, 2019) — shipped 2026-07-03
+- **Moon Knight (2021) #9 "Stranger"** (Marvel, 2023) — shipped 2026-07-04
+- **Batman Incorporated** (DC, 2012) #8 "R.I.P." — Damian Wayne's death; `projects/damian-wayne-death`, shipped 2026-07-12
+- **Punisher: Kill Krew** (Marvel) #3 — Juggernaut orphan-drawings scene; `projects/punisher-juggernaut-kill-krew`, shipped 2026-07-13
+- **Batman** (DC, 2011) #7 — Court of Owls, Harper Row revival scene; `projects/batman-court-owls-7`, shipped 2026-07-11
+- **Detective Comics** (DC, 2020) #1026 "Monsters of Men" — Killer Croc "Waylon" epilogue; `projects/batman-killer-croc`, shipped 2026-07-12
+- **The Last Smile** (DC, 2020) #1 — Joker; `projects/joker-last-smile`, shipped 2026-07-11
+- **Catwoman 80th Anniversary 100-Page Super Spectacular** (DC, 2020) #1 — "Skin the Cat" backup story; `projects/catwoman-skin-the-cat` (has `final.mp4` but is MISSING from `qa_question_banlist.md`'s Produced section — flag to Master, likely a logging gap)
 
-When a new comic is produced, ADD it here immediately (don't wait — projects/ is volatile).
+NOTE (2026-07-14 sync): the Q&A-mode multi-source questions in `qa_question_banlist.md`
+Produced section (batcave-breach, mjolnir-shattered, ghost-rider-devils-angels,
+juggernaut-unstoppable, penance-stare) are deliberately NOT listed here as comic
+titles — each answers from 3-5 DIFFERENT comics, so no single title is "fully
+narrated" the way a recap/micro-moment consumes one comic. Don't add them as comic
+titles; if a specific answer-item issue later turns up as a recap candidate, dedup it
+by checking whether that exact issue/moment already has a produced English narration
+(Step 4), not via this list.
+
+When a new comic is produced, ADD it to `comic_candidates.csv` (status
+`produced-banned`) AND append it here for backup (don't wait — projects/ is volatile).
 
 ---
 
