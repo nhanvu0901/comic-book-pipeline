@@ -34,3 +34,8 @@ comic-pipeline-course/
 # Research / analysis workspace (reference videos, gap reports, frame extracts)
 research/
 docs
+tools/
+
+# Session workspace + local backups (never commit)
+scratchpad/
+*.bak*
