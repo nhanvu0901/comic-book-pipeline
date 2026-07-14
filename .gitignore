@@ -39,3 +39,4 @@ tools/
 # Session workspace + local backups (never commit)
 scratchpad/
 *.bak*
+stage3-5-course/
