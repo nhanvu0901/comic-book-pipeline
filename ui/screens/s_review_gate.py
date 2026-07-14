@@ -18,16 +18,21 @@ from typing import Callable
 
 import flet as ft
 
+from pathlib import Path
+
+from config import PROJECTS_ROOT
 from ..bridge import (
-    load_narration, load_review_candidates, load_review_locks,
-    list_review_projects, narration_sha1, review_thumb_b64,
-    save_narration_edits, save_review_locks,
+    image_b64, load_narration, load_preprocessed, load_review_candidates,
+    load_review_locks, list_review_projects, narration_sha1, review_thumb_b64,
+    run_blocking, save_narration_edits, save_review_locks,
 )
+from ..intro_import import import_intro_image, remove_intro_image
 from ..layout import primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from stages.subject_panels import load_subject_panels
 
 
 THUMB_H = 200  # candidate tile thumb height — big enough to actually judge a panel
@@ -63,6 +68,57 @@ def _normalize_lock_panels(raw: dict | None) -> list[dict]:
     return []
 
 
+def _beat_key(beat: dict) -> str:
+    """The beat's lock key. `beat_key` is the phase-2 contract field; a beat from a
+    project reviewed before that upgrade lacks it, so fall back to str(scene_id) —
+    identical to the key every existing locks.json already uses."""
+    bk = beat.get("beat_key")
+    return str(bk) if bk else str(int(beat.get("scene_id") or 0))
+
+
+def _beat_unit(beat: dict) -> str:
+    """"scene" (old default, MULTI-select) | "fragment" | "intro" (both SINGLE-select)."""
+    return str(beat.get("unit") or "scene")
+
+
+def _frag_idx_from_key(beat_key: str) -> int:
+    """0-based fragment index from a "<scene_id>:<frag_idx>" beat_key."""
+    if ":" not in beat_key:
+        return 0
+    try:
+        return int(beat_key.rsplit(":", 1)[1])
+    except ValueError:
+        return 0
+
+
+def _row_label(beat: dict, beat_key: str, unit: str) -> str:
+    """Static label for a fragment/intro row — these have no free-text edit field
+    (a fragment shares its scene_id's narration.json text with sibling fragments, so
+    editing one in isolation has no safe write-back path)."""
+    text = str(beat.get("narration_text", ""))
+    if unit == "intro":
+        return f"INTRO (cold-open): {text}"
+    if unit == "fragment":
+        scene_id = int(beat.get("scene_id") or 0)
+        return f"s{scene_id} · mảnh {_frag_idx_from_key(beat_key) + 1}: {text}"
+    return text
+
+
+def _init_pre_selected(beats: list[dict], locks: dict) -> None:
+    """Seed `locks` (in place) with each beat's pre_selected panels when locks.json has
+    no entry for that beat_key yet — an existing lock always wins, and a beat with no
+    (or empty) pre_selected is a no-op. Old-format beats (no beat_key/pre_selected
+    fields) are untouched, matching prior behaviour exactly."""
+    for beat in beats:
+        bk = _beat_key(beat)
+        if bk in locks:
+            continue
+        panels = [{"page": int(p["page"]), "panel": int(p["panel"])}
+                  for p in (beat.get("pre_selected") or []) if p.get("page") is not None]
+        if panels:
+            locks[bk] = {"panels": panels, "source": "pre_selected"}
+
+
 def _chip(label: str, color: str, *, visible: bool = True) -> ft.Container:
     return ft.Container(
         content=ft.Text(label, size=9, color=color, weight=ft.FontWeight.BOLD),
@@ -93,28 +149,28 @@ def build(
     locks_doc = load_review_locks(project)
     locks: dict = dict(locks_doc.get("locks") or {})
     locks_doc["locks"] = locks
+    _init_pre_selected(review.get("beats") or [], locks)
 
     status_text = ft.Text("", size=12, color=TEXT_MUTED)
-    # per-scene control refs so a lock/dup change repaints just that card
-    card_refs: dict[int, dict] = {}
+    # per-beat control refs (keyed by beat_key) so a lock/dup change repaints just that card
+    card_refs: dict[str, dict] = {}
 
-    def _selected_keys(scene_id: int) -> set[tuple[int, int]]:
+    def _selected_keys(beat_key: str) -> set[tuple[int, int]]:
         return {(p["page"], p["panel"])
-                for p in _normalize_lock_panels(locks.get(str(scene_id)))}
+                for p in _normalize_lock_panels(locks.get(beat_key))}
 
-    def _dup_scene_ids() -> set[int]:
-        by_panel: dict[tuple[int, int], list[int]] = {}
-        for sid_str, lock in locks.items():
-            sid = int(sid_str)
+    def _dup_beat_keys() -> set[str]:
+        by_panel: dict[tuple[int, int], list[str]] = {}
+        for bk, lock in locks.items():
             for p in _normalize_lock_panels(lock):
                 key = (p["page"], p["panel"])
-                by_panel.setdefault(key, []).append(sid)
-        return {sid for ids in by_panel.values() if len(ids) > 1 for sid in ids}
+                by_panel.setdefault(key, []).append(bk)
+        return {bk for ids in by_panel.values() if len(ids) > 1 for bk in ids}
 
     def _refresh_dup_badges():
-        dups = _dup_scene_ids()
-        for sid, refs in card_refs.items():
-            refs["dup_badge"].visible = sid in dups
+        dups = _dup_beat_keys()
+        for bk, refs in card_refs.items():
+            refs["dup_badge"].visible = bk in dups
             try:
                 refs["dup_badge"].update()
             except Exception:
@@ -126,11 +182,89 @@ def build(
         sb.open = True
         page.update()
 
-    def _refresh_beat_card(scene_id: int):
-        refs = card_refs.get(scene_id)
+    # ─── Import external intro image ────────────────────────────────────────
+    # Master can open a Q&A with an image from disk instead of a comic panel. The
+    # inject (sips → jpg + preprocessed page + subject_panels force_intro entry)
+    # lives in ui/intro_import.py (pure, tested); this screen only calls it and
+    # renders the current imports as a strip above the beat cards.
+    intro_list_col = ft.Column(spacing=8)
+    file_picker = ft.FilePicker()
+    try:
+        page.services.append(file_picker)
+    except Exception:
+        pass
+
+    def _intro_row(entry: dict, src_by_page: dict[int, str]) -> ft.Control:
+        page_n = int(entry.get("page", -1))
+        b64 = image_b64(src_by_page.get(page_n, ""))
+        thumb = (ft.Image(src=b64, height=90, fit=ft.BoxFit.CONTAIN, border_radius=2)
+                 if b64 else ft.Container(width=68, height=90, bgcolor=BG_ELEVATED,
+                                          border=ft.border.all(1, BORDER), border_radius=2))
+
+        def _remove(_e, pn=page_n):
+            try:
+                remove_intro_image(PROJECTS_ROOT / project, pn)
+                _show_snack(f"Removed imported intro p{pn}.")
+                _rebuild_intro_box()
+            except Exception as e:
+                _show_snack(f"Remove failed: {e}")
+
+        return ft.Container(
+            content=ft.Row([
+                thumb,
+                ft.Column([
+                    _chip("IMPORTED — intro", ACCENT),
+                    ft.Text(f"p{page_n}", size=10, color=TEXT_MUTED, font_family="Menlo"),
+                ], spacing=4),
+                ft.Container(expand=True),
+                ft.IconButton(icon=ft.Icons.DELETE_OUTLINE, icon_color=WARN,
+                              tooltip="Remove imported intro", on_click=_remove),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
+            padding=8, border=ft.border.all(1, ACCENT), border_radius=4, bgcolor=BG_PANEL,
+        )
+
+    def _rebuild_intro_box():
+        src_by_page = {int(pg.get("page_number", -1)): str(pg.get("source_image") or "")
+                       for pg in load_preprocessed(project)}
+        entries = [p for p in (load_subject_panels(project).get("panels") or [])
+                   if p.get("force_intro")]
+        intro_list_col.controls = [_intro_row(e, src_by_page) for e in entries]
+        try:
+            intro_list_col.update()
+        except Exception:
+            pass
+
+    async def _do_import():
+        try:
+            files = await file_picker.pick_files(
+                dialog_title="Pick an intro image (avif / jpg / png)",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["avif", "jpg", "jpeg", "png"],
+                allow_multiple=False,
+            )
+        except Exception as e:
+            _show_snack(f"File picker failed: {e}")
+            return
+        if not files or not files[0].path:
+            return
+        subject = str(load_subject_panels(project).get("subject") or "").strip() or "intro"
+        try:
+            entry = await run_blocking(
+                import_intro_image, PROJECTS_ROOT / project, Path(files[0].path), subject)
+            _show_snack(f"Imported intro image → p{entry['page']} (subject: {entry['subject']}).")
+            _rebuild_intro_box()
+        except Exception as e:
+            _show_snack(f"Import failed: {e}")
+
+    def _on_import_click(_e):
+        page.run_task(_do_import)
+
+    def _refresh_beat_card(beat_key: str):
+        refs = card_refs.get(beat_key)
         if not refs:
             return
-        selected = _selected_keys(scene_id)
+        unit = refs["unit"]
+        selected = _selected_keys(beat_key)
         for key, tile in refs["tiles"].items():
             is_sel = key in selected
             tile.border = ft.border.all(2 if is_sel else 1, ACCENT if is_sel else BORDER)
@@ -139,8 +273,9 @@ def build(
             icon.icon = ft.Icons.CHECK_CIRCLE if is_sel else ft.Icons.RADIO_BUTTON_UNCHECKED
             icon.icon_color = ACCENT if is_sel else TEXT_MUTED
         refs["auto_badge"].visible = not selected
-        refs["count_chip"].value = f"{len(selected)}/{MAX_PANELS} selected"
-        refs["warn_chip"].visible = len(selected) < MIN_PANELS
+        cap = MAX_PANELS if unit == "scene" else 1
+        refs["count_chip"].value = f"{len(selected)}/{cap} selected"
+        refs["warn_chip"].visible = unit == "scene" and len(selected) < MIN_PANELS
         try:
             refs["cand_row"].update()
             refs["auto_badge"].update()
@@ -150,23 +285,26 @@ def build(
             pass
         _refresh_dup_badges()
 
-    def _toggle_candidate(scene_id: int, cand_page: int, cand_panel: int):
-        sid = str(scene_id)
-        panels = _normalize_lock_panels(locks.get(sid))
+    def _toggle_candidate(beat_key: str, cand_page: int, cand_panel: int, unit: str):
+        panels = _normalize_lock_panels(locks.get(beat_key))
         key = (cand_page, cand_panel)
-        if key in {(p["page"], p["panel"]) for p in panels}:
-            panels = [p for p in panels if (p["page"], p["panel"]) != key]
-        elif len(panels) >= MAX_PANELS:
-            _show_snack(f"Max {MAX_PANELS} panels per beat.")
-            return
-        else:
-            panels = panels + [{"page": cand_page, "panel": cand_panel}]
+        already = key in {(p["page"], p["panel"]) for p in panels}
+        if unit == "scene":
+            if already:
+                panels = [p for p in panels if (p["page"], p["panel"]) != key]
+            elif len(panels) >= MAX_PANELS:
+                _show_snack(f"Max {MAX_PANELS} panels per beat.")
+                return
+            else:
+                panels = panels + [{"page": cand_page, "panel": cand_panel}]
+        else:  # fragment / intro — single-select: pick replaces, re-pick clears
+            panels = [] if already else [{"page": cand_page, "panel": cand_panel}]
         if panels:
-            locks[sid] = {"panels": panels, "source": "batcave"}
+            locks[beat_key] = {"panels": panels, "source": "batcave"}
         else:
-            locks.pop(sid, None)
+            locks.pop(beat_key, None)
         save_review_locks(project, locks_doc)
-        _refresh_beat_card(scene_id)
+        _refresh_beat_card(beat_key)
 
     def _save_narration_text(_e=None):
         current = load_narration(project)
@@ -196,15 +334,15 @@ def build(
             content=ft.Text("no thumb", size=9, color=TEXT_MUTED, font_family="Menlo"),
         )
 
-    def _open_preview(scene_id: int, key: tuple[int, int], c: dict):
+    def _open_preview(beat_key: str, unit: str, scene_id: int, key: tuple[int, int], c: dict):
         """Lightbox: same crop, shown large, with an Add/Remove toggle so
         selecting stays reachable without leaving the dialog."""
         def _handler(_e):
             desc = str(c.get("desc") or "")
             dialog_line = c.get("dialog")
 
-            def _toggle(_e2, sid=scene_id, k=key):
-                _toggle_candidate(sid, k[0], k[1])
+            def _toggle(_e2, bk=beat_key, u=unit, k=key):
+                _toggle_candidate(bk, k[0], k[1], u)
                 page.pop_dialog()
 
             body: list[ft.Control] = [
@@ -235,18 +373,25 @@ def build(
 
     def _beat_card(beat: dict) -> ft.Control:
         scene_id = int(beat.get("scene_id") or 0)
+        beat_key = _beat_key(beat)
+        unit = _beat_unit(beat)
         anchor_key = _anchor_key(beat.get("page_ref"), beat.get("panel_ref"))
-        selected = _selected_keys(scene_id)
+        selected = _selected_keys(beat_key)
 
-        text_field = ft.TextField(
-            value=edited_text.get(scene_id, str(beat.get("narration_text", ""))),
-            multiline=True, min_lines=2, max_lines=5,
-            border_color=BORDER, focused_border_color=ACCENT, text_size=13,
-        )
+        if unit == "scene":
+            text_field = ft.TextField(
+                value=edited_text.get(scene_id, str(beat.get("narration_text", ""))),
+                multiline=True, min_lines=2, max_lines=5,
+                border_color=BORDER, focused_border_color=ACCENT, text_size=13,
+            )
 
-        def _on_text(e, sid=scene_id):
-            edited_text[sid] = e.control.value or ""
-        text_field.on_change = _on_text
+            def _on_text(e, sid=scene_id):
+                edited_text[sid] = e.control.value or ""
+            text_field.on_change = _on_text
+            text_control: ft.Control = text_field
+        else:
+            text_control = ft.Text(_row_label(beat, beat_key, unit), size=13,
+                                    color=TEXT_PRIMARY)
 
         source = beat.get("source") or {}
         src_label = " · ".join(x for x in (source.get("title"), source.get("issue")) if x)
@@ -308,8 +453,8 @@ def build(
             if c.get("dialog"):
                 tooltip = f"{tooltip}\n\n“{c['dialog']}”"
 
-            def _pick(_e, sid=scene_id, k=key):
-                _toggle_candidate(sid, k[0], k[1])
+            def _pick(_e, bk=beat_key, k=key, u=unit):
+                _toggle_candidate(bk, k[0], k[1], u)
 
             lock_icon = ft.IconButton(
                 icon=ft.Icons.CHECK_CIRCLE if is_selected else ft.Icons.RADIO_BUTTON_UNCHECKED,
@@ -322,7 +467,7 @@ def build(
             tile = ft.Container(
                 content=ft.Column([
                     ft.Container(content=_thumb(c.get("thumb", "")), ink=True,
-                                 on_click=_open_preview(scene_id, key, c),
+                                 on_click=_open_preview(beat_key, unit, scene_id, key, c),
                                  tooltip=tooltip or None),
                     ft.Row([
                         ft.Text(f"p{key[0]:02d}·{key[1]}", size=9, color=TEXT_MUTED,
@@ -344,13 +489,16 @@ def build(
         # base64 thumb, which chokes once a beat has hundreds of candidates.
         cand_row = ft.ListView(cand_tiles, horizontal=True, spacing=8, height=270)
         auto_badge = _chip("auto", TEXT_MUTED, visible=not selected)
-        dup_badge = _chip("duplicate panel", WARN, visible=scene_id in _dup_scene_ids())
-        count_chip = ft.Text(f"{len(selected)}/{MAX_PANELS} selected", size=9,
+        dup_badge = _chip("duplicate panel", WARN, visible=beat_key in _dup_beat_keys())
+        cap = MAX_PANELS if unit == "scene" else 1
+        count_chip = ft.Text(f"{len(selected)}/{cap} selected", size=9,
                               color=TEXT_MUTED, font_family="Menlo")
-        warn_chip = _chip("pick at least 2", WARN, visible=len(selected) < MIN_PANELS)
-        card_refs[scene_id] = {"tiles": tiles, "icons": icons, "cand_row": cand_row,
-                                "auto_badge": auto_badge, "dup_badge": dup_badge,
-                                "count_chip": count_chip, "warn_chip": warn_chip}
+        warn_chip = _chip("pick at least 2", WARN,
+                           visible=unit == "scene" and len(selected) < MIN_PANELS)
+        card_refs[beat_key] = {"tiles": tiles, "icons": icons, "cand_row": cand_row,
+                               "auto_badge": auto_badge, "dup_badge": dup_badge,
+                               "count_chip": count_chip, "warn_chip": warn_chip,
+                               "unit": unit}
 
         header = ft.Row([
             ft.Text(f"{scene_id:02d}", size=12, color=TEXT_MUTED, font_family="Menlo"),
@@ -360,7 +508,7 @@ def build(
             count_chip, auto_badge, dup_badge, warn_chip,
         ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
-        children: list[ft.Control] = [header, text_field]
+        children: list[ft.Control] = [header, text_control]
         if source_items:
             children.append(ft.Row(source_items, spacing=14, wrap=True))
         if drawable_moment:
@@ -418,7 +566,23 @@ def build(
         save_state(state)
         on_go(6)
 
+    _rebuild_intro_box()  # populate the imported-intro strip on first paint
+    intro_section = ft.Container(
+        content=ft.Column([
+            ft.Row([
+                ft.Text("Intro image", size=12, weight=ft.FontWeight.BOLD,
+                        color=TEXT_PRIMARY),
+                ft.Container(expand=True),
+                secondary_button("📷 Import intro image", _on_import_click,
+                                 icon=ft.Icons.IMAGE_OUTLINED),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            intro_list_col,
+        ], spacing=8),
+        padding=ft.padding.symmetric(horizontal=28, vertical=10),
+    )
+
     center = ft.Column([
+        intro_section,
         ft.Container(content=cards, expand=True),
         ft.Container(content=status_text,
                      padding=ft.padding.symmetric(horizontal=28, vertical=12)),

@@ -85,19 +85,27 @@ def test_skip_flag_policy(tmp_path, monkeypatch):
     monkeypatch.setattr(rg, "REVIEW_GATE", True)
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
 
-    # normal comic → --skip-review honored (no raise even without approval)
+    # HARD GATE all modes (Master 2026-07-14): --skip-review is accepted but IGNORED — an
+    # unapproved project is blocked regardless of mode. Normal comic → NOW blocked too.
     a = tmp_path / "a"
     a.mkdir()
     (a / "narration.json").write_text("{}")
-    rg.ensure_reviewed("a", skip_flag=True)
+    with pytest.raises(SystemExit):
+        rg.ensure_reviewed("a", skip_flag=True)
 
-    # answer_research (Q&A) → --skip-review IGNORED → still blocked
+    # answer_research (Q&A) → still blocked.
     b = tmp_path / "b"
     b.mkdir()
     (b / "narration.json").write_text("{}")
     (b / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
     with pytest.raises(SystemExit):
         rg.ensure_reviewed("b", skip_flag=True)
+
+    # approving unblocks — skip_flag is now irrelevant either way.
+    st = rg.load_state("a")
+    st["approved"] = True
+    rg.save_state("a", st)
+    rg.ensure_reviewed("a", skip_flag=True)   # no raise
 
 
 def test_gate_off_env(tmp_path, monkeypatch):
@@ -134,16 +142,22 @@ def test_build_candidates_schema(tmp_path, monkeypatch):
     out_path = rg.build_candidates("cand", k=5)
     data = json.loads(out_path.read_text())
     assert "generated_at" in data and isinstance(data["beats"], list)
-    assert len(data["beats"]) == 1  # intro excluded
-    beat = data["beats"][0]
-    assert set(beat) == {"scene_id", "narration_text", "page_ref", "panel_ref", "source", "candidates"}
+    # HARD GATE all modes: recap now emits an INTRO row (cold-open reviewable) + the story beat.
+    assert len(data["beats"]) == 2
+    assert {b["unit"] for b in data["beats"]} == {"intro", "scene"}
+    beat = next(b for b in data["beats"] if b["unit"] == "scene")
+    assert set(beat) == {"scene_id", "narration_text", "page_ref", "panel_ref", "source",
+                         "candidates", "beat_key", "pre_selected", "unit"}
     assert beat["scene_id"] == 2 and beat["page_ref"] == 10 and beat["panel_ref"] == 0
+    assert beat["beat_key"] == "2" and beat["pre_selected"] == [{"page": 10, "panel": 0}]
     assert set(beat["source"]) == {"title", "issue", "url", "drawable_moment",
                                    "verified", "verify_note", "research_urls"}
     cand = beat["candidates"][0]
     assert set(cand) == {"page", "panel", "score", "thumb", "desc", "dialog"}
     assert cand["thumb"] == "review/thumbs/p010_0.jpg"
     assert cand["dialog"] == "BOOM"
+    intro = next(b for b in data["beats"] if b["unit"] == "intro")
+    assert intro["beat_key"] == "intro" and intro["narration_text"] == "hook"
 
 
 def test_build_candidates_all_emits_full_ranked_pool(tmp_path, monkeypatch):
@@ -229,6 +243,52 @@ def test_recap_query_is_narration_unchanged(tmp_path, monkeypatch):
     assert q == "Frank felt zero remorse."                   # no drawable_moment → narration only
 
 
+# ─── FIX: Q&A build_candidates zeroes the page-anchored prior ────────────────
+
+def test_qa_zeros_fwd_bias_recap_keeps_it_and_restores(tmp_path, monkeypatch):
+    """A Q&A beat's page_ref is the issue's FIRST page (drawable_moment has no page anchor of
+    its own), not the page the moment happens on — so PANEL_FWD_BIAS's page-anchored prior in
+    _match_panels would drag rank toward the issue opener/montage page. build_candidates must
+    zero it for the Q&A matcher calls only; a recap build keeps the real value; both restore
+    the module global afterward regardless of which path ran last."""
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    orig_bias = shots.PANEL_FWD_BIAS
+    assert orig_bias != 0.0, "test needs a non-zero default to prove the override took effect"
+    seen: dict = {}
+
+    def fake_match(units, pages, cluster, *, project=None, candidates_out=None, candidates_k=12):
+        seen["bias_during_call"] = shots.PANEL_FWD_BIAS
+        for _ in units:
+            candidates_out.append([])
+        return []
+
+    monkeypatch.setattr(shots, "_match_panels", fake_match)
+    monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
+
+    qa = tmp_path / "qa_bias"
+    qa.mkdir()
+    (qa / "narration.json").write_text(json.dumps({"scenes": [
+        {"scene_id": 2, "text": "beat", "page_ref": 3, "panel_ref": 0},
+    ]}))
+    (qa / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
+    (qa / "answer_context.json").write_text(json.dumps({"items": [
+        {"source_comic": "X", "source_year": "2020", "reader_url": "u",
+         "drawable_moment": "something", "verification_note": ""},
+    ]}))
+    rg.build_candidates("qa_bias", k=5)
+    assert seen["bias_during_call"] == 0.0            # zeroed for Q&A
+    assert shots.PANEL_FWD_BIAS == orig_bias          # restored after
+
+    recap = tmp_path / "recap_bias"
+    recap.mkdir()
+    (recap / "narration.json").write_text(json.dumps({"scenes": [
+        {"scene_id": 2, "text": "beat", "page_ref": 3, "panel_ref": 0},
+    ]}))
+    rg.build_candidates("recap_bias", k=5)
+    assert seen["bias_during_call"] == orig_bias      # recap keeps the real prior
+    assert shots.PANEL_FWD_BIAS == orig_bias          # still restored
+
+
 # ─── deliverable 3: lock override reaches PANEL_ANCHOR_BIND ───────────────────
 
 def test_lock_override_reaches_anchor_bind(tmp_path, monkeypatch):
@@ -258,6 +318,9 @@ def test_lock_override_reaches_anchor_bind(tmp_path, monkeypatch):
 
 def _prime_stage4(tmp_path, monkeypatch, sidecar_hash):
     import stages.stage_4.pipeline as s4
+    # These tests exercise Stage-4 TTS caching, not the review gate — turn the (now hard) gate
+    # off so an unapproved fixture project doesn't block before the logic under test runs.
+    monkeypatch.setattr(rg, "REVIEW_GATE", False)
     monkeypatch.setattr(s4, "PROJECTS_ROOT", tmp_path)
     monkeypatch.setattr(s4, "TTS_PROVIDER", "cartesia")
     proj = tmp_path / "proj"
