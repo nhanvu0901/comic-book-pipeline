@@ -207,20 +207,23 @@ def test_anchor_bind_wins_over_strong_cosine_conflict(monkeypatch):
 
 
 def test_anchor_bind_allows_duplicate_anchor(monkeypatch):
-    # Two scenes hand/grounded-anchored to the SAME panel is a legal authorial repeat
-    # (e.g. two narration lines about one splash) — BIND must not error or silently
-    # redirect one of them elsewhere.
+    # Two DIFFERENT scenes hand/grounded-anchored to the SAME panel is a legal authorial
+    # repeat (e.g. two narration lines about one splash) — BIND must not error or silently
+    # redirect one of them elsewhere. (Fragments of ONE scene are a different case: they
+    # spread across the page — see test_drift_dup_fixes.test_fragment_spread_*.)
     _no_network_embed(monkeypatch)
     monkeypatch.setattr(shots, "PANEL_FWD_BIAS", 0.0)
     monkeypatch.setattr(shots, "PANEL_ANCHOR_BIND", True)
     monkeypatch.setattr(shots, "_panel_content_score", _fake_score)
     pages = _page(["alpha", "beta"])
-    scene = {"scene_id": 1, "text": "x", "page_ref": 10, "panel_ref": 0}   # both -> alpha
-    units = [(scene, "line one"), (scene, "line two")]
+    # distinct scene dicts (distinct id) → cross-scene repeat, not a sibling-fragment spread
+    s1 = {"scene_id": 1, "text": "x", "page_ref": 10, "panel_ref": 0}   # -> alpha
+    s2 = {"scene_id": 2, "text": "y", "page_ref": 10, "panel_ref": 0}   # -> alpha (repeat)
+    units = [(s1, "line one"), (s2, "line two")]
 
     out = shots._match_panels(units, pages, {})
     idx = [p["index"] for p, _ in out]
-    assert idx == [0, 0]                # duplicate anchor allowed, no error
+    assert idx == [0, 0]                # duplicate anchor across scenes allowed, no error
 
 
 def test_anchor_bind_falls_back_when_key_missing(monkeypatch):

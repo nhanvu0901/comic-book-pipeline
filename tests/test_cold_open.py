@@ -89,6 +89,45 @@ def test_cold_open_penalizes_letterbox_landscape_even_when_clean():
     assert panel["bbox"]["w"] == 700 and panel["bbox"]["h"] == 1200   # portrait wins
 
 
+def test_cold_open_penalizes_caption_dense_over_clean_single_subject():
+    """RULE 3 (reads-instantly): a portrait panel packed with caption/dialogue boxes must LOSE to
+    an identically-shaped clean single-subject panel — the caption-clutter penalty COLD_OPEN_W_DIALOG."""
+    caption_dense = {"bbox": {"x": 0, "y": 0, "w": 700, "h": 1200},
+                     "characters": ["Hero"], "dialog": [{"text": f"cap {i}"} for i in range(8)]}
+    clean = {"bbox": {"x": 0, "y": 0, "w": 700, "h": 1200},
+             "characters": ["Hero"], "dialog": []}
+    pages = {
+        1: {"panels": [caption_dense, clean], "source_image": "p.png",
+            "image_dimensions": {"width": 1500, "height": 1500}},
+        2: _pg([_panel(100, 100)]),
+        3: _pg([_panel(100, 100)]),
+        4: _pg([_panel(100, 100)]),   # ending → excluded
+        5: _pg([_panel(100, 100)]),   # ending → excluded
+    }
+    panel, _ = _cold_open_panel(pages)
+    assert panel is not None and panel["dialog"] == []   # clean single-subject wins
+
+
+def test_cold_open_penalizes_crowded_establishing_over_single_subject():
+    """RULE 3 (reads-instantly): a crowded panel (many named figures = no single readable subject,
+    the busy-establishing-shot defect) loses to an identically-sized single-subject panel — the
+    crowd penalty COLD_OPEN_W_CROWD."""
+    crowd = {"bbox": {"x": 0, "y": 0, "w": 700, "h": 1200},
+             "characters": [f"Char{i}" for i in range(7)], "dialog": []}
+    single = {"bbox": {"x": 0, "y": 0, "w": 700, "h": 1200},
+              "characters": ["Hero"], "dialog": []}
+    pages = {
+        1: {"panels": [crowd, single], "source_image": "p.png",
+            "image_dimensions": {"width": 1500, "height": 1500}},
+        2: _pg([_panel(100, 100)]),
+        3: _pg([_panel(100, 100)]),
+        4: _pg([_panel(100, 100)]),   # ending → excluded
+        5: _pg([_panel(100, 100)]),   # ending → excluded
+    }
+    panel, _ = _cold_open_panel(pages)
+    assert panel is not None and len(panel["characters"]) == 1   # single subject wins
+
+
 def _intro_narration_inputs(intro_panel):
     """Minimal caption-chunk inputs with a single is_intro scene, plus a monkeypatch
     target that forces _match_panels to return `intro_panel` for the cold-open unit."""

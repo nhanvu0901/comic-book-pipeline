@@ -50,6 +50,8 @@ class TTSResult:
     word_timestamps: list[WordTiming] = field(default_factory=list)
     scene_timings: list[SceneTiming] = field(default_factory=list)
     caption_chunks: list[CaptionChunk] = field(default_factory=list)
+    mode: str = ""                 # narration mode; lets the CLI soften the ≤58s Shorts note
+                                   # for micro_moment (allowed to run long), not recap/Q&A
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

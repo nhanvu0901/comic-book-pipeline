@@ -57,17 +57,24 @@ def build_panel_sheet(shots: list, out_path, cols: int = 4, thumb_h: int = 320) 
     tiles: list[tuple[Image.Image, str]] = []
     thumb_w = 0
     for i, s in enumerate(shots, 1):
-        src = _get(s, "source_image", "") or ""
-        bbox = _get(s, "panel_bbox", None)
+        # A Master-added custom image REPLACES the matched panel for this shot (see
+        # stage_5.shots.Shot.custom_image) — show IT on the sheet, whole (no page bbox
+        # applies to it), so a wrong/blurry custom pick is just as catchable pre-render.
+        custom = _get(s, "custom_image", "") or ""
+        src = custom or (_get(s, "source_image", "") or "")
+        bbox = None if custom else _get(s, "panel_bbox", None)
         try:
             thumb = _crop_thumb(src, bbox, thumb_h)
         except Exception:
             thumb = Image.new("RGB", (round(thumb_h * 0.75), thumb_h), _PLACEHOLDER)
         thumb_w = max(thumb_w, thumb.width)
         label = f"s{_get(s, 'scene_id', '?')}#{i}"
-        page = _page_of(src)
-        if page is not None:
-            label += f" p{page}"
+        if custom:
+            label += " CUSTOM"
+        else:
+            page = _page_of(src)
+            if page is not None:
+                label += f" p{page}"
         dur = _get(s, "duration_seconds", None)
         if dur is not None:
             label += f" {float(dur):.1f}s"

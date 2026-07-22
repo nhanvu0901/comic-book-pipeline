@@ -33,6 +33,33 @@ def test_auto_fix_rewrites_plot_and_logs_discrepancies(monkeypatch):
     assert ctx["verification"]["sources_used"] == ["https://cbr.com/x"]
 
 
+def test_story_first_fields_populated(monkeypatch):
+    verified = {
+        "verified_plot": "Thor battles MODOK and restores the Ten Realms.",
+        "story_meaning": "A story about duty outlasting rage. The final blow lands because Thor spares what he hates.",
+        "notable_moments": ["Thor tears off the arm", {"moment": "the Realms reforge", "page": "22"}],
+        "story_sources": [
+            {"url": "https://marvel.fandom.com/wiki/Thor", "site": "Fandom", "type": "wiki", "summary": "full plot"},
+            {"url": "https://cbr.com/thor-review", "site": "CBR", "type": "review", "summary": "praises the ending"},
+            "https://aiptcomics.com/thor",
+        ],
+        "confidence": "high",
+        "discrepancies": [],
+        "sources_used": [],
+    }
+    _patch_web(monkeypatch, lambda system, user, **kw: json.dumps(verified))
+    ctx = _ctx()
+    vp.verify_plot(ctx)
+    assert ctx["story_meaning"].startswith("A story about duty")
+    assert ctx["notable_moments"] == ["Thor tears off the arm", "the Realms reforge (p22)"]
+    assert len(ctx["story_sources"]) == 3
+    assert ctx["story_sources"][0]["type"] == "wiki"
+    assert ctx["story_sources"][2] == {"url": "https://aiptcomics.com/thor", "site": "",
+                                       "type": "review", "summary": ""}
+    # sources_used empty from model → derived from story_sources urls
+    assert ctx["verification"]["sources_used"][0].startswith("https://marvel.fandom.com")
+
+
 def test_none_keeps_draft_and_marks_unverified(monkeypatch):
     _patch_web(monkeypatch, lambda system, user, **kw: None)
     ctx = _ctx()

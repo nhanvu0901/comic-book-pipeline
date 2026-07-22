@@ -459,3 +459,22 @@ def test_moment_present_flag_when_all_vision_low(monkeypatch, tmp_path):
 
     data = json.loads(rg.build_candidates("qa", k=5).read_text())
     assert "moment_warn" in data["beats"][0]["source"]
+
+
+# ─── custom-image lock (v3 additive shape) ───────────────────────────────────────
+
+def test_lock_custom_image_reads_v3_shape_only():
+    assert rg.lock_custom_image({"custom_image": "review/custom/x.jpg"}) == "review/custom/x.jpg"
+    assert rg.lock_custom_image(None) is None
+    assert rg.lock_custom_image({}) is None
+    assert rg.lock_custom_image({"custom_image": ""}) is None
+    # v1/v2 page-panel shapes are NOT a custom-image lock.
+    assert rg.lock_custom_image({"page": 1, "panel": 0}) is None
+    assert rg.lock_custom_image({"panels": [{"page": 1, "panel": 0}]}) is None
+
+
+def test_lock_panels_is_noop_for_custom_image_shape():
+    """lock_panels() must return [] for a v3 custom-image lock — every existing page/panel
+    reader (_apply_review_locks, _review_locks's any() gate, ...) has to no-op on it, not
+    crash on a missing "page" key."""
+    assert rg.lock_panels({"custom_image": "review/custom/x.jpg"}) == []

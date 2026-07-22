@@ -8,14 +8,16 @@ from pathlib import Path
 from typing import Callable
 
 from config import (CREATIVE_LLM_MODELS, ENABLE_LOGIC_CRITIC, ENABLE_LOOP_TEASE,
-                    ENABLE_TITLE_BANNER, FIDELITY_LLM_MODELS, LOGIC_CRITIC_MIN_BEATS,
-                    OPENROUTER_MODEL, PROJECTS_ROOT)
+                    ENABLE_TITLE_BANNER, FIDELITY_LLM_MODELS, GROUNDING_CHECK,
+                    LOGIC_CRITIC_MIN_BEATS, OPENROUTER_MODEL, PROJECTS_ROOT,
+                    TRANSPARENCY_CRITIC)
 from .modes import MODES_BY_KEY
 from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 from .._embedding import semantic_sim as _semantic_sim
 from .._panel_index import panel_embed_text as _panel_embed_text
 from .story_architect import render_story_map_block, _tokens
+from .beat_split import _verbatim_ok
 
 
 # CALIBRATED FROM 3 REAL RENDERS (Resemble Carl voice + the default --atempo 1.35,
@@ -206,6 +208,33 @@ def _safe_beat_int(v, default: int) -> int:
     except (ValueError, TypeError):
         m = re.match(r"-?\d+", str(v or "").strip())
         return int(m.group()) if m else default
+
+
+def _dedupe_beat_ids(beats: list[Beat], log: Callable[[str], None]) -> list[Beat]:
+    """Guarantee every beat.id is UNIQUE (2026-07-16 fix). `_retry_outline_with_bridge`
+    asks the LLM to insert new beats but never tells it inserted beats need a fresh id —
+    it sometimes echoes an EXISTING id onto a genuinely different new beat (real case:
+    a "Ghost Rider becomes Ghost Rider" CLIMAX beat and an unrelated "heroes overwhelmed"
+    beat both came back id=12). ids are documented as not load-bearing (see
+    _safe_beat_int) EXCEPT for uniqueness: `_select_moment_window`'s tier floors and
+    `_anchor_scenes_to_beats`'s positional matching both assume distinct ids, and a
+    collision silently drops one beat's prose (the "band too short" bug). Keep the
+    first occurrence of each id, bump every later collision past the current max —
+    a no-op when ids are already unique (the common case, no bridge retry)."""
+    seen: set[int] = set()
+    next_id = max((b.id for b in beats), default=0) + 1
+    renumbered = 0
+    for b in beats:
+        if b.id in seen:
+            b.id = next_id
+            next_id += 1
+            renumbered += 1
+        else:
+            seen.add(b.id)
+    if renumbered:
+        log(f"[stage4]   beat-id dedup: renumbered {renumbered} colliding id(s) "
+            f"(bridge-inserted beat reused an existing id)")
+    return beats
 
 
 def _intro_overlaps(intro_line: str, body_first_line: str) -> bool:
@@ -520,10 +549,16 @@ def generate_outro(
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
     direction: dict | None = None,
+    system_override: str | None = None,
+    extra_user_context: str = "",
 ) -> str:
     """Dedicated LLM call: craft a punchy THEMATIC closing line — the alternative
     to the factual 'The comic is X.' credit. Returns "" if unusable, so the caller
-    falls back to the factual credit (never blocks the pipeline)."""
+    falls back to the factual credit (never blocks the pipeline).
+
+    system_override/extra_user_context: let a caller (e.g. the Q&A explore_answer
+    writer) swap in its own outro contract + grounding context without duplicating
+    this function — default behavior (recap mode) is unchanged when both are unset."""
     log = progress or (lambda _msg: None)
     dump = debug_dump if debug_dump is not None else {}
 
@@ -539,6 +574,7 @@ def generate_outro(
 
     user = (
         _direction_block(direction or {})
+        + (extra_user_context.strip() + "\n\n" if extra_user_context.strip() else "")
         + f"COMIC TITLE: {title}\n"
         f"THEME / PLOT (ground truth):\n{plot[:1500]}\n\n"
         f"THE NARRATION (for tone + what the story covered):\n{body_text[:1200]}\n\n"
@@ -557,7 +593,7 @@ def generate_outro(
 
     try:
         content, used = call_with_chain(
-            system=_OUTRO_SYSTEM, user=user,
+            system=system_override or _OUTRO_SYSTEM, user=user,
             models=list(CREATIVE_LLM_MODELS) or None,
             max_tokens=200, progress=progress, label="outro", validator=_valid,
         )
@@ -689,8 +725,13 @@ def write_script(
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
     direction: dict | None = None,
+    clarity_fixes: str = "",
 ) -> Narration:
-    """Run intro -> outline -> glossary -> write -> validate (+ retries)."""
+    """Run intro -> outline -> glossary -> write -> validate (+ retries).
+
+    clarity_fixes: an optional pre-formatted FIX block (see _format_clarity_fixes)
+    routed into the mode's writer prompt on a transparency feedback-retry. Empty by
+    default → prompts are byte-identical to a first-pass run."""
     if mode not in MODES_BY_KEY:
         raise ValueError(f"Unknown mode: {mode!r}. Valid: {sorted(MODES_BY_KEY)}")
 
@@ -703,7 +744,7 @@ def write_script(
         return write_explore_answer(
             comic_context, story_pages, mode, hook_hint,
             all_pages=all_pages, model=model, progress=progress,
-            debug_dump=debug_dump, direction=direction,
+            debug_dump=debug_dump, direction=direction, clarity_fixes=clarity_fixes,
         )
 
     # micro_moment: a 30-50s single-moment Short. Separate writer path (reuses this
@@ -714,7 +755,7 @@ def write_script(
         return write_micro_moment(
             comic_context, story_pages, mode, hook_hint,
             all_pages=all_pages, model=model, progress=progress,
-            debug_dump=debug_dump, direction=direction,
+            debug_dump=debug_dump, direction=direction, clarity_fixes=clarity_fixes,
         )
 
     log = progress or (lambda _msg: None)
@@ -763,7 +804,8 @@ def write_script(
     parsed, write_model = write_scenes(beats, glossary, comic_context, story_pages, mode,
                                        hook_hint=hook_hint, all_pages=all_pages,
                                        model=model, progress=progress, debug_dump=dump,
-                                       story_map=story_map, direction=direction)
+                                       story_map=story_map, direction=direction,
+                                       clarity_fixes=clarity_fixes)
     # Deterministic anchoring: page_ref/panel_ref come from the page-sorted beats,
     # not the writer. 1 beat → 1 scene. This is the single source of truth for
     # which page each scene maps to (see the beat-anchoring design doc).
@@ -1522,6 +1564,7 @@ def outline_beats(
             hook_hint=hook_hint, model=model, progress=progress, debug_dump=debug_dump,
         ) or beats
         beats = _order_beats_canonical(beats)  # re-apply bookend invariant after bridge
+        beats = _dedupe_beat_ids(beats, log)  # bridge insert can echo an existing id
 
     # Reveal-dedup guard: a twist the comic hides until late (a confession, "what X
     # really did") sometimes gets emitted TWICE — once foreshadowed in an early
@@ -1562,8 +1605,16 @@ def _ground_beat_panels(
     narration). The chosen (page, panel) overwrites key_panels, so `_beat_anchor`
     and the scene's page_ref/panel_ref become content-grounded and Stage 5's
     relevance + cross-check lock onto the right panel. Deterministic (embedding),
-    no LLM. Beats whose pages have no usable panel/description keep their anchor."""
+    no LLM. Beats whose pages have no usable panel/description keep their anchor.
+
+    STAGE3_NO_EMBED=1 (--no-embed, narration-only test mode) skips this pass
+    entirely: beats keep whatever key_panel the outliner already guessed (or none),
+    no network embed call is made."""
     log = progress or (lambda _msg: None)
+    if os.environ.get("STAGE3_NO_EMBED") == "1":
+        log("[stage3] embed skipped (--no-embed): beat-panel grounding "
+            "(keeping outline page hints, no vector re-grounding)")
+        return beats
     panels_by_page: dict[int, list[dict]] = {}
     area_by_page: dict[int, int] = {}
     text_blocks_by_page: dict[int, list[dict]] = {}
@@ -1687,23 +1738,70 @@ def _order_beats_canonical(beats: list[Beat]) -> list[Beat]:
     return cold + mid + land
 
 
+def _content_align_scenes(
+    scene_texts: list[str],
+    beats: list[Beat],
+    *,
+    log: Callable[[str], None] = lambda _m: None,
+) -> list[int] | None:
+    """Map each scene (by index, IN SCENE ORDER) to its best-CONTENT beat via a 1:1
+    assignment on embedding cosine + a soft positional prior. Returns f where f[i] is
+    the beat index for scene i, or None → caller keeps the old positional mapping.
+
+    This replaces PURE-POSITIONAL scene[i]→beat[i] (which drifts when the writer's
+    scene order slips from beat order — e.g. it opens with a framing line that isn't
+    beat 0, shifting every later page_ref onto a LATER event). Measured: 18/18 scenes
+    off by one on wolverine-debt-of-death; content-align recovers all 18 (sim .74–.93).
+
+    Why this is safe where the OLD beat_id/semantic re-pairing was fragile (see the
+    caller's note): the output keeps SCENE order — only page_ref changes, the text/audio
+    order is untouched — so an early line can never be narrated late. Each scene takes
+    its best beat INDEPENDENTLY (no 1:1 constraint) so two near-duplicate scenes can both
+    point at the same beat (a bijection would have to exile one to a far, wrong beat); the
+    soft positional prior keeps a pick near the diagonal so only a clear cosine win pulls
+    it far. STAGE3_NO_EMBED or a weak/failed embed falls back to positional (degrade soft,
+    never crash offline)."""
+    n, m = len(scene_texts), len(beats)
+    if n == 0 or m == 0 or os.environ.get("STAGE3_NO_EMBED") == "1":
+        return None
+    try:
+        import numpy as np
+        from .._embedding import embed_batch
+        sv = np.asarray(embed_batch(scene_texts), dtype="float64")
+        bv = np.asarray(embed_batch([f"{b.name or ''}. {b.summary or ''}" for b in beats]),
+                        dtype="float64")
+    except Exception as e:                       # embed server down, etc.
+        log(f"[stage4]   content-align unavailable ({e}) — positional fallback")
+        return None
+    if sv.shape[0] != n or bv.shape[0] != m or not sv.any() or not bv.any():
+        return None
+    sv /= (np.linalg.norm(sv, axis=1, keepdims=True) + 1e-9)
+    bv /= (np.linalg.norm(bv, axis=1, keepdims=True) + 1e-9)
+    cos = sv @ bv.T                              # (n, m) cosine
+    w = float(os.getenv("ANCHOR_ALIGN_POS_WEIGHT", "0.35"))
+    ii = (np.arange(n) / max(1, n - 1))[:, None]
+    jj = (np.arange(m) / max(1, m - 1))[None, :]
+    score = cos - w * np.abs(ii - jj)            # soft diagonal prior
+    f = [int(np.argmax(score[i])) for i in range(n)]
+    mean_cos = float(np.mean([cos[i, f[i]] for i in range(n)]))
+    if mean_cos < float(os.getenv("ANCHOR_ALIGN_MIN_COS", "0.30")):
+        log(f"[stage4]   content-align low confidence (mean cos {mean_cos:.2f}) — positional fallback")
+        return None
+    return f
+
+
 def _anchor_scenes_to_beats(
     parsed: dict,
     beats: list[Beat],
     progress: Callable[[str], None] | None = None,
 ) -> dict:
-    """Deterministic 1 beat → 1 scene. The writer authored prose keyed loosely by
-    beat_id; we re-key it to the canonical, page-sorted beat list so that:
+    """Deterministic 1 beat → 1 scene: scene[i] narrates beat[i] by POSITION so
+    that:
 
       - every beat gets exactly one scene (no dropped middle beats — the Venom bug),
       - scenes follow page-sorted beat order (page_ref is monotonic),
       - page_ref/panel_ref come from `_beat_anchor`, never from the writer
         (kills the writer-mis-tags-page class — the Marvel Zombies bug).
-
-    Matching is two-pass and pool-consuming so no writer scene is reused:
-      1. exact beat_id match (first non-empty wins),
-      2. positional fill of still-unmatched beats from leftover scenes in order
-         (recovers a mislabeled beat_id when the writer kept beat order).
 
     The channel outro credit ("The comic is X.") is not a beat — it is popped off
     the writer's list and re-appended last, anchored to the final beat with
@@ -1720,27 +1818,66 @@ def _anchor_scenes_to_beats(
     if body and "comic is" in str(body[-1].get("text", "")).lower():
         outro_src = body.pop()
 
-    def _bid(s: dict) -> int:
-        try:
-            return int(s.get("beat_id", 0) or 0)
-        except (TypeError, ValueError):
-            return 0
-
     pool = [s for s in body if str(s.get("text", "")).strip()]
 
-    # PURE POSITIONAL: scene[i] narrates beat[i]. The writer is required (write
+    # CONTENT-ALIGN (primary): map each scene to its best-content beat so a writer
+    # whose scene order slips from beat order (a framing opener, a merged beat) still
+    # gets the RIGHT page_ref instead of a later event's. Iterates SCENES (text/audio
+    # order preserved — only page_ref moves), so the "narrate an early line late"
+    # fragility of the old semantic re-pairing cannot recur. None → positional below.
+    f = _content_align_scenes([str(s.get("text", "")).strip() for s in pool], beats, log=log)
+    if f is not None:
+        anchored = []
+        used_beats: set[int] = set()
+        for i, src in enumerate(pool):
+            beat = beats[f[i]]
+            page, panel = _beat_anchor(beat)
+            anchored.append({
+                "text": str(src.get("text", "")).strip(),
+                "page_ref": page,
+                "panel_ref": panel,
+                "connective": src.get("connective"),
+                "beat_id": beat.id,
+                "visual_beats": src.get("visual_beats") or [],
+            })
+            used_beats.add(f[i])
+        if outro_src is not None:
+            page, _ = _beat_anchor(beats[-1])
+            anchored.append({
+                "text": str(outro_src.get("text", "")).strip(),
+                "page_ref": page, "panel_ref": -1,
+                "connective": None, "beat_id": beats[-1].id,
+            })
+        gaps = [beats[j].id for j in range(len(beats)) if j not in used_beats]
+        if gaps:
+            log(f"[stage4]   ⚠ {len(gaps)} beat(s) unused by content-align: {gaps}")
+        parsed["scenes"] = anchored
+        parsed["_coverage_gaps"] = gaps
+        parsed["_anchor_pool_count"] = len(pool)
+        log(f"[stage4]   content-aligned {len(pool)} scene(s) to beats")
+        return parsed
+
+    # PURE POSITIONAL (fallback): scene[i] narrates beat[i]. The writer is required (write
     # prompt) to emit EXACTLY one scene per beat, in beat order, so position is the
     # reliable mapping. The older beat_id-then-positional pairing and the semantic
     # re-pairing BOTH proved fragile — they anchored an early event (e.g. "Reed
     # raised the sonic gun") to a late beat, narrating it at the very end after the
     # character was already dead, or scrambled the climax. Position can't drift.
+    #
+    # Keyed by INDEX, not beat.id (2026-07-16 fix): a bridge-retry outline bug let
+    # two DIFFERENT beats share the same numeric id. Keying this dict by `.id`
+    # silently collapsed both beats onto whichever scene was assigned LAST for
+    # that id (dict overwrite), duplicating one scene's text onto two beats and
+    # dropping the other beat's real content — the "band 67w" narration-too-short
+    # bug (a whole beat's prose vanished with no error, since scene COUNT still
+    # matched beat COUNT going in). Position is already unique by construction —
+    # no dict-key collision is possible keyed this way, regardless of `.id` hygiene.
     matched: dict[int, dict] = {}
     n_beats, n_pool = len(beats), len(pool)
     if n_pool <= n_beats:
         # fewer/equal scenes → front-align; unmatched trailing beats become gaps.
-        for i, beat in enumerate(beats):
-            if i < n_pool:
-                matched[beat.id] = pool[i]
+        for i in range(n_pool):
+            matched[i] = pool[i]
     else:
         # Writer emitted EXTRA scene(s) (split one beat into two). Front-only
         # truncation drops the writer's LAST scene — which is the LANDING (plummet /
@@ -1749,9 +1886,9 @@ def _anchor_scenes_to_beats(
         # keeps the writer's LAST scene; the surplus is dropped from the MIDDLE.
         half = n_beats // 2
         for i in range(half):
-            matched[beats[i].id] = pool[i]
+            matched[i] = pool[i]
         for j in range(1, n_beats - half + 1):
-            matched[beats[n_beats - j].id] = pool[n_pool - j]
+            matched[n_beats - j] = pool[n_pool - j]
     if n_pool != n_beats:
         how = f"first {n_pool}" if n_pool < n_beats else "both-ends aligned; dropped middle surplus"
         log(f"[stage4]   ⚠ writer emitted {n_pool} story scenes for {n_beats} "
@@ -1759,8 +1896,8 @@ def _anchor_scenes_to_beats(
 
     anchored: list[dict] = []
     gaps: list[int] = []
-    for beat in beats:
-        src = matched.get(beat.id)
+    for i, beat in enumerate(beats):
+        src = matched.get(i)
         if src is None:
             gaps.append(beat.id)
             continue
@@ -1794,6 +1931,36 @@ def _anchor_scenes_to_beats(
     parsed["_coverage_gaps"] = gaps
     parsed["_anchor_pool_count"] = len(pool)
     return parsed
+
+
+def reanchor_narration(narration: dict, *, progress: Callable[[str], None] | None = None) -> bool:
+    """Re-run CONTENT anchoring on an EXISTING narration dict IN PLACE: recompute each
+    BODY scene's page_ref/panel_ref from its best-content beat, rebuilding Beat objects
+    from the stored `beats`. Keeps intro/outro and every scene's text + order — so it
+    fixes a narration that drifted under the old positional anchoring WITHOUT re-narrating
+    (the TTS audio stays valid). Returns True if anything changed. No-op (returns False)
+    when embeddings are unavailable or body-scene count != beat count."""
+    log = progress or (lambda _m: None)
+    beats = [Beat(id=int(b.get("id", i)), function=str(b.get("function", "")),
+                  name=str(b.get("name", "")),
+                  page_refs=[int(x) for x in (b.get("page_refs") or [])],
+                  key_panels=b.get("key_panels") or [], summary=str(b.get("summary", "")),
+                  characters_active=b.get("characters_active") or [], cause=str(b.get("cause", "")))
+             for i, b in enumerate(narration.get("beats") or [])]
+    scenes = narration.get("scenes") or []
+    body_idx = [i for i, s in enumerate(scenes)
+                if not s.get("is_intro") and not s.get("is_outro")]
+    f = _content_align_scenes([str(scenes[i].get("text", "")).strip() for i in body_idx],
+                              beats, log=log)
+    if f is None:
+        log("[reanchor] content-align unavailable / count mismatch — no change")
+        return False
+    for k, i in enumerate(body_idx):
+        page, panel = _beat_anchor(beats[f[k]])
+        scenes[i]["page_ref"], scenes[i]["panel_ref"] = page, panel
+        scenes[i]["beat_id"] = beats[f[k]].id
+    log(f"[reanchor] re-anchored {len(body_idx)} body scene(s) by content")
+    return True
 
 
 _ENDING_STOP = {
@@ -2250,28 +2417,28 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - Past-perfect only for backstory: "he had been…"
    - NEVER simple-past for active narrative.
 
-6) PANEL FIDELITY (HARD RULE — applies to every scene)
-   Every fact in your narration MUST be derivable from the input data: panel descriptions, dialog text_blocks, characters lists, page_summary, or the LORE NOTES block. Do NOT invent:
-   - emotions or motives that aren't in dominant_emotion or dialog
-   - relationships not stated (e.g. don't imply a romantic anniversary if the comic shows the anniversary of an accident)
-   - characters who don't appear in the data (NEVER substitute a related character — Doc Connors is NOT the Lizard's name in this story unless data says so)
-   - events that didn't happen on the cited page (NO "devoured civilian", "blood sprayed", "screamed in agony" unless panel explicitly shows it)
-   - poetic metaphors describing visuals (NO "tendrils twitching like a living breath" — describe what's literally shown)
-   - rhetorical flourishes invented for impact (NO "it wasn't poison, it was purpose" — only use phrasing derivable from dialog or panel description)
-   - sensory details not in panel description (NO "smelled of", "tasted like", "ear-splitting scream" unless explicitly stated)
-   When a panel implies meaning that the data doesn't make explicit, write what's literally happening, not your interpretation. Reread the panel description before each scene.
+6) STORY FIDELITY (HARD RULE — applies to every scene)
+   TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY — the canonical wiki plot, the story meaning, the key story moments, the beat summaries, and the verbatim dialog quotes (plus the glossary + LORE NOTES). There is NO panel art in your inputs; you are not describing pictures, you are telling what HAPPENS and WHY. Every fact in your narration MUST be derivable from those STORY SOURCES. Do NOT invent:
+   - emotions or motives the story sources (dialog, wiki plot, story meaning) don't state
+   - relationships not stated (e.g. don't imply a romantic anniversary if the story shows the anniversary of an accident)
+   - characters who don't appear in the story (NEVER substitute a related character — Doc Connors is NOT the Lizard's name in this story unless the sources say so)
+   - events that aren't in the plot / beats / story moments (NO "devoured civilian", "blood sprayed", "screamed in agony" unless a story source states it)
+   - poetic metaphors describing visuals (NO "tendrils twitching like a living breath" — say the plain story event instead)
+   - rhetorical flourishes invented for impact (NO "it wasn't poison, it was purpose" — only use phrasing derivable from dialog or the story sources)
+   - sensory details no source states (NO "smelled of", "tasted like", "ear-splitting scream" unless a source says so)
+   When the story implies meaning the sources don't make explicit, write what plainly happens, not your interpretation. Reread the story sources before each scene.
 
    ABSOLUTE RULE — NEVER INVENT AN EVENT. The WIKI plot / beat SUMMARY is the ONLY
-   authority for WHAT HAPPENED. A panel image only tells you HOW to phrase a moment —
-   it does NOT license a new event. If an event, death, mechanism, or INTERNAL
+   authority for WHAT HAPPENED. If an event, death, mechanism, or INTERNAL
    EXPERIENCE (telepathy, mind-reading, "phasing into someone's mind", a vision, a
    shared memory, a character's private thought) is NOT in the beat summary, the wiki
-   plot, or the dialog, you MUST NOT write it — EVEN IF a panel seems to suggest it.
-   When a panel is ambiguous, narrate ONLY the plain physical action shown.
+   plot, the story moments, or the dialog, you MUST NOT write it — EVEN IF it would
+   make a more dramatic scene. When a moment is ambiguous, narrate ONLY the plain
+   action the sources state.
      ✗ "in desperation he phased into her dying mind, witnessing the terror firsthand
         before she died"  (invented internal experience + invented death — not in wiki)
      ✓ "he reached for the falling crew member, but his phantom hand passed through her"
-        (the plain physical action actually shown)
+        (the plain action the sources support)
    If you cannot ground a dramatic beat in the wiki / summary / dialog, DROP it and tell
    the simpler TRUE event. A thinner accurate scene ALWAYS beats a vivid invented one.
 
@@ -2283,19 +2450,19 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      ✗ "When a war between Spider-Man, Captain America, Thor, and Hawkeye erupted..." (WRONG — sounds like they fought each other)
 
    ANTI-PATTERN EXAMPLE 1 (anniversary):
-   Panel data: "Ben says 'YOU FORGOT OUR ANNIVERSARY, REED.' Reed replies 'considering what this date means for you…'"
+   Dialog: "Ben says 'YOU FORGOT OUR ANNIVERSARY, REED.' Reed replies 'considering what this date means for you…'"
    BAD: "Ben confronts Reed about forgetting their anniversary."  (sounds romantic, misleads)
    GOOD: "Ben confronts Reed for forgetting the anniversary of the accident that turned him into the Thing."
 
    ANTI-PATTERN EXAMPLE 2 (invented action):
-   Panel data: "monstrous figure made of black symbiotic material breaks through wall"
-   BAD: "It bit Reed's arm — blood sprayed as it revealed Dr. Connors' face in its fangs."  (NONE OF THIS IS IN THE PANEL)
-   GOOD: "It crashed through the wall, revealing itself as Venom."  (matches what's shown)
+   Story: "the symbiote creature crashes through the wall to attack"
+   BAD: "It bit Reed's arm — blood sprayed as it revealed Dr. Connors' face in its fangs."  (NONE OF THIS IS IN THE STORY)
+   GOOD: "It crashed through the wall, revealing itself as Venom."  (matches what the story says)
 
    ANTI-PATTERN EXAMPLE 3 (invented metaphor):
-   Panel data: "The Thing pulls back a cloth, revealing a desk with a glowing symbiote container"
+   Story: "the Thing uncovers the glowing symbiote container"
    BAD: "tendrils twitching like a living breath" (poetic invention)
-   GOOD: "peered beneath the cloth, finding the glowing symbiote in its container"
+   GOOD: "the Thing finds the glowing symbiote in its container"
 
 6.6) CAUSAL FIDELITY — narrate the BEAT SUMMARY, in story order (this is critical)
    Each beat gives you a SUMMARY: one factual, wiki-grounded sentence of what
@@ -2312,7 +2479,9 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      villain still has the symbiote. Track who holds the symbiote at each beat.
    - Do NOT narrate the same event twice (e.g. two scenes both saying the symbiote
      rebonds with Ben). Each scene is a NEW story step.
-   If the summary and a panel description seem to disagree, the SUMMARY (wiki) wins.
+   The wiki plot / beat summary is your only authority for what happens — there is no
+   panel art in your inputs to weigh against it, so never bend the story to a visual
+   you imagine.
 
 6.7) CONNECT CAUSE → EFFECT — no turn from nowhere (this makes the story land)
    Each beat may carry a "WHY" (its cause/motive, from the wiki). When a beat is a
@@ -2332,11 +2501,11 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    (others stay punchy, ≤14). Never invent a cause not in the WHY/summary/wiki.
 
 6.5) FACT-CHECK SELF-PASS — before returning JSON
-   For EACH scene you write, mentally verify:
-   (a) Every named character actually appears in this panel's `characters` list (or page summary)
-   (b) Every action verb (bit, fired, exploded, devoured, etc.) is in panel description or dialog
-   (c) Every emotion adjective is in `dominant_emotion` or implied by dialog text
-   (d) Every adjective describing a thing (glowing, monstrous, etc.) is in panel description
+   For EACH scene you write, mentally verify against the STORY SOURCES:
+   (a) Every named character actually appears in the wiki plot, beats, glossary, or dialog
+   (b) Every action verb (bit, fired, exploded, devoured, etc.) is in the wiki plot, a beat summary, or the dialog
+   (c) Every emotion/motive is stated or implied by the wiki plot, the story meaning, or the dialog
+   (d) Every concrete detail (a named object, place, or number) comes from a story source — not invented for colour
    If a phrase isn't grounded, REPLACE it with a grounded one or REMOVE it. Better to write a less colorful but accurate scene than a vivid but invented one.
    The user has rejected past drafts that twisted the story. Accuracy beats flourish.
 
@@ -2562,6 +2731,20 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
         into a gimmick. Like a seed, it is a second sentence on an existing beat's scene,
         never its own scene, and the scene must still fit the 18-word cap.
 
+   12) VISUAL BEATS (every story scene) — split each scene into the 1-3 separate MOMENTS it
+       contains, so Stage 5 can cut to a fresh panel on each instead of holding one panel for
+       the whole line. You do NOT pick pages or panels — the pipeline maps each fragment to art.
+       Your ONLY job is to split at the visual seams:
+        - "visual_beats" is a LIST OF STRINGS: the scene's OWN words, split at ITS punctuation /
+          connective (and / but / then / comma / dash) into 1-3 fragments, each ONE separately-
+          drawable moment (a new action, a new subject, a beat change).
+        - VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text"
+          (you may only drop a comma / dash / connective at a split point). NEVER reword, add, or
+          drop a word — a seed or beat-comment aside (rules 11i/11j) is its own fragment.
+        - A short single-event scene (<=12 words) may be ONE fragment = the whole "text"; do NOT
+          force a split where there is only one visual moment.
+        - The outro credit line needs no split — one fragment = its whole text.
+
 Return ONLY JSON. No prose, no markdown fences."""
 
 
@@ -2645,6 +2828,7 @@ def write_scenes(
     debug_dump: dict | None = None,
     story_map: dict | None = None,
     direction: dict | None = None,
+    clarity_fixes: str = "",
 ) -> tuple[dict, str]:
     log = progress or (lambda _msg: None)
     mode_info = MODES_BY_KEY[mode]
@@ -2669,12 +2853,21 @@ def write_scenes(
         if _plot:
             wiki_block += f"[full plot] {_plot[:4800]}\n"
 
+    # STORY-FIRST INPUT (2026-07-17 port from micro_moment): the writer's source of
+    # truth is the STORY (wiki plot + story_meaning + notable_moments + verbatim dialog),
+    # NOT the VLM panel art. Feeding it panel descriptions made it "tell the pictures"
+    # (describe the ART) instead of the story — the VLM tilt. Panel matching is a
+    # post-hoc job for the grounder (_ground_beat_panels), invisible to the writer.
+    story_sources = _story_sources_block(comic_context)
+    dialog_block = _dialog_block(story_pages)
     _smap = render_story_map_block(story_map)
     user = (
         _direction_block(direction or {})
         + _smap
+        + clarity_fixes
         + f"COMIC CONTEXT:\n{_ctx_block(comic_context)}\n\n"
         + (f"{wiki_block}\n\n" if wiki_block else "")
+        + (f"{story_sources}\n\n" if story_sources else "")
         + (f"{lore_block}\n\n" if lore_block else "")
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
@@ -2684,9 +2877,8 @@ def write_scenes(
         + f"BEATS — write EXACTLY ONE scene for EACH beat, in this SAME order:\n{_beats_block(beats)}\n\n"
         f"GLOSSARY (use these exact names):\n{_glossary_block(glossary)}\n\n"
         + (f"{few_shot}\n\n" if few_shot else "")
-        + f"PAGE DETAIL (background grounding — what is actually on each page, so "
-        f"your prose stays factual):\n{_pages_block_compact(story_pages)}\n\n"
-        f"WORD BUDGET: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} total words across all scenes.\n"
+        + (f"{dialog_block}\n\n" if dialog_block else "")
+        + f"WORD BUDGET: {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} total words across all scenes.\n"
         f"CONNECTIVES (OPTIONAL — pick by meaning; null if subject-first; But/However = real contrast ONLY): {', '.join(_CONNECTIVES)}.\n\n"
         f"╔═══ STRICT 1-TO-1 OUTPUT (this is how scenes map to the video) ═══╗\n"
         f"The \"scenes\" array MUST have EXACTLY {len(beats)} story scenes — ONE per beat,\n"
@@ -2702,10 +2894,10 @@ def write_scenes(
         f'  "title": "<short punchy title for this Short>",\n'
         f'  "hook": "<scenes[0] text — narrates the FIRST beat only>",\n'
         f'  "scenes": [\n'
-        f'    {{"text": "When ...", "connective": null, "beat_id": {beats[0].id}}},\n'
-        f'    {{"text": "Then ...", "connective": "Then", "beat_id": "<2nd beat id>"}},\n'
-        f"    ...  (one per beat, in order) ...,\n"
-        f'    {{"text": "The comic is <title>.", "connective": null, "beat_id": {beats[-1].id}}}\n'
+        f'    {{"text": "When ...", "visual_beats": ["When ...", "..."], "connective": null, "beat_id": {beats[0].id}}},\n'
+        f'    {{"text": "Then ...", "visual_beats": ["Then ...", "..."], "connective": "Then", "beat_id": "<2nd beat id>"}},\n'
+        f"    ...  (one per beat, in order; visual_beats = 1-3 VERBATIM fragments of that scene's text) ...,\n"
+        f'    {{"text": "The comic is <title>.", "visual_beats": ["The comic is <title>."], "connective": null, "beat_id": {beats[-1].id}}}\n'
         f"  ]\n"
         f"}}\n\n"
         f"REMINDER: {len(beats)} story scenes (one per beat, in order) THEN the "
@@ -3350,6 +3542,18 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
         prev_toks = toks
         wc = len(text.split())
         conn = s.get("connective")
+        # WRITER-PICKS-PANEL: micro_moment beats are {"text","page","panel"} dicts and must
+        # survive as dicts; recap/Q&A beats are plain strings (kept string-normalised as before).
+        raw_vb = s.get("visual_beats") or []
+        # STRING beats (recap/Q&A) must stay VERBATIM vs the FINAL scene text so Stage 5's
+        # word-position split aligns. `text` may have been normalised AFTER the writer emitted
+        # the beats (vs.->versus, confusing-title canonicalisation), so a stale multi-fragment
+        # split could no longer reconstruct it — drop those to a single held panel (safe) rather
+        # than mis-slice. Dict beats (micro pins) are governed by micro's own verbatim validator.
+        if raw_vb and all(not isinstance(b, dict) for b in raw_vb):
+            frags = [str(b).strip() for b in raw_vb if str(b).strip()]
+            if len(frags) > 1 and not _verbatim_ok(text, frags):
+                raw_vb = []
         scenes.append(Scene(
             scene_id=len(scenes) + 1,
             text=text,
@@ -3361,11 +3565,9 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
             beat_id=int(s.get("beat_id", 0) or 0),
             is_intro=bool(s.get("is_intro")),
             is_outro=bool(s.get("is_outro")),
-            # WRITER-PICKS-PANEL: micro_moment beats are {"text","page","panel"} dicts and must
-            # survive as dicts; recap beats are plain strings (kept string-normalised as before).
             visual_beats=[
                 (b if isinstance(b, dict) else str(b).strip())
-                for b in (s.get("visual_beats") or [])
+                for b in raw_vb
                 if (str(b.get("text", "")).strip() if isinstance(b, dict) else str(b).strip())
             ],
         ))
@@ -3562,6 +3764,55 @@ def _pages_block_compact(story_pages: list[dict]) -> str:
         ]
         out.append("\n".join([head] + panel_lines))
     return "\n".join(out) if out else "(no preprocessed pages)"
+
+
+def _story_sources_block(comic_context: dict) -> str:
+    """STORY-language sources the recap writer draws its WORDING from (story-first port
+    from micro_moment): the theme (story_meaning — THEME ONLY, for the hook/landing,
+    never narrated as its own scene) and the key story moments (notable_moments — clean
+    story beats). Both are additive Stage-1 fields; each is included only when present,
+    so an old project that carries neither degrades to plot-only (the prior behaviour)."""
+    parts: list[str] = []
+    meaning = str(comic_context.get("story_meaning", "") or "").strip()
+    if meaning:
+        parts.append(
+            "STORY MEANING (THEME ONLY — use for the hook and the ending/landing line; "
+            "this is NOT a scene to narrate as an event):\n" + meaning[:700])
+    moments = comic_context.get("notable_moments") or []
+    moments = [str(m).strip() for m in moments if str(m).strip()] if isinstance(moments, list) else []
+    if moments:
+        parts.append(
+            "KEY STORY MOMENTS (told in story language — draw your scene WORDING from the "
+            "story, not from panel visuals):\n" + "\n".join(f"- {m}" for m in moments[:16]))
+    return "\n\n".join(parts)
+
+
+def _dialog_block(story_pages: list[dict], max_chars: int = 8000) -> str:
+    """Verbatim dialog/OCR from the story pages, per page — the ACTUAL words characters
+    say, so the recap writer can quote or attribute them ("Stating X", a grounded turn).
+    This is STORY material, NOT a VLM visual description (which is kept out of the writer
+    input). Magi pixel-OCR is preferred over the VLM `text` field (DIALOG_TRUTH ground
+    truth). "" when no dialog is found → the writer degrades to paraphrase-from-plot,
+    same as before this block existed.
+    ponytail: char-capped so a 100-page arc can't balloon the prompt (same reason the
+    outliner uses the compact page block for arcs); keeps early pages, drops the tail."""
+    from .._panel_index import page_dialog
+    lines: list[str] = []
+    for p in story_pages or []:
+        pn = p.get("page_number")
+        for tb in page_dialog(p):
+            text = str(tb.get("ocr") or tb.get("text") or "").strip()
+            if text:
+                spk = str(tb.get("speaker") or "").strip() or "?"
+                lines.append(f'  p{pn} [{spk}]: "{text}"')
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    if len(body) > max_chars:                       # ponytail: cap so a big arc can't
+        body = body[:max_chars].rsplit("\n", 1)[0]  # balloon the prompt; keep whole lines
+    return ("VERBATIM DIALOG (the actual words characters say on the page — STORY material "
+            "you MAY quote or paraphrase; this is NOT a visual description of the art):\n"
+            + body)
 
 
 def _beats_block(beats: list[Beat]) -> str:
@@ -3837,6 +4088,237 @@ def _logic_clarity_critic(
                        f"(fix: {str(it.get('fix', '')).strip()})")
     if out:
         log(f"[stage4]   phase G found {len(out)} clarity/impact issue(s)")
+    return out
+
+
+# ─── TRANSPARENCY / CLARITY CRITIC (all 3 modes: recap, micro, Q&A) ──────────────
+# Runs at the convergence point (pipeline.write_script) on the FINAL narration of every
+# mode. It answers ONE question the other critics don't: is the prose TRANSPARENT — can
+# a first-time viewer follow every scene on a single listen? Real miss it targets: a
+# Silver Surfer micro that pulled in a side character "Dawn" (viewer has no idea who Dawn
+# is) and a "Surfer becomes a herald" arc that diluted the core "the god spares one man
+# but erases his whole planet". FLAG + LOG only by default (never rewrites/blocks).
+_TRANSPARENCY_HEAVY_TYPES = ("undefined_character", "subplot_dilutes", "off_target")
+
+_TRANSPARENCY_SYSTEM = """You are a CLARITY EDITOR for a comic-video narration watched by \
+people who know NOTHING about this comic. You check ONE thing: is the narration \
+TRANSPARENT — can a first-time viewer follow every scene on a SINGLE listen? Read the \
+scenes in order, measured against the video's FOCUS (its core subject), and flag ONLY the \
+four failures below.
+
+FLAG types (use these EXACT type strings):
+- "undefined_character": a proper NAME (a person / team / place) appears for the FIRST \
+time with no short role-or-context clause telling the viewer who or what it is — e.g. \
+"Dawn finishes his thought" leaves a stranger asking "who is Dawn?". EXEMPT: household \
+names a general audience already knows (Batman, Spider-Man, Thor, Hulk, Joker, Galactus, \
+...). Only flag a name a first-time viewer would NOT recognize AND that arrives with zero \
+introduction.
+- "subplot_dilutes": the scene drags in a side thread or secondary theme that is NOT the \
+FOCUS, blurring the main point — e.g. a "he becomes a cosmic herald" arc muddying the core \
+"the god spares one man but erases his entire world".
+- "overstuffed_sentence": ONE sentence chains THREE OR MORE separate events/clauses with \
+dashes / "and" / commas, so a listener cannot absorb it in one pass. A short lead-in \
+bridge + one event is fine; three stacked events is not.
+- "off_target": the scene does not serve the FOCUS at all — cut it and the main point \
+gets CLEARER, not poorer.
+
+Do NOT flag: style, tone, pacing, word choice, faithfulness, or anything that merely \
+COULD be richer. A household name with no intro is NOT a flag. When unsure, DO NOT flag. \
+Most narrations are clean — returning zero flags is the common, correct answer.
+
+Return JSON ONLY: {"flags":[{"scene_id":N,"type":"<one of the four>","issue":"..."}]}."""
+
+
+def _transparency_critic(
+    nar: Narration, comic_context: dict, mode: str,
+    *, model: str | None = None, progress: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Clarity/focus pass over the FINAL narration of ANY mode. Returns SOFT flag
+    strings (one per opaque scene) — empty when the prose is transparent. Never raises
+    (skips on any LLM failure), so it can only ADD a log signal, never block a render.
+    The video's FOCUS is mode-specific: micro → target_moment, Q&A/recap → the title."""
+    if not TRANSPARENCY_CRITIC:
+        return []
+    log = progress or (lambda _msg: None)
+    scenes = [s for s in nar.scenes if str(getattr(s, "text", "")).strip()]
+    if len(scenes) < 2:
+        return []
+    if mode == "micro_moment":
+        focus = str(comic_context.get("target_moment") or nar.title or "").strip()
+    else:  # explore_answer (question) + recap/narrate (title)
+        focus = str(nar.title or "").strip()
+    cast = ", ".join(_character_names(comic_context)) or "?"
+    nar_lines = [f"S{s.scene_id}: {str(s.text).strip()}" for s in scenes]
+    user = (
+        f"FOCUS (the video's core subject — every scene must serve THIS):\n"
+        f"{focus or '(unstated)'}\n\n"
+        f"KNOWN CAST (proper names that belong to this story; a name NOT here and not a "
+        f"household name is suspect):\n{cast}\n\n"
+        "NARRATION SCENES (in order — judge transparency only):\n"
+        + "\n".join(nar_lines)
+        + "\n\nReturn JSON {\"flags\":[{\"scene_id\":N,\"type\":\"...\",\"issue\":\"...\"}]}."
+    )
+    log("[stage4] transparency critic — clarity/focus pass…")
+    chain = [model] if model else list(FIDELITY_LLM_MODELS)
+    try:
+        raw, _mdl = call_with_chain(
+            system=_TRANSPARENCY_SYSTEM, user=user, models=chain, max_tokens=2000,
+            progress=progress, label="transparency", validator=lambda c: '"flags"' in c)
+    except RuntimeError as exc:
+        log(f"[stage4]   transparency critic unavailable — skipping: {exc}")
+        return []
+    pc = _extract_json(raw)
+    if not isinstance(pc, dict):
+        return []
+    out: list[str] = []
+    for it in (pc.get("flags") or []):
+        typ = (str(it.get("type", "")).strip() or "clarity")
+        issue = str(it.get("issue", "")).strip()
+        if issue:
+            out.append(f"transparency[{typ}]: scene S{it.get('scene_id', '?')}: {issue}")
+    if out:
+        log(f"[stage4]   transparency critic flagged {len(out)} scene(s)")
+    return out
+
+
+def _transparency_has_heavy(flags: list[str]) -> bool:
+    """True if any flag is a HEAVY type (undefined char / subplot / off-target) — the
+    ones worth an optional re-write. An overstuffed sentence alone is a light nit."""
+    return any(f"transparency[{t}]" in f for f in flags for t in _TRANSPARENCY_HEAVY_TYPES)
+
+
+# Per-flag-type repair directive: turns a critic flag into a concrete instruction the
+# writer can act on (feedback-retry, not blind re-roll). Every type the critic can emit
+# maps to one fix; an unmapped type is skipped so the block never carries vague noise.
+_CLARITY_FIX_DIRECTIVES = {
+    "undefined_character": "introduce them with a one-clause role tag on first mention, or cut the name",
+    "subplot_dilutes": "cut or fold this off-focus thread so the main point stays sharp",
+    "overstuffed_sentence": "split this sentence so each line lands a single beat",
+    "off_target": "replace it with a beat that serves the focus, or cut the scene",
+}
+_CLARITY_FLAG_RE = re.compile(r"^transparency\[([^\]]+)\]:\s*scene S(\S+):\s*(.*)$")
+
+
+def _format_clarity_fixes(flags: list[str]) -> str:
+    """Turn transparency-critic flag strings into a writer-facing FIX block that names
+    each flagged scene and the concrete repair. Returns "" when nothing is actionable,
+    so a caller that concatenates it into a prompt is byte-identical to the no-flag path.
+    Shared by all 3 modes (recap / micro / Q&A) via their writer's clarity_fixes param."""
+    lines: list[str] = []
+    for f in flags:
+        m = _CLARITY_FLAG_RE.match(str(f).strip())
+        if not m:
+            continue
+        typ, sid, issue = m.group(1), m.group(2), m.group(3).strip().rstrip(". ")
+        directive = _CLARITY_FIX_DIRECTIVES.get(typ)
+        if not directive or not issue:
+            continue
+        lines.append(f"- scene {sid}: {issue} — {directive}.")
+    if not lines:
+        return ""
+    return ("PREVIOUS DRAFT HAD CLARITY ISSUES — FIX THESE (keep everything else intact):\n"
+            + "\n".join(lines) + "\n\n")
+
+
+# ─── GROUNDING CHECK CRITIC (narration line ↔ the panel it is SHOWN over) ────────
+# THIRD critic, SEPARATE from transparency. Transparency is text-vs-text (is the prose
+# clear?); this is text-vs-IMAGE (does the panel on screen actually SHOW what the line
+# claims?). It reads each scene's narration line against its panel_description (filled by
+# _enrich_scenes_with_panel_metadata in save_narration — the only point that field exists)
+# and flags a line that asserts a CONCRETE, drawable event/place/action the shown panel
+# does not depict. Real miss it targets: an Immortal Hulk micro whose hook said "Bruce
+# Banner died at a gas station" while the focus-filter cut the gas-station setup and every
+# shown panel started at the morgue window — the video ASSERTS a place it never shows.
+# The hard line (and the overfit trap): only a SPECIFIC visualizable claim is checkable;
+# an abstract meaning/thesis/interior line ("the truth was worse than he imagined", "no
+# one really wins") needs no panel and must NOT be flagged. That distinction lives in the
+# LLM prompt, not a keyword list, so it generalizes past the gas-station case.
+# FLAG + LOG only; never rewrites/blocks; no auto-retry (feedback wiring is later).
+_GROUNDING_SYSTEM = """You are a GROUNDING CHECKER for a comic-video narration. For each \
+scene you get the spoken NARRATION line and a description of the PANEL shown on screen \
+while that line is heard. You check ONE thing: does the line assert a CONCRETE, DRAWABLE \
+specific — a PLACE, a physical EVENT/ACTION, or a named object on screen — that the shown \
+panel does NOT depict (or contradicts)?
+
+FLAG a scene (type "ungrounded_claim") only when BOTH hold:
+1. The line names something a viewer would EXPECT to SEE: a place ("at a gas station", \
+"in the throne room"), a physical event/action ("leaps onto the machine", "the ship \
+explodes", "stabs him"), or a specific shown object.
+2. The panel description does NOT depict that specific — a different place, a different \
+action, or unrelated content.
+
+DO NOT FLAG (these are narration's connective tissue and need NO matching panel):
+- Abstract meaning / thesis / interpretation ("the truth was worse than he imagined", \
+"no one really wins here", "this was the day everything changed").
+- Interior states, motives, feelings, or narration ABOUT a character not tied to one \
+visible action ("he had always feared this moment").
+- Time/backstory stated in words ("years earlier", "he was once a hero") when the panel \
+reasonably shows the subject.
+- A line whose concrete claim IS shown, even loosely — same place/action, different \
+wording or camera angle counts as grounded.
+
+When unsure, DO NOT FLAG. Most scenes are grounded; returning zero flags is the common, \
+correct answer. Flag ONLY a clear mismatch between a SPECIFIC spoken claim and the panel.
+
+Return JSON ONLY: {"flags":[{"scene_id":N,"claim":"the concrete thing said",\
+"shown":"what the panel shows","issue":"one line"}]}."""
+
+
+def _grounding_critic(
+    scenes: list[dict], *, model: str | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Text↔shown-panel pass over the FINAL enriched scenes (dicts carrying `text` +
+    `panel_description`). Returns SOFT flag strings — one per scene whose spoken CONCRETE
+    claim the shown panel doesn't depict — empty when everything is grounded, the knob is
+    off, or panel metadata is missing (offline / Q&A panels not yet assigned at stage 5).
+    Never raises (skips on any LLM failure), so it can only ADD a log signal, never block."""
+    if not GROUNDING_CHECK:
+        return []
+    log = progress or (lambda _msg: None)
+    rows = [
+        (int(s.get("scene_id", i) or i), str(s.get("text", "")).strip(),
+         str(s.get("panel_description", "")).strip())
+        for i, s in enumerate(scenes)
+    ]
+    grounded = [(sid, t, pd) for sid, t, pd in rows if t and pd]
+    if not grounded:
+        log("[stage4] grounding-check — no panel metadata yet, skipping")
+        return []
+    body = "\n\n".join(
+        f"S{sid}:\n  SAYS: {t}\n  PANEL SHOWS: {pd}" for sid, t, pd in grounded)
+    user = (
+        "For each scene, does the spoken line assert a concrete drawable event/place/"
+        "action the PANEL does not show? Flag ONLY clear mismatches; abstract "
+        "meaning/thesis lines are never flagged.\n\n"
+        + body
+        + "\n\nReturn JSON {\"flags\":[{\"scene_id\":N,\"claim\":\"...\","
+          "\"shown\":\"...\",\"issue\":\"...\"}]}."
+    )
+    log("[stage4] grounding-check — narration↔shown-panel pass…")
+    chain = [model] if model else list(FIDELITY_LLM_MODELS)
+    try:
+        raw, _mdl = call_with_chain(
+            system=_GROUNDING_SYSTEM, user=user, models=chain, max_tokens=1500,
+            progress=progress, label="grounding", validator=lambda c: '"flags"' in c)
+    except RuntimeError as exc:
+        log(f"[stage4]   grounding-check unavailable — skipping: {exc}")
+        return []
+    pc = _extract_json(raw)
+    if not isinstance(pc, dict):
+        return []
+    out: list[str] = []
+    for it in (pc.get("flags") or []):
+        claim = str(it.get("claim", "")).strip()
+        shown = str(it.get("shown", "")).strip()
+        issue = str(it.get("issue", "")).strip()
+        if claim:
+            out.append(
+                f"grounding[ungrounded_claim]: scene S{it.get('scene_id', '?')}: "
+                f"claim \"{claim}\" but panel shows \"{shown or '?'}\""
+                + (f" — {issue}" if issue else ""))
+    if out:
+        log(f"[stage4]   grounding-check flagged {len(out)} scene(s)")
     return out
 
 

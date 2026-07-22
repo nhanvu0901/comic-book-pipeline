@@ -136,15 +136,13 @@ def index_project(project: str, pages_by_number: dict[int, dict], *, log=print,
         log("[panel-index] skipped — no embedding backend")
         return 0
 
-    # CLEAR the project's old vectors on every re-run (recreate the collection), sized
-    # to the ACTIVE embedding backend (Gemini 3072 / Qwen 4096 / mxbai 1024).
-    try:
-        _qdrant.ensure_collection(project, _embedding.embed_dim(), recreate=True)
-    except Exception as exc:
-        log(f"[panel-index] skipped (Qdrant unavailable): {exc}")
-        return 0
-
-    total, failed_pages = 0, []
+    # DON'T drop the old index up-front: embed FIRST and recreate the collection only once we
+    # actually have vectors (see `created` below). A backend that passes the "none" check above
+    # but then fails EVERY embed call (API flaky/timeout) would otherwise leave the collection
+    # dropped-and-empty — silently degrading every later render to in-memory embed with nobody
+    # the wiser. Sized to the ACTIVE backend (Gemini 3072 / Qwen 4096 / mxbai 1024); the first
+    # recreate sets the dim.
+    total, failed_pages, created = 0, [], False
     for i in range(0, len(per_page), batch_pages):
         chunk = per_page[i:i + batch_pages]
         chunk_pns = [pn for pn, _p, _t in chunk]
@@ -156,6 +154,9 @@ def index_project(project: str, pages_by_number: dict[int, dict], *, log=print,
             for p, v in ok:
                 p["vector"] = v.tolist() if hasattr(v, "tolist") else list(v)
             if ok:
+                if not created:      # first real vectors → NOW it's safe to drop the stale index
+                    _qdrant.ensure_collection(project, _embedding.embed_dim(), recreate=True)
+                    created = True
                 _qdrant.upsert_panels(project, [p for p, _ in ok])
                 total += len(ok)
             if len(ok) != len(pts):

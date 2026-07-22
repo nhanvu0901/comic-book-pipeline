@@ -94,7 +94,7 @@ FIDELITY_LLM_MODELS: list[str] = [
     if m.strip()
 ]
 _DEFAULT_VLM_CHAIN = (
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"  # NEW Primary: 30B MoE, reasoning, 256K ctx, multimodal
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"  # 30B MoE, reasoning, 256K ctx, multimodal
     "google/gemma-4-31b-it:free,"                           # Backup: 31B, 262K ctx
     "google/gemma-3-27b-it,"                                # Paid backup: $0.08/$0.16 per M, 27B, stable
     "google/gemini-2.5-flash-lite"                          # Last resort paid
@@ -201,6 +201,31 @@ ENABLE_LOGIC_CRITIC = os.getenv("ENABLE_LOGIC_CRITIC", "true").lower() in ("true
 # Never let the beat-impact critic gut the story below this many beats.
 LOGIC_CRITIC_MIN_BEATS = int(os.getenv("LOGIC_CRITIC_MIN_BEATS", "9"))
 
+# Stage 3 TRANSPARENCY / CLARITY CRITIC (runs for ALL 3 modes: recap, micro, Q&A).
+# Fires at the convergence point in pipeline.write_script AFTER the writer emits scenes
+# and BEFORE narration.json is saved. Flags four clarity failures a first-time viewer
+# trips on that no existing critic catches: (1) an undefined proper name (a stranger
+# character dropped in with no role clause), (2) a subplot that dilutes the core point,
+# (3) an overstuffed 3+-event run-on sentence, (4) an off-focus scene. Default behavior
+# is FLAG + LOG only — it never rewrites or blocks (Master still reviews the panel sheet).
+# Soft: never raises; skips on any LLM failure (offline/no-embed safe).
+TRANSPARENCY_CRITIC = os.getenv("TRANSPARENCY_CRITIC", "true").lower() in ("true", "1", "yes")
+# When on AND heavy flags remain (undefined char / subplot / off-target), re-run the
+# writer ONCE and keep whichever draft has fewer flags. Default OFF so current single-pass
+# behavior is unchanged.
+TRANSPARENCY_RETRY = os.getenv("TRANSPARENCY_RETRY", "false").lower() in ("true", "1", "yes")
+
+# Stage 3 GROUNDING CHECK (text <-> SHOWN panel, all 3 modes). SEPARATE from the
+# transparency critic: transparency is text-vs-text prose clarity; grounding is
+# text-vs-IMAGE. It runs in save_narration AFTER panel enrich (the only point each scene
+# carries panel_description) and flags a narration line that ASSERTS a concrete, drawable
+# event/place/action the panel it is shown over does not depict — e.g. a hook saying
+# "died at a gas station" while every shown panel is the morgue. Abstract meaning/thesis
+# lines ("the truth was worse than he imagined") need no panel and are never flagged.
+# FLAG + LOG only; never rewrites/blocks. Soft: skips on any LLM failure / missing panel
+# metadata (offline / Q&A-before-stage-5 safe). No auto-retry (feedback wiring is later).
+GROUNDING_CHECK = os.getenv("GROUNDING_CHECK", "true").lower() in ("true", "1", "yes")
+
 # Stage 3 LLM VISUAL-BEAT SPLIT (end of Stage 3). Splits each body scene's sentence into
 # VERBATIM visual beats so Stage 5 can show a distinct panel per beat (panel changes at
 # each new visual moment, not held static for the whole sentence). Replaces the old spaCy
@@ -242,17 +267,24 @@ GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 # EMBED_BACKEND picks the embedding backend explicitly:
 #   "auto"   (default) → Gemini (if GEMINI_API_KEY) → Azure → local mxbai
 #   "google"/"gemini"  → force Gemini
-#   "qwen"/"openai"    → an OpenAI-compatible /v1/embeddings server (EMBED_OPENAI_URL).
-#                        Served by LM Studio (:1234) as model `text-embedding-qwen3-embedding-8b`
-#                        — LM Studio DOES serve it correctly under the `text-embedding-` id
-#                        (returns real 4096-dim qwen, NOT the 768-dim nomic fallback; verified
-#                        2026-06-29). Earlier note that LM Studio routed qwen3→nomic applied
-#                        only to the bare `qwen3-embedding-8b` id; the text-embedding- id works.
+#   "qwen"/"openai"    → tiered chain (see EMBED_PRIMARY below): OpenRouter
+#                        `qwen/qwen3-embedding-8b` API (cheap/fast/0 RAM, PRIMARY
+#                        since 2026-07-17) → local LM Studio (:1234, model
+#                        `text-embedding-qwen3-embedding-8b`, real 4096-dim qwen —
+#                        verified 2026-06-29, NOT the 768-dim nomic fallback) →
+#                        llama.cpp (:1235, manually-started last resort).
 #   "azure"            → force Azure ·  "local" → force local mxbai
 EMBED_BACKEND = os.getenv("EMBED_BACKEND", "auto").strip().lower()
 EMBED_OPENAI_URL = os.getenv("EMBED_OPENAI_URL", "http://127.0.0.1:1234/v1/embeddings").strip()
 EMBED_OPENAI_MODEL = os.getenv("EMBED_OPENAI_MODEL", "text-embedding-qwen3-embedding-8b").strip()
 EMBED_OPENAI_DIM = int(os.getenv("EMBED_OPENAI_DIM", "4096"))
+# Which tier goes first within the "qwen"/"openai" backend: "openrouter" (default,
+# cloud API — no local RAM/server needed) or "local" (LM Studio :1234 first, e.g.
+# no OPENROUTER_API_KEY or a session that wants to keep calls offline). llama.cpp
+# (:1235) is always the last-resort tier regardless of this knob.
+EMBED_PRIMARY = os.getenv("EMBED_PRIMARY", "openrouter").strip().lower()
+EMBED_OPENROUTER_MODEL = os.getenv("EMBED_OPENROUTER_MODEL", "qwen/qwen3-embedding-8b").strip()
+EMBED_LLAMACPP_URL = os.getenv("EMBED_LLAMACPP_URL", "http://127.0.0.1:1235/v1/embeddings").strip()
 
 # ─── Qdrant vector store (panel↔narration matching) ─────────────────────────
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:8069")

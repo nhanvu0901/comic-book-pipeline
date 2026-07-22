@@ -253,6 +253,7 @@ def synthesize_project(
         word_timestamps=words_from_dicts(words),
         scene_timings=scene_timings,
         caption_chunks=caption_chunks,
+        mode=str(narration.get("mode", "")).strip().lower(),
     )
 
 

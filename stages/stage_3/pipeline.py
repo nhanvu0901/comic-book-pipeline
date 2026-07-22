@@ -7,9 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from config import PROJECTS_ROOT, get_project_dirs
+from config import PROJECTS_ROOT, TRANSPARENCY_RETRY, get_project_dirs
 from .propose_modes import propose_modes as _propose_modes
-from .write_script import write_script as _write_script, _load_direction
+from .write_script import (write_script as _write_script, _load_direction,
+                           _transparency_critic, _transparency_has_heavy,
+                           _format_clarity_fixes, _grounding_critic)
 from .schema import Narration
 
 _LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs" / "stage_4_runs"
@@ -88,6 +90,42 @@ def write_script(
         _write_run_dump(project_name, debug_dump, narration=None)
         raise
     nar.source_project = project_name
+
+    # TRANSPARENCY / CLARITY CRITIC — single convergence point for all 3 modes (recap,
+    # micro, Q&A all return their nar through here). FLAG + LOG only; optional one-shot
+    # re-write behind TRANSPARENCY_RETRY (default OFF) when heavy flags remain.
+    flags = _transparency_critic(nar, ctx, mode, progress=progress)
+    if flags:
+        for f in flags:
+            log(f"[stage4] ⚠ {f}")
+        log(f"[stage4] ⚠ transparency critic: {len(flags)} clarity flag(s) — "
+            f"review narration before render")
+        # Feedback-retry (not a blind re-roll): route the critic's flags back INTO the
+        # writer prompt so it repairs the exact scenes flagged. Skip when the flags
+        # produce no actionable fix block (would just be a no-op re-roll).
+        clarity_fixes = _format_clarity_fixes(flags) if TRANSPARENCY_RETRY else ""
+        if TRANSPARENCY_RETRY and _transparency_has_heavy(flags) and clarity_fixes:
+            log("[stage4] TRANSPARENCY_RETRY on + heavy flag(s) — feedback re-writing once…")
+            try:
+                retry_dump = {"project": project_name, "mode": mode,
+                              "hook_hint": hook_hint, "transparency_retry": True,
+                              "clarity_fixes": clarity_fixes}
+                nar2 = _write_script(ctx, story, mode, hook_hint=hook_hint,
+                                     all_pages=pages, direction=direction,
+                                     progress=progress, debug_dump=retry_dump,
+                                     clarity_fixes=clarity_fixes)
+                nar2.source_project = project_name
+                flags2 = _transparency_critic(nar2, ctx, mode, progress=progress)
+                if len(flags2) < len(flags):
+                    log(f"[stage4] retry improved transparency {len(flags)}→{len(flags2)} "
+                        f"— keeping re-write")
+                    nar, flags = nar2, flags2
+                else:
+                    log(f"[stage4] retry did not improve ({len(flags2)} flag(s)) — "
+                        f"keeping original")
+            except Exception as exc:
+                log(f"[stage4] transparency retry failed — keeping original: {exc!r}")
+    debug_dump["transparency_flags"] = flags
     debug_dump["narration"] = nar.to_dict()
     _write_run_dump(project_name, debug_dump, narration=nar)
     sm = (debug_dump or {}).get("story_map")
@@ -108,6 +146,12 @@ def save_narration(
     path = root / "narration.json"
     data = narration.to_dict()
     _enrich_scenes_with_panel_metadata(data, root, log)
+    # GROUNDING CHECK — text↔shown-panel, runs HERE (not at write_script) because this is
+    # the only point each scene carries panel_description. FLAG + LOG only; catches a line
+    # that asserts a concrete place/action the panel it plays over never shows. Soft-skips
+    # when panel metadata is absent (Q&A panels are assigned later at stage 5).
+    for gf in _grounding_critic(data.get("scenes", []), progress=log):
+        log(f"[stage4] ⚠ {gf}")
     # Slim output (final update of beat): no visual-beat split. Stage 5 no longer
     # anchors panels to beats/visual_beats — it matches panels to the narration
     # semantically (forward-only, no-reuse, hold-while-same-subject), so the pace
@@ -116,6 +160,22 @@ def save_narration(
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
     log(f"[stage4] saved narration → {path}")
     return path
+
+
+def reanchor_project(project_name: str, *, progress: Callable[[str], None] | None = None) -> bool:
+    """Re-run CONTENT anchoring on an existing narration.json (fix drifted page_refs
+    WITHOUT re-narrating), then re-enrich panel metadata + save. Returns True if changed."""
+    from .write_script import reanchor_narration
+    log = progress or (lambda _msg: None)
+    root = get_project_dirs(project_name)["root"]
+    path = root / "narration.json"
+    data = json.loads(path.read_text())
+    if not reanchor_narration(data, progress=log):
+        return False
+    _enrich_scenes_with_panel_metadata(data, root, log)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    log(f"[stage4] re-anchored narration → {path}")
+    return True
 
 
 def _enrich_scenes_with_panel_metadata(

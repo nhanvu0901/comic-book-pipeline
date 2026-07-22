@@ -70,8 +70,11 @@ def main():
     print(f"   duration:        {result.audio_duration_seconds:.2f}s")
     print(f"   scenes aligned:  {len(result.scene_timings)}")
     print(f"   caption chunks:  {len(result.caption_chunks)}")
-    if result.audio_duration_seconds > 58:
-        print(f"   ⚠️  audio > 58s — algo-unfriendly for Shorts; consider higher --speed")
+    # micro_moment may legitimately run long (whole-moment story); recap / Q&A still
+    # flag >58s. Soft note only.
+    soft_cap = 100 if result.mode == "micro_moment" else 58
+    if result.audio_duration_seconds > soft_cap:
+        print(f"   ⚠️  audio > {soft_cap}s — algo-unfriendly for Shorts; consider higher --speed")
 
 
 if __name__ == "__main__":

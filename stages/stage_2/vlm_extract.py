@@ -14,6 +14,7 @@ same model; on unparseable JSON it sharpens the prompt and retries once.
 import base64
 import io
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -760,7 +761,7 @@ def _map_batch_pages(
     return [by_index[k] for k in range(n)]
 
 
-_BATCH_TIMEOUT_S = 90  # fail fast — free-tier providers can queue requests for hours otherwise
+_BATCH_TIMEOUT_S = int(os.getenv("VLM_BATCH_TIMEOUT_S", "90"))  # fail fast — free-tier providers can queue for hours; raise (e.g. 240) for slow-but-accurate Qwen batches
 
 
 def _call_model_batch(

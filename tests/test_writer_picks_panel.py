@@ -159,24 +159,31 @@ def test_writer_dict_beats_survive_to_narration(monkeypatch):
         assert " ".join(vb["text"] for vb in s.visual_beats).split() == s.text.split()
 
 
-# ── (e) the writer prompt carries a PANEL MENU ───────────────────────────────
-def test_panel_menu_reaches_writer_prompt(monkeypatch):
+# ── (e) STORY-FIRST: the writer prompt carries NO panel prose ────────────────
+def test_write_prompt_has_no_panel_prose(monkeypatch):
+    """2026-07-16 story-first rewrite: the writer no longer picks panels, so its prompt must
+    contain NEITHER a PANEL MENU NOR any VLM panel description — that panel prose is exactly
+    what made the writer describe the ART instead of telling the story. Pins are assigned
+    afterwards by _pin_beats_by_vector, invisible to the writer."""
     captured = {}
 
     def _capture(*, system, user, models=None, max_tokens=1600, progress=None,
                  label="llm", validator=None):
         captured["user"] = user
-        # minimal valid response for _valid (hook + one scene per window beat)
         scenes = [{"text": "x", "visual_beats": [], "connective": None, "beat_id": b.id}
                   for b in _BEATS2]
         return json.dumps({"hook": "h", "ending_style": "thesis", "scenes": scenes}), "m"
     monkeypatch.setattr(mm, "call_with_chain", _capture)
 
-    story_pages = [_page(3, 2), _page(4, 2)]         # real panels → menu is built
+    story_pages = [_page(3, 2), _page(4, 2)]         # real panel descriptions exist...
     mm._call_micro_writer(_BEATS2, {"title": "t", "plot_summary": "p"}, _TARGET2,
                           model=None, progress=None, debug_dump={}, story_pages=story_pages)
-    assert "PANEL MENU" in captured["user"]
-    assert "p3/0:" in captured["user"] and "p4/1:" in captured["user"]
+    user = captured["user"]
+    assert "PANEL MENU" not in user
+    assert "panel 0 on page 3" not in user       # ...but the VLM description never reaches the prompt
+    assert "p3/0:" not in user and "p4/1:" not in user
+    # the beat SPINE carries only the short label, not the VLM `summary`
+    assert "summary 1" not in user and "summary 2" not in user
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ def test_apply_micro_locks_overrides_fragment_pin():
             {"text": "B", "page": 1, "panel": 1}]}]}
     locks = {"3:1": {"panels": [{"page": 7, "panel": 4}], "source": "batcave"},
              "intro": {"panels": [{"page": 9, "panel": 0}]}}
-    shots._apply_micro_locks(narration, locks)
+    shots._apply_visual_beat_locks(narration, locks)
     vbs = narration["scenes"][0]["visual_beats"]
     assert (vbs[0]["page"], vbs[0]["panel"]) == (1, 0)   # untouched fragment
     assert (vbs[1]["page"], vbs[1]["panel"]) == (7, 4)   # fragment 1 overridden to Master's pick
@@ -43,7 +43,7 @@ def test_apply_micro_locks_whole_scene_key_sets_every_fragment():
         {"scene_id": 2, "text": "A B", "visual_beats": [
             {"text": "A", "page": 1, "panel": 0},
             {"text": "B", "page": 1, "panel": 1}]}]}
-    shots._apply_micro_locks(narration, {"2": {"panels": [{"page": 3, "panel": 5}]}})
+    shots._apply_visual_beat_locks(narration, {"2": {"panels": [{"page": 3, "panel": 5}]}})
     vbs = narration["scenes"][0]["visual_beats"]
     assert all((b["page"], b["panel"]) == (3, 5) for b in vbs)
 

@@ -6,8 +6,8 @@ drafts, (c) the moment-window selector picks a mini-arc (lead-in + moment +
 consequence) around the described moment, with the moment landing mid-window
 (not last), (d) the hook mirrors the title (statement, names a character in
 sentence 1), (e) the writer declares one of 3 ending styles and the validator
-accepts all three, (f) panel dialog/OCR is surfaced to the writer so the payoff
-can quote it verbatim."""
+accepts all three, (f) panel dialog/OCR is surfaced to the writer as context
+only — the writer must NEVER quote a character's bubble in the narration."""
 import pytest
 
 import stages.stage_3.micro_moment as mm
@@ -154,10 +154,21 @@ def test_micro_band_accepts_120_to_200():
 
 
 def test_micro_band_rejects_over_ceiling():
-    beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3, 4, 5)]
+    beats = [Beat(id=i, function="SETUP", name="x") for i in range(1, 10)]
     hook = "The day the Punisher finally made the giant lose his lunch."  # 11w
-    issues = mm._validate_micro_scenes(hook, _scenes(40, 40, 40, 40, 40), beats, "thesis")  # 11+200=211
+    # 9 scenes × 38w + 11w hook = 353w > the 320w ceiling (raised 2026-07-20).
+    issues = mm._validate_micro_scenes(hook, _scenes(*([38] * 9)), beats, "thesis")
     assert any("micro band" in i for i in issues), issues
+
+
+def test_micro_band_accepts_whole_story_length_over_58s():
+    """Ceiling nới (2026-07-20): a whole-moment micro that runs well past the old ~59s
+    cap (here ~250w ≈ 74s) must NOT trip the band lint — longer is fine when the story
+    needs it (Master). The old 200w ceiling would have flagged this."""
+    beats = [Beat(id=i, function="SETUP", name="x") for i in range(1, 8)]
+    hook = "The day the Punisher finally made the giant lose his lunch."  # 11w
+    issues = mm._validate_micro_scenes(hook, _scenes(*([34] * 7)), beats, "thesis")  # 11+238=249
+    assert not any("micro band" in i for i in issues), issues
 
 
 def test_micro_band_rejects_under_floor():
@@ -257,7 +268,7 @@ def test_write_micro_moment_parses_all_three_ending_styles(monkeypatch, style, l
     assert nar.ending_style == style
 
 
-# ── (f) panel dialog/OCR surfaced for verbatim quoting ────────────────────────
+# ── (f) panel dialog/OCR surfaced as context (never quoted in narration) ─────
 def test_window_dialog_block_includes_verbatim_ocr_quote():
     window = [Beat(id=5, function="CLIMAX", name="Vomit moment", page_refs=[12])]
     story_pages = [
@@ -281,11 +292,177 @@ def test_window_dialog_block_empty_when_no_dialog_or_no_pages():
     assert mm._window_dialog_block(window, None) == ""
 
 
-def test_micro_write_system_requires_verbatim_quote_of_payoff():
+def test_micro_write_system_forbids_quoting_dialogue():
     low = mm._MICRO_WRITE_SYSTEM.lower()
-    assert "panel dialog" in low
-    assert "verbatim" in low
-    assert "quote" in low
+    assert "never speak the bubbles" in low
+    assert "no quotation marks around anything a character" in low
+    assert "narrator-voice" in low
+    # the old "quote the payoff verbatim" instruction must be GONE, not just softened
+    assert "quote the payoff" not in low
+    assert "quote-fidelity" not in low
+
+
+# ── RULE 1 (retention): hook is a CONCRETE twist, abstract/poetic hooks banned ──
+def test_micro_write_system_hook_is_concrete_twist_bans_abstract():
+    low = mm._MICRO_WRITE_SYSTEM.lower()
+    assert "concrete twist" in low                 # winning shape is a concrete reversal
+    assert "concrete, never abstract" in low       # the abstract ban is explicit
+    assert "she planned every second" in low       # a named banned abstract example
+    # reconciled with the old "don't force a paradox" note — the story's REAL reversal is wanted,
+    # only a disconnected invented riddle is banned
+    assert "invented riddle is banned" in low
+
+
+# ── RULE 2 (retention): last line is a SHORT, quotable loop back to the hook ────
+def test_micro_write_system_outro_is_quotable_loop():
+    low = mm._MICRO_WRITE_SYSTEM.lower()
+    assert "the last line is the loop" in low
+    assert "quotable" in low
+    assert "close the hook" in low
+
+
+# ── STORY-FIRST input builder (2026-07-16): story sources IN, panel prose OUT ──
+def test_micro_write_system_is_story_first_not_art_description():
+    low = mm._MICRO_WRITE_SYSTEM.lower()
+    assert "tell the story, not the pictures" in low
+    # the writer is explicitly told NOT to pick panels / describe art
+    assert "you do not pick pages or panels" in low
+    assert "story sources" in low
+
+
+def test_call_micro_writer_surfaces_story_meaning_and_moments(monkeypatch):
+    """story_meaning (marked THEME ONLY) and notable_moments (clean story beats) must reach
+    the writer prompt when Stage 1 supplied them — these are the story-language sources the
+    writer draws its wording from instead of VLM panel prose."""
+    captured = {}
+
+    def _capture(*, system, user, models=None, max_tokens=1600, progress=None,
+                 label="llm", validator=None):
+        captured["user"] = user
+        return _fake_writer_call(system=system, user=user, models=models,
+                                 max_tokens=max_tokens, progress=progress,
+                                 label=label, validator=validator)
+
+    monkeypatch.setattr(mm, "call_with_chain", _capture)
+    cc = {"title": "t", "plot_summary": "p",
+          "story_meaning": "doubt is the real weapon here",
+          "notable_moments": ["young bruce watches the show", "bruce sits in arkham"]}
+    mm._call_micro_writer(_FIXTURE_BEATS, cc, _TARGET, model=None, progress=None,
+                          debug_dump={}, story_pages=None)
+    u = captured["user"]
+    assert "STORY MEANING" in u and "THEME ONLY" in u and "doubt is the real weapon here" in u
+    assert "KEY STORY MOMENTS" in u and "young bruce watches the show" in u
+
+
+def test_call_micro_writer_omits_sources_when_absent(monkeypatch):
+    """Old projects (no story_meaning / notable_moments) degrade to plot-only — the sources
+    blocks must NOT appear, and nothing must crash."""
+    captured = {}
+
+    def _capture(*, system, user, models=None, max_tokens=1600, progress=None,
+                 label="llm", validator=None):
+        captured["user"] = user
+        return _fake_writer_call(system=system, user=user, models=models,
+                                 max_tokens=max_tokens, progress=progress,
+                                 label=label, validator=validator)
+
+    monkeypatch.setattr(mm, "call_with_chain", _capture)
+    mm._call_micro_writer(_FIXTURE_BEATS, {"title": "x", "plot_summary": "y"}, _TARGET,
+                          model=None, progress=None, debug_dump={}, story_pages=None)
+    assert "STORY MEANING" not in captured["user"]
+    assert "KEY STORY MOMENTS" not in captured["user"]
+
+
+# ── vector-PIN + GROUND-CHECK (2026-07-16) ───────────────────────────────────
+def _crc_embed(texts):
+    """Deterministic bag-of-words embedding (crc32-bucketed, 4096-dim, unit-normed) — a
+    fragment sharing content words with a panel's embed_text scores high; disjoint text
+    scores ~0. Stands in for the real embedding backend so the pin argmax is predictable
+    without a network/model."""
+    import re as _re
+    import zlib
+    import numpy as np
+    out = []
+    for t in texts:
+        v = np.zeros(4096, dtype="float32")
+        for tok in _re.findall(r"[a-z]+", (t or "").lower()):
+            v[zlib.crc32(tok.encode()) % 4096] += 1.0
+        n = float(np.linalg.norm(v))
+        out.append(v / n if n else v)
+    return out
+
+
+def test_pin_beats_by_vector_argmax_and_ground_check(monkeypatch):
+    import stages._embedding as emb
+    monkeypatch.setattr(emb, "backend_name", lambda: "openai")
+    monkeypatch.setattr(emb, "embed_batch", _crc_embed)
+
+    window = [Beat(id=1, function="SETUP", name="a", page_refs=[10]),
+              Beat(id=2, function="SETUP", name="b", page_refs=[11]),
+              Beat(id=3, function="SETUP", name="c", page_refs=[12])]
+    story_pages = [
+        {"page_number": 10, "is_story_page": True, "panels": [
+            {"index": 0, "description": "quiet empty rooftop"},
+            {"index": 1, "description": "hero punches villain fist"}]},
+        {"page_number": 11, "is_story_page": True, "panels": [
+            {"index": 0, "description": "villain grows huge monster"}]},
+        {"page_number": 12, "is_story_page": True, "panels": [
+            {"index": 0, "description": "crowd flees burning street"}]},
+    ]
+    scenes = [
+        {"text": "hero punches villain fist", "visual_beats": ["hero punches villain fist"]},
+        {"text": "penguin waddles across frozen antarctica",   # matches NOTHING on any page
+         "visual_beats": ["penguin waddles across frozen antarctica"]},
+        {"text": "villain grows huge monster", "visual_beats": ["villain grows huge monster"]},
+    ]
+    best = mm._pin_beats_by_vector(scenes, window, story_pages, floor=0.3, log=lambda _m: None)
+
+    # scene 1 fragment → argmax is page 10 panel 1 (exact content overlap), pinned as a dict
+    vb0 = scenes[0]["visual_beats"][0]
+    assert isinstance(vb0, dict) and vb0["page"] == 10 and vb0["panel"] == 1
+    # scene 2 fragment matches no window panel → left UNPINNED (Stage 5 matcher handles it)
+    vb1 = scenes[1]["visual_beats"][0]
+    assert isinstance(vb1, dict) and vb1["page"] is None and vb1["panel"] is None
+
+    # ground-check flags the ungrounded MIDDLE scene, never the grounded scene 1, never last
+    issues = mm._ground_issues(scenes, window, best, 0.3)
+    assert any("scene 2 describes something not drawn" in i for i in issues), issues
+    assert not any("scene 1 describes" in i for i in issues)
+    assert not any("scene 3 describes" in i for i in issues)  # last scene is exempt (thematic landing)
+
+
+def test_pin_beats_by_vector_graceful_without_backend(monkeypatch):
+    """No embedding backend → no pins, no ground scores, beats left untouched (Stage 5 matcher
+    then handles every beat, identical to recap/Q&A)."""
+    import stages._embedding as emb
+    monkeypatch.setattr(emb, "backend_name", lambda: "none")
+    scenes = [{"text": "hero wins", "visual_beats": ["hero wins"]}]
+    window = [Beat(id=1, function="SETUP", name="a", page_refs=[10])]
+    story_pages = [{"page_number": 10, "is_story_page": True,
+                    "panels": [{"index": 0, "description": "hero wins"}]}]
+    best = mm._pin_beats_by_vector(scenes, window, story_pages, floor=0.3, log=lambda _m: None)
+    assert best == []
+    assert scenes[0]["visual_beats"] == ["hero wins"]            # untouched (still a string)
+    assert mm._ground_issues(scenes, window, best, 0.3) == []    # no scores → no issues
+
+
+def test_pin_beats_by_vector_skips_on_no_embed_env(monkeypatch):
+    """--no-embed (STAGE3_NO_EMBED=1) must short-circuit BEFORE any network call — even
+    with a live backend configured, embed_batch must never be invoked."""
+    import stages._embedding as emb
+    monkeypatch.setattr(emb, "backend_name", lambda: "openai")  # backend IS configured
+    def _boom(_texts):
+        raise AssertionError("embed_batch called despite STAGE3_NO_EMBED=1")
+    monkeypatch.setattr(emb, "embed_batch", _boom)
+    monkeypatch.setenv("STAGE3_NO_EMBED", "1")
+
+    scenes = [{"text": "hero wins", "visual_beats": ["hero wins"]}]
+    window = [Beat(id=1, function="SETUP", name="a", page_refs=[10])]
+    story_pages = [{"page_number": 10, "is_story_page": True,
+                    "panels": [{"index": 0, "description": "hero wins"}]}]
+    best = mm._pin_beats_by_vector(scenes, window, story_pages, floor=0.3, log=lambda _m: None)
+    assert best == []
+    assert scenes[0]["visual_beats"] == ["hero wins"]  # untouched, no network attempted
 
 
 def test_call_micro_writer_surfaces_dialog_block_in_user_prompt(monkeypatch):
@@ -484,6 +661,284 @@ def test_write_micro_moment_ships_with_soft_only_issues(monkeypatch):
 
     assert nar.mode == "micro_moment"  # shipped despite the unresolved soft hook-length issue
     assert any("shipping with unresolved issue" in m for m in logged), logged
+
+
+# ── (g) QUOTE-FIDELITY lint (2026-07-16 tilt: real quote shortened to 'VENGEANCE.') ──
+def test_quote_issues_flags_non_verbatim_quote():
+    dialog_lines = ["WE AM SMASH FOR VENGEANCE"]
+    scenes = [{"text": "and the only thing left to say is 'VENGEANCE, DESTROY THEM ALL.'"}]
+    issues = mm._quote_issues(scenes, dialog_lines)
+    assert any("quote:" in i and "scene 1" in i for i in issues), issues
+
+
+def test_quote_issues_passes_verbatim_quote():
+    dialog_lines = ["...THEY'VE ACTUALLY SURPRISED ME..."]
+    scenes = [{"text": "and Blackheart admits: '...THEY'VE ACTUALLY SURPRISED ME...'"}]
+    issues = mm._quote_issues(scenes, dialog_lines)
+    assert issues == []
+
+
+def test_quote_issues_noop_without_dialog_lines():
+    # No dialog block at all -> nothing to verify against, stays silent even on a
+    # fabricated-looking quote.
+    scenes = [{"text": "and the demon screams 'I WILL NEVER SURRENDER TO YOU.'"}]
+    assert mm._quote_issues(scenes, []) == []
+
+
+def test_quote_issues_ignores_plain_possessives_and_contractions():
+    dialog_lines = ["WE AM SMASH FOR VENGEANCE"]
+    scenes = [{"text": "Blackheart's own hell turns against him, and it isn't over yet."}]
+    assert mm._quote_issues(scenes, dialog_lines) == []
+
+
+def test_quote_issues_double_quotes_also_checked():
+    dialog_lines = ["I AM THE DANGER"]
+    scenes = [{"text": 'He screams "I am the one who knocks" at the sky.'}]
+    issues = mm._quote_issues(scenes, dialog_lines)
+    assert any("quote:" in i for i in issues), issues
+
+
+def test_validate_micro_scenes_surfaces_quote_issue_via_dialog_lines():
+    beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3)]
+    hook = "The day the Punisher finally made the giant lose his lunch."
+    scenes = _scenes(36, 36, 36)
+    scenes[-1]["text"] += " and the crowd roars 'WE HAVE WON THIS FIGHT FOREVER.'"
+    issues = mm._validate_micro_scenes(hook, scenes, beats, "thesis",
+                                       dialog_lines=["THE FIGHT IS OVER NOW"])
+    assert any("quote:" in i for i in issues), issues
+    # Same call with no dialog_lines given (default None) must NOT lint quotes at all.
+    issues2 = mm._validate_micro_scenes(hook, scenes, beats, "thesis")
+    assert not any("quote:" in i for i in issues2), issues2
+
+
+# ── (h) RESOLUTION beat gate (2026-07-16 tilt: arc stopped cold on the moment,
+#     never reaching the villain's defeat 8 beats later in a 20-beat outline) ──
+def _res_beat(bid, name, summary, pages, chars=()):
+    return Beat(id=bid, function="SETUP", name=name, summary=summary,
+                page_refs=list(pages), characters_active=list(chars))
+
+
+def test_append_resolution_beat_noop_when_window_already_reaches_the_end():
+    beats_all = [_res_beat(1, "a", "setup", [1]), _res_beat(2, "b", "defeat", [2])]
+    window = list(beats_all)  # window's last id (2) == beats_all's last id (2)
+    out = mm._append_resolution_beat(window, beats_all, {"plot_summary": "The villain is defeated."})
+    assert out == window
+
+
+def test_append_resolution_beat_noop_when_ending_has_no_resolution_language():
+    beats_all = [_res_beat(i, f"b{i}", "the story continues elsewhere", [i]) for i in range(1, 11)]
+    window = beats_all[3:6]  # ids 4,5,6 — well short of the last beat (id 10)
+    cc = {"plot_summary": "Meanwhile, across town, a new mystery quietly begins to unfold."}
+    out = mm._append_resolution_beat(window, beats_all, cc)
+    assert out == window
+
+
+def test_append_resolution_beat_appends_when_tail_describes_defeat():
+    beats_all = [_res_beat(i, f"b{i}", f"event number {i} happens", [i], ["Red Hulk"])
+                 for i in range(1, 19)]
+    beats_all.append(_res_beat(19, "Curse lands", "Red Hulk becomes the Ghost Rider", [19],
+                               ["Red Hulk"]))
+    beats_all.append(_res_beat(20, "Defeat", "Blackheart's reign collapses and he is banished",
+                               [30, 31], ["Red Hulk", "Blackheart"]))
+    window = beats_all[8:12]  # peak around id 11, follow-up capped well short of id 20
+    cc = {"plot_summary": "Red Hulk becomes the Spirit of Vengeance."}  # no ending language here
+    logged = []
+    out = mm._append_resolution_beat(window, beats_all, cc, log=logged.append)
+    assert len(out) == len(window) + 1
+    new_beat = out[-1]
+    assert new_beat.function == "RESOLUTION"
+    assert new_beat.page_refs == [19, 30, 31]  # union of the LAST TWO outline beats' pages
+    assert "banished" in new_beat.summary.lower() or "collapses" in new_beat.summary.lower()
+    assert any("appended RESOLUTION beat" in m for m in logged), logged
+
+
+def test_append_resolution_beat_prefers_plot_summary_ending_when_it_has_resolution_language():
+    beats_all = [_res_beat(i, f"b{i}", "irrelevant VLM-flavored beat text", [i])
+                 for i in range(1, 6)]
+    window = beats_all[:2]
+    cc = {"plot_summary": "The hero fights on. In the end, the villain is finally defeated."}
+    out = mm._append_resolution_beat(window, beats_all, cc)
+    assert len(out) == len(window) + 1
+    assert "defeated" in out[-1].summary.lower()
+
+
+def test_resolution_label_skips_post_climax_epilogue_tease_in_story_arc():
+    """Live bug found during the 2026-07-16 tilt: plot_summary stops at the moment
+    itself (no defeat language anywhere), and the richer story_arc block's OWN
+    final sentence is a coda tease for the NEXT story ('a demonic figure schemes...')
+    — a blind 'last sentence' read would wrongly surface that tease as the
+    'resolution'. Scanning BACKWARD must skip the tease and land on the real
+    defeat sentence buried a few sentences earlier."""
+    cc = {
+        "plot_summary": "The hero is bonded with a power that judges the guilty.",
+        "summary": {"story_arc": (
+            "The villain tears through the city unchecked. "
+            "The heroes regroup and strike back. "
+            "A fiery motorcycle seals the breach; the villain's reign collapses. "
+            "The team confirms the mission is over with command. "
+            "A rival hero questions their methods, but they hold firm. "
+            "In a final coda, a new villain schemes elsewhere, foreshadowing the next conflict."
+        )},
+    }
+    tail = [Beat(id=1, function="SETUP", name="x", summary="irrelevant tail text")]
+    label = mm._resolution_label(cc, tail)
+    assert "collapses" in label.lower()
+    assert "coda" not in label.lower() and "schemes" not in label.lower()
+
+
+def test_resolution_label_ignores_negated_midstory_beat_language():
+    """'cannot beat a god of Hell' (a mid-story COMPLICATION/failure line) must NOT
+    be mistaken for resolution language — "beat"/"beats" bare are excluded from the
+    keyword set precisely because of this ambiguity, and the bounded tail-window
+    also keeps an early sentence like this out of scan range entirely."""
+    cc = {"plot_summary": (
+        "The villain feeds on rage. The hero throws everything at the villain and "
+        "gets hurled through a wall for it; raw muscle alone cannot beat a god of "
+        "Hell. In the final push, a new power is passed to the hero. Even the "
+        "villain admits they are surprised."
+    )}
+    tail = [Beat(id=1, function="SETUP", name="x", summary="the story trails off here")]
+    label = mm._resolution_label(cc, tail)
+    assert label == "the story trails off here"  # falls all the way to the tail-beat fallback
+
+
+def test_append_resolution_beat_respects_window_size_cap():
+    # window already at the mini-arc cap — must not push it over cap+1.
+    beats_all = [_res_beat(i, f"b{i}", "the villain is finally defeated", [i])
+                 for i in range(1, 12)]
+    window = beats_all[:mm._MICRO_WINDOW_MAX_BEATS + 1]  # already over cap
+    cc = {"plot_summary": "The villain is finally defeated."}
+    out = mm._append_resolution_beat(window, beats_all, cc)
+    assert out == window  # no-op: already over the size budget
+
+
+# ── (i) RESOLUTION beat feeds a GIST + anti-copy reference, not a bare source
+#     sentence (2026-07-16 tilt #2: writer copied the source's own vague nouns —
+#     "a symbiote tears itself free", "a flaming motorcycle seals the breach") ──
+def test_wrap_resolution_reference_marks_do_not_copy():
+    wrapped = mm._wrap_resolution_reference("A symbiote tears itself free; the villain's reign collapses.")
+    assert "do not copy" in wrapped.lower()
+    assert "named characters" in wrapped.lower()
+    assert "A symbiote tears itself free" in wrapped  # reference still present, just marked
+
+
+def test_append_resolution_beat_name_carries_gist_and_reference_not_bare_sentence():
+    beats_all = [_res_beat(i, f"b{i}", "irrelevant text", [i]) for i in range(1, 6)]
+    window = beats_all[:2]
+    cc = {"plot_summary": "A symbiote tears itself free; the villain's reign finally collapses."}
+    out = mm._append_resolution_beat(window, beats_all, cc)
+    name = out[-1].name
+    assert "do not copy" in name.lower()
+    assert name != "A symbiote tears itself free; the villain's reign finally collapses."
+
+
+# ── (j) AMBIGUOUS-SUBJECT lint: anonymous prop acting alone reads like a VLM read ──
+def test_ambiguous_subject_issues_flags_anonymous_prop_actor():
+    beats = [Beat(id=1, function="SETUP", name="x", characters_active=["Red Hulk"])]
+    scenes = [{"text": "A symbiote tears itself free, and a flaming motorcycle seals the breach."}]
+    issues = mm._ambiguous_subject_issues(scenes, beats)
+    assert any("ambiguous:" in i and "scene 1" in i for i in issues), issues
+
+
+def test_ambiguous_subject_issues_passes_when_named_character_present():
+    beats = [Beat(id=1, function="SETUP", name="x", characters_active=["Venom", "Ghost Rider"])]
+    scenes = [{"text": "Venom tears free of its host, and Ghost Rider's bike seals the breach."}]
+    assert mm._ambiguous_subject_issues(scenes, beats) == []
+
+
+def test_ambiguous_subject_issues_noop_without_known_character_names():
+    beats = [Beat(id=1, function="SETUP", name="x")]  # no characters_active anywhere
+    scenes = [{"text": "A symbiote tears itself free from the demon's grip."}]
+    assert mm._ambiguous_subject_issues(scenes, beats) == []
+
+
+def test_micro_write_system_requires_named_subject():
+    low = mm._MICRO_WRITE_SYSTEM.lower()
+    assert "named subject only" in low
+    assert "a symbiote" in low  # the exact failure example is called out
+
+
+# ── (k) QUOTE SPEAKER: quote must be attributed to the correct speaker ───────
+#     (2026-07-16 tilt #3: a Blackheart admission narrated as "a burning Hulk
+#     who roars, '...'" — WRONG speaker, real name available in beat context)
+def test_named_speaker_rejects_vague_placeholders():
+    assert mm._named_speaker("a figure") is None
+    assert mm._named_speaker("a man") is None
+    assert mm._named_speaker("?") is None
+    assert mm._named_speaker("") is None
+    assert mm._named_speaker(None) is None
+
+
+def test_named_speaker_keeps_real_names():
+    assert mm._named_speaker("Blackheart") == "Blackheart"
+    assert mm._named_speaker("Juggernaut") == "Juggernaut"
+
+
+def test_window_dialog_block_shows_speaker_unclear_for_vague_placeholder():
+    window = [Beat(id=5, function="CLIMAX", name="x", page_refs=[22])]
+    story_pages = [
+        {"page_number": 22, "panels": [
+            {"index": 0, "dialog": [
+                {"type": "speech", "speaker": "a figure", "ocr": "...SURPRISED ME..."},
+            ]},
+        ]},
+    ]
+    block = mm._window_dialog_block(window, story_pages)
+    assert "speaker unclear" in block
+    assert "a figure" not in block
+
+
+def test_quote_speaker_issues_flags_misattributed_quote():
+    known_names = {"blackheart", "red hulk"}
+    dialog_entries = [(22, "Blackheart", "...THEY'VE ACTUALLY SURPRISED ME...")]
+    scenes = [{"text": "Red Hulk transforms, and a burning Hulk who roars, "
+                       "'...THEY'VE ACTUALLY SURPRISED ME...'"}]
+    issues = mm._quote_speaker_issues(scenes, dialog_entries, known_names)
+    assert any("quote-speaker:" in i and "scene 1" in i for i in issues), issues
+
+
+def test_quote_speaker_issues_passes_when_correctly_attributed():
+    known_names = {"blackheart", "red hulk"}
+    dialog_entries = [(22, "Blackheart", "...THEY'VE ACTUALLY SURPRISED ME...")]
+    scenes = [{"text": "Red Hulk transforms, and Blackheart admits, "
+                       "'...THEY'VE ACTUALLY SURPRISED ME...'"}]
+    assert mm._quote_speaker_issues(scenes, dialog_entries, known_names) == []
+
+
+def test_quote_speaker_issues_noop_when_entry_speaker_is_vague():
+    # entry's own speaker tag is a placeholder ("a figure") — nothing solid to
+    # compare against, so this mechanical check must stay silent (the prompt's
+    # QUOTE SPEAKER rule is the primary defense for this case).
+    known_names = {"blackheart", "red hulk"}
+    dialog_entries = [(22, "a figure", "...THEY'VE ACTUALLY SURPRISED ME...")]
+    scenes = [{"text": "Red Hulk transforms, and a burning Hulk who roars, "
+                       "'...THEY'VE ACTUALLY SURPRISED ME...'"}]
+    assert mm._quote_speaker_issues(scenes, dialog_entries, known_names) == []
+
+
+def test_validate_micro_scenes_surfaces_quote_speaker_issue_via_dialog_entries():
+    beats = [Beat(id=i, function="SETUP", name="x",
+                  characters_active=["Blackheart", "Red Hulk"]) for i in (1, 2, 3)]
+    hook = "The day Red Hulk finally became the Spirit of Vengeance."
+    scenes = _scenes(36, 36, 36)
+    scenes[-1]["text"] += (" and a burning Hulk who roars, "
+                           "'...THEY'VE ACTUALLY SURPRISED ME...'")
+    issues = mm._validate_micro_scenes(
+        hook, scenes, beats, "thesis",
+        dialog_entries=[(22, "Blackheart", "...THEY'VE ACTUALLY SURPRISED ME...")])
+    assert any("quote-speaker:" in i for i in issues), issues
+    # default (no dialog_entries) must NOT lint speaker attribution at all.
+    issues2 = mm._validate_micro_scenes(hook, scenes, beats, "thesis")
+    assert not any("quote-speaker:" in i for i in issues2), issues2
+
+
+def test_micro_write_system_tells_writer_to_describe_dialogue_indirectly():
+    # QUOTE SPEAKER (attributing a quote to the right character) is moot now that
+    # quoting dialogue at all is banned — the replacement rule instead tells the
+    # writer to retell a dialogue-driven moment in indirect story language.
+    low = mm._MICRO_WRITE_SYSTEM.lower()
+    assert "describe it indirectly in story language" in low
+    assert "quote speaker" not in low
 
 
 if __name__ == "__main__":

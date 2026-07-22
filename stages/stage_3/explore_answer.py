@@ -160,6 +160,9 @@ CONNECT THE ITEMS — this is the point of the format:
 
 HARD RULES:
   - Plain B2 English. Concrete, no purple prose, no riddles.
+  - ONE EVENT PER SENTENCE. Say one thing, then stop — do NOT chain three clauses with em-dashes into a run-on. A short lead-in bridge + one plain event is the whole sentence.
+  - TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY / research (what HAPPENED and WHY), NOT a description of the comic art. Never narrate the artwork ("we see", "a figure holding", "in this panel/frame", colours / poses / camera for their own sake) — write the plain STORY EVENT the panel stands for.
+  - STRIP JARGON — a stranger must know every noun. The items below WILL carry obscure proper names (realms, teams, materials, minor characters). Test each noun: would a first-time viewer know it? If not, swap the plain word ("Cancerverse" -> "a dead universe", "the Negative Zone" -> "a prison dimension") or drop it — never make the viewer hit a word they'd have to look up. (Household-name heroes/villains still keep their names — see the name rule below.)
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - EXACTLY one scene per item, in the SAME order given.
   - NEVER speak a countdown/rank number ("number five", "#3", "third place" — all banned).
@@ -167,10 +170,11 @@ HARD RULES:
   - Total words across ALL scenes must land inside the WORD BUDGET given.
   - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
+  - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. TARGET 3 fragments per scene — a body scene of 18+ words almost always contains a third drawable moment, find it before settling for 2; use 2 only when the sentence truly has just two moments. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then) into 3 (or 2) fragments, each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words. A short single-event scene (<=12 words) may be ONE fragment = the whole "text".
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"scenes": [{"text": "...", "connective": null, "beat_id": <id>}, ...]}"""
+{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>", "<verbatim fragment three>"], "connective": null, "beat_id": <id>}, ...]}"""
 
 _EXPLORE_WRITE_SYSTEM_EXPLAIN = """You are QAWriter for a comic-trivia YouTube Short. The video answers ONE Why/How question as an ARGUMENT built from real comic moments — the items are stages of the answer (they may come from one story or from several different comics), given in escalation order (the revelation is the LAST item) — never re-rank them.
 
@@ -184,6 +188,9 @@ For EACH item, write exactly ONE scene: name who/what it is about, give the how/
 
 HARD RULES:
   - Plain B2 English. Concrete, no purple prose, no riddles.
+  - ONE EVENT PER SENTENCE. Say one thing, then stop — do NOT chain three clauses with em-dashes into a run-on. A short lead-in bridge + one plain event is the whole sentence.
+  - TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY / research (what HAPPENED and WHY), NOT a description of the comic art. Never narrate the artwork ("we see", "a figure holding", "in this panel/frame", colours / poses / camera for their own sake) — write the plain STORY EVENT the panel stands for.
+  - STRIP JARGON — a stranger must know every noun. The items below WILL carry obscure proper names (realms, teams, materials, minor characters). Test each noun: would a first-time viewer know it? If not, swap the plain word ("Cancerverse" -> "a dead universe", "the Negative Zone" -> "a prison dimension") or drop it — never make the viewer hit a word they'd have to look up. (Household-name heroes/villains still keep their names — see the name rule below.)
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - EXACTLY one scene per item, in the SAME order given.
   - This is ONE story, not a list: NEVER use list language ("this list", "the last one", "number three" — all banned).
@@ -191,10 +198,32 @@ HARD RULES:
   - Total words across ALL scenes must land inside the WORD BUDGET given.
   - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
+  - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. TARGET 3 fragments per scene — a body scene of 18+ words almost always contains a third drawable moment, find it before settling for 2; use 2 only when the sentence truly has just two moments. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then) into 3 (or 2) fragments, each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words. A short single-event scene (<=12 words) may be ONE fragment = the whole "text".
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"scenes": [{"text": "...", "connective": null, "beat_id": <id>}, ...]}"""
+{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>", "<verbatim fragment three>"], "connective": null, "beat_id": <id>}, ...]}"""
+
+
+# Q&A-specific outro contract (passed to write_script.generate_outro's
+# system_override). The recap _OUTRO_SYSTEM there is written for a SINGLE-STORY
+# retelling ("the cost the hero paid") and has no idea a Q&A video asked one
+# question then answered it with items from several different comics — it kept
+# producing generic thematic lines unrelated to what was just shown (Master:
+# "boring, not related, seems come from the guy who not watch the video").
+# This system prompt instead lands the QUESTION's answer using the actual items.
+_QA_OUTRO_SYSTEM = """You are OutroWriter for a comic-trivia Q&A Short. The video asked ONE question, then answered it with real comic moments (the ITEMS below) in escalation order — the LAST item is the payoff the hook promised. Write ONE closing line: the final sentence the viewer hears right after that last item.
+
+HARD RULES:
+  - 4-14 words, exactly ONE sentence, ends with ".".
+  - LAND the answer: crown the LAST item or tie all items back to the question's famous "unbreakable" fact — say plainly what the answer proves about it.
+  - ONE simple idea, stated plainly. Do NOT restate HOW it happened — no weapon, method, or mechanism details (those belong to the body, the viewer just saw them). Name WHO + the takeaway, nothing else. ✓ "Even the King of Hell couldn't survive his own son." ✗ "...falls when Blackheart's blade carries innocent blood." (mechanism re-told = rejected)
+  - MUST contain at least one CONCRETE element from the ITEMS — a character's name, or a physical event (a stab, a fall, a stolen throne). Never introduce a fact that is not in the ITEMS.
+  - The viewer just watched these moments — do NOT re-summarize them; give the takeaway.
+  - It is NOT a question. No meta talk, no "comic is", no comic titles, no hashtags.
+  - IELTS 6.5 / B2 PLAIN ENGLISH. Punchy, quotable, no purple phrasing.
+
+Return ONLY JSON, no markdown: {"outro_line": "..."}"""
 
 
 def _items_block(beats: list[Beat], items: list[dict]) -> str:
@@ -218,6 +247,7 @@ def _call_explore_writer(
     issues: list[str] | None = None,
     archetype: str = "list",
     thesis: str = "",
+    clarity_fixes: str = "",
 ) -> tuple[dict, str]:
     fix_block = ""
     if issues:
@@ -235,12 +265,13 @@ def _call_explore_writer(
         f"QUESTION being answered: {question}\n\n"
         f"{thesis_block}"
         f"{fix_block}"
+        f"{clarity_fixes}"
         f"ITEMS — write ONE scene per item, in this EXACT order (do not reorder):\n"
         f"{_items_block(beats, items)}\n\n"
         f"WORD BUDGET: {_exp_band(len(beats))[0]}-{_exp_band(len(beats))[1]} words total across all "
         f"{len(beats)} scenes (each scene: connective bridge + entity + how/why, under {_EXP_SCENE_MAX_WORDS} words).\n"
-        f'Return JSON: {{"scenes": [{{"text": "...", "connective": null, "beat_id": {beats[0].id}}}, '
-        f"... one per item ...]}}."
+        f'Return JSON: {{"scenes": [{{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>", "<verbatim fragment three>"], '
+        f'"connective": null, "beat_id": {beats[0].id}}}, ... one per item ...]}}.'
     )
 
     def _valid(raw: str) -> bool:
@@ -395,6 +426,7 @@ def write_explore_answer(
     progress: Callable[[str], None] | None = None,
     debug_dump: dict | None = None,
     direction: dict | None = None,
+    clarity_fixes: str = "",
 ) -> Narration:
     """Orchestrates the explore_answer writer: load answer_context.json -> build
     deterministic beats -> LLM writes item scenes (1 retry on validation fail) ->
@@ -427,13 +459,15 @@ def write_explore_answer(
 
     log(f"[explore_answer] writing {len(beats)} item scene(s)… (archetype={archetype})")
     parsed, mdl = _call_explore_writer(beats, items, question, model=model, progress=progress,
-                                       debug_dump=dump, archetype=archetype, thesis=thesis)
+                                       debug_dump=dump, archetype=archetype, thesis=thesis,
+                                       clarity_fixes=clarity_fixes)
     issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype)
     if issues:
         log(f"[explore_answer] draft has {len(issues)} issue(s); retrying once: {issues}")
         parsed, mdl = _call_explore_writer(beats, items, question, model=model, progress=progress,
                                            debug_dump=dump, issues=issues,
-                                           archetype=archetype, thesis=thesis)
+                                           archetype=archetype, thesis=thesis,
+                                           clarity_fixes=clarity_fixes)
         issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype)
         if issues:
             log(f"[explore_answer] shipping with unresolved issue(s): {issues}")
@@ -460,8 +494,18 @@ def write_explore_answer(
         "connective": None, "beat_id": beats[-1].id, "is_outro": True,
     }
     tone_scenes = [intro_scene] + body  # context for the outro/tease LLM helpers
+    # Q&A-specific grounding: the recap outro contract has no idea this video
+    # answered ONE question with items from several comics (see _QA_OUTRO_SYSTEM's
+    # docstring above) — hand it the actual question + items so the closing line
+    # lands the answer instead of a generic single-story theme.
+    items_ctx = (
+        f"QUESTION: {question}\n"
+        f"ITEMS (in order, last = payoff):\n"
+        + "\n".join(f"- {b.name}: {b.summary[:200]}" for b in beats)
+    )
     thematic = generate_outro(comic_context, tone_scenes, model=model,
-                              progress=progress, debug_dump=dump, direction=direction)
+                              progress=progress, debug_dump=dump, direction=direction,
+                              system_override=_QA_OUTRO_SYSTEM, extra_user_context=items_ctx)
     if thematic and _outro_is_concrete(thematic, comic_context):
         outro_scene["text"] = thematic
         log(f"[explore_answer] outro: thematic -> {thematic!r}")
@@ -472,8 +516,10 @@ def write_explore_answer(
             outro_scene["text"] = _append_loop_tease(outro_scene["text"], tease)
             log(f"[explore_answer] outro: + loop tease -> {tease!r}")
     if not outro_scene["text"].strip():
-        # Both LLM helpers failed — close on the hook's promise, not a credit line.
-        outro_scene["text"] = "And that's the one nobody saw coming."
+        # Both LLM helpers failed — close on the last item's proof, not a generic
+        # unrelated line (was: "And that's the one nobody saw coming.").
+        last_name = beats[-1].name.split(" (")[0].split(" /")[0].strip()
+        outro_scene["text"] = f"Nobody stays untouchable — {last_name} proved it."
         log("[explore_answer] outro: generic meaning fallback")
 
     parsed["scenes"] = [intro_scene] + body + [outro_scene]

@@ -42,6 +42,12 @@ class Shot:
     # only fire between beats (e.g. XFADE_ROTATE transition variety) don't fire between
     # two panels of the SAME answer item. None (recap) = scene_id is already the beat.
     beat_id: int | None = None
+    # Absolute path to a Master-added custom image (review/custom/<file>) that REPLACES the
+    # matcher's panel pick for this shot — "" (default) = old crop-from-page path, byte-
+    # identical. Set by stage_5.shots._apply_custom_images_to_shots AFTER the normal builder
+    # + matcher run (see assign_custom_images); render_shot loads this file directly instead
+    # of cropping panel_bbox out of source_image when it's non-empty.
+    custom_image: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

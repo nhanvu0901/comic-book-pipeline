@@ -41,3 +41,20 @@ def test_grounding_prefers_dialog_over_vague_description(monkeypatch):
     out = write_script._ground_beat_panels(beats, story_pages)
 
     assert out[0].key_panels == [{"page": 10, "panel": 1}]  # picks `target`, not `decoy`
+
+
+def test_no_embed_env_skips_grounding_entirely(monkeypatch):
+    """--no-embed (STAGE3_NO_EMBED=1) must skip the pass with zero calls to _semantic_sim
+    (no network/model) and leave the outliner's key_panels untouched."""
+    def _boom(*_a, **_kw):
+        raise AssertionError("_semantic_sim called despite STAGE3_NO_EMBED=1")
+    monkeypatch.setattr(write_script, "_semantic_sim", _boom)
+    monkeypatch.setenv("STAGE3_NO_EMBED", "1")
+
+    beats = [_beat(1, "Doom unmasks himself before Reed in the ruined lab", [10])]
+    story_pages = [{"page_number": 10, "panels": [{"description": "a scarred face"}],
+                    "image_dimensions": {"width": 600, "height": 900}, "text_blocks": []}]
+
+    out = write_script._ground_beat_panels(beats, story_pages)
+
+    assert out[0].key_panels == []  # untouched — outliner's guess (none here) kept

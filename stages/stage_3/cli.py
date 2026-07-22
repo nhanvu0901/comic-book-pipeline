@@ -12,6 +12,7 @@ If --mode is omitted, the LLM proposes 3 modes and you pick one interactively.
 Hyphens in a mode name are accepted (micro-moment == micro_moment).
 """
 import argparse
+import os
 import sys
 import textwrap
 from pathlib import Path
@@ -19,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from .modes import MODES_BY_KEY
-from .pipeline import propose_modes, write_script, save_narration
+from .pipeline import propose_modes, write_script, save_narration, reanchor_project
 
 
 def main():
@@ -41,7 +42,27 @@ def main():
         help="Skip mode proposal and use this mode directly.",
     )
     parser.add_argument("--hook", default="", help="Optional hook hint to steer the opening line.")
+    parser.add_argument(
+        "--no-embed", action="store_true",
+        help="Skip all embedding/vector work (beat grounding + vector pin) — narration-only "
+             "test mode. Use when the embedding server (LM Studio/Qwen) isn't running; "
+             "narration.json still writes full scenes/visual_beats text, just without "
+             "vector-grounded page_ref/panel_ref pins (Stage 5's own matcher handles that).",
+    )
+    parser.add_argument(
+        "--reanchor", action="store_true",
+        help="Re-run CONTENT anchoring on the EXISTING narration.json (fix drifted "
+             "page_ref/panel_ref without re-narrating — TTS audio stays valid), then exit.",
+    )
     args = parser.parse_args()
+
+    if args.reanchor:
+        changed = reanchor_project(args.project, progress=print)
+        print(f"\n{'✓ re-anchored' if changed else '· no change'}: {args.project}")
+        return
+
+    if args.no_embed:
+        os.environ["STAGE3_NO_EMBED"] = "1"
 
     chosen_mode = args.mode
     hook_hint = args.hook
@@ -78,9 +99,12 @@ def main():
     print(f"   title:      {nar.title}")
     print(f"   scenes:     {len(nar.scenes)}")
     print(f"   words:      {nar.total_word_count}")
-    print(f"   duration:   ~{nar.estimated_duration_seconds}s (target ≤58s)")
-    if nar.estimated_duration_seconds > 58:
-        print(f"   ⚠️  OVER 58s — run again or edit narration.json before Stage 4")
+    # micro_moment is allowed to run long so the whole moment lands (Master, 2026-07-20);
+    # recap / Q&A still target ≤58s. Soft note only — never trims.
+    soft_cap = 100 if nar.mode == "micro_moment" else 58
+    print(f"   duration:   ~{nar.estimated_duration_seconds}s (target ≤{soft_cap}s)")
+    if nar.estimated_duration_seconds > soft_cap:
+        print(f"   ⚠️  OVER {soft_cap}s — run again or edit narration.json before Stage 4")
     print()
 
 

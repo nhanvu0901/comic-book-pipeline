@@ -4,11 +4,14 @@ A sentence-embedding model scores how well two texts match semantically — far
 more reliable than lexical word overlap ("mistletoe" vs "spear", "reverted to
 mortal form" vs "FIZAPPT").
 
-Backend (resolved once, lazily):
-  1. Azure OpenAI text-embedding-3-large  — when AZURE_OPENAI_EMBEDDING_* env is
-     set (network, but Cloudflare-independent). Best quality.
-  2. local mxbai-embed-large-v1 (sentence-transformers) — offline fallback.
-  3. None — every call degrades gracefully to 0.0 / None.
+Backend (resolved once, lazily; EMBED_BACKEND env forces one, see config.py):
+  - EMBED_BACKEND=qwen/openai (current default, 2026-07-17): tiered chain —
+    OpenRouter `qwen/qwen3-embedding-8b` API (PRIMARY, cheap/fast/0 RAM) → local
+    LM Studio (:1234) → llama.cpp (:1235). EMBED_PRIMARY="local" reverses the
+    first two. See _openai_tiers().
+  - gemini / azure — cloud alternatives when their API keys are set.
+  - local mxbai-embed-large-v1 (sentence-transformers) — final offline fallback.
+  - None — every call degrades gracefully to 0.0 / None.
 
 Stage 3's panel-grounding and Stage 5's panel-match share the SAME model + cache
 (one model, one cache, no Stage-3 → Stage-5 import).
@@ -47,9 +50,11 @@ def _init_gemini() -> bool:
 
 
 def _init_openai() -> bool:
-    """OpenAI-compatible /v1/embeddings server (e.g. local llama-server running
-    Qwen3-Embedding with --embedding --pooling last). Just records the URL — failures
-    surface per-call (graceful None), so a down server doesn't crash resolution."""
+    """'qwen'/'openai' backend: a tiered chain resolved lazily per-call by
+    _openai_tiers() (OpenRouter cloud API → local LM Studio :1234 → llama.cpp
+    :1235, order set by EMBED_PRIMARY). Just records the local URL + logs the
+    chain — failures surface per-call (graceful None/fallback), so a down
+    server doesn't crash resolution."""
     global _BACKEND, _OPENAI_URL
     import config
     url = getattr(config, "EMBED_OPENAI_URL", "")
@@ -57,7 +62,8 @@ def _init_openai() -> bool:
         return False
     _OPENAI_URL = url
     _BACKEND = "openai"
-    print(f"[embedding] backend=openai ({config.EMBED_OPENAI_MODEL} @ {url}, "
+    names = [name for name, _fn, _t in _openai_tiers()]
+    print(f"[embedding] backend=openai chain={names} (EMBED_PRIMARY={config.EMBED_PRIMARY!r}, "
           f"dim={config.EMBED_OPENAI_DIM})", file=sys.stderr)
     return True
 
@@ -190,48 +196,122 @@ def _azure_embed(texts: list[str]):
         return []
 
 
-def _openai_embed_one(texts: list[str], timeout: float):
-    """One /v1/embeddings request (with retry). Returns normalized vectors aligned
-    with `texts`, or None on failure after 3 attempts."""
+def _openai_embed_one(texts: list[str], timeout: float, url: str | None = None,
+                       model: str | None = None):
+    """One /v1/embeddings request against a local OpenAI-compatible server (with
+    retry). Defaults to LM Studio (_OPENAI_URL / config.EMBED_OPENAI_MODEL); the
+    llama.cpp fallback tier reuses this with a different url/model. Returns
+    normalized vectors aligned with `texts`, or None on failure after 3 attempts."""
     import json, time, urllib.request, config
-    body = json.dumps({"model": config.EMBED_OPENAI_MODEL, "input": texts}).encode()
+    url = url or _OPENAI_URL
+    model = model or config.EMBED_OPENAI_MODEL
+    body = json.dumps({"model": model, "input": texts}).encode()
     last_exc = None
     for attempt in range(3):
         try:
             req = urllib.request.Request(
-                _OPENAI_URL, data=body, headers={"Content-Type": "application/json"})
+                url, data=body, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 resp = json.load(r)
             data = sorted(resp["data"], key=lambda d: d.get("index", 0))
             return [_normalize(d["embedding"]) for d in data]
         except Exception as exc:
             last_exc = exc
-            print(f"[embedding] OpenAI-compatible embed call failed "
-                  f"(attempt {attempt + 1}/3, timeout={timeout}s): {exc}", file=sys.stderr)
+            print(f"[embedding] local embed call failed ({url}, "
+                  f"attempt {attempt + 1}/3, timeout={timeout}s): {exc}", file=sys.stderr)
             time.sleep(2)
-    print(f"[embedding] giving up after 3 attempts: {last_exc}", file=sys.stderr)
+    print(f"[embedding] giving up on {url} after 3 attempts: {last_exc}", file=sys.stderr)
     return None
 
 
+def _llamacpp_embed_one(texts: list[str], timeout: float):
+    """llama.cpp last-resort tier — same request shape as local LM Studio, different
+    URL (manually-started `llama-server --embedding --pooling last`, see
+    project_qwen_embedding_llamacpp memory)."""
+    import config
+    return _openai_embed_one(texts, timeout, url=config.EMBED_LLAMACPP_URL,
+                              model=config.EMBED_OPENAI_MODEL)
+
+
+def _openrouter_embed_one(texts: list[str], timeout: float):
+    """One OpenRouter /embeddings request (retry x2 — cloud primary, fail fast and
+    let the caller fall over to a local tier rather than hang). Returns normalized
+    vectors aligned with `texts`, or None after 2 attempts."""
+    import json, time, urllib.request, config
+    url = config.OPENROUTER_BASE_URL.rstrip("/") + "/embeddings"
+    body = json.dumps({"model": config.EMBED_OPENROUTER_MODEL, "input": texts}).encode()
+    headers = {"Content-Type": "application/json",
+               "Authorization": f"Bearer {config.OPENROUTER_API_KEY}"}
+    last_exc = None
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(url, data=body, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                resp = json.load(r)
+            data = sorted(resp["data"], key=lambda d: d.get("index", 0))
+            return [_normalize(d["embedding"]) for d in data]
+        except Exception as exc:
+            last_exc = exc
+            print(f"[embedding] OpenRouter embed call failed "
+                  f"(attempt {attempt + 1}/2, timeout={timeout}s): {exc}", file=sys.stderr)
+            if attempt == 0:
+                time.sleep(1)
+    print(f"[embedding] OpenRouter giving up after 2 attempts: {last_exc}", file=sys.stderr)
+    return None
+
+
+def _openai_tiers():
+    """Ordered (name, embed_fn, timeout) tiers for the 'openai'/'qwen' backend.
+    EMBED_PRIMARY ("openrouter" default, or "local") picks which of the two live
+    tiers goes first; llama.cpp (:1235, manually-started) is always last resort.
+    OpenRouter is only included when OPENROUTER_API_KEY is set."""
+    import os, config
+    local = ("local:1234", _openai_embed_one, float(os.getenv("EMBED_TIMEOUT", "90")))
+    llama = ("llama.cpp:1235", _llamacpp_embed_one, float(os.getenv("EMBED_TIMEOUT", "90")))
+    cloud = (("openrouter", _openrouter_embed_one, 30.0)
+             if getattr(config, "OPENROUTER_API_KEY", "") else None)
+    order = ([local, cloud, llama] if config.EMBED_PRIMARY == "local"
+              else [cloud, local, llama])
+    return [t for t in order if t is not None]
+
+
+_OPENAI_TIER_IDX = 0  # ponytail: sticky within this process — once a tier is
+# confirmed dead, later chunks/calls skip straight past it instead of re-timing-out
+# on it every chunk. Resets only on process restart (each pipeline run is its own
+# process, so that's the natural reset point).
+
+
 def _openai_embed(texts: list[str]):
-    """Batch-embed via an OpenAI-compatible /v1/embeddings server (local llama-server,
-    LM Studio, etc.). Returns normalized vectors aligned with `texts`, or [] on any
-    failure (graceful — the caller then leaves those entries as None).
+    """Batch-embed via the 'openai'/'qwen' tiered chain (see _openai_tiers):
+    OpenRouter cloud API by default, local LM Studio (:1234) and llama.cpp (:1235)
+    as offline fallbacks. Returns normalized vectors aligned with `texts`, or []
+    on total failure (graceful — the caller then leaves those entries as None).
 
     Sub-batches the request: LM Studio / llama.cpp embedding servers WEDGE on a huge
     single batch (a 300+ panel project pins the server in COMPUTINGEMBEDDING and every
     request times out), while small chunks return fine. We split into EMBED_CHUNK-sized
-    requests and concatenate. Any chunk that fails after retries collapses the whole
-    call to [] (unchanged all-or-nothing contract vs embed_batch's len-check). Each
-    request still gets a bounded EMBED_TIMEOUT so a transient stall fails fast."""
+    requests; each chunk tries tiers in order (falling over automatically) and the
+    whole call only collapses to [] if every tier fails for some chunk."""
     import os
-    timeout = float(os.getenv("EMBED_TIMEOUT", "90"))
+    global _OPENAI_TIER_IDX
+    tiers = _openai_tiers()
+    if not tiers:
+        return []
+    _OPENAI_TIER_IDX = min(_OPENAI_TIER_IDX, len(tiers) - 1)
     chunk = max(1, int(os.getenv("EMBED_CHUNK", "24")))
     out: list = []
     for i in range(0, len(texts), chunk):
-        vecs = _openai_embed_one(texts[i:i + chunk], timeout)
+        piece = texts[i:i + chunk]
+        vecs = None
+        for idx in range(_OPENAI_TIER_IDX, len(tiers)):
+            name, fn, timeout = tiers[idx]
+            vecs = fn(piece, timeout)
+            if vecs is not None:
+                _OPENAI_TIER_IDX = idx
+                break
+            print(f"[embedding] tier {name!r} down — falling back", file=sys.stderr)
         if vecs is None:
-            return []  # a chunk genuinely failed → graceful all-or-nothing
+            return []  # every tier failed for this chunk → graceful all-or-nothing
         out.extend(vecs)
     return out
 

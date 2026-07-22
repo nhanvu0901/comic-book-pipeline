@@ -166,6 +166,23 @@ def lock_panels(lock: dict | None) -> list[dict]:
     return []
 
 
+def lock_custom_image(lock: dict | None) -> str | None:
+    """A scene's locks.json entry as a Master-picked CUSTOM image path
+    ("review/custom/<file>"), or None when the lock is empty/malformed/a normal v1-v2
+    page-panel lock. Additive v3 lock shape ({"custom_image": str}) alongside v1/v2 (see
+    lock_panels) — lock_panels() correctly returns [] for this shape (no "panels"/"page"
+    key), so every existing page/panel-anchor reader no-ops on a custom-image lock. A
+    custom image is NEVER cosine-gated (Master added it → it WILL appear in the video);
+    cosine only decides WHICH BEAT an unlocked custom image lands on (see
+    stages.stage_5.shots.assign_custom_images) — a beat locked here skips that argmax
+    entirely. Mirrors the review UI's own normaliser
+    (ui/screens/s_review_gate._normalize_lock_custom_image)."""
+    if not lock:
+        return None
+    ci = lock.get("custom_image")
+    return str(ci) if ci else None
+
+
 def save_state(project, state: dict) -> Path:
     p = _locks_path(project)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -778,9 +795,13 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
                      "pre_selected": _lock_pair_list(narration.get("cold_open_lock"))})
     for s in story:
         sid = int(s.get("scene_id") or 0)
-        raw_beats = (s.get("visual_beats") or []) if micro else []
+        # ANY mode that emitted visual_beats gets one review ROW per fragment (was micro-only) —
+        # so Master locks a panel PER drawn moment and Stage 5 cuts per fragment (recap + Q&A now
+        # emit verbatim fragments too). A scene with no visual_beats stays a single "scene" row
+        # (old behaviour preserved). Recap/Q&A string beats carry no pin → pre_selected empty.
+        raw_beats = s.get("visual_beats") or []
         frags = [b for b in raw_beats if _vb_text(b)]
-        if micro and frags:
+        if frags:
             for fi, b in enumerate(frags):
                 txt = _vb_text(b)
                 pin = _vb_pin(b)
@@ -843,13 +864,20 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
         _shots_mod.PANEL_FWD_BIAS = _orig_fwd_bias
 
     # MONEY SHOT funnel — no-op unless answer_context carries a money_target (recap/micro + non-money
-    # Q&A untouched). Keyed on story SCENE rows (Q&A rows are all scene-unit, 1:1 with scenes), so
-    # the funnel sees exactly the same {id(scene): cands} + {issue: [scene]} it always did.
-    cands_by_id = {id(r["scene"]): r["_cands"] for r in rows if r["unit"] == "scene"}
+    # Q&A untouched). Keyed on story SCENES: collapse rows to ONE representative per scene so a Q&A
+    # scene that now emits per-FRAGMENT rows still feeds the funnel its issue-scoped candidate pool
+    # (first row per scene wins; all fragments of a scene share the same issue pool). A pure
+    # scene-unit project is byte-identical (already one row per scene).
+    cands_by_id: dict = {}
     money_groups: dict[str, list] = {}
     for r in rows:
-        if r["unit"] == "scene":
-            money_groups.setdefault(_issue_of(r["scene"]), []).append(r["scene"])
+        if r["unit"] == "intro":
+            continue
+        key = id(r["scene"])
+        if key in cands_by_id:
+            continue
+        cands_by_id[key] = r["_cands"]
+        money_groups.setdefault(_issue_of(r["scene"]), []).append(r["scene"])
     _money_funnel(root, answer_ctx, pages_by_number, page_to_issue, money_groups, cands_by_id, log=log)
 
     thumbs_dir = root / "review" / "thumbs"
@@ -881,6 +909,12 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
                 "thumb": thumb, "desc": str(panel.get("description", "") or ""),
                 "dialog": _panel_dialog_str(panel, page_tb),
             }
+            # Vision-judge score (0-10) when _vlm_rank_top ran. This is what actually ORDERS the
+            # top slice (see _vlm_rank_top: key=(vlm, cosine)), so the file/UI MUST surface it —
+            # otherwise a lower-`score` (cosine) tile sitting ABOVE a higher one reads as a sort
+            # bug when it is really VLM winning the tie. Absent on the tail / when SDK is off.
+            if "_vlm" in c:
+                entry["vlm"] = round(float(c["_vlm"]), 1)
             # Money-shot flag (present only when the funnel confirmed this panel — the no-money
             # path leaves the 6-key schema byte-identical).
             if c.get("money"):

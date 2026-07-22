@@ -247,3 +247,38 @@ def test_micro_joker_shape_18_fragments_18_shots_no_dup_captions(monkeypatch):
     caps = [s.caption_text for s in built]
     assert all(caps[k] != caps[k + 1] for k in range(len(caps) - 1)), "adjacent duplicate caption"
     assert len(set(caps)) == 18                          # all 18 captions distinct
+
+
+# ── word-aligned retime: fixes Stage-4 caption_chunk / scene_timing drift (red-hulk v6) ───────
+# Stage 4 can bucket a scene's TAIL words under the next scene (chunk TEXT glued onto the wrong
+# TIMESTAMPS), so _fragment_units' scene-span window drifts and every micro panel cut lands
+# early → the video races ahead of the voiceover. _retime_units_to_words re-derives each unit's
+# span from word_timestamps (ground truth): cumulative video start of unit i == its audio start.
+def test_retime_units_to_words_aligns_to_true_word_starts():
+    sc = {"scene_id": 1}
+    # DRIFTED spans (as caption_chunks would give): even ~2s each, wrong.
+    units = [(sc, [("Alpha beta gamma delta", 0.0, 2.0)], "Alpha beta gamma delta", (1, 1)),
+             (sc, [("epsilon", 2.0, 2.0)], "epsilon", (1, 2)),
+             (sc, [("zeta eta theta", 4.0, 1.0)], "zeta eta theta", (1, 3))]
+    # GROUND TRUTH word timings: fragment 1 is long (4s), 2 short (2s), 3 medium (3s).
+    words = [{"word": "Alpha", "start": 0.0, "end": 1.0}, {"word": "beta", "start": 1.0, "end": 2.0},
+             {"word": "gamma", "start": 2.0, "end": 3.0}, {"word": "delta", "start": 3.0, "end": 4.0},
+             {"word": "epsilon", "start": 4.0, "end": 6.0},
+             {"word": "zeta", "start": 6.0, "end": 7.0}, {"word": "eta", "start": 7.0, "end": 8.0},
+             {"word": "theta", "start": 8.0, "end": 9.0}]
+    shots._retime_units_to_words(units, words)
+    durs = [sum(m[2] for m in sl) for _s, sl, _sp, _p in units]
+    assert durs == [4.0, 2.0, 3.0]                       # spans match the real word timing
+    assert [sum(durs[:i]) for i in range(3)] == [0.0, 4.0, 6.0]   # cumulative start == audio start
+    assert [sl[0][0] for _s, sl, _sp, _p in units] == \
+        ["Alpha beta gamma delta", "epsilon", "zeta eta theta"]   # captions preserved
+    assert [p for _s, _sl, _sp, p in units] == [(1, 1), (1, 2), (1, 3)]   # pins preserved
+
+
+def test_retime_units_to_words_noop_on_divergence():
+    sc = {"scene_id": 1}
+    units = [(sc, [("alpha beta", 0.0, 2.0)], "alpha beta", None)]
+    before = [sl[0] for _s, sl, _sp, _p in units]
+    shots._retime_units_to_words(units, [{"word": "totally", "start": 0.0, "end": 1.0},
+                                         {"word": "different", "start": 1.0, "end": 2.0}])
+    assert [sl[0] for _s, sl, _sp, _p in units] == before   # streams diverge → untouched, no raise

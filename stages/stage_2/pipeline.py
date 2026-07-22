@@ -840,13 +840,23 @@ def _demote_credits_pages(
     the VLM tags the page 'story' anyway — so re-check the assembled text here, where
     it is complete, and flip matches to skip so they are NEVER chosen as a story panel.
     General: runs on every issue (a credits/title page can sit mid-front after a cold
-    open, e.g. p7 of 'What If...? Galactus Transformed Hulk')."""
+    open, e.g. p7 of 'What If...? Galactus Transformed Hulk').
+
+    Guarded by `_has_strong_story_signal`: a genuine story page's LAST panel can end on
+    a "TO BE CONTINUED!" cliffhanger caption — real case: spiderman-venom-double-trouble
+    p22, a real 2-panel scene (Peter recoils in the mirror / Eddie bursts out the window)
+    whose final caption is the TBC teaser. `_looks_like_backmatter` matches that phrase
+    regardless of what else is on the page, so a page with real multi-panel dialogue must
+    win over the phrase match — only a page with NO real story content of its own (the
+    hero-splash-reused credits page this function targets) gets demoted."""
     for p in pages:
         if not p.get("is_story_page"):
             continue
         from .._panel_index import page_dialog
         corpus = " ".join(str(tb.get("text", "")) for tb in page_dialog(p))
         if not _looks_like_backmatter(corpus):
+            continue
+        if _has_strong_story_signal(p):
             continue
         pn = int(p.get("page_number", 0) or 0)
         log(f"[preprocess] credits/title text on p{pn:03d} → demoting story→skip (not a story panel)")
@@ -891,15 +901,57 @@ def _demote_backmatter_tail_one(p: dict, project_root: Path, cut: int, log: Call
             log(f"[preprocess]   ⚠ couldn't persist tail-demotion for p{pn}: {exc}")
 
 
+def _has_strong_story_signal(p: dict) -> bool:
+    """Multiple panels + real dialogue = this page genuinely continues the story, not a
+    single ad/filler page the VLM mistagged 'story'. Guards `_find_tail_cut` below: real
+    case — spiderman-venom-double-trouble p17 is a Stan's Soapbox house-ad page sitting
+    MID-issue; p18 right after it has 3 panels of real dialogue, so p17 must demote only
+    ITSELF (already done at per-page classification time), not drag p18-22 down with it."""
+    if len(p.get("panels") or []) < 2:
+        return False
+    from .._panel_index import page_dialog
+    return any(str(tb.get("ocr", "") or tb.get("text", "")).strip() for tb in page_dialog(p))
+
+
+def _find_tail_cut(issue_pages: list[dict], half: float) -> int | None:
+    """Earliest terminal-back-matter page (past `half`) that is a genuine tail START —
+    i.e. the main story never resumes after it. Candidates are walked in ascending page
+    order so the first genuine one wins.
+
+    A terminal reason does NOT start a tail when a real story page (multi-panel + real
+    dialogue) appears ANYWHERE later in the issue. That later content is either a lone
+    ad with story resuming right after it, or the SECOND story of a two-in-one issue
+    whose interior cover/credits sit between the two — real case: AvX: VS #5, where
+    story 1 (Hawkeye/Angel) ends on a 'WINNER … TO BE CONTINUED' page tagged
+    'back_matter' and story 2 (Black Panther/Storm) begins right after. Scanning only the
+    immediate next page missed this, because a non-story transition page (interior cover /
+    end-card) sits between the terminal page and the resuming story. Genuine end-of-book
+    previews carry no real content of their own (no multi-panel dialogue), so they never
+    trip this guard and still demote — the money-story-vs-preview tie always breaks toward
+    keeping real content."""
+    ordered = sorted(issue_pages, key=lambda p: int(p.get("page_number", 0) or 0))
+    for i, p in enumerate(ordered):
+        pn = int(p.get("page_number", 0) or 0)
+        if pn <= half or str(p.get("skip_reason", "")) not in _TERMINAL_BACKMATTER:
+            continue
+        if any(nxt.get("is_story_page") and _has_strong_story_signal(nxt)
+               for nxt in ordered[i + 1:]):
+            continue  # real story resumes later — lone ad or a two-in-one 2nd story
+        return pn
+    return None
+
+
 def _demote_backmatter_tail(
     pages: list[dict], project_root: Path, log: Callable[[str], None]
 ) -> None:
-    """Demote every story page that follows the first terminal back-matter page in the
-    BACK HALF of the issue. General: keyed on page position + an already-detected
+    """Demote every story page that follows the first GENUINE terminal back-matter page
+    in the BACK HALF of the issue. General: keyed on page position + an already-detected
     terminal reason, no per-issue constants. The front story is never touched — a recap
     or credits page near the FRONT sits below the half-way cutoff and is ignored, so this
     only ever trims a genuine end-of-book tail (e.g. a G.I. Joe preview printed after the
-    letters page that the VLM mislabelled 'story').
+    letters page that the VLM mislabelled 'story'). A lone ad/filler page MID-issue (already
+    self-demoted at per-page classification time) does not drag the tail down with it when
+    real story with real dialogue resumes right after — see `_find_tail_cut`.
 
     Multi-issue (saga) awareness: a GLOBAL half-cutoff mis-fires on sagas. Simulated case
     that shipped broken: a 5-issue saga at 18pp/issue (90 pages total), each issue ending
@@ -916,11 +968,7 @@ def _demote_backmatter_tail(
     ranges = _issue_page_ranges(pages)
     if len(ranges) <= 1:
         half = max(numbers) * 0.5
-        cut: int | None = None
-        for p in pages:
-            pn = int(p.get("page_number", 0) or 0)
-            if pn > half and str(p.get("skip_reason", "")) in _TERMINAL_BACKMATTER:
-                cut = pn if cut is None else min(cut, pn)
+        cut = _find_tail_cut(pages, half)
         if cut is None:
             return
         for p in pages:
@@ -933,11 +981,7 @@ def _demote_backmatter_tail(
     for label, (lo, hi) in ranges.items():
         issue_pages = [p for p in pages if str(p.get("issue_label", "") or "") == label]
         half = lo + (hi - lo) * 0.5
-        cut: int | None = None
-        for p in issue_pages:
-            pn = int(p.get("page_number", 0) or 0)
-            if pn > half and str(p.get("skip_reason", "")) in _TERMINAL_BACKMATTER:
-                cut = pn if cut is None else min(cut, pn)
+        cut = _find_tail_cut(issue_pages, half)
         if cut is None:
             continue
         for p in issue_pages:
