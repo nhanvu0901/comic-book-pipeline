@@ -7,11 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from config import PROJECTS_ROOT, TRANSPARENCY_RETRY, get_project_dirs
+from config import (COLD_VIEWER_RETRY, PROJECTS_ROOT, TRANSPARENCY_RETRY,
+                    get_project_dirs)
 from .propose_modes import propose_modes as _propose_modes
 from .write_script import (write_script as _write_script, _load_direction,
                            _transparency_critic, _transparency_has_heavy,
-                           _format_clarity_fixes, _grounding_critic)
+                           _format_clarity_fixes, _grounding_critic,
+                           _cold_viewer_critic, _format_cold_viewer_fixes)
 from .schema import Narration
 
 _LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs" / "stage_4_runs"
@@ -126,6 +128,41 @@ def write_script(
             except Exception as exc:
                 log(f"[stage4] transparency retry failed — keeping original: {exc!r}")
     debug_dump["transparency_flags"] = flags
+
+    # COLD-VIEWER CRITIC — sibling of the transparency critic (runs AFTER it, on the
+    # possibly-rewritten nar). Asks, per scene, whether a viewer who never read the comic
+    # knows WHO these people are to each other and WHY the action matters (the
+    # harley-quinn-25 miss: the narration beat the Joker bloody but never said he was
+    # Harley's abusive ex). FLAG + LOG by default; optional one verbatim-safe feedback
+    # re-write behind COLD_VIEWER_RETRY (full-writer rewrite — visual_beats stay consistent).
+    cv_flags = _cold_viewer_critic(nar, ctx, mode, progress=progress)
+    if cv_flags:
+        for f in cv_flags:
+            log(f"[stage4] ⚠ {f}")
+        log(f"[stage4] ⚠ cold-viewer critic: {len(cv_flags)} scene(s) a zero-context viewer "
+            f"can't follow — weave the missing WHO/WHY before render")
+        cv_fixes = _format_cold_viewer_fixes(cv_flags) if COLD_VIEWER_RETRY else ""
+        if COLD_VIEWER_RETRY and cv_fixes:
+            log("[stage4] COLD_VIEWER_RETRY on — feedback re-writing once to weave the WHY…")
+            try:
+                cv_dump = {"project": project_name, "mode": mode, "hook_hint": hook_hint,
+                           "cold_viewer_retry": True, "clarity_fixes": cv_fixes}
+                nar2 = _write_script(ctx, story, mode, hook_hint=hook_hint,
+                                     all_pages=pages, direction=direction,
+                                     progress=progress, debug_dump=cv_dump,
+                                     clarity_fixes=cv_fixes)
+                nar2.source_project = project_name
+                cv2 = _cold_viewer_critic(nar2, ctx, mode, progress=progress)
+                if len(cv2) < len(cv_flags):
+                    log(f"[stage4] cold-viewer retry improved {len(cv_flags)}→{len(cv2)} "
+                        f"— keeping re-write")
+                    nar, cv_flags = nar2, cv2
+                else:
+                    log(f"[stage4] cold-viewer retry did not improve ({len(cv2)} flag(s)) "
+                        f"— keeping original")
+            except Exception as exc:
+                log(f"[stage4] cold-viewer retry failed — keeping original: {exc!r}")
+    debug_dump["cold_viewer_flags"] = cv_flags
     debug_dump["narration"] = nar.to_dict()
     _write_run_dump(project_name, debug_dump, narration=nar)
     sm = (debug_dump or {}).get("story_map")

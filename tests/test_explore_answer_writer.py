@@ -60,10 +60,8 @@ def project_dir():
 
 
 def test_write_explore_answer_end_to_end(monkeypatch, project_dir):
-    # Small band so the short fixture scenes above land "in budget" without
-    # needing 200 words of fixture prose.
-    monkeypatch.setattr(ea, "_TARGET_WORDS_MIN", 10)
-    monkeypatch.setattr(ea, "_TARGET_WORDS_MAX", 60)
+    # (explore_answer sizes its own budget from _EXP_* constants — recap's word band
+    # is not involved, so there is nothing to shrink here.)
     monkeypatch.setattr(ea, "call_with_chain", _fake_writer_call)
     # generate_outro / generate_loop_tease live in write_script.py and call ITS
     # call_with_chain binding — patch that one too so no real LLM/network call
@@ -255,6 +253,53 @@ def test_writer_system_prompts_ban_bare_reveal_fragments():
         assert "They are alive." in system  # the banned-example is named, not just described
 
 
+# ─── Length-based fragment granularity (todo #10) + per-item mini-arc (todo #7):
+# the old fixed "TARGET 3 fragments" rule made the first fragment carry connective
+# +citation+event (~29w ≈ 8.5s hanging on one static panel). Replaced by a
+# length-based split (a citation/connective head is its own establishing shot) and
+# a mini-arc rule so each item is a setup→turn→payoff, not a flattened wiki fact.
+
+def test_writer_system_prompts_have_length_based_fragment_and_miniarc_rules():
+    for system in (ea._EXPLORE_WRITE_SYSTEM_LIST, ea._EXPLORE_WRITE_SYSTEM_EXPLAIN):
+        assert "TARGET 3 fragments" not in system            # the old fixed count is gone
+        assert "35+ words gives 4-5 fragments" in system      # length-based granularity
+        assert "establishing shot" in system                  # citation/connective head split
+        assert "MINI-ARC PER ITEM" in system                  # setup -> visual turn -> payoff
+        assert "wiki-style" in system                          # no flattening to one summary line
+        # the verbatim guarantee (Stage 5 word-position bucketing) must survive the rewrite
+        assert "VERBATIM ONLY" in system
+        assert "concatenate back to" in system
+
+
+def test_validate_explore_scenes_is_fragment_count_agnostic(monkeypatch):
+    """Trace lock (todo #10): the Q&A validator gates scene count, per-scene word
+    cap, band, and entity-naming — it NEVER inspects visual_beats. Splitting a
+    scene into 5 fragments vs 2 changes NOTHING it reports, which is why the finer-
+    granularity change needs no downstream validator edit. A future regression that
+    hard-codes a fragment count would break this."""
+    beat = ea.Beat(id=1, function="COLD_OPEN", name="Zarathos", page_refs=[1])
+    text = ("In Ghost Rider #35, the demon Zarathos finally cornered the boy, but the "
+            "Spirit of Vengeance rose up through the flames, seized the blade from his "
+            "hand, and turned the stroke back onto the master who had summoned it.")
+    five = {"text": text, "visual_beats": [
+        "In Ghost Rider #35,",
+        "the demon Zarathos finally cornered the boy,",
+        "but the Spirit of Vengeance rose up through the flames,",
+        "seized the blade from his hand,",
+        "and turned the stroke back onto the master who had summoned it."]}
+    two = {"text": text, "visual_beats": [
+        "In Ghost Rider #35, the demon Zarathos finally cornered the boy,",
+        "but the Spirit of Vengeance rose up through the flames, seized the blade "
+        "from his hand, and turned the stroke back onto the master who had summoned it."]}
+    # identical issues regardless of fragment count (validator ignores visual_beats)
+    assert (ea._validate_explore_scenes([five], [beat], "list")
+            == ea._validate_explore_scenes([two], [beat], "list"))
+    # with the band widened, a 5-fragment scene passes clean — there is no fragment gate
+    monkeypatch.setattr(ea, "_exp_band", lambda n: (0, 500))
+    assert ea._validate_explore_scenes([five], [beat], "list") == []
+    assert ea._validate_explore_scenes([two], [beat], "list") == []
+
+
 def test_build_hook_by_archetype():
     ctx = {"answer_summary": "Because only the dead woman could let him go."}
     h_list = ea._build_hook("Who survived X", ctx, "list", "proj-a")
@@ -295,6 +340,26 @@ def test_build_hook_tease_rotation_is_deterministic_per_project():
     # astronomically unlikely with a uniform hash)
     picks = {ea._pick_tease(ea._LIST_TEASE_POOL, f"project-{i}") for i in range(12)}
     assert len(picks) > 1
+
+
+def test_build_hook_comparison_shape_skips_list_language():
+    # "X things A can do that B can't" is a capability comparison, not a
+    # ranked list of people — it must not get the "who"/"list"/"name"/
+    # "Here's the answer" list tease (bug: comparison questions were routed
+    # to _LIST_TEASE_POOL just because question_archetype() calls them "list").
+    h = ea._build_hook("Things Carnage Can Do That Venom Can't", {}, "list", "carnage-x")
+    low = h.lower()
+    assert "who" not in low
+    assert "list" not in low
+    assert "name" not in low
+    assert "here's the answer" not in low
+    assert any(h.endswith(t) for t in ea._COMPARISON_TEASE_POOL)
+
+    # ordinary list questions are untouched (same tease pool, same behavior)
+    h2 = ea._build_hook("Which Villains Have Actually Defeated Mephisto",
+                         {"answer_summary": "three villains"}, "list", "meph-x")
+    assert any(h2.endswith(t) for t in ea._LIST_TEASE_POOL)
+    assert "three villains" in h2
     picks_explain = {ea._pick_tease(ea._EXPLAIN_TEASE_POOL, f"project-{i}") for i in range(12)}
     assert len(picks_explain) > 1
 
@@ -325,3 +390,37 @@ def test_exp_band_targets_seconds_not_flat_per_item():
     # impossible.
     lo2, hi2 = ea._exp_band(2)
     assert lo2 == hi2 == 2 * ea._EXP_SCENE_MAX_WORDS
+
+
+# ─── ADDITIVE story-context: relationships / stakes_why per item + question-level
+# viewer_context / constant_broken. Old answer_context.json WITHOUT them must produce
+# a byte-identical writer prompt (the additive contract Master relies on). ──────────
+
+def test_items_block_includes_relationships_and_stakes_when_present():
+    beats = [ea.Beat(id=1, function="COLD_OPEN", name="Blackheart", page_refs=[1])]
+    # No apostrophes in the values so repr() uses single quotes (matches entity='...' style).
+    items = [{"source_comic": "Ghost Rider #1", "drawable_moment": "a stab",
+              "relationships": "Blackheart is the son of Mephisto",
+              "stakes_why": "a father falls to his own child"}]
+    block = ea._items_block(beats, items)
+    assert "relationships='Blackheart is the son of Mephisto'" in block
+    assert "stakes_why='a father falls to his own child'" in block
+
+
+def test_items_block_omits_missing_story_context_fields():
+    # An old item with neither field -> block has no relationships= / stakes_why= at all.
+    beats = [ea.Beat(id=1, function="COLD_OPEN", name="Wolverine", page_refs=[1])]
+    items = [{"source_comic": "X-Men #1", "drawable_moment": "walks through fire"}]
+    block = ea._items_block(beats, items)
+    assert "relationships=" not in block and "stakes_why=" not in block
+    assert "entity='Wolverine'" in block
+
+
+def test_viewer_context_block_present_and_empty():
+    ctx = {"viewer_context": "Nobody has ever survived the stare.",
+           "constant_broken": "The Penance Stare always kills."}
+    blk = ea._viewer_context_block(ctx)
+    assert "VIEWER CONTEXT" in blk and "Nobody has ever survived" in blk
+    assert "THE CONSTANT BEING BROKEN" in blk
+    # Old context with neither field -> empty string (byte-identical prompt path).
+    assert ea._viewer_context_block({}) == ""

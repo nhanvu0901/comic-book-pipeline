@@ -19,7 +19,7 @@ from ..bridge import (
     page_numbers, panels_for_page, render_scene_panel_path, run_blocking,
     run_stage6_render, save_narration_edits,
 )
-from ..layout import log_list, primary_button, secondary_button, three_col
+from ..layout import log_list, primary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED,

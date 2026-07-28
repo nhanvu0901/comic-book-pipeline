@@ -8,6 +8,7 @@
 from stages.stage_3.write_script import (
     _classify_hook, _ALLOWED_HOOK_ARCHETYPES,
     _TARGET_WORDS_MIN, _TARGET_WORDS_MAX, _WORDS_PER_SEC,
+    _RECAP_WORDS_PER_SEC, _wps_for,
 )
 
 
@@ -23,14 +24,25 @@ def test_thought_until_pivot_lands_in_allowed_archetype():
     assert _classify_hook(when_first) in _ALLOWED_HOOK_ARCHETYPES
 
 
-def test_length_band_targets_45_57s_at_measured_wps():
-    # Retuned from the empirical ~3.4 wps (Resemble Carl + shipped --atempo 1.35),
-    # NOT the stale 2.88. Body band + a ~14-word teaser intro must land the FINAL
-    # audio inside the ~45-57s attention budget (B4 retune, 2026-07-12).
-    assert (_TARGET_WORDS_MIN, _TARGET_WORDS_MAX) == (140, 180)
+def test_length_band_targets_the_competitor_53_61s_video():
+    # VARIANT-PROFILE REGISTER. The six biggest hits of the format run 53-61s of audio.
+    # Until 2026-07-28 the band copied their WORD count (195-215) instead — but recap
+    # renders at 3.98 wps, not the shared 3.4 estimate, so a "57s" script shipped at
+    # 49.5s (gambit-new-sun, first render of this register). Master 2026-07-28: match
+    # their DURATION, which at our pace needs more words.
+    assert (_TARGET_WORDS_MIN, _TARGET_WORDS_MAX) == (211, 243)
+    lo_total = _TARGET_WORDS_MIN + 4    # shortest teaser: "Who is Deadpool 2099?"
+    hi_total = _TARGET_WORDS_MAX + 9    # longest allowed teaser
+    assert 53 <= lo_total / _RECAP_WORDS_PER_SEC <= 56, lo_total / _RECAP_WORDS_PER_SEC
+    assert 58 <= hi_total / _RECAP_WORDS_PER_SEC <= 64, hi_total / _RECAP_WORDS_PER_SEC
+
+
+def test_recap_rate_is_separate_so_qa_keeps_the_shared_estimate():
+    """Retuning recap must not move Q&A: explore_answer imports _WORDS_PER_SEC to size its
+    own band, and Q&A actually measures 3.19-3.50 wps, so 3.4 is correct THERE."""
     assert _WORDS_PER_SEC == 3.4
-    intro_words = 14  # typical teaser prepended on top of the body
-    lo_sec = (_TARGET_WORDS_MIN + intro_words) / _WORDS_PER_SEC
-    hi_sec = (_TARGET_WORDS_MAX + intro_words) / _WORDS_PER_SEC
-    assert 43 <= lo_sec <= 48, lo_sec   # ~45s floor
-    assert 54 <= hi_sec <= 60, hi_sec   # ~57s ceiling
+    assert _RECAP_WORDS_PER_SEC != _WORDS_PER_SEC
+    assert _wps_for("explore_answer") == _WORDS_PER_SEC
+    assert _wps_for("micro_moment") == _WORDS_PER_SEC
+    assert _wps_for("recap_summary") == _RECAP_WORDS_PER_SEC
+    assert _wps_for("panel_walk") == _RECAP_WORDS_PER_SEC

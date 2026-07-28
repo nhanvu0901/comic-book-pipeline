@@ -134,6 +134,7 @@ def test_build_shots_routes_on_gate(monkeypatch):
     assert calls == ["chunk"]                               # gate off → unchanged path
 
     calls.clear()
+    monkeypatch.setattr(shots, "SENTENCE_MATCH_ENABLED", True)   # legacy sentence path default off (2026-07-24)
     monkeypatch.setattr(shots, "_load_sentence_panels", lambda project: {"scenes": []})
     build_shots(narration, caption_chunks=chunks, pages_by_number=pages, project="p")
     assert calls == ["sentence"]                            # gate on → sentence path
@@ -298,6 +299,91 @@ def test_choose_crop_offset_tiny_bubble_no_churn():
     # bubble covers <2% of the window → hysteresis keeps dead center
     tiny = [{"x": 1000, "y": 100, "w": 60, "h": 60}]
     assert _choose_crop_offset(2160, 1920, 1080, 1920, tiny) == (540, 0)
+
+
+# ─── Subject-aware cover-crop (face-crop fix, psylocke shot00) ────────────────
+
+def _subject_cols(peak_lo: float, peak_hi: float, n: int = 200):
+    """Column profile: flat background 0.05, a subject block of 1.0 over
+    [peak_lo, peak_hi) of the panel width."""
+    import numpy as np
+    cols = np.full(n, 0.05, dtype="float32")
+    cols[int(n * peak_lo):int(n * peak_hi)] = 1.0
+    return cols, np.full(120, 0.5, dtype="float32")      # rows: flat (no y slack anyway)
+
+
+def test_subject_crop_follows_subject_right():
+    from stages.stage_5.shots import _choose_crop_offset
+    cols, rows = _subject_cols(0.75, 0.95)               # subject on the RIGHT
+    x0, y0 = _choose_crop_offset(2160, 1920, 1080, 1920, [],
+                                 detail_cols=cols, detail_rows=rows)
+    assert y0 == 0
+    assert x0 > 540 + 200, f"window must slide right, got {x0} (center 540)"
+    assert 0 <= x0 <= 1080                               # never leaves the panel
+
+
+def test_subject_crop_follows_subject_left():
+    from stages.stage_5.shots import _choose_crop_offset
+    cols, rows = _subject_cols(0.05, 0.25)               # subject on the LEFT
+    x0, _ = _choose_crop_offset(2160, 1920, 1080, 1920, [],
+                                detail_cols=cols, detail_rows=rows)
+    assert x0 < 540 - 200, f"window must slide left, got {x0} (center 540)"
+    assert x0 >= 0
+
+
+def test_subject_crop_centered_subject_stays_put():
+    from stages.stage_5.shots import _choose_crop_offset
+    cols, rows = _subject_cols(0.40, 0.60)               # subject already centered
+    assert _choose_crop_offset(2160, 1920, 1080, 1920, [],
+                               detail_cols=cols, detail_rows=rows) == (540, 0)
+
+
+def test_subject_crop_no_profile_matches_legacy_branch():
+    """profile=None → byte-identical to the old bubble-only rule, for every case the
+    old tests cover AND a bubble case (compared against the legacy branch directly)."""
+    from stages.stage_5.shots import _choose_crop_offset
+    bubble = [{"x": 500, "y": 100, "w": 500, "h": 800}]
+    for boxes in ([], bubble, [{"x": 1000, "y": 100, "w": 60, "h": 60}]):
+        assert (_choose_crop_offset(2160, 1920, 1080, 1920, boxes)
+                == _choose_crop_offset(2160, 1920, 1080, 1920, boxes,
+                                       detail_cols=None, detail_rows=None))
+    assert _choose_crop_offset(2160, 1920, 1080, 1920, bubble)[0] == 540 + int(1080 * 0.35)
+
+
+def test_subject_crop_knob_off_ignores_profile(monkeypatch):
+    from stages.stage_5 import shots
+    monkeypatch.setattr(shots, "SUBJECT_AWARE_CROP", False)
+    cols, rows = _subject_cols(0.75, 0.95)
+    assert shots._choose_crop_offset(2160, 1920, 1080, 1920, [],
+                                     detail_cols=cols, detail_rows=rows) == (540, 0)
+
+
+def test_subject_crop_weighs_bubble_against_subject():
+    """A big empty bubble sitting ON the subject's side still leaves the window
+    subject-side (combined score), but the penalty pulls it back off the bubble."""
+    from stages.stage_5.shots import _choose_crop_offset
+    cols, rows = _subject_cols(0.70, 0.88)
+    clean = _choose_crop_offset(2160, 1920, 1080, 1920, [],
+                                detail_cols=cols, detail_rows=rows)[0]
+    bubble = [{"x": 1880, "y": 0, "w": 280, "h": 1920}]   # empty blob past the subject
+    withb = _choose_crop_offset(2160, 1920, 1080, 1920, bubble,
+                                detail_cols=cols, detail_rows=rows)[0]
+    assert withb > 540, f"still right of center, got {withb}"
+    assert withb < clean, f"bubble penalty must pull back left ({withb} vs {clean})"
+
+
+def test_detail_profile_flat_background_is_zero_and_finds_the_block():
+    import numpy as np
+    from stages.stage_5.shots import detail_profile
+    g = np.full((60, 100), 255.0, dtype="float32")
+    cols, rows = detail_profile(g)
+    assert cols.max() == 0 and rows.max() == 0           # flat paper → no detail
+    g[20:40, 70:90] = 0.0                                # inked block, right of center
+    cols, rows = detail_profile(g)
+    assert cols.shape == (100,) and rows.shape == (60,)
+    assert 0.0 <= cols.min() and cols.max() == 1.0       # normalized to [0,1]
+    assert cols[70:90].sum() > 5 * cols[0:60].sum()
+    assert rows[20:40].sum() > 5 * rows[45:60].sum()
 
 
 # ─── Q&A subject bookend (intro/outro on-subject, not spectacle) ─────────────

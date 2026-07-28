@@ -14,10 +14,10 @@ import flet as ft
 
 from config import PipelineMode, PROJECTS_ROOT, MAX_PHASE_RETRIES
 from ..bridge import PhaseApprovalBridge, format_exception, run_blocking, run_stage_1
-from ..layout import log_list, primary_button, secondary_button, three_col
+from ..layout import primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
-    ACCENT, BG, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS,
+    ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS,
     TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
 

@@ -7,10 +7,10 @@ import statistics
 from pathlib import Path
 from typing import Callable
 
-from config import (CREATIVE_LLM_MODELS, ENABLE_LOGIC_CRITIC, ENABLE_LOOP_TEASE,
-                    ENABLE_TITLE_BANNER, FIDELITY_LLM_MODELS, GROUNDING_CHECK,
-                    LOGIC_CRITIC_MIN_BEATS, OPENROUTER_MODEL, PROJECTS_ROOT,
-                    TRANSPARENCY_CRITIC)
+from config import (COLD_VIEWER_CRITIC, CREATIVE_LLM_MODELS, ENABLE_LOGIC_CRITIC,
+                    ENABLE_LOOP_TEASE, ENABLE_TITLE_BANNER, FIDELITY_LLM_MODELS,
+                    GROUNDING_CHECK, LOGIC_CRITIC_MIN_BEATS, OPENROUTER_MODEL,
+                    PROJECTS_ROOT, TRANSPARENCY_CRITIC)
 from .modes import MODES_BY_KEY
 from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
@@ -28,53 +28,111 @@ from .beat_split import _verbatim_ok
 # → effective rate ≈ 3.4 words/sec. (The old 2.88 was the 1.1-atempo pace we no
 # longer use, so it under-estimated duration and let scripts run long.)
 #
-# LENGTH TARGET = the measured attention budget. Verbatim mining of 23 competitor
-# Shorts found the hits cluster at 48-71s, but our own channel forensics put mean
-# attention at ~24s/view, so we now aim the FINISHED audio LOWER, at ~45-57s, to
-# land more of the video inside that budget. The teaser intro (~14 words) is
-# prepended on top of the body, so at 3.4 wps: body 140-180 + ~14 intro = 154-194
-# final words → ~45-57s. That is the band below. ((140+14)/3.4 ≈ 45s floor,
-# (180+14)/3.4 ≈ 57s ceiling.)
+# LENGTH TARGET — VARIANT-PROFILE REGISTER (2026-07-27). Recap now mimics the one
+# competitor formula that is measurably alive: @SkarShorts, median ~130k/video,
+# posting every 1-2 days. Auto-captions of its 6 biggest hits (883k / 710k / 580k /
+# 561k / 503k / 469k) were transcribed and counted: EVERY script lands 195-215 total
+# words over 53-61s of finished audio. That is the target now — NOT the old 45-57s
+# band. The old band came from our own ~24s/view attention forensics, which measured
+# where OUR viewers dropped off; the competitor data says the ceiling was never the
+# duration, it was the subject + register. Aim at what actually wins.
+#
+# The teaser intro is now a SHORT question echoing the title (~4-9 words, see
+# _INTRO_*_WORDS), so at 3.4 wps: body 191-206 + 4-9 intro = 195-215 final words
+# → ~57-63s. ((191+4)/3.4 ≈ 57s floor, (206+9)/3.4 ≈ 63s ceiling.)
 #
 # SINGLE SOURCE OF TRUTH for the word budget. Previously three places disagreed
 # (system prompt said 175-195, this user-message budget said 175-260, and the
 # validator demanded 230-290) — the validator won and pulled output to ~283
 # words of long, compound, multi-event sentences. All three now read these
 # constants / the validator band below.
-_TARGET_WORDS_MIN = 140   # body floor: 140 + ~14 intro = 154 final ≈ 45s at 3.4 wps.
-_TARGET_WORDS_MAX = 180   # body ceiling: 180 + ~14 intro = 194 final ≈ 57s at 3.4 wps —
-                          # inside the ~24s/view attention budget's reach. LOWERED 245→180
-                          # (2026-07-12, B4): the old 195-245 band ran ~61-76s, well past the
-                          # measured attention budget; retuned DOWN to ~45-57s. Trim still
-                          # comes from MAIN-POINT FOCUS (rule 2.5), NOT from dropping
-                          # climax/ending beats.
 _WORDS_PER_SEC = 3.4     # MEASURED at the shipped --atempo 1.35 pace (3 renders above); was 2.88 at the unused 1.1 pace
+                         # SHARED — explore_answer.py imports this to size the Q&A band, and Q&A
+                         # measures 3.19-3.50 wps across shipped renders, so 3.4 is right THERE.
+                         # Do not retune it for recap; recap has its own rate below.
+
+# Recap runs FASTER than the shared estimate. Measured on the first render of the mimicked
+# register (2026-07-27): 197 words of finished audio in 49.47s = 3.98 wps, against the 3.4
+# the writer budgeted with — so a "57s" script shipped at 49.5s and undershot the reference
+# format's 53-61s window. The gap is the register itself (long paratactic lines read faster
+# than Q&A's countdown cadence), not the tempo, which stays at --atempo 1.35.
+# n=1 so far: re-measure after the next recap ships and correct this if it drifts.
+_RECAP_WORDS_PER_SEC = 3.98
+_TARGET_WORDS_MIN = 211   # body floor: 211 + 4 intro = 215 final ≈ 54s at 3.98 wps.
+_TARGET_WORDS_MAX = 243   # body ceiling: 243 + ~9 intro = 252 final ≈ 63s at 3.98 wps.
+                          # RAISED 191-206 → 211-243 (2026-07-28, Master: "53-61s for recap").
+                          # The old band matched the competitor's WORD count; at our faster
+                          # recap pace that lands ~50s. Matching their DURATION needs more
+                          # words. Recap-only: explore_answer/micro_moment never read these.
+
+# Scene count is DERIVED from the band, never declared separately. Four places used to carry
+# their own number — the prompt said "16-20 scenes", the beat-impact critic budgeted
+# _TARGET_WORDS_MAX // 16, the completeness check allowed 9-22, and the register mandates
+# 18-28 words per line. No draft can satisfy all four: 18 scenes x 22 words is ~400 words
+# against a 243 ceiling, so the writer kept 18 scenes and simply overran (heroes-reborn-magneto,
+# 2026-07-28: 674 -> 498 -> 508 -> 529 words across four passes, scene count never moved).
+# Dividing the band by the line-length rule is the only consistent answer, and it lands on the
+# ~11 scene lines the reference format actually runs.
+_SCENE_AIM_MIN_WORDS = 18   # the register's STATED aim per scene line (rule 0 prose).
+_SCENE_AIM_MAX_WORDS = 28   # Distinct from the hard 5/34 floor+cap below.
+
+# Derive the scene count from what the register PRODUCES, not what it says. Rule 0 asks for
+# 18-28 words but ships two verbatim "✓ correct" exemplars of 34 and 29 words, and the model
+# imitates the exemplars: measured 31.0 then 34.4 words/line across two heroes-reborn-magneto
+# runs, four lines over the 34 cap. Dividing by the stated aim gave 7-13 scenes, which at the
+# real line length is 330-440 words against a 243 ceiling — unwritable, and adding an explicit
+# per-line word budget to the prompt made it WORSE (309 -> 327 words), because a number cannot
+# outvote a demonstrated example. Dividing by the real length is the lever that actually moves.
+# Back to the AIM after fixing rule 0 (2026-07-28). Deriving from the measured 30-34 was
+# treating the symptom: the writer only wrote 30-34 because every "✓ correct" exemplar in
+# rule 0 was 29-34 words, i.e. at or above the stated aim's ceiling. Shrinking the scene
+# window just made it stretch lines further (11 scenes @31w -> 8 scenes @38w, total flat
+# at ~306w). Rule 0 now demonstrates the norm at ~22 words and demotes the 34-word line to
+# a rare ceiling, so the aim is what gets imitated and the aim is what we divide by.
+# CEILING on the floor, FLOOR on the ceiling, so every count in the window is writable.
+_TARGET_SCENES_MIN = -(-_TARGET_WORDS_MIN // _SCENE_AIM_MAX_WORDS)  # >=211w at 28w lines -> 8
+_TARGET_SCENES_MAX = _TARGET_WORDS_MAX // _SCENE_AIM_MIN_WORDS      # <=243w at 18w lines -> 13
+
+# The two INTERNAL modes keep the shared rate: Q&A measures 3.19-3.50 wps and micro_moment
+# never sizes itself off this constant at all. Everything else IS the recap register.
+_NON_RECAP_MODES = ("explore_answer", "micro_moment")
+
+
+def _wps_for(mode: str) -> float:
+    """Words-per-second estimate for a mode. Only affects the ESTIMATE written into
+    narration.json — Stage 4 replaces it with real TTS alignment (scene_timings.json)."""
+    return _WORDS_PER_SEC if mode in _NON_RECAP_MODES else _RECAP_WORDS_PER_SEC
+
 
 _SCENE_MIN_WORDS = 5     # punch sentences go as low as 5w ("Stating they would
                          # die anyway.") — floor must allow them, not block them.
-_SCENE_MAX_WORDS = 18    # HARD line cap (was 24): the accepted register averages
-                         # ~11 words/line; 17w+ lines were the #1 cause of blown
-                         # word budgets. A causal 'why' clause must fit inside 18.
-_FINALE_MAX_WORDS = 24   # headroom for the LAST TWO story lines only (rule 8.68):
-                         # the twist-unpack + thematic-mirror lines carry the story's
-                         # biggest idea and the approved register runs 22-24 words
-                         # (learned from a hand-fixed ending, 2026-07-03).
-_TARGET_SENT_LEN = 14    # channel-punchy median; used by median soft-validator
-_PUNCH_MAX_WORDS = 11    # a "punch" sentence: lands one beat hard
-_MIN_PUNCH_SCENES = 3    # enforce variance toward SHORT (the channel signature)
-_HOOK_MIN_WORDS = 14    # BODY cold-open hook (rule 1) — within the 140-180 body budget
+_SCENE_MAX_WORDS = 34    # HARD line cap. RAISED 18→34 (2026-07-27, hard-mimic): the
+                         # competitor register is PARATACTIC — one long chained sentence
+                         # carrying 3-4 events ("Jonah took the deal and Silver Surfer 2099
+                         # was born, a being unlike anything the universe had seen before,
+                         # carrying both cosmic power and infernal flame as he drifted
+                         # through the stars collecting souls for his master." = 34w).
+                         # An 18w cap makes that sentence unwritable.
+_FINALE_MAX_WORDS = 38   # headroom for the LAST TWO story lines only (rule 8.68):
+                         # the twist-unpack + character-defining closer carry the story's
+                         # biggest idea and the mimicked register runs long there.
+_TARGET_SENT_LEN = 24    # competitor median (was 14, channel-punchy); median soft-validator
+_PUNCH_MAX_WORDS = 14    # a "punch" sentence: lands one beat hard
+_MIN_PUNCH_SCENES = 1    # keep ONE short line for rhythm; the register is otherwise long
+_HOOK_MIN_WORDS = 8     # BODY cold-open hook (rule 1). LOWERED 14→8: in the mimicked
+                        # shape the teaser question carries the hook, so body scene 1 is
+                        # just the first ordinary story line and needs no length floor.
 _HOOK_MAX_WORDS = 26
 
 # TEASER intro band (the line spoken over the cover, generate_intro → parsed["hook"]).
-# This is a DIFFERENT line from the body cold-open hook above and is PREPENDED on top of
-# the body budget, so it must stay short: at 3.4 wps a 20-word teaser + a 180-word body
-# is ~59s (the top of what the length-band test already tolerates); a 26-word teaser would
-# push ~61s and blow the 45-57s target. It carries TWO short sentences now — the hook +
-# the rule-1 foreshadow-promise — so the floor is 10 (a 7-word teaser can't hold both).
-# Named here so the validator/prompt stop hard-coding "7-18" (the old magic-number pair
-# that read as inconsistent with _HOOK_MIN/MAX_WORDS).
-_INTRO_MIN_WORDS = 10
-_INTRO_MAX_WORDS = 20
+# HARD-MIMIC (2026-07-27): every measured competitor hit opens on a SHORT QUESTION that
+# simply echoes the title — "Who is Silver Surfer 2099?" (5w), "Who is Spider-Man 3099?"
+# (5w), "How powerful is Cyclops 2099?" (5w), "How did Absolute Superman become
+# unstoppable?" (7w). No pivot, no foreshadow-promise, no stakes sentence: the curiosity
+# gap lives in the SUBJECT (a famous character in an unfamiliar continuity), so the hook
+# only has to name it. Band is therefore 4-9, not the old 10-20 two-sentence teaser.
+_INTRO_MIN_WORDS = 4
+_INTRO_MAX_WORDS = 9
 
 _YOU_QUOTA = 2          # rule 4: "you" family appears at most twice (hook + final line), 0 in body
 _BEAT_COMMENT_CAP = 2   # rule 5: at most two deadpan narrator asides, or they lose impact
@@ -287,76 +345,38 @@ def _reveal_only_names(body_scenes: list[dict]) -> set[str]:
     return {n for n in (late_names - setup_names) if n not in _CAP_STOP}
 
 
-_INTRO_SYSTEM = """You are HookWriter. You produce ONE short teaser intro sentence for a YouTube Short about a comic. It is the first thing the viewer hears — it must grab attention and tease the premise WITHOUT spoiling the ending.
+_INTRO_SYSTEM = """You are HookWriter. You produce ONE very short opening QUESTION for a YouTube Short about a comic. It is the first thing the viewer hears.
 
-BEST HOOK SHAPE (channel data — the 3 BIGGEST hits, 3.24M / 1.70M / 1.38M views, ALL used it): a concrete, ordinary moment + a "thought/believed [normal] ... until [dark turn]" contrast pivot. Picture a normal scene, then break it. PREFER this whenever the story allows.
-  ✓ "Nightwing thought he had the perfect life with the Titans, until it all fell apart."
-  ✓ "When Superman came home, Lois thought he'd been gone hours, until she learned the truth."
-  ✓ "The Flash thought he saved an innocent man, until he found out what he really wanted."
+THE SHAPE IS FIXED — DO NOT INVENT A DIFFERENT ONE. Every measured hit of the format this channel is now mimicking (883k / 710k / 580k / 561k / 503k / 469k views) opens on a bare question that simply NAMES THE SUBJECT:
+  ✓ "Who is Silver Surfer 2099?"          (5 words)
+  ✓ "Who is Spider-Man 3099?"             (4 words)
+  ✓ "Who is Deadpool 2099?"               (4 words)
+  ✓ "How powerful is Cyclops 2099?"       (5 words)
+  ✓ "How did Absolute Superman become unstoppable?"  (7 words)
 
-Pick the ONE archetype that fits THIS story, then write the line. You MUST begin with the exact opener words shown for your chosen archetype, or the hook is rejected:
+WHY IT IS THIS BARE: the curiosity gap lives in the SUBJECT, not in the sentence. A famous character standing in an unfamiliar continuity is already the hook — the line only has to say the name out loud. Any extra clause dilutes it.
 
-  • temporal-when  — a STATEMENT beginning with "When ". BEST for the pivot. Ends with ".".
-        e.g. "When Superman came home, Lois thought he'd been gone hours, until she learned the truth."
-  • character_action — a STATEMENT beginning with the hero's NAME + a verb (thought/believed/woke/found/broke/entered/stood/was/had). NAME-FIRST IS GOOD here — lead with the hero, then pivot. Ends with ".".
-        e.g. "Nightwing thought he had the perfect life, until it all fell apart."
-        e.g. "Peter woke in a body that was no longer his."
-  • temporal-other — a STATEMENT beginning with "After", "While", "During", or "Once". Ends with ".".
-        e.g. "After one ordinary night, Illyana's whole world stopped making sense."
-  • scenic         — a STATEMENT beginning with "In a <adjective> universe/reality/world" (or "In <year>"). Ends with ".".
-        e.g. "In a broken reality, Magik turned her back on the X-Men for good."
-  • interrogative  — LAST RESORT ONLY. A QUESTION beginning with "Ever wonder", "What if", "What would", "Why", "How", "Can", "Could", "Would". Ends with "?". ZERO of the channel's biggest hits opened with a question — use ONLY if no concrete scene + pivot can be built from this story.
-        e.g. "Could a girl who clawed out of hell ever feel safe again?"
+CHOOSE ONE OF THREE FORMS:
+  1. "Who is <SUBJECT>?"                       — default. Use unless one below clearly fits better.
+  2. "How powerful is <SUBJECT>?"              — when the story is mainly a power showcase.
+  3. "How did <SUBJECT> become <ADJECTIVE>?"   — when the story is mainly an origin/transformation.
+     e.g. "How did Absolute Superman become unstoppable?"
 
-HARD RULES for the intro line:
-  - 10-20 words total, ONE or TWO short sentences (see FORESHADOW-PROMISE below).
-  - FORESHADOW-PROMISE (retention — do this whenever the story allows): after the hook
-    sentence, add ONE short second sentence (≤7 words) that PROMISES what the ending
-    costs the hero, WITHOUT naming the twist or the outcome. It tells the viewer "stay,
-    this pays off" — a stakes promise, not a spoiler. Plain words, confident, no question.
-      ✓ hook + "What he does about it breaks him."
-      ✓ hook + "The choice costs him everything."
-      ✗ "...until he learns he was Doom all along." (names the twist — that is a SPOILER)
-    Keep BOTH sentences plain; the two together must still fit 10-20 words. One strong
-    hook sentence alone is acceptable when no honest promise can be made without spoiling.
-  - ZERO PRIOR KNOWLEDGE (BINDING): a viewer who has NEVER read this comic must fully
-    grasp the line. NO continuity/lore references — no event names, cosmic titles,
-    prior-series callbacks, or character history a newcomer wouldn't know. Lore-dense
-    hooks are the FLOP signature.
-      ✗ "Superman became King Omega due to the sacrifice of the Time Trapper." (lore soup — no newcomer parses it)
-      ✓ "Superman came home to a world that had already moved on without him." (plain, instant)
-  - PLAIN LANGUAGE (BINDING): use the simplest phrasing a 12-year-old gets INSTANTLY
-    on first listen. No abstract riddles, no literary wordplay, no double meanings.
-      ✓ "Doom woke up in a ruined future, unable to remember who he was."
-        (concrete situation, plain words — the register to aim for)
-      ✗ "What if the man who lost everything was the only one who could save it?"
-        (abstract riddle — no concrete image, nothing a viewer can picture)
-  - LEAD WITH VISCERAL, HUMAN-SCALE STAKES when the story offers one — a concrete image
-    beats an abstract one ("found a girl locked in a basement" >> "surrounded by angels
-    led by a young leader"). Pick the moment a viewer can feel.
-  - Name the hero AND the premise so a viewer instantly grasps the stakes.
-  - It is a TEASER, not a summary — do NOT reveal the ending/twist.
-  - CONCEALED IDENTITY: if the protagonist's TRUE name/identity is itself the twist —
-    they BELIEVE they are someone else and the real identity is disclosed only late —
-    you MUST refer to them by the BELIEVED identity, NEVER the true name. Naming who
-    they really are here spoils the whole story. (e.g. call him "Doctor Doom", the
-    identity he's convinced he is — not the real name revealed at the climax.)
-  - No meta talk ("in this video", "today", "let's see"). No spoilers.
-  - Begin with the EXACT opener words for your chosen archetype (above).
-  - TEASE THE WHOLE STORY'S HOOK — the central premise, conflict, irony, or price
-    paid — NOT the literal opening scene. The FIRST narration line already
-    describes the opening event, so if your intro just restates that event the
-    video says the same thing twice. Frame the broader stakes instead.
-    ✗ (restates opening beat) "When Illyana returned from Limbo, she rejected the X-Men."
-    ✓ (teases the whole hook)  "Magik survived hell, until she realized she'd become the very monster she fled."
-  - BE TRUE TO THE PLOT above — never invent a framing it doesn't support: do NOT say
-    a hero "took a darker path" / "turned evil" / "went rogue" unless the plot says so.
-  - Do NOT use "What if" / "Ever wonder what if" ALTERNATE-REALITY framing for a
-    CANONICAL story — it falsely implies an alternate timeline or a different-dimension
-    hero (it confuses the viewer). Reserve "what if" ONLY for genuine What-If /
-    alternate-universe comics.
+HARD RULES:
+  - 4-9 words. ONE sentence. Ends with "?".
+  - <SUBJECT> = the character's name AS THE VIDEO WILL CALL THEM, including the
+    continuity tag when they have one ("Silver Surfer 2099", "Spider-Man 3099",
+    "Absolute Superman", "Gambit 2099"). If the character has no tag, just the name.
+  - NO second sentence. NO stakes promise. NO "until" pivot. NO adjectives stacked on
+    the character. NO comma clauses. If your line has a comma, it is wrong.
+  - NEVER name the issue or series ("in X-Men 2099 #3") — the mimicked format never does.
+  - No meta talk ("in this video", "today", "let's see"). No spoilers of the ending.
+  - CONCEALED IDENTITY: if the protagonist's TRUE name is itself the twist, use the
+    BELIEVED identity here, never the real one.
+  - BE TRUE TO THE PLOT — the adjective in form 3 must be something the story actually
+    supports ("unstoppable", "immortal", "broken", "tragic", "relentless"), never invented.
 
-Return ONLY JSON, no markdown: {"archetype": "interrogative|temporal-when|temporal-other|scenic|character_action", "intro_line": "..."}"""
+Return ONLY JSON, no markdown: {"archetype": "interrogative", "intro_line": "..."}"""
 
 
 def _fallback_hero(comic_context: dict) -> str:
@@ -386,12 +406,32 @@ def _character_names(comic_context: dict) -> list[str]:
     """Display names from comic_context['characters'], which may be a list of plain
     name STRINGS (top-level convention) OR a list of {name,...} DICTS (summary
     shape / hand-built context). Never raises on a dict — `", ".join(...)` of a
-    dict list was a TypeError that crashed generate_intro. Skips empty names."""
+    dict list was a TypeError that crashed generate_intro. Skips empty names.
+
+    Falls through to summary.characters and the per-issue rosters, mirroring
+    _fallback_hero's priority. url-mode / saga contexts routinely have an EMPTY
+    top-level characters list with every real name under summary.characters, so
+    reading only the top level returned [] for them — which silently made
+    _outro_is_concrete reject every closing line that named a character, and the
+    video shipped the factual credit instead (heroes-reborn-magneto + gambit-new-sun,
+    2026-07-28). Same names, one resolution order, everywhere."""
     out: list[str] = []
-    for c in (comic_context.get("characters") or []):
-        nm = (c.get("name", "") if isinstance(c, dict) else str(c)).strip()
-        if nm:
+    seen: set[str] = set()
+
+    def _add(raw) -> None:
+        nm = (raw.get("name", "") if isinstance(raw, dict) else str(raw or "")).strip()
+        if nm and nm.lower() not in seen:
+            seen.add(nm.lower())
             out.append(nm)
+
+    for c in (comic_context.get("characters") or []):
+        _add(c)
+    for c in ((comic_context.get("summary") or {}).get("characters") or []):
+        _add(c)
+    for issue in (comic_context.get("issues") or []):
+        if isinstance(issue, dict):
+            for c in (issue.get("characters") or []):
+                _add(c)
     return out
 
 
@@ -510,33 +550,33 @@ def generate_intro(
         return {"story_type": "temporal-when", "intro_line": fallback}
 
 
-_OUTRO_SYSTEM = """You are OutroWriter. You write ONE short THEMATIC closing line for a YouTube Short retelling of a comic — the final sentence the viewer hears.
+_OUTRO_SYSTEM = """You are OutroWriter. You write the LAST line of a YouTube Short about a comic character — the final sentence the viewer hears before the video ends.
 
-It must capture the EMOTIONAL / THEMATIC core of the story — what it was REALLY about — in a punchy, resonant line. Think of the lesson, the irony, or the cost the hero paid.
+THIS IS NOT A MORAL, A LESSON, OR A SIGN-OFF. It is a CHARACTER-DEFINING STATEMENT: where this character STANDS when the story ends, or what he is now. The format being mimicked (measured hits, 469k-883k views) always closes this way — the video simply stops on a statement of what the character became.
+
+Verbatim closers from that format — COPY THIS SHAPE:
+  ✓ "Jonah walked away free for the first time, still carrying the power cosmic but with no master left to serve." (Silver Surfer 2099, 580k)
+  ✓ "Even now, Marius only restores his sight when there's absolutely no other option." (Cyclops 2099, 561k)
+  ✓ "Every version of Spider-Man has been built around saving lives, but this one seems to believe destruction is necessary, which just makes him all the more terrifying." (Spider-Man 3099, 883k)
+  ✓ "Standing there in a reinforced suit of armor, wielding two of the deadliest weapons in the DC Universe." (Absolute Superman, 469k — a FRAGMENT, and that is fine)
+
+WHAT THEY HAVE IN COMMON:
+  - They name the character or refer to him directly, and state his END STATE as fact.
+  - They can be long (up to ~30 words) and can be a sentence FRAGMENT.
+  - They carry a CONCRETE detail — a weapon, a power, a habit, an unresolved choice.
+  - They do NOT wrap the story up in a bow, moralise, or address the viewer.
 
 HARD RULES:
-  - 4-14 words, exactly ONE sentence, ends with ".".
-  - NO plot summary, NO "the comic is", NO comic title, NO character names required.
-  - It is NOT a question. No meta talk ("in this video"). No hashtags.
-  - Grounded in THIS story's actual theme (below) — never a generic platitude.
-  - Punchy and shareable — the kind of line a viewer would quote or screenshot.
-  - SIMPLE, PLAIN language. Say it straight — no purple/grandiose phrasing, no
-    forced poetry. A clear line beats a fancy one.
-  - IELTS 6.5 / B2 PLAIN ENGLISH: state the actual ending FACT in short, common
-    words — not a riddle, wordplay, or a double meaning stacked on itself.
-      ✓ "Reed finally learned his name, right before he died." (concrete ending fact)
-      ✗ "The name he refused was the one that always fit." (too abstract — no
-        concrete fact, just wordplay)
-      ✗ "He spent everything becoming someone he had never been." (still abstract —
-        no person, no event)
-  - HARD REQUIREMENT: the line MUST contain at least one CONCRETE element from the
-    ending — a character's name, or a physical event (a fall, a death, a reveal).
-    A line with neither is rejected.
-
-Examples (for OTHER comics — match the TONE, not the words):
-  - "The scariest monster is the one you might become."
-  - "Power is worthless if it costs you everyone you love."
-  - "He lost everything trying to be someone he wasn't."
+  - 8-30 words, ONE sentence or fragment.
+  - NO "the comic is", NO comic title, NO issue number.
+  - NOT a question. No meta talk ("in this video"). No hashtags. No CTA.
+  - No moral, no lesson, no "and that is why...". State what IS, not what it means.
+      ✓ "Even now, Marius only restores his sight when there's absolutely no other option."
+      ✗ "The scariest monster is the one you might become." (a moral — banned)
+      ✗ "Power is worthless if it costs you everyone you love." (a lesson — banned)
+  - HARD REQUIREMENT: the line MUST contain at least one CONCRETE element — the
+    character's name, a physical object, a power, or a specific act. A line with none
+    is rejected.
 
 Return ONLY JSON, no markdown: {"outro_line": "..."}"""
 
@@ -588,22 +628,70 @@ def generate_outro(
         except Exception:
             return False
         n = len(line.split())
+        # Concreteness belongs HERE, on the generated path, not at the call site: a failure
+        # makes call_with_chain retry, and only an LLM line can be the abstract wordplay the
+        # guard exists to catch. The deterministic fallback is lifted verbatim out of the
+        # already-validated narration, so it is grounded by construction — running the same
+        # guard on it just rejected good closers over a roster alias ("Xavier" vs the
+        # roster's "Professor X") and handed the credit back (heroes-reborn-magneto).
         return (4 <= n <= 14 and line.endswith(".")
-                and "?" not in line and "comic is" not in line.lower())
+                and "?" not in line and "comic is" not in line.lower()
+                and _outro_is_concrete(line, comic_context))
 
-    try:
-        content, used = call_with_chain(
-            system=system_override or _OUTRO_SYSTEM, user=user,
-            models=list(CREATIVE_LLM_MODELS) or None,
-            max_tokens=200, progress=progress, label="outro", validator=_valid,
-        )
-        data = _json_loads_loose(content)
-        line = " ".join(str(data.get("outro_line", "")).split()).strip()
-        dump["outro_thematic"] = {"outro_line": line, "model": used}
-        return line
-    except Exception as exc:
-        log(f"[stage4] thematic outro LLM failed ({type(exc).__name__}); keeping factual credit")
+    # Retry once. This is the LAST line the viewer hears and the register never signs off
+    # with the factual credit, so a single transient LLM error must not silently decide the
+    # ending (seen 2026-07-27: one RuntimeError turned the closer into "The comic is X.").
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            content, used = call_with_chain(
+                system=system_override or _OUTRO_SYSTEM, user=user,
+                models=list(CREATIVE_LLM_MODELS) or None,
+                max_tokens=200, progress=progress, label="outro", validator=_valid,
+            )
+            data = _json_loads_loose(content)
+            line = " ".join(str(data.get("outro_line", "")).split()).strip()
+            dump["outro_thematic"] = {"outro_line": line, "model": used, "attempt": attempt}
+            return line
+        except Exception as exc:                        # noqa: BLE001 - any LLM/parse failure
+            last_exc = exc
+            if attempt == 1:
+                log(f"[stage4] thematic outro attempt 1 failed "
+                    f"({type(exc).__name__}) — retrying")
+    log(f"[stage4] thematic outro LLM failed twice ({type(last_exc).__name__}); "
+        f"falling back to a defining line built from the narration")
+    return _defining_line_fallback(body_scenes, comic_context)
+
+
+def _defining_line_fallback(body_scenes: list[dict] | None, comic_context: dict) -> str:
+    """Last-resort closer: a character-DEFINING sentence, not the channel credit.
+
+    The register's whole point is that the video stops on what the character became, so
+    "The comic is X." is the one ending it must never have. When the LLM is unreachable we
+    still owe a defining line, so lift one out of the narration the writer already produced.
+
+    Cut on CLAUSE boundaries, never on a word count. Gluing a name onto the last N words
+    produced broken English on its first real run ("Magneto, for when he went looking for
+    his best friend." — heroes-reborn-magneto, 2026-07-28); a real clause lifted whole is
+    always grammatical, and the register allows a fragment closer. If no clause fits the
+    4-16 word shape, return "" and let the caller keep the credit rather than ship something
+    malformed. Deterministic and offline — no LLM call on this path."""
+    body = [s for s in (body_scenes or [])
+            if not s.get("is_intro") and not s.get("is_outro")]
+    if not body:
         return ""
+    last = " ".join(str(body[-1].get("text", "")).split()).strip().rstrip(".")
+    if not last:
+        return ""
+    # Longest-first: prefer the fullest clause that still fits the outro shape. The window
+    # is 4-16 here, two wider than the 4-14 the LLM path validates: a lifted clause misses by
+    # one or two words often enough that the stricter bound just hands the credit back.
+    clauses = [c.strip(" ,—-") for c in re.split(r"\s+—\s+|,\s+", last) if c.strip(" ,—-")]
+    for clause in sorted(clauses, key=lambda c: -len(c.split())):
+        n = len(clause.split())
+        if 4 <= n <= 16:
+            return clause[0].upper() + clause[1:] + "."
+    return ""
 
 
 def _append_loop_tease(closure_text: str, tease: str) -> str:
@@ -826,6 +914,15 @@ def write_script(
     # pass (retry-wiki + wiki-check); 4 passes exhausts the account usage window
     # mid-run. Cap arcs at 2 passes to roughly halve the SDK calls per saga run.
     MAX_PASSES = 2 if comic_context.get("is_arc") else 4
+    # Length-only escalation. The arc cap above protects the SDK usage window, but an arc
+    # is also the draft most likely to blow the ceiling — 124 story pages once shipped a
+    # 699w draft against a 206w ceiling and only logged a warning. Grant ONE extra pass,
+    # and only when length is the LAST thing wrong, so the common path still costs 2.
+    length_escalations_left = 1
+    # Past this multiple of the ceiling the draft is not "a bit long", it is the wrong
+    # shape for the format (too much source crammed in) and no trim pass will save it.
+    # Fail loudly instead of shipping something that needs a hand-rewrite.
+    HARD_CEILING = int(_TARGET_WORDS_MAX * 1.5)
     best_parsed = parsed
     # (length_ok, words_ok, -critical, -errors, -words): higher is better.
     # (complete, -n_critical, words_ok, -errors, -words) — see selection below.
@@ -867,7 +964,10 @@ def write_script(
         #   4. fewest total issues, then shorter.
         _scenes = parsed.get("scenes") or []
         _words = sum(len(str(s.get("text", "")).split()) for s in _scenes)
-        complete = 1 if (9 <= len(_scenes) <= 22 and _words >= _TARGET_WORDS_MIN - 40) else 0
+        # Scene-count window comes from the band (see _TARGET_SCENES_*), with slack on both
+        # sides so a near-miss still counts as a shippable draft rather than a truncation.
+        complete = 1 if (_TARGET_SCENES_MIN - 2 <= len(_scenes) <= _TARGET_SCENES_MAX + 3
+                         and _words >= _TARGET_WORDS_MIN - 40) else 0
         # words_ok: inside the HARD band (no +20 slack — the ceiling is the ceiling, so an
         # over-length draft is never marked ok and loses to a shorter one of equal fidelity).
         words_ok = 1 if _TARGET_WORDS_MIN <= _words <= _TARGET_WORDS_MAX else 0
@@ -886,12 +986,36 @@ def write_script(
             f"({len(critical)} critical, {len(_scenes)} scenes / {_words}w, "
             f"complete={bool(complete)})")
         if pass_num >= MAX_PASSES:
-            log(f"[stage4]   ⚠ MAX_PASSES reached; shipping best draft "
-                f"(complete={best_key[0]==1}, critical={-best_key[1]}, "
-                f"words_ok={best_key[2]==1}, {-best_key[3]} issues)")
-            parsed = best_parsed
-            errors = []  # don't raise — fall through with best draft
-            break
+            best_words = -best_key[4]
+            if best_words > HARD_CEILING:
+                n_sc = len(best_parsed.get("scenes") or []) or 1
+                per_scene = best_words / n_sc
+                # Name the actual lever. Too MANY scenes is the common cause (the writer keeps
+                # one scene per beat and shaves words instead of merging), and it reads very
+                # differently from a genuinely oversized source.
+                lever = (f"{n_sc} scenes is over the {_TARGET_SCENES_MAX} the ceiling can carry "
+                         f"— the outline handed the writer more beats than fit, so merge beats"
+                         if n_sc > _TARGET_SCENES_MAX else
+                         f"{per_scene:.0f}w per scene is over the {_SCENE_AIM_MAX_WORDS}w aim "
+                         f"— lines are too long, not too many")
+                raise RuntimeError(
+                    f"narration is {best_words}w against a {_TARGET_WORDS_MAX}w ceiling "
+                    f"(hard limit {HARD_CEILING}w) after {pass_num} pass(es): "
+                    f"{n_sc} scenes x {per_scene:.0f}w. {lever}. If the source really is "
+                    f"oversized (a multi-issue arc), scope the project down and re-run.")
+            if (length_escalations_left and best_words > _TARGET_WORDS_MAX
+                    and best_key[1] == 0):
+                length_escalations_left -= 1
+                MAX_PASSES += 1
+                log(f"[stage4]   over ceiling ({best_words}w > {_TARGET_WORDS_MAX}w) with no "
+                    f"critical issues — granting one extra trim pass")
+            else:
+                log(f"[stage4]   ⚠ MAX_PASSES reached; shipping best draft "
+                    f"(complete={best_key[0]==1}, critical={-best_key[1]}, "
+                    f"words_ok={best_key[2]==1}, {-best_key[3]} issues)")
+                parsed = best_parsed
+                errors = []  # don't raise — fall through with best draft
+                break
         log(f"[stage4]   retrying (pass {pass_num+1}/{MAX_PASSES})…")
         parsed = _retry_fix_with_wiki(parsed, errors, beats, comic_context,
                                        model, progress, dump, story_map=story_map,
@@ -948,15 +1072,13 @@ def write_script(
                                direction=direction)
         intro_line = (intro.get("intro_line") or "").strip()
         if _intro_bad(intro_line):
-            # last-resort: a question hook. If the fallback hero name IS the concealed
-            # identity (shares a name with reveal_only), naming it would spoil the
-            # twist — use a name-free hook instead.
+            # last-resort: the format's default bare question. If the fallback hero name
+            # IS the concealed identity (shares a name with reveal_only), naming it would
+            # spoil the twist — use a name-free variant instead.
             hero = _fallback_hero(comic_context)
             hero_is_spoiler = any(n.lower() in hero.lower() for n in reveal_only)
-            # Plain, concrete, name-free fallbacks (never the abstract-riddle style).
-            intro_line = ("He woke up with no memory. What he believed almost destroyed him."
-                          if hero_is_spoiler
-                          else f"When {hero} woke up, the whole world had already turned against him.")
+            intro_line = ("Who is the man behind the mask?"
+                          if hero_is_spoiler else f"Who is {hero}?")
             intro["intro_line"] = intro_line
             log(f"[stage4]   ⚠ still bad; using fallback question hook: {intro_line!r}")
         else:
@@ -980,31 +1102,27 @@ def write_script(
         parsed["scenes"] = [intro_scene] + body
         parsed["hook"] = intro_line  # thumbnail / opening line is now the teaser
 
-    # Outro variety: 50/50 coin-flip between the factual "The comic is X." credit
-    # (channel identity) and a punchy THEMATIC takeaway. The writer ALWAYS emits the
-    # factual credit, so beat-anchoring + wiki/validation stay stable on a known
-    # phrasing; we only swap the outro scene's TEXT here, after the loop, keeping
-    # its is_outro flag + panel_ref=-1 (Stage 5 resolves it to the final splash).
+    # Closing line: ALWAYS a character-defining statement (was a 50/50 coin-flip with
+    # the factual "The comic is X." credit until 2026-07-27 — the mimicked format never
+    # signs off, it just stops on what the character became). The writer still ALWAYS
+    # emits the factual credit so beat-anchoring + wiki/validation stay stable on a
+    # known phrasing; we swap the outro scene's TEXT here, after the loop, keeping its
+    # is_outro flag + panel_ref=-1 (Stage 5 resolves it to the final splash). The credit
+    # remains the fallback when generation fails or comes back abstract.
     scenes_now = parsed.get("scenes") or []
     outro_idx = next((i for i, s in enumerate(scenes_now) if s.get("is_outro")), -1)
-    if outro_idx >= 0 and random.random() < 0.5:
-        thematic = generate_outro(comic_context, scenes_now,
-                                  model=model, progress=progress, debug_dump=dump,
-                                  direction=direction)
-        # Concrete-guard: the LLM keeps producing abstract wordplay outros despite
-        # the prompt's plain-language rule. Accept the thematic line only if it
-        # contains something CONCRETE — a character name from this comic or a
-        # physical ending event — else keep the factual credit.
-        if thematic and not _outro_is_concrete(thematic, comic_context):
-            log(f"[stage4] outro: thematic REJECTED (no concrete element): {thematic!r}")
-            thematic = ""
-        if thematic:
-            scenes_now[outro_idx]["text"] = thematic
-            log(f"[stage4] outro: thematic → {thematic!r}")
+    if outro_idx >= 0:
+        closer = generate_outro(comic_context, scenes_now,
+                                model=model, progress=progress, debug_dump=dump,
+                                direction=direction)
+        # Concreteness is enforced inside generate_outro's validator now (so the chain can
+        # RETRY an abstract line instead of silently losing it here), and the deterministic
+        # fallback is lifted from the approved narration, so anything returned is usable.
+        if closer:
+            scenes_now[outro_idx]["text"] = closer
+            log(f"[stage4] closer: {closer!r}")
         else:
-            log("[stage4] outro: factual credit (thematic gen failed)")
-    elif outro_idx >= 0:
-        log("[stage4] outro: factual credit (coin-flip)")
+            log("[stage4] closer: factual credit (generation failed/abstract)")
     # Item 2: hybrid loop ending — append a forward-pointing tease after the
     # chosen closure so the ending invites a rewatch (closure is preserved).
     if outro_idx >= 0 and ENABLE_LOOP_TEASE:
@@ -1144,7 +1262,7 @@ def generate_banner_title(
         return ""
 
 
-_OUTLINE_SYSTEM = """You are PanelOutliner. Your job is to extract the FULL dramatic skeleton of a comic story into 16-20 canonical beats — MUST cover the entire story arc including the climax, not just the opening.
+_OUTLINE_SYSTEM = """You are PanelOutliner. Your job is to extract the FULL dramatic skeleton of a comic story into a SMALL number of canonical beats (the caller states the exact ceiling) — MUST cover the entire story arc including the climax, not just the opening.
 
 You DO NOT write narration prose yet. You produce structured beats only.
 
@@ -1259,11 +1377,15 @@ Beats are in dramatic order (which is usually but not always chronological). The
 ╚════════════════════════════════════════════════════════════════════════════╝
 
 Constraints:
-- **16-20 beats** total. Beats map 1:1 to scenes (one panel shown per scene), so
-  MORE beats = MORE distinct panels on screen. Cover the FULL canonical arc THROUGH
-  the decisive RESOLUTION — every major wiki PLOT event gets its own beat. BUT a
-  trailing quiet EPILOGUE after the conflict resolves (hero resting, reuniting with
-  an ally, reaffirming themselves) is NOT a "major event" — do not give it a beat.
+- **{_TARGET_SCENES_MIN}-{_TARGET_SCENES_MAX} beats** total — a HARD CEILING, not a target to fill. Beats map 1:1
+  to scenes and each scene line runs {_SCENE_AIM_MIN_WORDS}-{_SCENE_AIM_MAX_WORDS} words, so this count IS the
+  {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} word budget divided by line length. Handing back more beats than
+  this makes the script mathematically unwritable — the writer cannot drop a beat you
+  gave it, so it overruns instead. Cover the FULL canonical arc THROUGH the decisive
+  RESOLUTION, but do that by MERGING events that share one cause into a single beat,
+  not by giving every wiki sentence its own. A trailing quiet EPILOGUE after the
+  conflict resolves (hero resting, reuniting with an ally, reaffirming themselves)
+  is NOT a major event — do not give it a beat.
 - Each beat covers 1-4 input pages. Don't spread one beat across the whole comic.
 - HIGHLIGHTS — pages/panels marked "★BIG SHOT" are large splash/action/reveal art:
   the visual highlights of the comic. When you cannot cover every page (more pages
@@ -1427,6 +1549,8 @@ def outline_beats(
         canonical_block += f"╔══ CANONICAL STORY ARC (Marvel/DC Fandom — ground truth) ══╗\n{arc}\n\n"
     if plot:
         canonical_block += f"╔══ CANONICAL FULL PLOT (wiki) ══╗\n{plot[:5000]}\n\n"
+    if not canonical_block:
+        log("⚠️  [outline] no canonical plot/arc (fandom+wiki both missed) — outlining blind from OCR/panels only")
 
     # ── Crossover-saga: spread beats across issues, anchor to each issue's pages ──
     if comic_context.get("is_arc") and comic_context.get("issues"):
@@ -1491,9 +1615,11 @@ def outline_beats(
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + page_range_hint + "\n\n"
         + must_have_line
-        + f"TASK: Extract 16-20 beats that COVER THE ENTIRE canonical story arc. "
-        + f"USE THE CANONICAL WIKI PLOT ABOVE as the spine — each major event in "
-        + f"the wiki MUST get its own beat. Then map each beat to the most fitting "
+        + f"TASK: Extract {_TARGET_SCENES_MIN}-{_TARGET_SCENES_MAX} beats (HARD CEILING) that COVER THE ENTIRE "
+        + f"canonical story arc. USE THE CANONICAL WIKI PLOT ABOVE as the spine, but "
+        + f"MERGE wiki events that share one cause so the total stays inside the "
+        + f"ceiling — coverage comes from merging, never from exceeding it. "
+        + f"Then map each beat to the most fitting "
         + f"page_ref + panel from the STORY PAGES. Do NOT skip the climax. Do NOT "
         + f"pile multiple major events into one beat.\n\n"
         + f"Return JSON in this exact shape:\n"
@@ -1542,8 +1668,9 @@ def outline_beats(
             cause=str(b.get("cause", "")).strip(),
             characters_active=[str(c).strip() for c in (b.get("characters_active") or []) if str(c).strip()],
         ))
-    if not (12 <= len(beats) <= 20):
-        log(f"[stage4]   warning: outline returned {len(beats)} beats (want 16-20)")
+    if not (_TARGET_SCENES_MIN <= len(beats) <= _TARGET_SCENES_MAX):
+        log(f"[stage4]   warning: outline returned {len(beats)} beats "
+            f"(want {_TARGET_SCENES_MIN}-{_TARGET_SCENES_MAX})")
 
     # Canonical (wiki/causal) order — NOT page order. The outliner emits beats in
     # story order; we only force COLD_OPEN first + LANDING last. Page is no longer
@@ -1611,7 +1738,8 @@ def _ground_beat_panels(
     entirely: beats keep whatever key_panel the outliner already guessed (or none),
     no network embed call is made."""
     log = progress or (lambda _msg: None)
-    if os.environ.get("STAGE3_NO_EMBED") == "1":
+    from config import stage3_no_embed
+    if stage3_no_embed():
         log("[stage3] embed skipped (--no-embed): beat-panel grounding "
             "(keeping outline page hints, no vector re-grounding)")
         return beats
@@ -1761,8 +1889,9 @@ def _content_align_scenes(
     soft positional prior keeps a pick near the diagonal so only a clear cosine win pulls
     it far. STAGE3_NO_EMBED or a weak/failed embed falls back to positional (degrade soft,
     never crash offline)."""
+    from config import stage3_no_embed
     n, m = len(scene_texts), len(beats)
-    if n == 0 or m == 0 or os.environ.get("STAGE3_NO_EMBED") == "1":
+    if n == 0 or m == 0 or stage3_no_embed():
         return None
     try:
         import numpy as np
@@ -2035,8 +2164,15 @@ def _ensure_ending_coverage(
 def _validate_outline(beats: list[Beat], max_gap: int = 5) -> list[str]:
     """Soft validation of outline. Returns issue strings; empty = OK."""
     issues: list[str] = []
-    if len(beats) < 12:
-        issues.append(f"only {len(beats)} beats (target 16-20)")
+    # Floor tracks the derived scene window. It used to demand 12+ against a "target 16-20",
+    # which actively fought the word ceiling: an outline that correctly returned 11 beats got
+    # flagged as too thin and the retry ADDED beats until the script could no longer fit.
+    if len(beats) < _TARGET_SCENES_MIN:
+        issues.append(f"only {len(beats)} beats "
+                      f"(target {_TARGET_SCENES_MIN}-{_TARGET_SCENES_MAX})")
+    if len(beats) > _TARGET_SCENES_MAX:
+        issues.append(f"{len(beats)} beats exceeds the {_TARGET_SCENES_MAX} the word "
+                      f"ceiling can carry — merge beats that share a cause")
 
     sorted_beats = sorted(
         [b for b in beats if b.page_refs],
@@ -2240,12 +2376,32 @@ _WRITE_SYSTEM = f"""You are PanelNarrator, writing short-form narration for YouT
 This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
 0) PLAIN-ENGLISH STYLE (BINDING — OVERRIDES ANY RULE BELOW THAT ENCOURAGES FANCY WORDING)
-   - Write at ~IELTS 6.5 / B2 level: short, common words; ONE event per sentence.
-   - LINE LENGTH IS THE WORD BUDGET'S MAIN LEVER: aim 8-14 words per scene line
-     (hard max 18; sole exceptions: the hook, and the two twist-landing closers of
-     rule 8.68 which may reach 24). Trim modifiers and sub-clauses first, never the
-     event itself.
-     A 20-scene script at ~11 words/line lands the total budget; 17-word lines blow it.
+   - Write at ~IELTS 6.5 / B2 level: common, everyday words. PLAIN WORDS, LONG SENTENCES.
+   - REGISTER IS PARATACTIC — LONG CHAINED SENTENCES (this is the format being mimicked).
+     TYPICAL LINE IS {_SCENE_AIM_MIN_WORDS}-{_SCENE_AIM_MAX_WORDS} WORDS. A scene line carries the beat AND its
+     consequences, chained with plain connectors — "and", "but", "then", "as", "while",
+     "before", "until", "so". Two lines at the NORM, both from a shipped video of ours:
+       ✓ "He is Remy LeBeau from another Earth, out of the same Black Womb lab, with the
+          same kinetic power, except nobody ever capped his."                      (24 words)
+       ✓ "He crossed into other realities looking for a fix, found the same ash in every
+          one, and decided Gambit was always the cause."                           (23 words)
+     Both chain three clauses and stack concrete nouns — that is the style, and it costs
+     ~{(_SCENE_AIM_MIN_WORDS + _SCENE_AIM_MAX_WORDS) // 2} words, not 34.
+
+     THE CEILING IS {_SCENE_MAX_WORDS} WORDS AND IT IS RARE — at most one or two lines in the whole
+     script, for a beat that genuinely cannot be said shorter (the two closers of rule
+     8.68 may reach {_FINALE_MAX_WORDS}). This is what the ceiling looks like; do NOT treat it as the
+     model to copy:
+       ~ "Jonah took the deal and Silver Surfer 2099 was born, a being unlike anything
+          the universe had seen before, carrying both cosmic power and infernal flame as
+          he drifted through the stars collecting souls for his master."            ({_SCENE_MAX_WORDS} words)
+     DO THE ARITHMETIC BEFORE YOU WRITE: your beat count x ~{(_SCENE_AIM_MIN_WORDS + _SCENE_AIM_MAX_WORDS) // 2} words must land inside the
+     {_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} budget. Writing every line near the ceiling overruns it every time.
+     Long does NOT mean maximal — do not chop a chained line into four short ones, but do
+     not pad one to {_SCENE_MAX_WORDS} either.
+   - LONG DOES NOT MEAN VAGUE. Every clause must add a CONCRETE fact — a name, an
+     object, a number, an action. Length comes from stacking facts, never from padding
+     with adjectives or mood.
    - NO ornate metaphors or literary flourishes ("a stranger's face clawed at his mind",
      "the truth unspooled", "one name burned through the fog"). Say it plainly instead
      ("kept haunting him", "then the truth came out").
@@ -2260,58 +2416,49 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      into a short grounded cause clause, or cut it. Never narrate an off-panel detail
      as if the viewer can see it on the current panel.
 
-1) HOOK FORMULA — CONCRETE ORDINARY MOMENT + CONTRAST PIVOT ("thought/believed X — until [dark turn]...")
+1) SCENE 1 — DROP THE VIEWER INTO A BIZARRE, CONCRETE SITUATION (no pivot, no tease)
 
-   PRIMARY SHAPE — this is what wins. Verbatim mining of 23 competitor Shorts: the
-   3 BIGGEST hits (3.24M / 1.70M / 1.38M views) ALL open on a concrete, ordinary
-   moment and then pivot with "thought/believed [normal] ... until [dark turn]".
-   Show a scene the viewer pictures instantly, then break it:
-     ✓ "Nightwing thought he was living the perfect life with the Titans, until one thing tore it all apart..." (3.24M)
-     ✓ "When Superman came home, Lois thought he'd only been gone a few hours, until she learned the truth..." (1.70M)
-     ✓ "The Flash thought he saved an innocent civilian, until he learned what the man really wanted..." (1.38M)
-   The umbrella framing "When [event], [twist]..." still works — the thought/until
-   pivot is just the PREFERRED way to fill it. Keep the older channel openers too:
-     ✓ "When Frank Castle entered Valhalla, he couldn't find peace, so Odin..."
+   A short question is spoken over the cover BEFORE your scene 1 ("Who is <SUBJECT>?").
+   That question is the hook and it is written for you — do NOT write another one, and
+   do NOT write a "thought/believed ... until ..." pivot. Your scene 1 is the first
+   STORY line: it drops the viewer straight into the strangest concrete situation the
+   story opens on, stated as fact.
 
-   NAME-FIRST IS ALLOWED when it leads into the pivot (channel data: several virals
-   open on the hero's name — "Nightwing thought...", "Spawn's body was just visiting...").
-     ✓ "Nightwing thought he was living the perfect life, until it all fell apart..."
-   STILL BANNED — a FLAT name-first ACTION opener (no pivot, no hook), and meta-talk:
-     ✗ "The Goblin unleashes his deadliest plan." (flat action, no contrast — not a hook)
+   Verbatim scene-1 lines from the format being mimicked (measured hits):
+     ✓ "Wade had been chained to a recliner for decades, forced to watch C-SPAN on loop
+        by a woman in a Deadpool suit riding a robotic dragon across New York." (710k)
+     ✓ "Jonah Marlowe was on his deathbed when Mephisto came to him with an offer,
+        immortality and a combination of the power cosmic and hellfire in exchange for
+        his service as Mephisto's herald." (580k)
+     ✓ "Marius Cole was born with one of the most dangerous mutant powers imaginable." (561k)
+     ✓ "After the Masters of Evil killed the Avengers as a statement of dominance,
+        only one survived, Moon Knight." (503k)
+
+   WHAT THEY HAVE IN COMMON — copy this:
+   - The character's REAL NAME up front (Wade, Jonah Marlowe, Marius Cole) when the
+     story has one. Plain declarative. No question, no "...", no open thread.
+   - A situation strange enough that the viewer needs the next sentence to make sense
+     of it. Weirdness does the work a pivot used to do.
+   - NAME THE ODD DETAILS. "chained to a recliner", "C-SPAN on loop", "robotic dragon"
+     — specifics ARE the hook. A generic version of that line is dead on arrival.
+
+   BANNED in scene 1:
+     ✗ "The Goblin unleashes his deadliest plan." (flat, generic, no strange detail)
      ✗ "In an alternate universe..." (different channel's signature, don't copy)
      ✗ "Today we're looking at..." / "In today's video" / any framing meta-talk
+     ✗ any trailing "..." or unresolved-promise device — this format never uses them
 
-   ZERO PRIOR-KNOWLEDGE RULE (HARD): the hook must be fully parseable by a viewer who
-   has NEVER read this comic. NO continuity/lore references — no event names, cosmic
-   titles, prior-series callbacks, or character history a newcomer wouldn't know.
-   Lore-dense hooks are the FLOP signature (these got <10k views):
+   ZERO PRIOR-KNOWLEDGE RULE (HARD): scene 1 must be fully parseable by a viewer who
+   has NEVER read this comic. Introduce every proper noun you use, in the same breath
+   ("a woman in a Deadpool suit", "Mephisto came to him with an offer"). Unexplained
+   continuity references are the FLOP signature:
      ✗ "Superman became King Omega due to the sacrifice of the Time Trapper." (7.8k — lore soup)
-     ✗ "When Judas killed Spawn, the Mother of Existence descended..." (4.8k — needs backstory to parse)
+   The alternate-continuity tag itself ("2099", "Absolute") is fine — the cover question
+   already established it.
 
-   LEAD WITH VISCERAL, HUMAN-SCALE STAKES when the story offers one — a concrete
-   image beats an abstract one every time (SAME character, opposite results):
-     ✓ Spawn "found a 20-year-old girl locked in a basement..." (1.99M — visceral, human)
-     ✗ Spawn "surrounded by angels led by a young leader..." (7.2k — abstract, no felt stakes)
-
-   QUESTION HOOKS ARE LAST RESORT. ZERO of the 15 analyzed virals opened with a
-   question ("What if...?", "Ever wonder...?"). Use one ONLY if no concrete scene +
-   pivot can be built from this story — never as your default.
-
-   The hook MUST be 14-26 words and end with an open thread that pulls the viewer
-   into scene 2 (use a comma + "..." or end with an unresolved promise). The hook
-   is the ONE scene allowed to run long — every other scene stays punchy.
-
-   HOOK = FIRST BEAT ONLY — NO PREVIEW OF LATER EVENTS.
-   The hook narrates ONLY the first beat's own moment. The "until [dark turn]" clause
-   must belong to the FIRST beat's own moment or its immediate tease — it does NOT
-   pull an event from a LATER beat into the opener (that contradicts the next scene).
-   Crack the door open; do not name the later payoff.
-     ✗ "When the symbiote sat imprisoned, it was Ben who set it free..."  then next
-        scene "But Ben discovered the caged symbiote." (he frees it, THEN finds the
-        cage? — broken. "set it free" belongs to a LATER beat.)
-     ✓ "When the Venom symbiote sat imprisoned in Reed Richards' lab, it waited
-        bitterly for a way out..."  (only the first beat — the imprisonment.)
-   The teaser line shown over the cover is the only place a future twist is hinted.
+   SCENE 1 = FIRST BEAT ONLY — NO PREVIEW OF LATER EVENTS. Narrate only the first
+   beat's own moment; never pull a later beat's event into the opener (it contradicts
+   the next scene).
 
 2) CONNECTIVE GRAMMAR — CHOOSE BY MEANING (scenes 2 onward)
    - Most scenes open with a connective to create the "and then... and then..." flow,
@@ -2356,45 +2503,36 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      climax or the ending; you are trimming detail WITHIN the story, not skipping beats.
      When unsure whether a detail matters to the outcome, leave it out.
 
-3) SENTENCE SHAPE — SHORT + PUNCHY, ONE EVENT PER SENTENCE (this is the fix)
-   - **ONE EVENT PER SENTENCE — HARD RULE.** Each scene is ONE page held on screen
-     for only a few seconds, so it can show ONE action. If your sentence names two
-     things happening ("X did A as Y did B and warned C"), the viewer sees one page
-     while you narrate three things — it looks WRONG. Pick the single most
-     important action of the beat and narrate only that. Drop the secondary clauses.
-   - **DO NOT write uniformly-sized sentences.** Vary length, but vary toward SHORT.
-   - Target distribution across the scenes (one per beat; including the outro credit):
-     • **AT LEAST 3 short PUNCH sentences (≤11 words)** — landing/twist moments.
-       A script with fewer than 3 punch sentences will be rejected and retried.
-     • the rest are MEDIUM (12-17 words) — main flow
-     • a CAUSAL scene (one event + its grounded 'why' clause, rule 6.7) MAY run to
-       the 18-word line cap; the hook (scene 1) too. Plain scenes over 14w with
-       no causal clause are still rejected — don't pad.
-     • 1 outro credit "The comic is X" (5-8 words)
-   - Punch examples (≤11w, hit hard — these LAND). VARY the opener — most punches do
-     NOT start with "But":
-     ✓ "The Penance Stare had no effect." (6w)                 — subject-first
-     ✓ "Stating they would die anyway." (5w)                   — fragment lead-in
-     ✓ "Then Ben crushed the sonic gun and stormed out." (9w)  — sequence opener
-     ✓ "But he only stopped once he remembered his aunt." (9w) — TRUE contrast (he wouldn't stop — then did)
-   - Medium examples (12-17w):
-     ✓ "So, Odin returned his cosmic powers and turned him into Ghost Rider again." (13w)
+3) SENTENCE SHAPE — LONG PARATACTIC CHAINS (this is the format being mimicked)
+   - **A SCENE CARRIES A BEAT PLUS ITS CONSEQUENCES — chained, not chopped.** A scene
+     may narrate 2-4 linked actions in ONE sentence, joined with plain connectors
+     (and / but / then / as / while / before / until / so). Do NOT split a chain into
+     four short lines; the chain IS the register.
+     Multi-event lines are FINE here because the scene's "visual_beats" fragments
+     (rule below) give Stage 5 a separate image for each moment in the chain — the
+     viewer is NOT staring at one page while you narrate three things.
+   - Target distribution across the scenes (one per beat; including the closer):
+     • most scenes are LONG (18-28 words) — the main flow
+     • a scene may run to the 34-word line cap when the chain earns it
+     • at least ONE short line (≤14 words) somewhere for rhythm — a flat, brutal
+       statement of fact that lands after a long chain
+     • the final closer may reach 38 words (rule 8.68)
+   - Long-chain examples (COPY THIS SHAPE):
+     ✓ "Warda responded by stabbing Ellie through the chest and burning her alive with
+        liquid napalm in front of Wade, but Ellie climbed back out of her own charred
+        corpse as a teenager." (29w — 3 chained events, all on one thread)
+     ✓ "The first time his mutation activated, he accidentally looked at his mother and
+        turned her into salt." (17w)
+     ✓ "Horrified, Marius tore his own eye out, then later removed the other, choosing
+        blindness over the risk of killing someone else ever again." (22w)
+   - Short-line example (use sparingly, for the landing):
+     ✓ "Even he can't control what material something changes into." (9w)
+     ✓ "Warda was furious." (3w)
    - **NO redundant consecutive scenes.** Each scene advances to a NEW moment —
-     never restate the previous scene's action with a later frame. Collapse an
-     action progression into its single most impactful moment:
-       ✗ Scene A "Reed aims the sonic gun." + Scene B "Reed fires the sonic gun."
-       ✓ One scene: "Reed fires the sonic gun at Ben." (keep the payoff, drop the wind-up)
-   - ANTI-PATTERN — MULTI-EVENT CRAM (do NOT write; this is exactly what we are fixing):
-     ✗ "Now restored to his original human form, Ben reveled in the change as a
-        horrified Reed raised his sonic gun and warned that the symbiote had
-        corrupted Spider-Man's mind." (29w — THREE events on one page)
-     ✓ Split the BEAT's single most important action into one punchy line:
-        "Now human again, Ben revelled in his restored form." (9w)
-        (the gun + the warning belong to OTHER beats — do not cram them here)
-   - Uniformity is the AI-tell. Punchy variance is the channel signature.
-   - Use AT MOST ONE internal connective per sentence. A second " and / while / as "
-     usually means you have crammed a second event — split it out.
-   - Every scene carries one real event — a punch line may be as short as 5 words, but never pad a thin scene just to hit a length.
+     never restate the previous scene's action with a later frame.
+   - Chain forward, never sideways: every clause must move the story ON. A chain that
+     re-describes the same instant from another angle is padding — cut it.
+   - Never pad a thin beat to reach a length. A genuinely small beat gets a short line.
 
 4) NAMING / PRONOUN DISCIPLINE
    - Use ONLY the canonical_name and epithets supplied in the GLOSSARY for each entity.
@@ -2497,7 +2635,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    SET UP a motive before it pays off: if a later turn relies on an earlier motive
    (the symbiote choosing Ben as its perfect host), PLANT that motive in the
    COLD_OPEN / early scene using that beat's WHY, so the payoff feels earned.
-   A scene that carries a causal clause MAY run up to the 18-word line cap
+   A scene that carries a causal clause MAY run up to the 34-word line cap
    (others stay punchy, ≤14). Never invent a cause not in the WHY/summary/wiki.
 
 6.5) FACT-CHECK SELF-PASS — before returning JSON
@@ -2509,12 +2647,15 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    If a phrase isn't grounded, REPLACE it with a grounded one or REMOVE it. Better to write a less colorful but accurate scene than a vivid but invented one.
    The user has rejected past drafts that twisted the story. Accuracy beats flourish.
 
-7) LENGTH BUDGET — TIGHT, PUNCHY SHORT (the finished video must stay ~{round((_TARGET_WORDS_MIN + 14) / _WORDS_PER_SEC)}-{round((_TARGET_WORDS_MAX + 14) / _WORDS_PER_SEC)}s)
-   - **16-20 scenes** total (one per beat — cover the full arc incl. resolution). Keep
-     scenes SHORT so more of them still fit the word ceiling (short scenes = more panels).
+7) LENGTH BUDGET — TIGHT, PUNCHY SHORT (the finished video must stay ~{round((_TARGET_WORDS_MIN + 14) / _RECAP_WORDS_PER_SEC)}-{round((_TARGET_WORDS_MAX + 14) / _RECAP_WORDS_PER_SEC)}s)
+   - **{_TARGET_SCENES_MIN}-{_TARGET_SCENES_MAX} scenes** total (one per beat — cover the full arc incl. resolution).
+     This count is NOT independent of the word ceiling below: at the {_SCENE_AIM_MIN_WORDS}-{_SCENE_AIM_MAX_WORDS} words a
+     scene line must carry (rule 0), more scenes than this CANNOT fit the ceiling. If the
+     beats you were given exceed it, MERGE the ones that share a cause — never keep every
+     beat and shave every line, which just breaks both rules at once.
    - **{_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} words TOTAL — this is a HARD CEILING, not a target to fill.** At the
-     MEASURED render pace (~3.4 words/sec at our shipped 1.35 atempo) that + the teaser
-     intro is ~{round((_TARGET_WORDS_MIN + 14) / _WORDS_PER_SEC)}-{round((_TARGET_WORDS_MAX + 14) / _WORDS_PER_SEC)}s finished — inside the 48-71s viral cluster. Going over makes the
+     MEASURED render pace (~{_RECAP_WORDS_PER_SEC} words/sec at our shipped 1.35 atempo) that + the teaser
+     intro is ~{round((_TARGET_WORDS_MIN + 14) / _RECAP_WORDS_PER_SEC)}-{round((_TARGET_WORDS_MAX + 14) / _RECAP_WORDS_PER_SEC)}s finished — inside the 48-71s viral cluster. Going over makes the
      Short drag. Aim for the MIDDLE (≈{(_TARGET_WORDS_MIN + _TARGET_WORDS_MAX) // 2}w) unless the arc genuinely needs more.
    - Before returning JSON, COUNT your total words. If > {_TARGET_WORDS_MAX}, you MUST cut: drop
      adjectives, drop any clause that is NOT a grounded cause, and tighten each sentence —
@@ -2599,8 +2740,29 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      Echo a CONTENT word (a noun/verb/idea from the hook), never a stop-word. Nothing comes
      after this line except the "The comic is X." credit.
    - These TWO closing lines (unpack + mirror) may run up to 24 words when the idea
-     needs it — the only scenes besides the hook allowed past the 18-word cap. Do not
+     needs it — the only scenes besides the hook allowed past the 34-word cap. Do not
      spend the headroom on modifiers; spend it on the idea.
+
+8.69) POWER FEATS — END ON WHAT THE SUBJECT CAN ACTUALLY DO (REQUIRED)
+   A plot recap answers "what happened". This format sells "what is this character" — and
+   the thing that sells it is FEATS: concrete, measurable proof of what the subject did.
+   The reference format always carries one or two, stated as flat fact with no adjectives
+   ("watched his mother turn to salt", "wiped out an entire Sentinel army with one look").
+   - Write ONE or TWO feat lines. Each must contain a hard, checkable detail from the
+     story: a NAMED character the subject beat/killed/broke, or a measured scale of
+     destruction (a city, a planet, a body count, a span of time). "Very powerful",
+     "unstoppable", "a god among men" are NOT feats — they are adjectives. Cut them.
+   - PLACE THEM LAST. The feat lines are the final story lines, immediately before the
+     closing line. The video climbs: who he is → how he got that way → what he did → what
+     that makes him. Do not bury a feat in the middle where it reads as plot.
+   - A feat may be something the story already narrated earlier; restating it at the end
+     as a bare capability line is correct, not repetition — earlier it was plot, here it
+     is proof. Say it shorter and harder the second time.
+   - Rule 6 still binds: the feat must have actually happened in THIS story. Never import
+     a feat from another comic, and never inflate the scale the pages show.
+   - PRECEDENCE over 8.68: when a feat block is present it owns the ending, so 8.68's
+     MIRROR + LOOP-ECHO requirement moves onto the LAST feat line — that line still reuses
+     a content word from your hook. There is exactly one ending, not two.
 
 8.7) KEEP IT SIMPLE — ONE MAIN THREAD, EXPLAIN AS YOU GO
    - Tell ONLY the main event/conflict (the hero vs the central villain/threat).
@@ -2718,7 +2880,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
           ✓ "The worst was still coming."
         Rules: it is its OWN sentence appended to that beat's scene (NEVER a new scene —
         one beat still maps to one scene), it adds NO new event (no clause-joiner), and the
-        whole scene (event + seed) must still fit the 18-word line cap — so keep that beat's
+        whole scene (event + seed) must still fit the 34-word line cap — so keep that beat's
         main event short. Vary the seeds; do not reuse the same phrase. The finale is exempt.
 
    11j. BEAT-COMMENT — 1-2 deadpan narrator asides (NO MORE THAN TWO)
@@ -2729,21 +2891,26 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
           ✓ "And that's when everything went wrong."
         Plain words (rule 0). Use it AT MOST twice in the whole script — more and it turns
         into a gimmick. Like a seed, it is a second sentence on an existing beat's scene,
-        never its own scene, and the scene must still fit the 18-word cap.
+        never its own scene, and the scene must still fit the 34-word cap.
 
-   12) VISUAL BEATS (every story scene) — split each scene into the 1-3 separate MOMENTS it
+   12) VISUAL BEATS (every story scene) — split each scene into the separate MOMENTS it
        contains, so Stage 5 can cut to a fresh panel on each instead of holding one panel for
-       the whole line. You do NOT pick pages or panels — the pipeline maps each fragment to art.
-       Your ONLY job is to split at the visual seams:
+       the whole line. THIS IS WHAT MAKES THE LONG CHAINED SENTENCES OF RULE 3 WORK: a 28-word
+       chain of three actions becomes three images, not one page held for eight seconds.
+       You do NOT pick pages or panels — the pipeline maps each fragment to art. Your ONLY job
+       is to split at the visual seams:
         - "visual_beats" is a LIST OF STRINGS: the scene's OWN words, split at ITS punctuation /
-          connective (and / but / then / comma / dash) into 1-3 fragments, each ONE separately-
-          drawable moment (a new action, a new subject, a beat change).
+          connective (and / but / then / comma / dash), each ONE separately-drawable moment
+          (a new action, a new subject, a beat change).
+        - SPLIT BY LENGTH — a scene of 25+ words gives 3-4 fragments, 15-24 words gives 2-3,
+          and a short single-event scene (<=12 words) stays ONE fragment = the whole "text".
+          Aim for fragments of ~8-14 words. Do NOT force a split where there is only one
+          visual moment, and do NOT leave a 30-word chain as a single fragment.
         - VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text"
-          (you may only drop a comma / dash / connective at a split point). NEVER reword, add, or
-          drop a word — a seed or beat-comment aside (rules 11i/11j) is its own fragment.
-        - A short single-event scene (<=12 words) may be ONE fragment = the whole "text"; do NOT
-          force a split where there is only one visual moment.
-        - The outro credit line needs no split — one fragment = its whole text.
+          (you may only drop a comma / dash at a split point). NEVER reword, add, or drop a
+          word — a connective (and / but / then) stays, at the START of the next fragment.
+          A seed or beat-comment aside (rules 11i/11j) is its own fragment.
+        - The closing line needs no split — one fragment = its whole text.
 
 Return ONLY JSON. No prose, no markdown fences."""
 
@@ -3174,7 +3341,7 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         if med > _TARGET_SENT_LEN + 3:
             errors.append(
                 f"median scene length {med:.0f}w > {_TARGET_SENT_LEN+3} "
-                f"(target {_TARGET_SENT_LEN}w; channel is punchy, one event/scene)"
+                f"(target {_TARGET_SENT_LEN}w; the mimicked register is long paratactic chains)"
             )
 
     # ANTI-UNIFORMITY toward SHORT: require >= _MIN_PUNCH_SCENES punch sentences
@@ -3195,7 +3362,9 @@ def _validate(parsed: dict, valid_pages: set[int], valid_beat_ids: set[int]) -> 
         )
 
     errors.extend(_detect_redundant_scenes(scenes))
-    errors.extend(_detect_multi_event(scenes))
+    # (single-event guard removed 2026-07-27 — the mimicked register is deliberately
+    #  multi-event per sentence; rule 12's visual_beats give each chained moment its
+    #  own panel, which is what the guard was really protecting against.)
 
     # Research-backed retention lints (all SOFT — none match _is_critical_error, so they
     # feed the writer a directive on retry but never block a ship or churn the best-draft
@@ -3301,54 +3470,6 @@ def _detect_redundant_scenes(scenes: list[dict], threshold: int = 4) -> list[str
                 )
     return issues
 
-
-# Clause joiners that typically introduce a SECOND independent event (a new
-# subject doing a new action). Plain " and " is tracked separately because it
-# often just continues ONE subject ("crushed the gun and stormed out") and is
-# fine on its own — it only signals cramming when paired with one of these.
-_EVENT_JOINERS = (" while ", " as ", " before ", " after ", " then ", " and then ")
-
-
-def _detect_multi_event(scenes: list[dict]) -> list[str]:
-    """Single-event guard. Flags a body scene that narrates MORE THAN ONE event,
-    because each scene is one page held on screen for a few seconds and cannot
-    visually track two simultaneous actions (the "narration doesn't match the
-    scene" bug — e.g. Venom scene 7 narrated 3 events over one whole page).
-
-    Heuristic (deterministic, no LLM — runs every retry, can't throttle):
-    flag when the sentence is long (>16 words) AND it both subordinates a second
-    clause (while/as/then/before/after) AND coordinates another with 'and', OR it
-    stacks two+ subordinate joiners. Short single-event lines never trip it.
-    Errors flow into _retry_fix_with_wiki, which is told to split/trim to the
-    single most important action (never to add a scene — 1 beat → 1 scene)."""
-    issues: list[str] = []
-    for i, s in enumerate(scenes):
-        if i == 0 or s.get("is_intro") or s.get("is_outro"):
-            continue  # hook (scene 1) and bookends are exempt
-        text = str(s.get("text", "")).strip()
-        if "comic is" in text.lower():
-            continue  # outro credit (may not be flagged is_outro yet at validate time)
-        wc = len(text.split())
-        t = " " + text.lower() + " "
-        joins = sum(t.count(j) for j in _EVENT_JOINERS)
-        plain_and = t.count(" and ") - t.count(" and then ")  # don't double-count
-        # A CAUSAL scene is one event + one grounded 'why' clause (allowed, ≤24w);
-        # a CRAM is ≥2 independent events. Flag only a real cram: two+ subordinate
-        # event-joiners (while/as/then/before/after), or a long sentence (>18w) that
-        # stacks a joiner AND an 'and'. A single causal/relative clause ('whose…',
-        # 'for forgetting…', '— the host it wanted') adds no event-joiner, so it
-        # passes.
-        multi = joins >= 2 or (wc > 18 and (joins + plain_and) >= 2)
-        if multi:
-            sid = s.get("scene_id", i + 1)
-            issues.append(
-                f"scene {sid} narrates multiple EVENTS in one sentence "
-                f"({wc}w; clause-joiners={joins}, 'and'={plain_and}) — a single page "
-                f"can't show two actions. Keep ONE event (you MAY add one grounded "
-                f"'why' clause for its cause); drop the OTHER events (they belong to "
-                f"other beats). Do NOT add a scene — one beat maps to one scene."
-            )
-    return issues
 
 
 def _story_scenes(scenes: list[dict]) -> list[dict]:
@@ -3523,6 +3644,7 @@ def _normalize_titles_to_common(scenes: list[dict], comic_context: dict,
 
 def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
                   mode: str, mdl: str) -> Narration:
+    _wps = _wps_for(mode)
     scenes: list[Scene] = []
     total_words = 0
     raw_scenes = parsed.get("scenes") or []
@@ -3560,7 +3682,7 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
             page_ref=int(s.get("page_ref", 0) or 0),
             panel_ref=int(s.get("panel_ref", -1) if s.get("panel_ref") is not None else -1),
             word_count=wc,
-            target_seconds=round(wc / _WORDS_PER_SEC, 2),
+            target_seconds=round(wc / _wps, 2),
             connective=str(conn).strip() if conn else None,
             beat_id=int(s.get("beat_id", 0) or 0),
             is_intro=bool(s.get("is_intro")),
@@ -3573,7 +3695,7 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
         ))
         total_words += wc
 
-    est_duration = round(total_words / _WORDS_PER_SEC, 2)
+    est_duration = round(total_words / _wps, 2)
     return Narration(
         mode=mode,
         title=str(parsed.get("title", "")).strip(),
@@ -3581,7 +3703,7 @@ def _to_narration(parsed: dict, beats: list[Beat], glossary: Glossary,
         scenes=scenes,
         total_word_count=total_words,
         estimated_duration_seconds=est_duration,
-        words_per_second=_WORDS_PER_SEC,
+        words_per_second=_wps,
         source_project="",
         llm_model=mdl,
         beats=beats,
@@ -4220,6 +4342,135 @@ def _format_clarity_fixes(flags: list[str]) -> str:
             + "\n".join(lines) + "\n\n")
 
 
+# ─── COLD-VIEWER CRITIC (all 3 modes: recap, micro, Q&A) ─────────────────────────
+# SIBLING of the transparency critic, same convergence point (pipeline.write_script), same
+# soft FLAG+LOG contract. Transparency asks "is the prose clear on a single listen?"; this
+# asks the DIFFERENT question a first-time viewer trips on: "do I know who these people are
+# to each other, and WHY this action matters?" Real miss it targets: the
+# harley-quinn-25-joker-breakup micro narrated Harley beating the Joker bloody and biting his
+# lip off, but NO scene ever said he was her ABUSIVE EX — a cold viewer had no idea why any
+# of it landed (Master: "confusing, lack context why Joker in cell / what he did to her").
+# The fix was a hand-added scene stating the relationship; this critic surfaces that gap
+# automatically. Each flag carries a <=12-word suggested_clause the writer can weave in.
+# FLAG + LOG only by default; optional one-shot feedback re-write behind COLD_VIEWER_RETRY.
+_COLD_VIEWER_SYSTEM = """You are a COLD VIEWER for a comic-video narration — you have NEVER \
+read this comic and know only what the narration TELLS you, scene by scene, in order. As you \
+hear each scene you carry forward ONLY what earlier scenes already stated. Your job: find the \
+scenes where a first-time viewer is left CONFUSED in a way that breaks the moment — NOT scenes \
+that merely omit deep lore.
+
+For each scene ask two questions:
+1. RELATIONSHIP: does an action happen between characters whose relationship to each other the \
+narration never told me, so I can't feel why it matters? (e.g. two people fight, but I was \
+never told one is the other's abuser / parent / partner / betrayer.)
+2. WHY: does the scene show something striking whose significance I can't grasp because the \
+narration never gave the reason or stakes?
+
+FLAG a scene ONLY when a first-time viewer would genuinely be confused, or the moment falls \
+flat, for lack of that WHO/WHY — AND the fix is a SHORT clause the narration could have said.
+
+DO NOT FLAG:
+- deep or optional lore (backstory that would enrich but isn't needed to FOLLOW the scene);
+- household-name characters whose basic nature a general audience already knows;
+- a relationship or reason ALREADY stated in an EARLIER scene (you remember it — never re-flag);
+- style, tone, pacing, or word choice.
+When unsure, DO NOT flag. Most narrations are fine — returning zero flags is the common, \
+correct answer. Flag only a gap that genuinely leaves a stranger lost.
+
+For each real problem return: scene_id, missing ("relationship" | "why" | "context"), a \
+one-line note, and suggested_clause — a <=12-word plain B2-English clause the narration could \
+weave in to fix it.
+
+Return JSON ONLY: {"flags":[{"scene_id":N,"missing":"relationship|why|context",\
+"note":"...","suggested_clause":"..."}]}."""
+
+
+def _cold_viewer_critic(
+    nar: Narration, comic_context: dict, mode: str,
+    *, model: str | None = None, progress: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Zero-context WHO/WHY pass over the FINAL narration of ANY mode. Returns SOFT flag
+    strings — one per scene a first-time viewer can't follow for lack of a relationship or
+    reason — empty when the narration stands on its own, the knob is off, or the LLM is
+    unavailable. Never raises (skips on any LLM failure), so it can only ADD a log signal,
+    never block a render. Standalone-callable for regression tests (no narrate needed)."""
+    if not COLD_VIEWER_CRITIC:
+        return []
+    log = progress or (lambda _msg: None)
+    scenes = [s for s in (getattr(nar, "scenes", None) or [])
+              if str(getattr(s, "text", "")).strip()]
+    if len(scenes) < 2:
+        return []
+    title = str(getattr(nar, "title", "") or "").strip()
+    cast = ", ".join(_character_names(comic_context)) or "?"
+    nar_lines = [f"S{s.scene_id}: {str(s.text).strip()}" for s in scenes]
+    user = (
+        f"VIDEO TITLE / QUESTION: {title or '(untitled)'}\n\n"
+        f"CHARACTERS IN THIS STORY (names only — their RELATIONSHIPS to each other are NOT "
+        f"given here; judge whether the NARRATION itself tells the viewer):\n{cast}\n\n"
+        "NARRATION SCENES (in order — you learn a fact ONLY when a scene speaks it):\n"
+        + "\n".join(nar_lines)
+        + "\n\nReturn JSON {\"flags\":[{\"scene_id\":N,\"missing\":\"relationship|why|context\","
+          "\"note\":\"...\",\"suggested_clause\":\"...\"}]}."
+    )
+    log("[stage4] cold-viewer critic — zero-context WHO/WHY pass…")
+    chain = [model] if model else list(FIDELITY_LLM_MODELS)
+    try:
+        raw, _mdl = call_with_chain(
+            system=_COLD_VIEWER_SYSTEM, user=user, models=chain, max_tokens=1500,
+            progress=progress, label="cold_viewer", validator=lambda c: '"flags"' in c)
+    except RuntimeError as exc:
+        log(f"[stage4]   cold-viewer critic unavailable — skipping: {exc}")
+        return []
+    pc = _extract_json(raw)
+    if not isinstance(pc, dict):
+        return []
+    out: list[str] = []
+    for it in (pc.get("flags") or []):
+        missing = (str(it.get("missing", "")).strip() or "context")
+        note = str(it.get("note", "")).strip()
+        clause = str(it.get("suggested_clause", "")).strip()
+        if note:
+            s = f"cold_viewer[{missing}]: scene S{it.get('scene_id', '?')}: {note}"
+            if clause:
+                s += f" | suggest: {clause}"
+            out.append(s)
+    if out:
+        log(f"[stage4]   cold-viewer critic flagged {len(out)} scene(s)")
+    return out
+
+
+_COLD_VIEWER_FLAG_RE = re.compile(r"^cold_viewer\[([^\]]+)\]:\s*scene S(\S+):\s*(.*)$")
+
+
+def _format_cold_viewer_fixes(flags: list[str]) -> str:
+    """Turn cold-viewer flag strings into a writer-facing FIX block that names each flagged
+    scene, the confusion, and the suggested clause to weave in. Returns "" when nothing is
+    actionable, so a caller concatenating it into a prompt is byte-identical to the no-flag
+    path. Routed via the SAME clarity_fixes param the transparency retry uses (all 3 mode
+    writers already read it), so the fix is a full-writer rewrite — the writer re-emits
+    visual_beats consistently, keeping the verbatim invariant intact (no surgical re-split)."""
+    lines: list[str] = []
+    for f in flags:
+        m = _COLD_VIEWER_FLAG_RE.match(str(f).strip())
+        if not m:
+            continue
+        typ, sid, rest = m.group(1), m.group(2), m.group(3).strip()
+        note, _sep, clause = rest.partition(" | suggest: ")
+        note = note.strip().rstrip(". ")
+        clause = clause.strip()
+        if not note:
+            continue
+        instr = f"weave in a plain clause like: {clause}" if clause \
+            else f"state the missing {typ} in plain words"
+        lines.append(f"- scene {sid}: {note} — {instr}.")
+    if not lines:
+        return ""
+    return ("PREVIOUS DRAFT LEFT A ZERO-CONTEXT VIEWER CONFUSED — FIX THESE by weaving the "
+            "missing WHO/WHY into the SAME scene in plain words (keep everything else intact, "
+            "stay in the word budget):\n" + "\n".join(lines) + "\n\n")
+
+
 # ─── GROUNDING CHECK CRITIC (narration line ↔ the panel it is SHOWN over) ────────
 # THIRD critic, SEPARATE from transparency. Transparency is text-vs-text (is the prose
 # clear?); this is text-vs-IMAGE (does the panel on screen actually SHOW what the line
@@ -4365,7 +4616,9 @@ def _critique_beats_for_impact(
     # scene per beat), so about _TARGET_WORDS_MAX//16 beats. When the outline exceeds that, the
     # critic MUST trim down to it: the OLD keep-biased prompt gave no target, so a dense plot
     # (Doom 2099: 16 beats) kept every beat and blew the ceiling (345 words). Never below the floor.
-    beat_budget = max(LOGIC_CRITIC_MIN_BEATS, _TARGET_WORDS_MAX // 16)
+    # Same derivation as _TARGET_SCENES_MAX — the old //16 assumed 16-word lines while the
+    # register mandates 18-28, so this budgeted more beats than the ceiling could ever carry.
+    beat_budget = max(LOGIC_CRITIC_MIN_BEATS, _TARGET_SCENES_MAX)
     excess = len(beats) - beat_budget
     if excess > 0:
         budget_line = (
@@ -4650,7 +4903,12 @@ def _retry_fix_with_wiki(
         + f"CANONICAL FULL PLOT (use this as your primary source of truth):\n{plot}\n\n"
         f"VALIDATION ERRORS (fix every one):\n{err_block}\n\n"
         + f"BEATS — emit EXACTLY ONE scene per beat, in this order ({len(beats)} story "
-        f"scenes + 1 outro credit). If a 'coverage gap' error is listed above you "
+        f"scenes + 1 outro credit). YOUR PER-LINE BUDGET IS {_TARGET_WORDS_MAX // max(1, len(beats))} WORDS: "
+        f"{_TARGET_WORDS_MAX} words divided by these {len(beats)} beats. That is an AVERAGE you must "
+        f"hold across the whole script — a longer line has to be paid for by a shorter "
+        f"one, and the {_SCENE_MAX_WORDS}-word cap still applies to every single line. Do not write "
+        f"every line at the cap; that is how the script overruns. "
+        f"If a 'coverage gap' error is listed above you "
         f"DROPPED or MERGED beats — re-add every missing beat as its own scene:\n"
         f"{_beats_block(beats)}\n\n"
         + _orientation_block()

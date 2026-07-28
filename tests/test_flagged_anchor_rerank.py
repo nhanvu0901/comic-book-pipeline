@@ -52,6 +52,7 @@ def _stub(monkeypatch, rerank_calls, *, rerank_pick=0):
     from the size tie-break and page prior, and replace the SDK vision judge with a recorder
     that returns `rerank_pick` (a pool index) so we can prove a unit reached rerank."""
     monkeypatch.setattr(_embedding, "embed_batch", lambda texts: [None] * len(texts))
+    monkeypatch.setattr(shots, "PANEL_RERANK", True)   # default flipped to 0 (2026-07-24); this suite tests the rerank
     monkeypatch.setattr(shots, "PANEL_SIZE_TIE_MARGIN", 0.0)
     monkeypatch.setattr(shots, "PANEL_FWD_BIAS", 0.0)
     monkeypatch.setattr(shots, "_panel_content_score", _high_cosine_beta)

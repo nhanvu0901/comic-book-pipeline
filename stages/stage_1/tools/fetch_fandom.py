@@ -1,5 +1,6 @@
 """Direct MediaWiki Action API client for Fandom wikis (Stage 1 plot fetch)."""
 import json
+import os
 import re
 import time
 import urllib.error
@@ -10,6 +11,7 @@ from ..ui import Colors
 
 _USER_AGENT = "ComicVideoPipeline/1.0"
 _TIMEOUT = 15
+_JINA_TIMEOUT = 20
 _MIN_PLOT_CHARS = 200
 _PUBLISHER_HINTS = ("marvel", "dc", "image", "darkhorse", "idw", "valiant", "boom")
 
@@ -48,8 +50,35 @@ def _priority_order(publisher: str) -> list[str]:
     return [primary]  # publisher known → query only its wiki, skip the rest
 
 
+def _fetch_via_jina(url: str) -> dict | None:
+    """Fallback for Cloudflare-blocked direct requests: r.jina.ai fetches the page
+    server-side (bypassing the challenge) and returns it as text. The MediaWiki
+    JSON comes back verbatim or wrapped in a ```...``` fence — strip that, parse."""
+    proxy_url = f"https://r.jina.ai/{url}"
+    try:
+        req = urllib.request.Request(proxy_url, headers={"User-Agent": _USER_AGENT})
+        with urllib.request.urlopen(req, timeout=_JINA_TIMEOUT) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        print(f"  {Colors.DIM}[fandom] jina FAILED too ({e}){Colors.END}")
+        return None
+    body = text.strip()
+    m = re.search(r'\{.*\}', body, re.DOTALL)  # strip markdown fence/prose jina may add
+    if m:
+        body = m.group(0)
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as e:
+        print(f"  {Colors.DIM}[fandom] jina FAILED too (bad JSON: {e}){Colors.END}")
+        return None
+    print(f"  {Colors.DIM}[fandom] jina OK ({len(text)} chars){Colors.END}")
+    return parsed
+
+
 def _http_get_json(url: str) -> dict | None:
-    """GET a URL with one retry and parse JSON."""
+    """GET a URL with one retry and parse JSON; if direct access keeps failing
+    (403/429/timeout/Cloudflare challenge), fall back once to the r.jina.ai
+    reader proxy (gate: FANDOM_PROXY env, default "1"=on)."""
     last_err: Exception | None = None
     for attempt in range(2):
         try:
@@ -62,8 +91,12 @@ def _http_get_json(url: str) -> dict | None:
             if attempt == 0:
                 time.sleep(2)
                 continue
-            return None
-    return None
+            break
+    status = getattr(last_err, "code", type(last_err).__name__)
+    print(f"  {Colors.DIM}[fandom] direct {status} → jina proxy...{Colors.END}")
+    if os.environ.get("FANDOM_PROXY", "1") != "1":
+        return None
+    return _fetch_via_jina(url)
 
 
 def _search_wiki(wiki: str, query: str) -> list[str]:

@@ -7,7 +7,7 @@ import json
 import queue
 import re
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -306,6 +306,26 @@ def save_review_locks(project_name: str, locks_doc: dict) -> None:
     p = PROJECTS_ROOT / project_name / "review" / "locks.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(locks_doc, indent=2, ensure_ascii=False))
+
+
+def load_hidden_panels(project_name: str) -> dict:
+    """review/hidden_panels.json — the project-wide "never show me this panel again"
+    blacklist ({"hidden": [{"page","panel"}, ...]}). A missing file means nothing is
+    hidden. It is a UI FILTER layer only: candidates.json (the matcher's export) is
+    never rewritten, so clearing this file restores every panel."""
+    p = PROJECTS_ROOT / project_name / "review" / "hidden_panels.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {"hidden": []}
+
+
+def save_hidden_panels(project_name: str, doc: dict) -> None:
+    p = PROJECTS_ROOT / project_name / "review" / "hidden_panels.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
 
 
 def narration_sha1(project_name: str) -> str | None:

@@ -121,6 +121,15 @@ VLM_MODELS_BATCH: list[str] = [
 ]
 VLM_BATCH_SIZE = int(os.getenv("VLM_BATCH_SIZE", "3"))  # pages per VLM call
 
+# Master 2026-07-24: per-page VLM description extraction (OpenRouter, via
+# stages/stage_2/vlm_extract.py) is DISABLED by default. Workflow now: panels are
+# hand-picked in review and speech bubbles come from Magi's OCR + bbox, so the
+# OpenRouter describe pass is dead cost. DISABLED via this knob, NOT deleted.
+#   0 = Magi-only: pick tay + bubble từ Magi OCR/bbox. Panel description empty (later
+#       synthesized from dialog/characters), page-sort candidates, no OpenRouter call.
+#   1 = re-enable the VLM OpenRouter desc extraction (old behaviour, byte-identical).
+VLM_EXTRACT = os.getenv("VLM_EXTRACT", "0").strip().lower() not in ("0", "false", "no", "")
+
 # ─── Stage 2 perf (2026-07-06) ──────────────────────────────────────────────
 # Magi panel-detection is a LOCAL model (Florence-2, float32 on Mac MPS) run once
 # per page — the biggest local-compute block of Stage 2. Its API already takes a
@@ -226,6 +235,23 @@ TRANSPARENCY_RETRY = os.getenv("TRANSPARENCY_RETRY", "false").lower() in ("true"
 # metadata (offline / Q&A-before-stage-5 safe). No auto-retry (feedback wiring is later).
 GROUNDING_CHECK = os.getenv("GROUNDING_CHECK", "true").lower() in ("true", "1", "yes")
 
+# Stage 3 COLD-VIEWER CRITIC (all 3 modes). SIBLING of the transparency critic, same
+# convergence point (pipeline.write_script), same soft FLAG+LOG contract. Plays a viewer
+# who NEVER read the comic and asks, per scene: do I know who these people are to each
+# other, and do I understand WHY this action matters? Real miss it targets: the
+# harley-quinn-25-joker-breakup micro beat the Joker bloody but never said he was Harley's
+# ABUSIVE EX — a cold viewer had no idea why any of it landed. Flags relationship/why/context
+# gaps ONLY when they cause genuine confusion (never deep/optional lore). Each flag carries a
+# <=12-word suggested_clause the writer can weave in. Default ON; never raises (offline-safe).
+COLD_VIEWER_CRITIC = os.getenv("COLD_VIEWER_CRITIC", "1").lower() in ("true", "1", "yes")
+# When on AND cold-viewer flags remain, re-run the writer ONCE with the flags' suggested
+# clauses as a fix block and keep whichever draft has fewer flags. Full-writer rewrite
+# (verbatim visual_beats stay consistent — the writer re-emits them) rather than a surgical
+# text-edit + re-split, which would risk desyncing visual_beats / per-fragment locks. Default
+# OFF so the single-pass behavior is unchanged; flags still log so Master can weave the WHY
+# in the review UI (exactly how harley scene S13 was hand-added).
+COLD_VIEWER_RETRY = os.getenv("COLD_VIEWER_RETRY", "false").lower() in ("true", "1", "yes")
+
 # Stage 3 LLM VISUAL-BEAT SPLIT (end of Stage 3). Splits each body scene's sentence into
 # VERBATIM visual beats so Stage 5 can show a distinct panel per beat (panel changes at
 # each new visual moment, not held static for the whole sentence). Replaces the old spaCy
@@ -288,6 +314,34 @@ EMBED_LLAMACPP_URL = os.getenv("EMBED_LLAMACPP_URL", "http://127.0.0.1:1235/v1/e
 
 # ─── Qdrant vector store (panel↔narration matching) ─────────────────────────
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:8069")
+
+# ─── Panel TEXT-embed master switch (Master 2026-07-24) ──────────────────────
+# The workflow now picks panels BY HAND in the Review Beats UI (hard gate, all modes),
+# so the Qwen 4096-dim panel TEXT index + Qdrant text collection + cosine ranking no
+# longer decide which panel renders. PANEL_TEXT_EMBED=0 (DEFAULT, OFF) turns that whole
+# dead machinery off: Stage 2 skips building the panel text index (no embedding API /
+# no `panels__<slug>` collection), review_gate.build_candidates lists ALL panels
+# page-sorted (no vector query), and Stage 5 assigns unlocked scenes DETERMINISTICALLY
+# (first panel of the beat's page_ref). Re-enable the old cosine pipeline with
+# PANEL_TEXT_EMBED=1. NOTE: the SigLIP IMAGE index (panels_img__) is separate and stays
+# on — it is local, cheap, and feeds custom-image argmax placement.
+PANEL_TEXT_EMBED = os.getenv("PANEL_TEXT_EMBED", "0").strip().lower() not in ("0", "false", "no", "")
+
+
+# ─── Stage 3 vector beat-grounding master switch (Master 2026-07-27) ─────────
+# Same manual-first reasoning as PANEL_TEXT_EMBED above: Stage 3's embed pass only
+# produces vector page_ref/panel_ref PINS for beat↔panel grounding, and hand-picked
+# panels + the review-lock hard gate overwrite those pins before anything renders.
+# So it is pure cost — and on 2026-07-27 it was worse than free: an OpenRouter embed
+# call blocked a recap run for 31 minutes inside an SSL read (urlopen(timeout=) bounds
+# each socket op, not the whole request, so a trickling server never trips it).
+# DEFAULT ON (= skip embedding). STAGE3_NO_EMBED=0 restores the old vector grounding.
+# Read through this helper, never as a module constant: stage_3/cli.py sets the env var
+# AFTER config import when --no-embed is passed, so a constant would miss it.
+def stage3_no_embed() -> bool:
+    """True when Stage 3 should skip every embedding call (default)."""
+    return os.getenv("STAGE3_NO_EMBED", "1").strip().lower() not in ("0", "false", "no", "")
+
 
 def _azure_embed_ready() -> bool:
     k, e = AZURE_OPENAI_EMBEDDING_API_KEY, AZURE_OPENAI_EMBEDDING_ENDPOINT

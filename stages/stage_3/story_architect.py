@@ -1,7 +1,6 @@
 """Story Architect — advisory pre-write structure analysis (see
 docs/superpowers/specs/2026-06-24-story-architect-design.md). Never raises."""
 from __future__ import annotations
-import json
 import re
 from typing import Callable
 

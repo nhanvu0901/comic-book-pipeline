@@ -90,11 +90,14 @@ def test_answer_context_schema_exact_and_presentation_order(wired, monkeypatch):
                                    researched_at="2026-07-04", log=lambda _m: None)
     a = json.loads(a_path.read_text())
 
-    assert set(a.keys()) == {"question", "answer_summary", "researched_at",
-                             "source_engine", "items"}
+    assert set(a.keys()) == {"question", "answer_summary", "constant_broken",
+                             "viewer_context", "researched_at", "source_engine", "items"}
     assert a["question"] == QUESTION
     assert a["researched_at"] == "2026-07-04"
     assert a["source_engine"] == "claude-sdk-web"
+    # ADDITIVE story-context fields present (default "" when research omitted them —
+    # the _ITEMS fixture carries none, so both stay empty here).
+    assert a["constant_broken"] == "" and a["viewer_context"] == ""
     # presentation order: rank 1 first, shock last
     assert [it["rank"] for it in a["items"]] == [1, 2, 3]
     assert [it["entity"] for it in a["items"]] == ["Ghost Rider", "Deadpool", "Man-Thing"]
@@ -102,8 +105,11 @@ def test_answer_context_schema_exact_and_presentation_order(wired, monkeypatch):
         assert set(it.keys()) == {"rank", "entity", "how_or_why", "source_comic",
                                   "source_year", "reader_url", "drawable_moment",
                                   "verification_note", "surprise_level",
+                                  "relationships", "stakes_why",
                                   "verified", "verify_note"}
         assert it["verified"] is True and it["verify_note"] == "verified"
+        # additive fields default to "" for the (old-shape) fixture items
+        assert it["relationships"] == "" and it["stakes_why"] == ""
 
 
 def test_comic_context_saga_shape(wired):
@@ -280,3 +286,33 @@ def test_pick_series_ignores_generic_tokens():
     assert _pick_series([hits[0]], "FF Vol. 2", "2014") == ""
     # all-generic/numeric names still resolve via raw-token fallback
     assert _pick_series([("1", "2000-ad", "AD")], "2000 AD", "") == "AD"
+
+
+def test_story_context_fields_round_trip_when_present(monkeypatch, tmp_path):
+    """When research supplies the ADDITIVE story-context, research_answer + build_contexts
+    persist question-level constant_broken/viewer_context and per-item
+    relationships/stakes_why into answer_context.json (the WHO/WHY the writer needs)."""
+    items = [dict(it) for it in _ITEMS]
+    items[0]["relationships"] = "Danny Ketch is the second Ghost Rider"
+    items[0]["stakes_why"] = "he turns his own curse on himself and feels nothing"
+    payload = "```json\n" + json.dumps({
+        "answer_summary": "Several shrugged it off.",
+        "constant_broken": "Nobody survives the Penance Stare.",
+        "viewer_context": "The Penance Stare forces a soul to feel every pain it caused.",
+        "items": items,
+    }) + "\n```"
+    monkeypatch.setattr(mod, "sdk_available", lambda: True)
+    monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: payload)
+    monkeypatch.setattr(mod, "get_project_dirs", lambda name: {"root": tmp_path})
+    monkeypatch.setattr(mod, "verify_issue", lambda *a, **k: {"ok": True, "note": "verified"})
+
+    res = mod.research_answer(QUESTION, log=lambda _m: None)
+    assert res["constant_broken"] == "Nobody survives the Penance Stare."
+    assert res["viewer_context"].startswith("The Penance Stare forces")
+    a_path, _ = mod.build_contexts(QUESTION, res, "gr_penance", log=lambda _m: None)
+    a = json.loads(a_path.read_text())
+    assert a["constant_broken"] == "Nobody survives the Penance Stare."
+    assert a["viewer_context"].startswith("The Penance Stare forces")
+    first = a["items"][0]
+    assert first["relationships"] == "Danny Ketch is the second Ghost Rider"
+    assert first["stakes_why"] == "he turns his own curse on himself and feels nothing"

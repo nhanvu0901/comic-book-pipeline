@@ -3,6 +3,7 @@ the two closing story lines carry the story's biggest idea — the twist's impli
 and the thematic mirror — and Master's approved versions run 22-24 words. The 18-word
 line cap must NOT reject those two lines (they'd be rewritten flat by the retry loop),
 while every other body line keeps the strict cap."""
+from stages.stage_3 import write_script as ws
 from stages.stage_3.write_script import _validate
 
 
@@ -28,9 +29,11 @@ def test_finale_two_lines_get_headroom():
     assert not cap_errs, f"finale lines must be allowed 24w, got: {cap_errs}"
 
 
-def test_mid_scene_still_capped_at_18():
-    # a MIDDLE scene at 24w must still be rejected — headroom is finale-only
-    parsed = _parsed(n_story=12, finale_words=10, mid_words=24)
+def test_mid_scene_still_capped_at_the_line_cap():
+    # The cap moved 18 -> 34 with the variant-profile register (long paratactic
+    # chains), but it is still a cap: a mid scene past _SCENE_MAX_WORDS is rejected,
+    # and the finale headroom above it stays finale-only.
+    parsed = _parsed(n_story=12, finale_words=10, mid_words=ws._SCENE_MAX_WORDS + 3)
     errors = _validate(parsed, valid_pages={1}, valid_beat_ids=set(range(1, 13)))
     cap_errs = [e for e in errors if "over the line cap" in e]
-    assert cap_errs, "mid-script 24w line must still hit the cap"
+    assert cap_errs, "a mid-script line past the cap must still be rejected"

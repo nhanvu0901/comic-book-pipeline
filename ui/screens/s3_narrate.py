@@ -10,7 +10,6 @@ Approve-and-continue action.
 """
 from __future__ import annotations
 
-import json
 from typing import Callable
 
 import flet as ft
@@ -22,7 +21,7 @@ from ..bridge import (
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
-    ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED,
+    ACCENT, BG_ELEVATED, BORDER, DANGER, SUCCESS, TEXT_MUTED,
     TEXT_PRIMARY, WARN,
 )
 from stages.stage_3.modes import MODES_BY_KEY

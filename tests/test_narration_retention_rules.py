@@ -20,24 +20,32 @@ def _sc(text: str) -> dict:
 
 # ── hook band: single source of truth, teaser distinct from body hook ──────────────
 def test_intro_band_is_named_and_short_enough_to_protect_the_length_band():
-    # Teaser (prepended ON TOP of the body budget) must stay short — its ceiling is well
-    # under the body cold-open hook's 26 so a teaser + a full body cannot blow ~60s.
-    assert (_INTRO_MIN_WORDS, _INTRO_MAX_WORDS) == (10, 20)
-    assert (_HOOK_MIN_WORDS, _HOOK_MAX_WORDS) == (14, 26)
+    # VARIANT-PROFILE REGISTER (2026-07-27): the teaser is now a bare question echoing
+    # the title ("Who is Deadpool 2099?" = 4w, "How did Absolute Superman become
+    # unstoppable?" = 7w), so the band is 4-9 — still prepended ON TOP of the body
+    # budget, still well under the body cold-open hook's ceiling.
+    assert (_INTRO_MIN_WORDS, _INTRO_MAX_WORDS) == (4, 9)
+    assert (_HOOK_MIN_WORDS, _HOOK_MAX_WORDS) == (8, 26)
     assert _INTRO_MAX_WORDS < _HOOK_MAX_WORDS
-    lo_sec = (_TARGET_WORDS_MIN + _INTRO_MIN_WORDS) / 3.4
-    hi_sec = (_TARGET_WORDS_MAX + _INTRO_MAX_WORDS) / 3.4
-    assert 40 <= lo_sec and hi_sec <= 60, (lo_sec, hi_sec)
+    # 3.98 = the MEASURED recap rate (see write_script._RECAP_WORDS_PER_SEC); the shared
+    # 3.4 estimate belongs to Q&A and undershot recap by ~8s per video until 2026-07-28.
+    lo_sec = (_TARGET_WORDS_MIN + _INTRO_MIN_WORDS) / 3.98
+    hi_sec = (_TARGET_WORDS_MAX + _INTRO_MAX_WORDS) / 3.98
+    assert 53 <= lo_sec and hi_sec <= 64, (lo_sec, hi_sec)
 
 
-def test_foreshadow_promise_two_sentence_teaser_still_classifies_and_fits_band():
-    # Rule 1: hook sentence + a short promise sentence, all in one teaser line. The
-    # promise must NOT change the archetype (classify reads the first 12 words) and the
-    # whole thing must fit the teaser band.
-    teaser = "Nightwing thought he had the perfect life. The choice costs him everything."
-    assert _classify_hook(teaser) == "character_action"
-    assert _classify_hook(teaser) in _ALLOWED_HOOK_ARCHETYPES
-    assert _INTRO_MIN_WORDS <= len(teaser.split()) <= _INTRO_MAX_WORDS
+def test_variant_question_teasers_classify_and_fit_the_band():
+    # Rule 1 (rewritten 2026-07-27): the teaser is ONE bare question naming the subject.
+    # Each of the three allowed forms must classify as interrogative (the "?" branch of
+    # _classify_hook) and fit the 4-9 word band. Verbatim shapes from the measured hits.
+    for teaser in (
+        "Who is Deadpool 2099?",
+        "How powerful is Cyclops 2099?",
+        "How did Absolute Superman become unstoppable?",
+    ):
+        assert _classify_hook(teaser) == "interrogative", teaser
+        assert _classify_hook(teaser) in _ALLOWED_HOOK_ARCHETYPES, teaser
+        assert _INTRO_MIN_WORDS <= len(teaser.split()) <= _INTRO_MAX_WORDS, teaser
 
 
 # ── rule 2: flat-sequence transition overuse ───────────────────────────────────────

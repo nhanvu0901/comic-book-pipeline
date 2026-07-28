@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import math
 import os
 import subprocess
 import sys
@@ -30,9 +31,10 @@ from pathlib import Path
 
 from config import PROJECTS_ROOT
 from ..bridge import (
-    image_b64, load_narration, load_preprocessed, load_review_candidates,
-    load_review_locks, list_review_projects, narration_sha1, review_thumb_b64,
-    review_thumb_path, run_blocking, save_narration_edits, save_review_locks,
+    image_b64, is_answer_project, load_hidden_panels, load_narration, load_preprocessed,
+    load_review_candidates, load_review_locks, list_review_projects, narration_sha1,
+    review_thumb_b64, review_thumb_path, run_blocking, save_hidden_panels,
+    save_narration_edits, save_review_locks,
 )
 from ..custom_image import add_custom_image, enrich_custom_image, list_custom_images
 from ..intro_import import import_intro_image, remove_intro_image
@@ -42,11 +44,20 @@ from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
 from stages.subject_panels import load_subject_panels
+from stages.review_gate import remap_locks_by_src
 
 
-THUMB_H = 200  # candidate tile thumb height — big enough to actually judge a panel
+THUMB_H = 120     # candidate tile thumb height — small enough for ~20 tiles on screen at
+                  # once (the pool is identical across beats, so browsing speed beats tile
+                  # size); click a tile for the 520px lightbox when a panel needs judging.
 MIN_PANELS = 2
 MAX_PANELS = 5
+
+# Candidate GALLERY = vertical GridView (was a 1-row horizontal strip showing ~4 tiles).
+GRID_EXTENT = 130   # max cell width → Flutter uses ceil(width / max_extent) columns
+GRID_ASPECT = 0.67  # cell width / height
+GRID_SPACING = 8
+GRID_H = 560        # grid viewport height — fixed so the card can't grow unbounded
 
 
 def _anchor_key(page_ref, panel_ref) -> tuple[int, int]:
@@ -63,15 +74,22 @@ def _anchor_label(page_ref, panel_ref) -> str:
 
 
 def _normalize_lock_panels(raw: dict | None) -> list[dict]:
-    """A scene's locks.json entry as a list of {"page","panel"} dicts. Handles
+    """A scene's locks.json entry as a list of {"page","panel"[,"src"]} dicts. Handles
     both the current v2 shape ({"panels": [...]}) and the old v1 single-panel
     shape ({"page","panel"}) so a project locked before the multi-select
-    upgrade still loads as a 1-item selection."""
+    upgrade still loads as a 1-item selection. Keeps each panel's "src" stamp (the
+    source-image basename, used by remap_locks_by_src) through the round-trip — dropping it
+    here would erase it the next time an unrelated toggle rewrites this beat's panel list."""
     if not raw:
         return []
     if "panels" in raw:
-        return [{"page": int(p["page"]), "panel": int(p["panel"])}
-                for p in raw.get("panels") or []]
+        out = []
+        for p in raw.get("panels") or []:
+            d = {"page": int(p["page"]), "panel": int(p["panel"])}
+            if p.get("src"):
+                d["src"] = str(p["src"])
+            out.append(d)
+        return out
     if "page" in raw:
         return [{"page": int(raw["page"]), "panel": int(raw["panel"])}]
     return []
@@ -96,7 +114,9 @@ def _beat_key(beat: dict) -> str:
 
 
 def _beat_unit(beat: dict) -> str:
-    """"scene" (old default, MULTI-select) | "fragment" | "intro" (both SINGLE-select)."""
+    """"scene" (old default, MULTI-select) | "fragment" | "intro" | "outro" (all SINGLE-select).
+    Everything below keys off `unit == "scene"` for the multi-select/cap-2 behaviour, so a new
+    single-panel unit needs no other change."""
     return str(beat.get("unit") or "scene")
 
 
@@ -111,29 +131,44 @@ def _frag_idx_from_key(beat_key: str) -> int:
 
 
 def _row_label(beat: dict, beat_key: str, unit: str) -> str:
-    """Static label for a fragment/intro row — these have no free-text edit field
-    (a fragment shares its scene_id's narration.json text with sibling fragments, so
-    editing one in isolation has no safe write-back path)."""
+    """Row label. intro/outro get a spelled-out prefix so Master sees WHERE in the video the
+    row sits; a fragment row is prefixed with its scene + fragment number. Every row now
+    renders its text in an editable TextField instead (see _beat_card), so this is the
+    labelling contract those fields' short labels mirror."""
     text = str(beat.get("narration_text", ""))
     if unit == "intro":
         return f"INTRO (cold-open): {text}"
+    if unit == "outro":
+        return f"OUTRO: {text}"
     if unit == "fragment":
         scene_id = int(beat.get("scene_id") or 0)
         return f"s{scene_id} · mảnh {_frag_idx_from_key(beat_key) + 1}: {text}"
     return text
 
 
-def _init_pre_selected(beats: list[dict], locks: dict) -> None:
+def _init_pre_selected(beats: list[dict], locks: dict,
+                       src_by_page: dict[int, str] | None = None) -> None:
     """Seed `locks` (in place) with each beat's pre_selected panels when locks.json has
     no entry for that beat_key yet — an existing lock always wins, and a beat with no
     (or empty) pre_selected is a no-op. Old-format beats (no beat_key/pre_selected
-    fields) are untouched, matching prior behaviour exactly."""
+    fields) are untouched, matching prior behaviour exactly. Each seeded panel is stamped
+    with "src" (like _toggle_candidate) when `src_by_page` is given, so an auto-accepted
+    pre_selected pick survives a later page renumber via remap_locks_by_src too."""
+    src_by_page = src_by_page or {}
     for beat in beats:
         bk = _beat_key(beat)
         if bk in locks:
             continue
-        panels = [{"page": int(p["page"]), "panel": int(p["panel"])}
-                  for p in (beat.get("pre_selected") or []) if p.get("page") is not None]
+        panels = []
+        for p in (beat.get("pre_selected") or []):
+            if p.get("page") is None:
+                continue
+            pg, pn = int(p["page"]), int(p["panel"])
+            d = {"page": pg, "panel": pn}
+            src = src_by_page.get(pg)
+            if src:
+                d["src"] = src
+            panels.append(d)
         if panels:
             locks[bk] = {"panels": panels, "source": "pre_selected"}
 
@@ -159,17 +194,34 @@ _HANGER_CHARS = ",-–—"  # comma, hyphen, en-dash, em-dash — the only
 _CONNECTIVES = {"and", "but", "then", "so", "yet", "however", "meanwhile"}
 
 
+def _frag_text(vb) -> str:
+    """A visual-beat's narration words. MICRO_MOMENT beats are {"text","page","panel"} dicts
+    (writer-picks-panel); recap/Q&A beats are plain strings — either way return the text.
+    Mirrors stages.stage_5.shots._vb_text so both modes flow through the same op path."""
+    return str(vb.get("text", "")).strip() if isinstance(vb, dict) else str(vb).strip()
+
+
+def _frag_with_text(vb, text: str):
+    """A fragment shaped like `vb` but carrying `text`: a dict KEEPS its {"page","panel"} pin
+    (Master relocks after if the split/merge moved the moment), a str stays a str. This is what
+    lets split/merge work identically for the string (Q&A/recap) and dict (micro) modes."""
+    if isinstance(vb, dict):
+        out = dict(vb)
+        out["text"] = text
+        return out
+    return text
+
+
 def split_fragment_at(scene: dict, frag_idx: int, word_idx: int) -> None:
     """Split scene["visual_beats"][frag_idx] into two fragments, after its
-    word_idx-th (1-based) whitespace word. Mutates `scene` in place. Raises
+    word_idx-th (1-based) whitespace word. Mutates `scene` in place. Both halves inherit the
+    original fragment's shape (a dict keeps its page/panel pin, a str stays a str). Raises
     ValueError if frag_idx/word_idx is out of bounds or the fragment has <=1 word."""
     beats = scene.get("visual_beats") or []
     if not (0 <= frag_idx < len(beats)):
         raise ValueError(f"frag_idx {frag_idx} out of range (0..{len(beats) - 1})")
     frag = beats[frag_idx]
-    if not isinstance(frag, str):
-        raise ValueError("cannot split a non-text (pinned) visual beat")
-    words = frag.split()
+    words = _frag_text(frag).split()
     if len(words) <= 1:
         raise ValueError("fragment has <=1 word — nothing to split")
     if not (1 <= word_idx < len(words)):
@@ -178,27 +230,101 @@ def split_fragment_at(scene: dict, frag_idx: int, word_idx: int) -> None:
     tail = " ".join(words[word_idx:]).lstrip(_HANGER_CHARS + " ").strip()
     if not head or not tail:
         raise ValueError("split would produce an empty fragment")
-    scene["visual_beats"] = beats[:frag_idx] + [head, tail] + beats[frag_idx + 1:]
+    scene["visual_beats"] = (beats[:frag_idx]
+                             + [_frag_with_text(frag, head), _frag_with_text(frag, tail)]
+                             + beats[frag_idx + 1:])
 
 
 def merge_fragment_into_prev(scene: dict, frag_idx: int) -> None:
     """Delete scene["visual_beats"][frag_idx], folding its words into the fragment
-    BEFORE it (frag_idx==0 has no "before" — folds into the fragment AFTER instead).
-    Mutates `scene` in place. Raises ValueError if the scene has only 1 fragment
-    (nothing left to merge into) or frag_idx is out of bounds."""
+    BEFORE it (frag_idx==0 has no "before" — folds into the fragment AFTER instead). The
+    surviving fragment keeps ITS OWN page/panel pin (dict mode); text order is always the
+    earlier fragment's words then the later's, so the verbatim concat is preserved. Mutates
+    `scene` in place. Raises ValueError if the scene has only 1 fragment or frag_idx is OOB."""
     beats = scene.get("visual_beats") or []
     if len(beats) <= 1:
         raise ValueError("scene has only 1 fragment — cannot delete it")
     if not (0 <= frag_idx < len(beats)):
         raise ValueError(f"frag_idx {frag_idx} out of range (0..{len(beats) - 1})")
     a, b = (beats[0], beats[1]) if frag_idx == 0 else (beats[frag_idx - 1], beats[frag_idx])
-    if not isinstance(a, str) or not isinstance(b, str):
-        raise ValueError("cannot merge a non-text (pinned) visual beat")
-    merged = f"{a.strip()} {b.strip()}".strip()
+    merged_text = f"{_frag_text(a)} {_frag_text(b)}".strip()
+    # survivor = the fragment that stays in place: the one AFTER on a frag_idx==0 delete, else
+    # the one BEFORE. It donates its pin to the merged fragment (Master relocks if needed).
+    survivor = b if frag_idx == 0 else a
+    merged = _frag_with_text(survivor, merged_text)
     if frag_idx == 0:
         scene["visual_beats"] = [merged] + beats[2:]
     else:
         scene["visual_beats"] = beats[:frag_idx - 1] + [merged] + beats[frag_idx + 1:]
+
+
+def drop_fragment(scene: dict, frag_idx: int) -> bool:
+    """Delete scene["visual_beats"][frag_idx] OUTRIGHT — its words are GONE, not folded
+    into a sibling (that's merge_fragment_into_prev). scene["text"] is REDEFINED as the
+    concat of the surviving fragments (str: joined by " "; dict {"text","page","panel"}:
+    joined by _frag_text — one path covers both Q&A/recap str frags and micro dict frags),
+    so the verbatim invariant holds by construction: after the drop,
+    stages.stage_3.beat_split._verbatim_ok(scene["text"], [each frag's text]) is always True.
+
+    Returns True after dropping. Returns False WITHOUT mutating when the scene has only ONE
+    fragment — dropping the last line would leave an empty scene, so the caller deletes the
+    whole scene instead. Mutates in place. Raises ValueError if frag_idx is out of range."""
+    beats = scene.get("visual_beats") or []
+    if not (0 <= frag_idx < len(beats)):
+        raise ValueError(f"frag_idx {frag_idx} out of range (0..{len(beats) - 1})")
+    if len(beats) <= 1:
+        return False
+    remaining = beats[:frag_idx] + beats[frag_idx + 1:]
+    scene["visual_beats"] = remaining
+    scene["text"] = " ".join(_frag_text(vb) for vb in remaining).strip()
+    return True
+
+
+def apply_fragment_edits(narration: dict, edits: dict[tuple[int, int], str]) -> dict:
+    """Write PER-FRAGMENT text edits into `narration` — MUTATES it in place and returns it
+    (the caller owns a fresh load_narration() dict).
+
+    `edits` maps (scene_id, frag_idx) → that fragment's new text. A dict fragment
+    ({"text","page","panel"} — micro writer-picks-panel) KEEPS its page/panel pin and a str
+    fragment stays a str (_frag_with_text), so both modes flow through one path. Each touched
+    scene's `text` is then REDEFINED as the concat of its fragments — exactly what
+    drop_fragment does — so stages.stage_3.beat_split._verbatim_ok(scene["text"], frags) holds
+    BY CONSTRUCTION and Stage 5's word-position shot bucketing stays aligned; no validator
+    needed. word_count/target_seconds are refreshed for those scenes and the narration totals
+    recomputed the same way ui.screens.s6_review._save does.
+
+    An edit naming a scene_id or frag_idx that no longer exists is silently SKIPPED (the card
+    list can be one op behind narration.json). A fragment edited to blank is dropped — it would
+    render a wordless shot; blanking EVERY fragment of a scene is ignored instead, deleting a
+    whole beat is the trash icon's job, not the text box's."""
+    by_sid: dict[int, dict[int, str]] = {}
+    for (sid, idx), text in (edits or {}).items():
+        by_sid.setdefault(int(sid), {})[int(idx)] = str(text)
+    wps = float(narration.get("words_per_second") or 3.4)
+    touched = False
+    for s in narration.get("scenes") or []:
+        pending = by_sid.get(int(s.get("scene_id") or 0))
+        if not pending:
+            continue
+        frags = list(s.get("visual_beats") or [])
+        hits = [i for i in pending if 0 <= i < len(frags)]
+        if not hits:
+            continue
+        for i in hits:
+            frags[i] = _frag_with_text(frags[i], pending[i].strip())
+        frags = [vb for vb in frags if _frag_text(vb)]
+        if not frags:
+            continue
+        s["visual_beats"] = frags
+        s["text"] = " ".join(_frag_text(vb) for vb in frags).strip()
+        s["word_count"] = len(s["text"].split())
+        s["target_seconds"] = round(s["word_count"] / wps, 2) if wps else 0.0
+        touched = True
+    if touched:
+        total = sum(int(s.get("word_count") or 0) for s in narration.get("scenes") or [])
+        narration["total_word_count"] = total
+        narration["estimated_duration_seconds"] = round(total / wps, 2) if wps else 0.0
+    return narration
 
 
 def insert_scene_at(narration: dict, list_index: int, text: str, neighbor: dict) -> dict:
@@ -272,6 +398,135 @@ def _remap_beats_list(beats: list[dict], sid: int, from_idx: int, delta: int) ->
     return out
 
 
+# ─── HIDDEN PANELS: project-wide candidate blacklist (pure, no flet) ────────
+# The candidate pool is IDENTICAL across beats (same page range), so a panel that is
+# useless for one beat is useless for all of them. Hiding it once drops it everywhere
+# instead of making Master skip past it on every single beat.
+
+
+def hidden_set(doc: dict | None) -> set[tuple[int, int]]:
+    """review/hidden_panels.json → {(page, panel), ...}. Missing/garbage entries are
+    skipped rather than raising — an old project has no file at all (empty set)."""
+    out: set[tuple[int, int]] = set()
+    for h in (doc or {}).get("hidden") or []:
+        try:
+            out.add((int(h["page"]), int(h["panel"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def filter_hidden(beats: list[dict], hidden: set[tuple[int, int]]) -> list[dict]:
+    """New beats list with every hidden (page, panel) dropped from EVERY beat's
+    `candidates`. All other fields pass through untouched. The unfiltered pool is kept
+    on the row as `candidates_all`, so re-running this with a smaller `hidden` set puts
+    the panels back (that's how "Hiện lại tất cả" works without re-reading
+    candidates.json). Pure — never mutates its inputs."""
+    out: list[dict] = []
+    for b in beats:
+        row = dict(b)
+        pool = list(b.get("candidates_all") or b.get("candidates") or [])
+        row["candidates_all"] = pool
+        row["candidates"] = [
+            c for c in pool
+            if (int(c.get("page", -1)), int(c.get("panel", -1))) not in hidden
+        ]
+        out.append(row)
+    return out
+
+
+def beats_locking(locks: dict, page: int, panel: int) -> list[str]:
+    """beat_keys whose lock currently SELECTS this panel (sorted). Hiding a panel that
+    is still selected somewhere must drop those locks — otherwise the render would use a
+    panel Master can no longer see, and no card would show the selection."""
+    key = (int(page), int(panel))
+    return sorted(bk for bk, lock in (locks or {}).items()
+                  if key in {(p["page"], p["panel"]) for p in _normalize_lock_panels(lock)})
+
+
+# ─── CANDIDATE GRID geometry (pure) ─────────────────────────────────────────
+
+
+def grid_geometry(grid_w: float) -> tuple[int, float]:
+    """(columns, row pitch px) of a GridView(max_extent=GRID_EXTENT, spacing=GRID_SPACING,
+    child_aspect_ratio=GRID_ASPECT) laid out in `grid_w` px. Mirrors Flutter's
+    SliverGridDelegateWithMaxCrossAxisExtent: columns = ceil(width / max_extent)."""
+    cols = max(1, math.ceil(max(grid_w, 1.0) / GRID_EXTENT))
+    cell_w = (max(grid_w, 1.0) - GRID_SPACING * (cols - 1)) / cols
+    return cols, cell_w / GRID_ASPECT + GRID_SPACING
+
+
+def grid_scroll_offset(index: int, grid_w: float) -> float:
+    """Pixel offset that brings tile #index's ROW to the top of the grid viewport.
+    Used instead of scroll_to(scroll_key=…) because the grid keeps
+    build_controls_on_demand=True (200+ tiles per beat) and flet 0.85 documents
+    scroll_to as ineffective for controls that build their items dynamically —
+    an arithmetic offset needs no built widget to aim at."""
+    cols, pitch = grid_geometry(grid_w)
+    return max(0.0, (max(index, 0) // cols) * pitch)
+
+
+def reconcile_beats(beats: list[dict], narration: dict, *, qa_mode: bool) -> list[dict]:
+    """Realign the candidate rows (from candidates.json) to the CURRENT narration.json so a
+    UI op keyed by beat_key/frag_idx can never target a stale, missing, or ghost row —
+    candidates.json is a one-shot matcher export and drifts from narration whenever a build
+    was interrupted or Master edited beats:
+      (a) DROP a row whose scene is gone from narration, or whose frag_idx >= the scene's live
+          fragment count (a "ghost" row — e.g. an 8:1 left behind when scene 8 dropped to one
+          fragment, or a 3:*/5:* left behind when the scene was deleted);
+      (b) ADD an empty row (candidates=[], source={}) for a narration beat that has NO row yet —
+          reusing the same zero-candidate "No candidates — Rebuild/Custom image" fallback a
+          freshly-inserted scene already relies on (e.g. a 13:0 the export never wrote);
+      (c) take each row's narration_text from the CURRENT narration, never the (possibly stale)
+          text baked into candidates.json.
+    Mirrors stages.review_gate's own row derivation exactly (INTRO row + OUTRO row for EVERY mode
+    when narration has that scene — Master 2026-07-24; a story scene's text fragments each become
+    a "<sid>:<i>" fragment row, else a single "<sid>" scene row) so the reconciled list is
+    byte-for-byte what a fresh build would emit, minus the matcher's candidates (preserved from the
+    existing rows when present). Rows come back in narration (render) order: intro, body…, outro —
+    so a project whose candidates.json predates the bookend rows (no "intro"/"outro" beat) gets
+    them here as (b)-style empty rows instead of losing the pick. Pure — never mutates its inputs.
+
+    `qa_mode` is accepted for call-site compatibility and no longer used: Q&A gets the bookend rows
+    too (its intro/outro panel used to be auto-picked from subject_panels.json)."""
+    by_key = {str(b.get("beat_key") or ""): b for b in beats}
+
+    def _row(bk: str, unit: str, scene: dict, text: str) -> dict:
+        sid = int(scene.get("scene_id") or 0)
+        old = by_key.get(bk)
+        if old is not None:
+            row = dict(old)                     # keep candidates/source/page_ref/pre_selected
+            row["beat_key"], row["unit"], row["scene_id"] = bk, unit, sid
+            row["narration_text"] = text        # (c) refresh from narration
+            return row
+        return {                                # (b) new empty row = zero-candidate fallback
+            "scene_id": sid, "narration_text": text,
+            "page_ref": scene.get("page_ref") if scene.get("page_ref") is not None else None,
+            "panel_ref": None, "source": {}, "candidates": [],
+            "beat_key": bk, "pre_selected": [], "unit": unit,
+        }
+
+    scenes = narration.get("scenes") or []
+    out: list[dict] = []
+    intro = next((s for s in scenes if s.get("is_intro")), None)
+    outro = next((s for s in scenes if s.get("is_outro")), None)
+    if intro is not None:
+        out.append(_row("intro", "intro", intro, str(intro.get("text", "") or "")))
+    for s in scenes:
+        if s.get("is_intro") or s.get("is_outro"):
+            continue
+        sid = int(s.get("scene_id") or 0)
+        frags = [vb for vb in (s.get("visual_beats") or []) if _frag_text(vb)]
+        if frags:
+            for i, vb in enumerate(frags):
+                out.append(_row(f"{sid}:{i}", "fragment", s, _frag_text(vb)))
+        else:
+            out.append(_row(str(sid), "scene", s, str(s.get("text", "") or "")))
+    if outro is not None:
+        out.append(_row("outro", "outro", outro, str(outro.get("text", "") or "")))
+    return out
+
+
 def build(
     page: ft.Page,
     state: AppState,
@@ -286,14 +541,44 @@ def build(
         return _empty_state(page, state, on_go, on_state_change)
 
     narration = load_narration(project) or {}
-    orig_text = {int(s.get("scene_id") or 0): str(s.get("text", ""))
-                 for s in narration.get("scenes") or []}
-    edited_text: dict[int, str] = dict(orig_text)
+    # Realign the candidate rows to the CURRENT narration BEFORE anything reads them (see
+    # reconcile_beats): drops ghost rows, adds missing beats, refreshes stale text — so every
+    # op below keys off a row that actually exists in narration, and _init_pre_selected never
+    # seeds a lock from a ghost row's pin.
+    review["beats"] = reconcile_beats(review.get("beats") or [], narration,
+                                      qa_mode=is_answer_project(project))
+    # Project-wide hidden-panel blacklist, applied to EVERY beat right here so no card
+    # below can ever render a panel Master already dismissed (see filter_hidden).
+    hidden_doc = load_hidden_panels(project)
+    hidden = hidden_set(hidden_doc)
+    review["beats"] = filter_hidden(review["beats"], hidden)
+    # PENDING text edits, both SPARSE on purpose — an entry exists only for a box Master
+    # actually typed in, so "no edit" is literally "no entry" and a save writes nothing there.
+    # (Pre-seeding these with every scene's text was a stale-write trap: after a drop-line
+    # redefined scene["text"] from the surviving fragments, the seeded copy still held the
+    # dropped words and the next save put them back — breaking the verbatim invariant.)
+    edited_text: dict[int, str] = {}                    # scene_id → whole-scene text
+    #   (scene_id, frag_idx) → that ONE fragment's text; cleared per scene by _rebuild after
+    #   any op that shifts fragment indices (split/merge/drop/delete).
+    frag_edits: dict[tuple[int, int], str] = {}
 
     locks_doc = load_review_locks(project)
     locks: dict = dict(locks_doc.get("locks") or {})
+    # page → source-image basename for every CURRENT preprocessed page. Used to (a) remap any
+    # lock whose page has drifted since it was stamped (an earlier chapter's page count changed
+    # — see remap_locks_by_src) and (b) stamp new locks below (_toggle_candidate) so a FUTURE
+    # renumber can detect and fix them the same way.
+    src_by_page: dict[int, str] = {
+        int(pg.get("page_number", -1)): Path(str(pg.get("source_image") or "")).name
+        for pg in load_preprocessed(project)
+    }
+    _remapped_locks = remap_locks_by_src(locks, src_by_page)
+    _n_remapped = sum(1 for k, v in locks.items() if _remapped_locks.get(k) != v)
+    if _n_remapped:
+        print(f"[review-lock] remapped {_n_remapped} lock(s) after page renumber")
+    locks = _remapped_locks
     locks_doc["locks"] = locks
-    _init_pre_selected(review.get("beats") or [], locks)
+    _init_pre_selected(review.get("beats") or [], locks, src_by_page)
 
     # Custom images (Master-added, cosine only decides PLACEMENT — never a select/reject
     # gate). Loaded once per screen build; a new add triggers on_state_change() (full
@@ -305,6 +590,22 @@ def build(
     status_text = ft.Text("", size=12, color=TEXT_MUTED)
     # per-beat control refs (keyed by beat_key) so a lock/dup change repaints just that card
     card_refs: dict[str, dict] = {}
+
+    # "Đã ẩn N panel — Hiện lại tất cả" — the only undo for the blacklist (per-panel undo
+    # isn't worth the UI: the whole point is speed, and re-hiding is one click).
+    unhide_btn = secondary_button("", lambda _e: _unhide_all(),
+                                  icon=ft.Icons.VISIBILITY_OUTLINED)
+    hidden_bar = ft.Container(
+        content=unhide_btn, visible=bool(hidden),
+        padding=ft.padding.only(left=28, right=28, top=4),
+    )
+
+    def _grid_w() -> float:
+        """Approx px width of a candidate grid: window − nav(240) − sidebar(320) −
+        cards padding(2×28) − card padding(2×14). Only feeds the page-jump offset, so a
+        window resize can land the jump a row off — never a crash."""
+        w = getattr(page, "width", None)
+        return (float(w) if isinstance(w, (int, float)) else 1400.0) - 644.0
 
     def _selected_keys(beat_key: str) -> set[tuple[int, int]]:
         return {(p["page"], p["panel"])
@@ -456,6 +757,11 @@ def build(
         panels = _normalize_lock_panels(locks.get(beat_key))
         key = (cand_page, cand_panel)
         already = key in {(p["page"], p["panel"]) for p in panels}
+        # Stamp the source image's basename on every NEWLY-locked panel — future page
+        # renumbers (an earlier chapter's length changes) can then be detected and fixed by
+        # remap_locks_by_src instead of silently pointing at the wrong art.
+        src = src_by_page.get(cand_page)
+        new_entry = {"page": cand_page, "panel": cand_panel, **({"src": src} if src else {})}
         if unit == "scene":
             if already:
                 panels = [p for p in panels if (p["page"], p["panel"]) != key]
@@ -463,9 +769,9 @@ def build(
                 _show_snack(f"Max {MAX_PANELS} panels per beat.")
                 return
             else:
-                panels = panels + [{"page": cand_page, "panel": cand_panel}]
+                panels = panels + [new_entry]
         else:  # fragment / intro — single-select: pick replaces, re-pick clears
-            panels = [] if already else [{"page": cand_page, "panel": cand_panel}]
+            panels = [] if already else [new_entry]
         if panels:
             locks[beat_key] = {"panels": panels, "source": "batcave"}
         else:
@@ -484,6 +790,77 @@ def build(
             locks[beat_key] = {"custom_image": rel_path, "source": "custom"}
         save_review_locks(project, locks_doc)
         _refresh_beat_card(beat_key)
+
+    # ─── Hide a panel PROJECT-WIDE ──────────────────────────────────────────
+    def _refresh_hidden_bar():
+        # flet 0.85 buttons carry their label in `content` (the first positional arg of
+        # layout.secondary_button) — assigning `.text` would be a silent no-op.
+        unhide_btn.content = f"👁 Đã ẩn {len(hidden)} panel — Hiện lại tất cả"
+        hidden_bar.visible = bool(hidden)
+        try:
+            hidden_bar.update()
+        except Exception:
+            pass
+
+    def _all_beat_keys() -> frozenset:
+        return frozenset(_beat_key(b) for b in (review.get("beats") or []))
+
+    def _apply_hidden(msg: str, *, warn: bool = False):
+        hidden_doc["hidden"] = [{"page": p, "panel": pan} for p, pan in sorted(hidden)]
+        save_hidden_panels(project, hidden_doc)
+        review["beats"] = filter_hidden(review.get("beats") or [], hidden)
+        _refresh_hidden_bar()
+        # EVERY card's tile set changed → all dirty (a reused card would still show the
+        # hidden tile). No page.update() anywhere in here — see _rebuild's comment.
+        _rebuild(msg, warn=warn, dirty=_all_beat_keys())
+
+    def _do_hide(cand_page: int, cand_panel: int, users: list[str]):
+        hidden.add((cand_page, cand_panel))
+        key = (cand_page, cand_panel)
+        for bk in users:
+            panels = [p for p in _normalize_lock_panels(locks.get(bk))
+                      if (p["page"], p["panel"]) != key]
+            if panels:
+                locks[bk] = {"panels": panels,
+                             "source": (locks.get(bk) or {}).get("source") or "batcave"}
+            else:
+                locks.pop(bk, None)
+        if users:
+            locks_doc["approved"] = False
+            locks_doc["approved_at"] = None
+        save_review_locks(project, locks_doc)
+        note = (f" — bỏ chọn ở beat {', '.join(users)}, cần re-approve." if users else ".")
+        _apply_hidden(f"Đã ẩn p{cand_page:02d}·{cand_panel} khỏi mọi beat{note}",
+                      warn=bool(users))
+
+    def _hide_panel(cand_page: int, cand_panel: int):
+        """✕ on a tile: blacklist this (page, panel) for the WHOLE project. Confirms first
+        ONLY when the panel is still selected somewhere (hiding it must drop those locks and
+        un-approve); an unselected panel vanishes with no dialog — that's the speed."""
+        users = beats_locking(locks, cand_page, cand_panel)
+        if not users:
+            _do_hide(cand_page, cand_panel, [])
+            return
+
+        def _confirm(_e):
+            page.pop_dialog()
+            _do_hide(cand_page, cand_panel, users)
+
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Ẩn panel p{cand_page:02d}/{cand_panel}?"),
+            content=ft.Text(f"Panel này đang được chọn ở beat {', '.join(users)} — "
+                            "ẩn sẽ bỏ chọn ở đó và cần re-approve trước khi render."),
+            actions=[
+                ft.TextButton("Hủy", on_click=lambda _e: page.pop_dialog()),
+                primary_button("Ẩn", _confirm, icon=ft.Icons.VISIBILITY_OFF_OUTLINED),
+            ],
+        ))
+
+    def _unhide_all():
+        n = len(hidden)
+        hidden.clear()
+        _apply_hidden(f"Đã hiện lại {n} panel.")
 
     async def _do_add_custom(beat_key: str):
         # with_data=True: in WEB mode (FLET_FORCE_WEB_SERVER=1) the picked file lives in
@@ -526,13 +903,26 @@ def build(
         current = load_narration(project)
         if not current:
             return
+        # Per-SCENE box first (scene/intro/outro rows — they have no fragments), but NEVER for a
+        # scene whose fragments were edited: apply_fragment_edits re-derives that scene's text
+        # from its fragments, so a per-scene write there would just be overwritten.
+        frag_sids = {sid for sid, _ in frag_edits}
         for s in current.get("scenes") or []:
             sid = int(s.get("scene_id") or 0)
-            if sid in edited_text:
+            if sid in edited_text and sid not in frag_sids:
                 s["text"] = edited_text[sid]
+        apply_fragment_edits(current, frag_edits)
         save_narration_edits(project, current)
-        status_text.value = "Saved narration text edits."
-        status_text.color = SUCCESS
+        nonlocal narration
+        narration = current
+        # narration.json changed on disk → un-approve so Master must re-approve before render,
+        # same as every other op here that rewrites it.
+        locks_doc["approved"] = False
+        locks_doc["approved_at"] = None
+        save_review_locks(project, locks_doc)
+        _refresh_approve_ui(push=False)   # sets a default status → overwrite it right after
+        status_text.value = "Đã lưu narration — cần re-approve trước khi render."
+        status_text.color = WARN
         try:
             status_text.update()
         except Exception:
@@ -552,7 +942,11 @@ def build(
                 pass
             try:
                 from stages.review_gate import build_candidates
-                await run_blocking(build_candidates, project)
+                # k=0 → ALL panels of the beat's issue, not the top-10 shortlist. The default
+                # k=10 silently hid the rest, and build_candidates' own docstring warns "the
+                # correct panel sometimes ranks 11th+". Manual-first picks by eye, so the full
+                # pool is the only correct pool — the thumb loader below is already built for it.
+                await run_blocking(build_candidates, project, 0)
             except Exception as exc:
                 _show_snack(f"Rebuild candidates failed: {exc}")
                 return
@@ -612,10 +1006,10 @@ def build(
             page.show_dialog(dialog)
         return _handler
 
-    def _scroll_step(row: ft.ListView, dx: int):
-        # ponytail: no trackpad → ◀/▶ nudge the horizontal gallery by ~2 thumbs.
+    def _scroll_step(row: ft.GridView, dy: int):
+        # ponytail: no trackpad → ▲/▼ page the candidate grid one viewport at a time.
         def _click(_e):
-            page.run_task(row.scroll_to, delta=dx, duration=400,
+            page.run_task(row.scroll_to, delta=dy, duration=400,
                           curve=ft.AnimationCurve.EASE_OUT)
         return _click
 
@@ -626,16 +1020,31 @@ def build(
         anchor_key = _anchor_key(beat.get("page_ref"), beat.get("panel_ref"))
         selected = _selected_keys(beat_key)
 
-        # Editable narration for scene AND intro (each has independent text). A fragment
-        # shares its scene's text with sibling fragments, so there's no safe per-fragment
-        # write-back — but the FIRST fragment of a scene still gets an editable TextField,
-        # seeded with the scene's FULL text (edit applies to every fragment of that scene,
-        # same _save_narration_text per-scene write path as scene/intro) — a Q&A project is
-        # ALL fragments, so without this the narration was never editable there. Later
-        # fragments of the same scene stay read-only (clause label only).
-        if unit != "fragment":
+        # Editable narration on EVERY row. A fragment row edits ITS OWN clause (keyed
+        # (scene_id, frag_idx) in frag_edits) — apply_fragment_edits writes it back into
+        # scene["visual_beats"][i] and re-derives scene["text"] from the fragments, so the
+        # verbatim invariant Stage 5 depends on holds by construction. scene/intro/outro rows
+        # have no fragments and keep the per-scene box (edited_text[scene_id]).
+        if unit == "fragment":
+            frag_idx = _frag_idx_from_key(beat_key)
+            frag_field = ft.TextField(
+                label=f"s{scene_id} · mảnh {frag_idx + 1}",
+                value=frag_edits.get((scene_id, frag_idx),
+                                     str(beat.get("narration_text", ""))),
+                multiline=True, min_lines=2, max_lines=5,
+                border_color=BORDER, focused_border_color=ACCENT, text_size=13,
+            )
+
+            def _on_frag_text(e, key=(scene_id, frag_idx)):
+                frag_edits[key] = e.control.value or ""
+            frag_field.on_change = _on_frag_text
+            text_control: ft.Control = frag_field
+        else:
             text_field = ft.TextField(
                 value=edited_text.get(scene_id, str(beat.get("narration_text", ""))),
+                # intro/outro carry no scene number Master can recognise → say what they ARE
+                # (the same wording _row_label uses for these rows).
+                label={"intro": "INTRO (cold-open)", "outro": "OUTRO"}.get(unit),
                 multiline=True, min_lines=2, max_lines=5,
                 border_color=BORDER, focused_border_color=ACCENT, text_size=13,
             )
@@ -643,27 +1052,7 @@ def build(
             def _on_text(e, sid=scene_id):
                 edited_text[sid] = e.control.value or ""
             text_field.on_change = _on_text
-            text_control: ft.Control = text_field
-        elif scene_id not in scene_edit_rendered:
-            scene_edit_rendered.add(scene_id)
-            full_text = orig_text.get(scene_id) or str(beat.get("narration_text", ""))
-            scene_field = ft.TextField(
-                label=f"s{scene_id} — sửa cả câu (áp cho mọi mảnh)",
-                value=edited_text.get(scene_id, full_text),
-                multiline=True, min_lines=2, max_lines=5,
-                border_color=BORDER, focused_border_color=ACCENT, text_size=13,
-            )
-
-            def _on_scene_text(e, sid=scene_id):
-                edited_text[sid] = e.control.value or ""
-            scene_field.on_change = _on_scene_text
-            text_control = ft.Column([
-                scene_field,
-                ft.Text(_row_label(beat, beat_key, unit), size=13, color=TEXT_PRIMARY),
-            ], spacing=4)
-        else:
-            text_control = ft.Text(_row_label(beat, beat_key, unit), size=13,
-                                    color=TEXT_PRIMARY)
+            text_control = text_field
 
         source = beat.get("source") or {}
         src_label = " · ".join(x for x in (source.get("title"), source.get("issue")) if x)
@@ -720,14 +1109,11 @@ def build(
 
         tiles: dict[tuple[int, int], ft.Container] = {}
         icons: dict[tuple[int, int], ft.IconButton] = {}
-        # ORDER: strong cosine matches first (the vision-judged shortlist, by score desc),
-        # then the rest in PAGE order — so the long --all tail is a predictable page-by-page
-        # browse instead of a flat score ranking Master can't navigate.
+        # ORDER: always PAGE order (p, panel) — the panel is hand-picked by eye now, so a
+        # predictable page-by-page browse beats a cosine/vlm ranking (which is empty under
+        # PANEL_TEXT_EMBED=0 anyway). Old projects that still carry scores also sort page-order.
         _cands = beat.get("candidates") or []
-        _ordered = (sorted((c for c in _cands if c.get("vlm") is not None),
-                           key=lambda c: -float(c.get("score") or 0))
-                    + sorted((c for c in _cands if c.get("vlm") is None),
-                             key=lambda c: (int(c.get("page") or 0), int(c.get("panel") or 0))))
+        _ordered = sorted(_cands, key=lambda c: (int(c.get("page") or 0), int(c.get("panel") or 0)))
         cand_tiles: list[ft.Control] = []
         for c in _ordered:
             key = (int(c.get("page", -1)), int(c.get("panel", -1)))
@@ -736,37 +1122,52 @@ def build(
             tooltip = str(c.get("desc") or "")
             if c.get("dialog"):
                 tooltip = f"{tooltip}\n\n“{c['dialog']}”"
+            # Score goes in the TOOLTIP, not on the tile: a grid cell is ~120px wide and
+            # under PANEL_TEXT_EMBED=0 there is no score at all (old cosine/vlm projects
+            # still get it, just on hover).
+            score = " · ".join(
+                ([f"vlm {float(c['vlm']):.0f}"] if c.get("vlm") is not None else [])
+                + ([f"cos {float(c.get('score') or 0):.2f}"]
+                   if float(c.get("score") or 0) > 0 else []))
+            if score:
+                tooltip = f"{tooltip}\n\n{score}" if tooltip else score
 
             def _pick(_e, bk=beat_key, k=key, u=unit):
                 _toggle_candidate(bk, k[0], k[1], u)
 
+            def _hide(_e, k=key):
+                _hide_panel(k[0], k[1])
+
             lock_icon = ft.IconButton(
                 icon=ft.Icons.CHECK_CIRCLE if is_selected else ft.Icons.RADIO_BUTTON_UNCHECKED,
-                icon_color=ACCENT if is_selected else TEXT_MUTED, icon_size=16,
-                tooltip="Select this panel", on_click=_pick,
+                icon_color=ACCENT if is_selected else TEXT_MUTED, icon_size=14,
+                width=22, height=22, tooltip="Select this panel", on_click=_pick,
                 style=ft.ButtonStyle(padding=ft.padding.all(0)),
             )
             icons[key] = lock_icon
+            hide_btn = ft.IconButton(
+                ft.Icons.CLOSE, icon_size=14, icon_color=TEXT_MUTED, width=22, height=22,
+                tooltip="Ẩn panel này khỏi MỌI beat", on_click=_hide,
+                style=ft.ButtonStyle(padding=ft.padding.all(0)),
+            )
+
+            meta: list[ft.Control] = [
+                ft.Text(f"p{key[0]:02d}·{key[1]}", size=9, color=TEXT_MUTED,
+                        font_family="Menlo"),
+            ]
+            if is_anchor:
+                meta.append(ft.Text("⚓", size=9, color=ACCENT, tooltip="anchor panel"))
+            meta += [ft.Container(expand=True), hide_btn, lock_icon]
 
             tile = ft.Container(
                 content=ft.Column([
                     ft.Container(content=_thumb(c.get("thumb", "")), ink=True,
                                  on_click=_open_preview(beat_key, unit, scene_id, key, c),
                                  tooltip=tooltip or None),
-                    ft.Row([
-                        ft.Text(f"p{key[0]:02d}·{key[1]}", size=9, color=TEXT_MUTED,
-                                font_family="Menlo"),
-                        # vlm (vision-judge 0-10) is the ACTUAL sort key of the top slice; show it
-                        # first so tile order is legible, cosine second. vlm absent → cosine only.
-                        ft.Text(
-                            (f"vlm {float(c['vlm']):.0f} · " if c.get("vlm") is not None else "")
-                            + f"cos {float(c.get('score', 0)):.2f}",
-                            size=9, color=ACCENT),
-                    ], spacing=6),
-                    ft.Row([_chip("anchor", TEXT_MUTED, visible=is_anchor), lock_icon],
-                           spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=6, border=ft.border.all(2 if is_selected else 1,
+                    ft.Row(meta, spacing=1,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=3, border=ft.border.all(2 if is_selected else 1,
                                                  ACCENT if is_selected else BORDER),
                 border_radius=4, bgcolor=BG_ELEVATED if is_selected else None,
             )
@@ -809,12 +1210,40 @@ def build(
             custom_tiles[rel_path] = {"tile": custom_tile, "icon": custom_icon}
             custom_controls.append(custom_tile)
         cand_tiles = custom_controls + cand_tiles
+        # Page of each tile, parallel to cand_tiles (custom images lead the gallery and
+        # belong to no comic page → -1) — the page-jump's index lookup.
+        tile_pages = [-1] * len(custom_controls) + [int(c.get("page", -1)) for c in _ordered]
 
-        # ListView lazy-builds children on demand (build_controls_on_demand
-        # defaults True) — a Row would eagerly decode every candidate's
-        # base64 thumb, which chokes once a beat has hundreds of candidates.
-        cand_row = ft.ListView(cand_tiles, horizontal=True, spacing=8, height=270,
-                               cache_extent=1200)
+        # VERTICAL GridView (was a 1-row horizontal ListView showing ~4 tiles): ~18-24
+        # tiles on screen at once, which is the whole point — the candidate pool is the
+        # same for every beat, so Master re-skims it once per beat. GridView keeps
+        # build_controls_on_demand=True so a 200-candidate beat still only builds the
+        # visible cells (a wrap Row would build all 200 → decode every thumb).
+        cand_row = ft.GridView(
+            cand_tiles, max_extent=GRID_EXTENT, child_aspect_ratio=GRID_ASPECT,
+            spacing=GRID_SPACING, run_spacing=GRID_SPACING, height=GRID_H,
+            cache_extent=600,
+        )
+        jump_field = ft.TextField(
+            width=70, height=38, hint_text="trang", text_size=12, content_padding=8,
+            border_color=BORDER, focused_border_color=ACCENT,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+
+        def _jump(_e=None, grid=cand_row, field=jump_field, pages=tile_pages):
+            raw = (field.value or "").strip()
+            if not raw.isdigit():
+                _show_snack("Nhập số trang, ví dụ 14.")
+                return
+            want = int(raw)
+            idx = next((i for i, p in enumerate(pages) if p == want), None)
+            if idx is None:
+                _show_snack(f"Beat này không có panel nào ở trang {want}.")
+                return
+            page.run_task(grid.scroll_to, offset=grid_scroll_offset(idx, _grid_w()),
+                          duration=350, curve=ft.AnimationCurve.EASE_OUT)
+        jump_field.on_submit = _jump
+
         has_pick = bool(selected) or bool(locked_custom)
         auto_badge = _chip("auto", TEXT_MUTED, visible=not has_pick)
         dup_badge = _chip("duplicate panel", WARN, visible=beat_key in _dup_beat_keys())
@@ -831,10 +1260,14 @@ def build(
         def _add_image_click(_e, bk=beat_key):
             page.run_task(_do_add_custom, bk)
 
-        # Fragment cards get a SECOND delete icon that removes just this fragment
-        # (merges its words into a sibling) — the original WARN icon stays too but
-        # its tooltip is clarified to say it drops the WHOLE scene, so the two
-        # destructive actions on a fragment card are never ambiguous.
+        # Two DISTINCT actions on a fragment card, never conflated (this was the UX trap:
+        # the trash icon used to delete the WHOLE scene):
+        #   • CALL_MERGE      → fold this fragment's WORDS into a sibling (keeps the text,
+        #     one fewer panel) — _delete_fragment.
+        #   • DELETE_OUTLINE  → drop just THIS narration line (its words are gone), the rest
+        #     of the beat stays — _drop_fragment_line. Only the beat's LAST line escalates to
+        #     a whole-scene delete, and only behind a confirm.
+        # A non-fragment card (a whole scene / intro) keeps the plain whole-scene delete.
         header_icons: list[ft.Control] = [
             ft.IconButton(ft.Icons.ADD_PHOTO_ALTERNATE_OUTLINED, icon_size=18,
                           tooltip="Add a custom image for this beat", on_click=_add_image_click,
@@ -843,18 +1276,20 @@ def build(
         if unit == "fragment":
             header_icons.append(ft.IconButton(
                 ft.Icons.CALL_MERGE, icon_size=18, icon_color=WARN,
-                tooltip="Xóa mảnh này — chữ gộp vào mảnh kề",
+                tooltip="Gộp mảnh này vào mảnh kề (giữ chữ, bớt 1 panel)",
                 on_click=lambda _e, b=beat: _delete_fragment(b),
                 style=ft.ButtonStyle(padding=ft.padding.all(0))))
-        delete_scene_tooltip = (
-            "Delete this beat — xóa CẢ scene khỏi narration.json"
-            if unit == "fragment" else
-            "Delete this beat (removes the scene from narration.json)")
-        header_icons.append(ft.IconButton(
-            ft.Icons.DELETE_OUTLINE, icon_size=18, icon_color=WARN,
-            tooltip=delete_scene_tooltip,
-            on_click=lambda _e, b=beat: _delete_beat(b),
-            style=ft.ButtonStyle(padding=ft.padding.all(0))))
+            header_icons.append(ft.IconButton(
+                ft.Icons.DELETE_OUTLINE, icon_size=18, icon_color=WARN,
+                tooltip="Xóa dòng này (chỉ mảnh này, không xóa cả beat)",
+                on_click=lambda _e, b=beat: _drop_fragment_line(b),
+                style=ft.ButtonStyle(padding=ft.padding.all(0))))
+        else:
+            header_icons.append(ft.IconButton(
+                ft.Icons.DELETE_OUTLINE, icon_size=18, icon_color=WARN,
+                tooltip="Delete this beat (removes the scene from narration.json)",
+                on_click=lambda _e, b=beat: _delete_beat(b),
+                style=ft.ButtonStyle(padding=ft.padding.all(0))))
 
         header = ft.Row([
             ft.Text(f"{scene_id:02d}", size=12, color=TEXT_MUTED, font_family="Menlo"),
@@ -873,14 +1308,23 @@ def build(
                                      color=TEXT_MUTED, italic=True))
         if cand_tiles:
             children.append(ft.Row([
-                ft.IconButton(ft.Icons.CHEVRON_LEFT, icon_size=20, tooltip="Scroll left",
-                              on_click=_scroll_step(cand_row, -320),
+                ft.Text(f"{len(cand_tiles)} panel · nhảy tới trang", size=10,
+                        color=TEXT_MUTED),
+                jump_field,
+                ft.IconButton(ft.Icons.ARROW_FORWARD, icon_size=16, tooltip="Go",
+                              on_click=_jump,
                               style=ft.ButtonStyle(padding=ft.padding.all(0))),
-                ft.Container(content=cand_row, expand=True),
-                ft.IconButton(ft.Icons.CHEVRON_RIGHT, icon_size=20, tooltip="Scroll right",
-                              on_click=_scroll_step(cand_row, 320),
+                ft.Container(expand=True),
+                # ponytail: no trackpad here — ▲/▼ page the grid by a full viewport
+                # (the old ◀/▶ nudged the horizontal strip by ~1.5 tiles).
+                ft.IconButton(ft.Icons.KEYBOARD_ARROW_UP, icon_size=20,
+                              tooltip="Lên 1 màn", on_click=_scroll_step(cand_row, -GRID_H),
                               style=ft.ButtonStyle(padding=ft.padding.all(0))),
-            ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+                ft.IconButton(ft.Icons.KEYBOARD_ARROW_DOWN, icon_size=20,
+                              tooltip="Xuống 1 màn", on_click=_scroll_step(cand_row, GRID_H),
+                              style=ft.ButtonStyle(padding=ft.padding.all(0))),
+            ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+            children.append(cand_row)
         else:
             # A beat with zero candidates (e.g. a brand-new Master-inserted scene) —
             # general fallback for ANY zero-candidate beat, not special-cased to the
@@ -899,10 +1343,13 @@ def build(
         card_refs[beat_key]["card"] = card
         return card
 
-    def _delete_beat(beat: dict):
+    def _delete_beat(beat: dict, *, confirm_title: str | None = None,
+                     confirm_body: str | None = None):
         """Delete a beat: drop its scene from narration.json (other scene_ids stay stable so
         sibling locks don't shift), drop its lock(s), un-approve (narration changed → must
-        re-approve before render), pull its card. Confirms first — destructive."""
+        re-approve before render), pull its card. Confirms first — destructive. The confirm
+        title/body are overridable so _drop_fragment_line can reuse this exact delete path
+        with a "this was the beat's last line" wording instead of the generic scene copy."""
         sid = int(beat.get("scene_id") or 0)
         bk = _beat_key(beat)
 
@@ -931,9 +1378,9 @@ def build(
 
         page.show_dialog(ft.AlertDialog(
             modal=True,
-            title=ft.Text(f"Delete beat {sid:02d}?"),
-            content=ft.Text("Removes this scene from narration.json. "
-                            "You'll need to re-approve before render."),
+            title=ft.Text(confirm_title or f"Delete beat {sid:02d}?"),
+            content=ft.Text(confirm_body or ("Removes this scene from narration.json. "
+                            "You'll need to re-approve before render.")),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
                 primary_button("Delete", _do_delete, icon=ft.Icons.DELETE_OUTLINE),
@@ -974,9 +1421,69 @@ def build(
         merged_beats = scene.get("visual_beats") or []
         for b in beats_list:
             if b.get("beat_key") == survivor_key and survivor_idx < len(merged_beats):
-                b["narration_text"] = merged_beats[survivor_idx]
+                b["narration_text"] = _frag_text(merged_beats[survivor_idx])
                 break
-        _rebuild("Đã xóa mảnh — cần re-approve trước khi render.", warn=True)
+        # Every fragment key of this scene shifted (merge closed the gap), so their cached cards
+        # now map to the WRONG content — rebuild the whole scene's fragment cards fresh (cheap:
+        # 1 scene) while other scenes' cards stay reused. Without this a shifted key reuses a
+        # stale card → duplicate/stale rows.
+        dirty = frozenset(f"{sid}:{i}" for i in range(len(merged_beats)))
+        _rebuild("Đã xóa mảnh — cần re-approve trước khi render.", warn=True, dirty=dirty)
+
+    def _drop_fragment_line(beat: dict):
+        """Trash icon on a FRAGMENT card — drop just THIS narration line (its words are
+        GONE, unlike _delete_fragment which folds them into a sibling). scene["text"] is
+        redefined as the concat of the surviving fragments (drop_fragment), this line's own
+        lock is dropped and later fragment locks shift down (remap_fragment_locks delta=-1),
+        un-approve, local rebuild. If it was the beat's LAST line, dropping it would empty the
+        scene → confirm + delete the whole scene via the existing _delete_beat path. (Master's
+        mental model: 1 card = 1 line, trash = that line, never the whole beat.)"""
+        beat_key = _beat_key(beat)
+        sid = int(beat.get("scene_id") or 0)
+        frag_idx = _frag_idx_from_key(beat_key)
+        current = load_narration(project) or {}
+        scene = next((s for s in current.get("scenes") or []
+                      if int(s.get("scene_id") or 0) == sid), None)
+        if scene is None:
+            _show_snack("Scene not found — reload the project.")
+            return
+        try:
+            dropped = drop_fragment(scene, frag_idx)
+        except ValueError as exc:
+            _show_snack(f"Cannot drop line: {exc}")
+            return
+        if not dropped:
+            # Last remaining fragment — dropping it = emptying the scene, so this genuinely IS
+            # a whole-beat delete. Reuse _delete_beat's confirm+delete path (never mutated disk
+            # above: drop_fragment returned False without touching `scene`).
+            _delete_beat(
+                beat,
+                confirm_title=f"Xóa dòng cuối của beat {sid:02d}?",
+                confirm_body="Đây là dòng cuối của beat — xóa nó sẽ xóa CẢ beat khỏi "
+                             "narration.json. Cần re-approve trước khi render.")
+            return
+        save_narration_edits(project, current)
+        nonlocal narration, locks
+        narration = current
+        locks = remap_fragment_locks(locks, sid, frag_idx, -1)
+        locks_doc["locks"] = locks
+        locks_doc["approved"] = False
+        locks_doc["approved_at"] = None
+        save_review_locks(project, locks_doc)
+        beats_list = _remap_beats_list(review.get("beats") or [], sid, frag_idx, -1)
+        review["beats"] = beats_list
+        # Every surviving fragment row of this scene shifted index (the drop closed the gap),
+        # so each row's narration_text now maps to a DIFFERENT fragment — refresh from the new
+        # visual_beats list keyed by the row's (already-remapped) fragment index.
+        new_vb = scene.get("visual_beats") or []
+        for b in beats_list:
+            bk = str(b.get("beat_key") or "")
+            if bk.startswith(f"{sid}:"):
+                i = _frag_idx_from_key(bk)
+                if i < len(new_vb):
+                    b["narration_text"] = _frag_text(new_vb[i])
+        dirty = frozenset(f"{sid}:{i}" for i in range(len(new_vb)))
+        _rebuild("Đã xóa dòng — cần re-approve trước khi render.", warn=True, dirty=dirty)
 
     def _open_split_dialog(before: dict):
         """"Tách mảnh" dialog: `before` is the fragment card sitting right above the
@@ -1028,17 +1535,21 @@ def build(
                                if b.get("beat_key") == beat_key), None)
                 if orig_i is not None and frag_idx + 1 < len(new_vb):
                     orig_row = beats_list[orig_i]
-                    orig_row["narration_text"] = new_vb[frag_idx]
+                    orig_row["narration_text"] = _frag_text(new_vb[frag_idx])
                     # CLONE the sibling's candidate pool in-memory for the new second
                     # half — same scene, same shared candidate pool per the review
                     # contract; no build_candidates re-run needed.
                     new_row = dict(orig_row)
                     new_row["beat_key"] = f"{sid}:{frag_idx + 1}"
-                    new_row["narration_text"] = new_vb[frag_idx + 1]
+                    new_row["narration_text"] = _frag_text(new_vb[frag_idx + 1])
                     new_row["candidates"] = list(orig_row.get("candidates") or [])
                     new_row["pre_selected"] = []
                     beats_list.insert(orig_i + 1, new_row)
-                _rebuild("Đã tách mảnh — cần re-approve trước khi render.", warn=True)
+                # A split shifts every following fragment key of this scene by +1, so their
+                # cached cards now map to the wrong content — rebuild the whole scene's
+                # fragment cards fresh (other scenes stay reused). See _delete_fragment.
+                dirty = frozenset(f"{sid}:{i}" for i in range(len(new_vb)))
+                _rebuild("Đã tách mảnh — cần re-approve trước khi render.", warn=True, dirty=dirty)
             return _handler
 
         word_controls: list[ft.Control] = []
@@ -1160,10 +1671,6 @@ def build(
                 # unchanged beat: flet then diffs it as identical and never re-sends
                 # its ~100 candidate-tile images. Rebuilding fresh cards for every
                 # survivor was serializing ~2500 Images on each delete → the freeze.
-                # Seed scene_edit_rendered so a dirty sibling fragment of the SAME
-                # scene (rebuilt below) doesn't render a 2nd "sửa cả câu" box.
-                if _beat_unit(b) != "fragment" or _frag_idx_from_key(bk) == 0:
-                    scene_edit_rendered.add(int(b.get("scene_id") or 0))
                 controls.append(cached)
             else:
                 controls.append(_beat_card(b))
@@ -1182,16 +1689,20 @@ def build(
         every other surviving beat REUSES its existing card control so flet doesn't
         re-serialize ~100 tile images per survivor. A plain scene delete passes no
         dirty keys → all survivors reused → the diff is just the removed cards."""
-        nonlocal orig_text
-        new_orig = {int(s.get("scene_id") or 0): str(s.get("text", ""))
-                    for s in narration.get("scenes") or []}
-        for sid, txt in new_orig.items():
-            if sid not in edited_text:
-                edited_text[sid] = txt          # seed a freshly-inserted scene
-        for sid in [k for k in edited_text if k not in new_orig]:
+        # Both pending-edit maps are SPARSE (see their declaration): an unedited scene has no
+        # entry and its card re-seeds straight from the reconciled narration text, so a rebuild
+        # only has to drop entries that can no longer be written back safely.
+        live_sids = {int(s.get("scene_id") or 0) for s in narration.get("scenes") or []}
+        for sid in [k for k in edited_text if k not in live_sids]:
             edited_text.pop(sid, None)          # drop a deleted scene's stale edit
-        orig_text = new_orig
-        scene_edit_rendered.clear()
+        # frag_edits is keyed by (scene_id, frag_idx) and a split/merge/drop SHIFTS those
+        # indices — so a pending edit of an op'd scene would land on the wrong fragment. Drop
+        # that whole scene's pending edits (its `dirty` keys name it) plus any deleted scene's;
+        # narration.json on disk is the truth and the rebuilt cards re-seed from it.
+        dirty_sids = {int(k.split(":", 1)[0]) for k in dirty
+                      if ":" in k and k.split(":", 1)[0].isdigit()}
+        for key in [k for k in frag_edits if k[0] in dirty_sids or k[0] not in live_sids]:
+            frag_edits.pop(key, None)
         # Prune card_refs for beats that no longer exist (so a stale cached card is
         # never reused); keep survivors' entries so _build_card_controls can reuse them.
         live_keys = {_beat_key(b) for b in (review.get("beats") or [])}
@@ -1216,9 +1727,6 @@ def build(
         except Exception:
             pass
 
-    # Reset per full rebuild — tracks which scene_ids already got their one editable
-    # TextField rendered on a fragment row (see _beat_card's fragment branch above).
-    scene_edit_rendered: set[int] = set()
     cards = ft.ListView(
         _build_card_controls(),
         spacing=12, expand=True, padding=ft.padding.symmetric(horizontal=28, vertical=16),
@@ -1289,8 +1797,10 @@ def build(
         padding=ft.padding.symmetric(horizontal=28, vertical=10),
     )
 
+    unhide_btn.content = f"👁 Đã ẩn {len(hidden)} panel — Hiện lại tất cả"
     center = ft.Column([
         intro_section,
+        hidden_bar,
         ft.Container(content=cards, expand=True),
         ft.Container(content=status_text,
                      padding=ft.padding.symmetric(horizontal=28, vertical=12)),

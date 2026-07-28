@@ -50,6 +50,11 @@ from config import PROJECTS_ROOT
 # Default-ON boolean env, same idiom as shots.PANEL_ANCHOR_BIND.
 REVIEW_GATE = os.getenv("REVIEW_GATE", "1").strip().lower() not in ("0", "false", "no", "")
 
+# Panel TEXT-embed master switch (see config.PANEL_TEXT_EMBED). OFF (default) → build_candidates
+# skips the cosine matcher and lists ALL panels of each beat's issue PAGE-SORTED so Master picks
+# by hand (no vector query, no dialog/vision rerank). Bound to the module so tests can flip it.
+from config import PANEL_TEXT_EMBED
+
 # Provenance label stamped on every lock — panels come from batcave-downloaded pages.
 _LOCK_SOURCE = "batcave"
 
@@ -107,6 +112,12 @@ QA_MOMENT_FLOOR = float(os.getenv("QA_MOMENT_FLOOR", "4.0"))
 # byte-identical (no money_target → the funnel returns before touching anything). The money_shot
 # module (derive_money_target + ocr_money_hits) is written by a sibling task; imported LAZILY so
 # this file loads even before it lands.
+# Master 2026-07-24: DEFAULT OFF. The money-shot VISION sweep (3-channel recall → VLM confirm →
+# pin frame-1) is dead now that Master hand-picks the intro / edits subject_panels.json. OFF skips
+# the whole _money_funnel detection loop (no VLM sweep); subject_panels.json is still built by
+# Stage 2 (cheap text-match) — Master just picks the intro there as usual. MONEY_SHOT_PIN=1
+# re-enables the vision funnel.
+MONEY_SHOT_PIN = os.getenv("MONEY_SHOT_PIN", "0").strip().lower() not in ("0", "false", "no", "")
 MONEY_SHOT_BONUS = float(os.getenv("MONEY_SHOT_BONUS", "2.0"))       # rank nudge for a confirmed money panel
 MONEY_CONF_FLOOR = float(os.getenv("MONEY_CONF_FLOOR", "0.5"))       # min VLM confidence to accept a panel
 MONEY_RECALL_K = int(os.getenv("MONEY_RECALL_K", "12"))             # per-channel top nominations
@@ -181,6 +192,45 @@ def lock_custom_image(lock: dict | None) -> str | None:
         return None
     ci = lock.get("custom_image")
     return str(ci) if ci else None
+
+
+def remap_locks_by_src(locks: dict, src_by_page: dict[int, str]) -> dict:
+    """Fix a stale `page` on every locked panel after the project's GLOBAL page numbering
+    shifts — e.g. Master swaps a mid-story issue for a shorter/longer one and every LATER
+    chapter's page number moves (page_2.py's cache re-key handles the preprocessed-JSON side
+    of this; this is the locks.json side). A v2+ panel entry stamps the basename of its
+    source image as "src" at lock time (see ui/screens/s_review_gate._toggle_candidate); if
+    `src_by_page[page]` no longer equals that basename, the lock now points at a DIFFERENT
+    page's art, so this looks up where the basename lives NOW and rewrites `page` to match.
+
+    `src_by_page` = {current global page number: source image basename}.
+    An entry with no "src" (every lock written before this fix) passes through byte-identical
+    — absolute backward compat. A "src" that isn't in `src_by_page` at all (source page
+    gone) is left on its stale page rather than guessed at. Pure, no I/O; never raises.
+    Diff the return against `locks` to count how many locks actually changed (see callers)."""
+    name_to_page: dict[str, int] = {}
+    for pn, name in (src_by_page or {}).items():
+        name_to_page.setdefault(str(name), int(pn))
+    out: dict = {}
+    for key, lock in (locks or {}).items():
+        panels = lock.get("panels") if isinstance(lock, dict) else None
+        if not isinstance(panels, list):
+            out[key] = lock
+            continue
+        new_panels, changed = [], False
+        for p in panels:
+            src = p.get("src") if isinstance(p, dict) else None
+            if not src or src_by_page.get(p.get("page")) == src:
+                new_panels.append(p)
+                continue
+            new_page = name_to_page.get(str(src))
+            if new_page is None:
+                new_panels.append(p)   # unresolved — keep stale rather than guess
+                continue
+            new_panels.append({**p, "page": new_page})
+            changed = True
+        out[key] = {**lock, "panels": new_panels} if changed else lock
+    return out
 
 
 def save_state(project, state: dict) -> Path:
@@ -405,6 +455,49 @@ def _write_thumb(src, bbox: dict, out_path: Path, *, max_side: int = 520) -> boo
         return True
     except Exception:
         return False
+
+
+_THUMB_NAME_RE = re.compile(r"^p(\d+)_\d+\.jpg$")
+
+
+def _sync_thumbs(thumbs_dir: Path, pages_by_number: dict, *, log=print) -> None:
+    """Invalidate stale + prune orphan thumbs BEFORE build_candidates (re)generates any, so a
+    page-number shift (mid-story issue swap → every later page renumbers) never lets an old
+    p041_0.jpg (a DIFFERENT page's art) survive under a new page's filename — build_candidates
+    only ever checked "does the file exist", never "is this still that page's source image".
+
+    thumbs_dir/_src.json ({"<page>": "<source image basename>"}) records what each page's thumb
+    was cropped from. Compared against the CURRENT pages_by_number:
+      • basename changed (or _src.json missing → old={} → every existing thumb counts as
+        changed) → delete that page's p{page:03d}_*.jpg so the normal _write_thumb calls below
+        regenerate it lazily (their own `exists()` check just sees no file).
+      • page no longer in pages_by_number at all → orphan → delete.
+      • basename unchanged → leave the cached file alone (fast path, unchanged).
+    Rewrites _src.json to the full current mapping. Never raises."""
+    cur_src = {str(pn): Path(str(p.get("source_image") or "")).name
+               for pn, p in (pages_by_number or {}).items()}
+    src_path = thumbs_dir / "_src.json"
+    old_src = _load_json(src_path)
+
+    regen_pages, orphan_pages = set(), set()
+    if thumbs_dir.exists():
+        for f in thumbs_dir.glob("p*_*.jpg"):
+            m = _THUMB_NAME_RE.match(f.name)
+            if not m:
+                continue
+            pn = str(int(m.group(1)))
+            if pn not in cur_src:
+                f.unlink(missing_ok=True)
+                orphan_pages.add(pn)
+            elif old_src.get(pn) != cur_src[pn]:
+                f.unlink(missing_ok=True)
+                regen_pages.add(pn)
+
+    if regen_pages or orphan_pages:
+        log(f"[review-gate] thumbs: regenerated {len(regen_pages)} page(s), "
+            f"removed {len(orphan_pages)} orphan(s)")
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
+    src_path.write_text(json.dumps(cur_src, indent=2, ensure_ascii=False))
 
 
 def _panel_dialog_str(panel: dict, page_tb) -> str:
@@ -692,6 +785,17 @@ def _lock_pair_list(raw) -> list[dict]:
         return []
 
 
+def _page_sorted_candidates(sub_pages: dict) -> list[dict]:
+    """NO-EMBED candidate pool: EVERY panel of `sub_pages`, sorted (page, panel_idx). Mirrors the
+    row shape _match_panels emits into candidates_out (score/cosine 0.0 — no ranking, no _vlm),
+    so the rest of build_candidates + the review UI consume it unchanged. Used when
+    PANEL_TEXT_EMBED is off: Master picks the panel by eye, cosine order is meaningless."""
+    from stages.stage_5.shots import _panel_pool
+    rows = sorted(_panel_pool(sub_pages), key=lambda t: (int(t[0][0]), int(t[0][1])))
+    return [{"page": int(key[0]), "panel_idx": int(key[1]), "score": 0.0, "cosine": 0.0,
+             "panel": panel, "src": src} for (key, panel, src, _tb) in rows]
+
+
 def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
     """Score every review ROW against every panel with the EXISTING Stage-5 matcher and write
     review/candidates.json + thumbs. Reuses _match_panels' own ranked scores (no duplicate
@@ -703,10 +807,12 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
       • micro_moment — one row PER VISUAL-BEAT FRAGMENT ({"text","page","panel"} dict → unit
                        "fragment", beat_key "<scene_id>:<frag_idx>"); a body scene with no
                        visual_beats is a single "scene" row keyed "<scene_id>".
-      • INTRO row (recap + micro, NOT Q&A) — the cold-open hook as unit "intro", beat_key
-                       "intro", pre_selected from narration.cold_open_lock; lets Master pick
-                       frame 1 in the same UI. The OUTRO is still excluded (loop-close panel is
-                       deterministic).
+      • INTRO + OUTRO rows (EVERY mode incl. Q&A — Master 2026-07-24) — the cold-open hook as
+                       unit "intro" (beat_key "intro") and the closing line as unit "outro"
+                       (beat_key "outro"), both SINGLE-select. intro pre_selected =
+                       narration.cold_open_lock else the scene's own anchor; outro pre_selected =
+                       the scene's own anchor. Emitted only when narration HAS that scene. Row
+                       order = video order: intro, body…, outro.
 
     Each beat carries three ADDITIVE fields alongside the old six: "beat_key", "pre_selected"
     (list, may be empty — the panel(s) already anchored/pinned), and "unit". Old fields keep
@@ -738,6 +844,7 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
     from stages.stage_5.pipeline import _load_preprocessed_pages
     from stages.stage_5.shots import _match_panels, _vb_text, _vb_pin
     pages_by_number = _load_preprocessed_pages(root)
+    _sync_thumbs(root / "review" / "thumbs", pages_by_number, log=log)
     cluster_to_name = {int(kk): str(vv) for kk, vv in _load_json(root / "cluster_to_name.json").items()}
 
     # Per-issue candidate scoping (general, keyed on data). In a multi-issue project
@@ -756,17 +863,36 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
         return page_to_issue.get(int(scene.get("page_ref", 0) or 0), "") if multi_issue else ""
 
     qa_mode = _plot_source(root) == "answer_research"
+
+    def _pool_issue_of(scene) -> str:
+        """Issue used to SCOPE a row's candidate pool (citation labels keep _issue_of).
+
+        Scoping is a Q&A contract, not a general one: each countdown item cites ONE issue
+        and its panel must come from that issue, so a "Thunderbolts #29" beat must not grab
+        a high-cosine Thanos page. A recap/micro tells a SINGLE story that merely spans
+        issues — there is no per-beat citation to honour, and scoping just silos each row
+        to whichever issue its page_ref landed in. Seen 2026-07-27 on an arc recap: body
+        rows offered 86 panels while the bookends offered 444, so the same story was picked
+        from five disjoint pools. Those modes get the whole project pool."""
+        return _issue_of(scene) if qa_mode else ""
     micro = mode == "micro_moment"
     intro_scene = next((s for s in scenes if s.get("is_intro")), None)
+    outro_scene = next((s for s in scenes if s.get("is_outro")), None)
 
     # Citation + drawable_moment per scene, resolved ONCE (reused for the match query below and
-    # each row's "source" field). For a Q&A beat this carries the item's drawable_moment. The
-    # intro scene gets one too (recap/micro intro row); Q&A has no intro row.
-    src_scenes = list(story)
-    if intro_scene is not None and not qa_mode:
-        src_scenes.append(intro_scene)
+    # each row's "source" field). For a Q&A beat this carries the item's drawable_moment.
     src_by_id = {id(s): _beat_source(s, comic_ctx, answer_ctx, issue_label=_issue_of(s))
-                 for s in src_scenes}
+                 for s in story}
+    # The bookend scenes cite the FIRST / LAST body beat's source: neither has an issue anchor of
+    # its own (a Q&A intro's page_ref is a placeholder, its source_image usually absent), so
+    # resolving them directly would silently fall through to the whole-comic citation. For a
+    # single-source project (recap/micro — answer_context has no items) this IS that same
+    # citation, so those rows are unchanged.
+    for _bs in (intro_scene, outro_scene):
+        if _bs is not None and id(_bs) not in src_by_id:
+            _cite = story[0] if _bs is intro_scene else story[-1]
+            src_by_id[id(_bs)] = _beat_source(_cite, comic_ctx, answer_ctx,
+                                              issue_label=_issue_of(_cite))
 
     def _query_text(scene) -> str:
         """Match query. For a Q&A beat, the item's drawable_moment (a PRECISE VISUAL of the exact
@@ -788,11 +914,12 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
     # ── Build review ROWS (mode-aware). Each row: scene, unit, beat_key, query, narration_text,
     #    pre_selected. recap/Q&A rows == story scenes (byte-identical matcher input). ─────────
     rows: list[dict] = []
-    if intro_scene is not None and not qa_mode:
+    if intro_scene is not None:
         hook = str(intro_scene.get("text", "") or "")
         rows.append({"scene": intro_scene, "unit": "intro", "beat_key": "intro",
                      "query": hook, "narration_text": hook,
-                     "pre_selected": _lock_pair_list(narration.get("cold_open_lock"))})
+                     "pre_selected": (_lock_pair_list(narration.get("cold_open_lock"))
+                                      or _scene_pre_selected(intro_scene))})
     for s in story:
         sid = int(s.get("scene_id") or 0)
         # ANY mode that emitted visual_beats gets one review ROW per fragment (was micro-only) —
@@ -817,12 +944,21 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
             rows.append({"scene": s, "unit": "scene", "beat_key": str(sid),
                          "query": _query_text(s), "narration_text": str(s.get("text", "") or ""),
                          "pre_selected": _scene_pre_selected(s)})
+    if outro_scene is not None:
+        tail = str(outro_scene.get("text", "") or "")
+        rows.append({"scene": outro_scene, "unit": "outro", "beat_key": "outro",
+                     "query": tail, "narration_text": tail,
+                     "pre_selected": _scene_pre_selected(outro_scene)})
 
     # Group rows by their scene's issue, preserving order; score each group against only that
     # issue's pages. Rows with an unknown/blank issue fall back to the full pool ("" group).
     groups: dict[str, list] = {}
     for r in rows:
-        groups.setdefault(_issue_of(r["scene"]), []).append(r)
+        # INTRO/OUTRO always get the FULL pool (group ""): a bookend panel belongs to no
+        # answer item, so scoping it to the issue its placeholder page_ref happens to land in
+        # would hide every other issue's panels from the hook/closing pick.
+        groups.setdefault("" if r["unit"] in ("intro", "outro") else _pool_issue_of(r["scene"]),
+                          []).append(r)
 
     # FIX B: a Q&A drawable_moment query is a visual description, so trust the SigLIP image
     # signal more than the recap default. Bump _img_index.PANEL_IMG_WEIGHT (read late-bound
@@ -847,6 +983,12 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
                  if page_to_issue.get(int(pn)) == issue_label}
                 if issue_label else pages_by_number
             )
+            if not PANEL_TEXT_EMBED:
+                # NO-EMBED: Master picks by eye — every panel of the issue, page-sorted, no
+                # vector query / dialog-channel / vision judge (all embed- or SDK-bound).
+                for r in group_rows:
+                    r["_cands"] = _page_sorted_candidates(sub_pages)
+                continue
             group_out: list = []
             _match_panels([(r["scene"], r["query"]) for r in group_rows],
                           sub_pages, cluster_to_name, project=slug,
@@ -871,14 +1013,17 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
     cands_by_id: dict = {}
     money_groups: dict[str, list] = {}
     for r in rows:
-        if r["unit"] == "intro":
+        if r["unit"] in ("intro", "outro"):
             continue
         key = id(r["scene"])
         if key in cands_by_id:
             continue
         cands_by_id[key] = r["_cands"]
         money_groups.setdefault(_issue_of(r["scene"]), []).append(r["scene"])
-    _money_funnel(root, answer_ctx, pages_by_number, page_to_issue, money_groups, cands_by_id, log=log)
+    # Money-shot VISION sweep is OFF by default (MONEY_SHOT_PIN) — Master hand-picks the intro
+    # / edits subject_panels.json. When on, the funnel is still no-op unless a money_target exists.
+    if MONEY_SHOT_PIN:
+        _money_funnel(root, answer_ctx, pages_by_number, page_to_issue, money_groups, cands_by_id, log=log)
 
     thumbs_dir = root / "review" / "thumbs"
     beats = []

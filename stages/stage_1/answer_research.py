@@ -34,6 +34,13 @@ _ITEM_FIELDS = (
     "entity", "how_or_why", "source_comic", "source_year",
     "reader_url", "drawable_moment", "verification_note", "surprise_level",
 )
+# ADDITIVE story-context fields (2026-07-24): richer WHO/WHY the writer needs so a
+# zero-context viewer isn't left watching an action with no idea why it lands (the
+# harley-quinn "why is the Joker in a cell / what did he do to her" miss). OPTIONAL —
+# an item missing them is NOT dropped (unlike _ITEM_FIELDS), and old answer_context.json
+# without them still loads unchanged. `relationships` = what the entity IS to the other
+# characters in the moment; `stakes_why` = why this moment is remarkable / what it costs.
+_OPTIONAL_ITEM_FIELDS = ("relationships", "stakes_why")
 
 _ANSWER_SYSTEM = """You are a comic-feats research agent. You are given a QUESTION \
 about comics (e.g. "Who has survived Ghost Rider's Penance Stare?"). Use the \
@@ -63,6 +70,12 @@ begin this note with "WEAK:" so the caller knows.
   * surprise_level — "low" | "medium" | "high": how shocking this entry is to a \
 comics-literate viewer (a famous hero = low; an obscure/cross-universe/absurd answer \
 = high).
+  * relationships — 1 PLAIN sentence naming what the entity IS to the other characters \
+in THIS moment, so a stranger feels the weight ("Blackheart is Mephisto's own SON", \
+"Gwen is Peter Parker's first love"). "" if the moment involves no such relationship. \
+Never assume the viewer already knows any character's history.
+  * stakes_why — 1 PLAIN sentence on why THIS moment is remarkable: the unspoken rule it \
+breaks or what it costs (not hype words like "epic" — the concrete reason it matters).
   * reader_url — a batcave.biz reader URL for the source series, form \
 "https://batcave.biz/reader/<news_id>/<chapter_id>" (two numeric ids). Search \
 batcave.biz for the series and COPY a real reader URL. If you only find a series \
@@ -75,6 +88,13 @@ video's finale and retention payoff). Do not label them "number five/four".
 
 - answer_summary — ONE sentence that restates the question as a promise and TEASES \
 the final shock WITHOUT naming that entity (e.g. "...and one of them will surprise you").
+
+- constant_broken — ONE sentence naming the famous "unbreakable" constant these answers \
+violate ("Nobody survives the Penance Stare"). "" if the question has no such constant.
+
+- viewer_context — 1-2 PLAIN, spoiler-free sentences of the bare context a viewer who \
+knows NOTHING must hear BEFORE the items make sense: who/what the question is about and \
+the baseline rule. This is the ground a stranger stands on to follow the whole video.
 
 - SOURCES to search and reconcile (use several): Marvel/DC Fandom \
 (marvel.fandom.com, dc.fandom.com), Comic Vine (comicvine.gamespot.com), Wikipedia, \
@@ -139,6 +159,10 @@ def _clean_items(raw_items: list) -> list[dict]:
         if not isinstance(it, dict):
             continue
         item = {k: str(it.get(k, "") or "").strip() for k in _ITEM_FIELDS}
+        # Optional story-context fields: carried through when present, "" when absent —
+        # they never gate the drop below, so old research without them still passes.
+        for k in _OPTIONAL_ITEM_FIELDS:
+            item[k] = str(it.get(k, "") or "").strip()
         lvl = item["surprise_level"].lower()
         item["surprise_level"] = lvl if lvl in _SURPRISE_RANK else "medium"
         # Every field except reader_url must be non-empty (reader_url "" is allowed
@@ -407,8 +431,12 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
         f"{hint_block}"
         f"{contract} STRICT JSON only, no prose around it:\n"
         '{"answer_summary":"' + summary_spec + '",'
+        '"constant_broken":"<the famous rule these answers break, or empty>",'
+        '"viewer_context":"<1-2 sentences a zero-context viewer needs first>",'
         '"items":[{"entity":"","how_or_why":"","source_comic":"","source_year":"",'
         '"drawable_moment":"","verification_note":"","surprise_level":"low|medium|high",'
+        '"relationships":"<what the entity is to the others in this moment, or empty>",'
+        '"stakes_why":"<why this moment is remarkable, or empty>",'
         '"reader_url":"https://batcave.biz/reader/<news_id>/<chapter_id> or empty"}]}'
     )
     log(f"[answer-research] researching: {question!r} (<= {max_items} items"
@@ -439,6 +467,9 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
     return {
         "question": question,
         "answer_summary": summary,
+        # ADDITIVE question-level story context (optional; "" when the model omits it).
+        "constant_broken": (data.get("constant_broken") or "").strip(),
+        "viewer_context": (data.get("viewer_context") or "").strip(),
         "source_engine": "claude-sdk-web",
         "items": items,
     }
@@ -513,6 +544,9 @@ def build_contexts(
     answer_ctx = {
         "question": question,
         "answer_summary": research.get("answer_summary", ""),
+        # ADDITIVE story context for the writer (optional; "" when research omitted it).
+        "constant_broken": research.get("constant_broken", ""),
+        "viewer_context": research.get("viewer_context", ""),
         "researched_at": researched_at,
         "source_engine": research.get("source_engine", ""),
         "items": [
@@ -526,6 +560,9 @@ def build_contexts(
                 "drawable_moment": it["drawable_moment"],
                 "verification_note": it["verification_note"],
                 "surprise_level": it["surprise_level"],
+                # ADDITIVE per-item WHO/WHY (optional; "" when research omitted them).
+                "relationships": it.get("relationships", ""),
+                "stakes_why": it.get("stakes_why", ""),
                 # FIX D: Comic Vine cross-check result (flag for review; not a drop).
                 "verified": it.get("verified", True),
                 "verify_note": it.get("verify_note", ""),

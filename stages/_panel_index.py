@@ -101,6 +101,14 @@ def index_project(project: str, pages_by_number: dict[int, dict], *, log=print,
     a transient network error kills only one batch (which is retried), not the whole run.
     The collection is RECREATED first so every re-run replaces the project's vectors (no
     stale points). Returns the count upserted (0 on total failure — never raises)."""
+    # Panel TEXT-embed master switch. OFF (default) → Master picks panels by hand in review,
+    # so building the Qwen text index + `panels__<slug>` collection is dead work. Skip it
+    # entirely (no embedding API, no collection). SigLIP image index is separate (see caller).
+    from config import PANEL_TEXT_EMBED
+    if not PANEL_TEXT_EMBED:
+        log("[panel-index] SKIPPED (PANEL_TEXT_EMBED=0)")
+        return 0
+
     try:
         from . import _embedding, _qdrant
     except Exception as exc:  # pragma: no cover

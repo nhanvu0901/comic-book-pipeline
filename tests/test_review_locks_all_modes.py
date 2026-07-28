@@ -124,6 +124,99 @@ def test_recap_intro_only_lock_stays_on_per_chunk(tmp_path, monkeypatch):
     assert narration["cold_open_lock"] == [4, 1]
 
 
+# ─── (f) "outro" lock → the outro scene's anchor + loop-close stays off ──────────
+
+def test_outro_lock_pins_outro_anchor_and_skips_loop_close(tmp_path, monkeypatch):
+    """The review UI now has an OUTRO row. Master's pick must reach the render: it overwrites the
+    outro scene's (page_ref, panel_ref) — the per-chunk builder's outro PIN — and _close_loop is
+    skipped so the cold-open clone can't overwrite the very panel Master locked."""
+    closed = []
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", True)
+    monkeypatch.setattr(shots, "_close_loop", lambda sh: closed.append(1))
+    # the builder stub returns sentinels, not Shots → keep the loop-tail carve out of the way
+    monkeypatch.setattr(shots, "_time_split_shots", lambda sh, mx, **k: sh)
+    monkeypatch.setattr(shots, "_load_sentence_panels", lambda project: None)
+    monkeypatch.setattr(shots, "_build_shots_per_chunk", lambda *a, **k: [1])
+    _recap_project(tmp_path, monkeypatch, {"outro": {"panels": [{"page": 8, "panel": 3}]}})
+    narration = {"scenes": [{"scene_id": 1, "text": "hook", "is_intro": True},
+                            {"scene_id": 2, "text": "body"},
+                            {"scene_id": 3, "text": "bye", "is_outro": True,
+                             "page_ref": 99, "panel_ref": 0}]}
+    shots.build_shots(narration, caption_chunks=[{"text": "x", "start": 0.0, "end": 1.0}],
+                      pages_by_number={1: _pg([], "p1.png")}, project="recap")
+    outro = narration["scenes"][-1]
+    assert (outro["page_ref"], outro["panel_ref"]) == (8, 3)   # lock beats Stage 3's own anchor
+    assert closed == []                                        # loop clone would erase the pick
+
+    # no outro lock → untouched anchor AND the loop closes exactly as before
+    closed.clear()
+    _recap_project(tmp_path, monkeypatch, {})
+    narration = {"scenes": [{"scene_id": 1, "text": "hook", "is_intro": True},
+                            {"scene_id": 3, "text": "bye", "is_outro": True,
+                             "page_ref": 99, "panel_ref": 0}]}
+    shots.build_shots(narration, caption_chunks=[{"text": "x", "start": 0.0, "end": 1.0}],
+                      pages_by_number={1: _pg([], "p1.png")}, project="recap")
+    assert (narration["scenes"][-1]["page_ref"], narration["scenes"][-1]["panel_ref"]) == (99, 0)
+    assert closed == [1]
+
+
+def test_bookend_only_lock_does_not_route_recap_to_locked_builder(tmp_path, monkeypatch):
+    """An intro/outro-only lock is a BOOKEND, not a body lock: routing a legacy recap into the
+    locked builder on it would leave every body scene with nothing locked to render from."""
+    calls = []
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)
+    monkeypatch.setattr(shots, "_build_shots_per_chunk_locked",
+                        lambda *a, **k: calls.append("locked") or [1])
+    monkeypatch.setattr(shots, "_build_shots_per_chunk",
+                        lambda *a, **k: calls.append("chunk") or [1])
+    monkeypatch.setattr(shots, "_load_sentence_panels", lambda project: None)
+    _recap_project(tmp_path, monkeypatch, {"outro": {"panels": [{"page": 8, "panel": 3}]}})
+    shots.build_shots({"scenes": [{"scene_id": 1, "text": "x"},
+                                  {"scene_id": 2, "text": "bye", "is_outro": True}]},
+                      caption_chunks=[{"text": "x", "start": 0.0, "end": 1.0}],
+                      pages_by_number={1: _pg([], "p1.png")}, project="recap")
+    assert calls == ["chunk"]
+
+
+# ─── (g) Q&A locked builder: bookend locks beat the subject-panel sequence ───────
+
+def test_qa_locked_builder_honors_intro_and_outro_locks(tmp_path, monkeypatch):
+    """Q&A used to bookend from subject_panels.json / the fallback matcher and IGNORE the locks
+    (there was no intro/outro review row). A locked bookend is a hand pick → it wins, and the
+    multi-panel subject hook collapses to that ONE panel."""
+    monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(shots, "PANEL_TEXT_EMBED", False)   # deterministic geometric fallback
+    from stages import _panel_index
+    monkeypatch.setattr(_panel_index, "load_vectors", lambda project: {})
+    proj = tmp_path / "qa"
+    (proj / "review").mkdir(parents=True)
+    (proj / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
+    (proj / "review" / "locks.json").write_text(json.dumps({"approved": True, "locks": {
+        "2": {"panels": [{"page": 1, "panel": 1}]},          # body beat
+        "intro": {"panels": [{"page": 1, "panel": 2}]},
+        "outro": {"panels": [{"page": 1, "panel": 3}]},
+    }}))
+    panels = [{"index": i, "bbox": {"x": 0, "y": 100 * i, "w": 600, "h": 100},
+               "description": f"d{i}", "characters": []} for i in range(4)]
+    pages = {1: _pg(panels, "p1.png")}
+    narration = {"mode": "explore_answer", "scenes": [
+        {"scene_id": 1, "text": "hook", "is_intro": True, "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 2, "text": "body", "page_ref": 1, "panel_ref": -1},
+        {"scene_id": 3, "text": "bye", "is_outro": True, "page_ref": 1, "panel_ref": -1}]}
+    chunks = [{"text": "hook", "start": 0.0, "end": 2.0},
+              {"text": "body", "start": 2.0, "end": 4.0},
+              {"text": "bye", "start": 4.0, "end": 6.0}]
+    timings = [{"scene_id": 1, "start": 0.0, "end": 2.0}, {"scene_id": 2, "start": 2.0, "end": 4.0},
+               {"scene_id": 3, "start": 4.0, "end": 6.0}]
+    out = shots.build_shots(narration, scene_timings=timings, caption_chunks=chunks,
+                            pages_by_number=pages, project="qa")
+    ys = [int(s.panel_bbox["y"]) for s in out]
+    assert ys[0] == 200, f"intro must render the locked p1/2, got y={ys[0]}"
+    assert ys[-1] == 300, f"outro must render the locked p1/3, got y={ys[-1]}"
+    assert out[0].is_intro is True
+
+
 # ─── (d) _qa_locks gates on answer_research; _review_locks is mode-agnostic ──────
 
 def test_qa_locks_answer_research_only(tmp_path, monkeypatch):

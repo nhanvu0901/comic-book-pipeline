@@ -382,7 +382,8 @@ def _segment_moment_window(
     log = log or (lambda _m: None)
     if not _focus_filter_llm_on():
         return None
-    if os.environ.get("STAGE3_NO_EMBED") == "1":
+    from config import stage3_no_embed
+    if stage3_no_embed():
         log("[micro_moment] focus-segment skipped (--no-embed): deterministic heuristic fallback")
         return None
     if not beats:
@@ -706,6 +707,7 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
 
 HARD RULES:
   - Plain B2 English. Concrete, no purple prose, no riddles, no lore a newcomer wouldn't know.
+  - WEAVE THE WHY. If a STORY CONTEXT block is given above, state who the characters are to each other and why the moment matters in plain words, early — a zero-context viewer must NEVER watch an action without knowing why it lands (e.g. never show two people fight without saying they were once partners / what one did to the other). Never assume the viewer knows any character's history.
   - EXACTLY one scene per beat, in the SAME order given. Do NOT merge, split, reorder, or skip a beat.
   - Each scene under 40 words.
   - The hook plus ALL scenes together must land inside the WORD BUDGET given.
@@ -988,7 +990,8 @@ def _pin_beats_by_vector(
     STAGE3_NO_EMBED=1 (--no-embed, narration-only test mode) short-circuits this to the
     same graceful [] path — pins stay empty, no network embed call is made, Stage 5's
     matcher fills in panels at render time (valid existing fallback)."""
-    if os.environ.get("STAGE3_NO_EMBED") == "1":
+    from config import stage3_no_embed
+    if stage3_no_embed():
         log("[stage3] embed skipped (--no-embed): vector pin (pins left empty, "
             "Stage 5 matcher will assign panels)")
         return []
@@ -1080,6 +1083,30 @@ def _story_sources_block(comic_context: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _story_context_block(comic_context: dict) -> str:
+    """The WHO/WHY a zero-context viewer needs, from an OPTIONAL top-level
+    comic_context["story_context"] = {relationships, stakes_why, constant_broken,
+    viewer_context} (any subset). "" when the field is absent or empty — a project
+    that never set it produces a byte-identical writer prompt (target_moment path
+    unchanged). Mirrors explore_answer's viewer-context block so both modes teach the
+    writer the same WEAVE THE WHY discipline."""
+    sc = comic_context.get("story_context")
+    if not isinstance(sc, dict):
+        return ""
+    order = (
+        ("viewer_context", "VIEWER CONTEXT (say this early — who/what this is, the baseline a stranger needs)"),
+        ("relationships", "RELATIONSHIPS (who the characters are to each other — state it plainly in the narration)"),
+        ("stakes_why", "WHY IT MATTERS (why this moment is remarkable / what rule it breaks / what it costs)"),
+        ("constant_broken", "THE CONSTANT BEING BROKEN (the famous rule this moment violates)"),
+    )
+    lines = [f"- {label}: {v}" for key, label in order
+             if (v := str(sc.get(key, "") or "").strip())]
+    if not lines:
+        return ""
+    return ("STORY CONTEXT (viewer needs this — weave it into the narration in plain words; "
+            "never assume the viewer knows any character's history):\n" + "\n".join(lines))
+
+
 def _call_micro_writer(
     window: list[Beat],
     comic_context: dict,
@@ -1101,13 +1128,15 @@ def _call_micro_writer(
     peak_idx = _peak_index(window, target_moment)
     dialog_block = _window_dialog_block(window, story_pages)
     sources_block = _story_sources_block(comic_context)
+    context_block = _story_context_block(comic_context)
     user = (
         f"TITLE (mirror this in the hook — restate/paraphrase it, name the character "
         f"in sentence 1): {title}\n"
         f"THE MOMENT TO TELL (do not stray beyond it): {target_moment}\n\n"
         f"{fix_block}"
         f"{clarity_fixes}"
-        f"BACKGROUND PLOT (ground truth — every fact + 'why' must come from here):\n"
+        + (f"{context_block}\n\n" if context_block else "")
+        + f"BACKGROUND PLOT (ground truth — every fact + 'why' must come from here):\n"
         f"{plot[:1800]}\n\n"
         + (f"{sources_block}\n\n" if sources_block else "")
         + f"BEATS (spine only — label + page, one scene each, in this EXACT order; take your "

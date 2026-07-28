@@ -24,7 +24,7 @@ from typing import Callable
 
 from PIL import Image
 
-from config import VLM_BATCH_SIZE, VLM_MODEL, VLM_PAGE_WORKERS, get_project_dirs
+from config import VLM_BATCH_SIZE, VLM_EXTRACT, VLM_MODEL, VLM_PAGE_WORKERS, get_project_dirs
 from .._panel_index import DIALOG_TRUTH
 from .cache import image_hash, load_cached, save_cached
 from .panel_detect import assign_to_panels, detect_full
@@ -237,8 +237,11 @@ def _process_single_page_group(
 
 
 # Description↔bbox verify gate (crop + look ground-truth check — see vlm_extract.
-# verify_page_descriptions). Default ON; DESC_VERIFY=0/false disables.
-DESC_VERIFY = os.getenv("DESC_VERIFY", "1").strip().lower() not in ("0", "false", "no", "")
+# verify_page_descriptions). Master 2026-07-24: DEFAULT OFF — panels are now hand-picked in
+# review, so VLM descriptions no longer decide the panel, and the extra VLM round-trip per page
+# is dead cost. DESC_VERIFY=1 re-enables the gate (pages then carry desc_verified / the anchor-
+# trust path in shots.py reactivates). Off = every page treated as trusted (old-project parity).
+DESC_VERIFY = os.getenv("DESC_VERIFY", "0").strip().lower() not in ("0", "false", "no", "")
 
 # Coverage guard: flag story pages where Magi's panel boxes cover suspiciously little of
 # the page (likely MISSED panels). Default ON; COVERAGE_GUARD=0/false disables.
@@ -454,6 +457,8 @@ def preprocess_project(
             flat.append((global_page_num, label, img_path))
 
     log(f"[preprocess] {len(flat)} total page(s); batch_size={VLM_BATCH_SIZE}")
+    if not VLM_EXTRACT:
+        log("[preprocess] VLM_EXTRACT=0 → Magi-only (no OpenRouter desc)")
 
     # ── Phase 1: hash every page, separate cached vs uncached (preserve order) ──
     page_states: list[dict] = []  # parallel to flat; carries "cached" dict OR None
@@ -599,7 +604,14 @@ def preprocess_project(
         # Call multi-image VLM with overlap (gated pages excluded). Returns None on
         # total failure → fall back per-page.
         vlm_pages, new_state, model_used = (None, None, "")
-        if vlm_entries:
+        if vlm_entries and not VLM_EXTRACT:
+            # Magi-only (VLM_EXTRACT=0): no OpenRouter describe pass. Feed each non-gated
+            # panel an EMPTY vlm_data ({}); _assemble_page_dict then builds the page purely
+            # from Magi — bboxes + OCR dialog (with bbox, so bubble-inpaint survives) — and
+            # defaults page_type to "story". {} is falsy-but-not-None, so the consume loop
+            # below takes the assemble branch (not the per-page VLM fallback).
+            vlm_pages, model_used = [{} for _ in vlm_entries], "magi-only"
+        elif vlm_entries:
             t_vlm = time.time()
             vlm_pages, new_state, model_used = extract_pages_batch(
                 [e["b"]["img"] for e in vlm_entries],
@@ -711,7 +723,9 @@ def preprocess_project(
     # vectors instead of re-embedding every panel each run. Graceful no-op if
     # Qdrant/embeddings are unavailable (matcher falls back to in-memory embed).
     from .._panel_index import index_project
-    _ensure_embed_model_loaded(log)
+    from config import PANEL_TEXT_EMBED
+    if PANEL_TEXT_EMBED:                    # only pay the LM Studio JIT model-load when indexing
+        _ensure_embed_model_loaded(log)
     index_project(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
 
     # Feature A: ALSO embed the panel PIXELS into SigLIP's joint image-text space so Stage 5
@@ -1410,8 +1424,8 @@ def _apply_desc_verify_gate(
     mismatch, re-describe ONCE via the single-page path (no continuity bias) and verify
     again; still failing → keep the result, flagged desc_verified=False. Never raises,
     never loops (max 2 verify calls + 1 redo describe per page)."""
-    if not DESC_VERIFY or page_dict.get("page_type") not in ("cover", "story"):
-        return page_dict
+    if not DESC_VERIFY or not VLM_EXTRACT or page_dict.get("page_type") not in ("cover", "story"):
+        return page_dict  # Magi-only mode never makes the OpenRouter verify round-trip
     pn = page_dict.get("page_number")
     if verify_page_descriptions(page_dict, image_path, log=log):
         page_dict["desc_verified"] = True
@@ -1518,10 +1532,16 @@ def _build_page_from_single(
         save_cached(project_root, page_number, content_hash, out)
         return out
 
-    log(f"[stage2]     p{page_number:03d} fallback single-image VLM ({len(panels_raw)} panels)…")
-    t_vlm = time.time()
-    vlm_data = extract_page(image_path, panels_raw, progress=log, story_context=story_context)
-    log(f"[stage2]     p{page_number:03d} fallback done in {time.time() - t_vlm:.1f}s")
+    if not VLM_EXTRACT:
+        # Magi-only (VLM_EXTRACT=0): skip the OpenRouter describe call; empty vlm_data →
+        # _assemble_page_dict builds from Magi alone (page_type default "story", dialog
+        # from OCR + bbox). Covers the single-page front/back-matter path too.
+        vlm_data: dict = {}
+    else:
+        log(f"[stage2]     p{page_number:03d} fallback single-image VLM ({len(panels_raw)} panels)…")
+        t_vlm = time.time()
+        vlm_data = extract_page(image_path, panels_raw, progress=log, story_context=story_context)
+        log(f"[stage2]     p{page_number:03d} fallback done in {time.time() - t_vlm:.1f}s")
 
     out = _assemble_page_dict(
         page_number=page_number, issue_label=issue_label, image_path=image_path,

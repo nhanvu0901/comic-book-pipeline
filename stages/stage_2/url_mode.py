@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import get_project_dirs
-from utils.comic_scraper import discover_issues, scrape_issue_pages
+from utils.comic_scraper import scrape_issue_pages
 from .issue_resolver import resolve_chapters
 
 try:

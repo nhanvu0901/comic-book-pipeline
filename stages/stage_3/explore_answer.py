@@ -11,15 +11,15 @@ here before any of its own machinery runs (see write_script.py's mode check).
 """
 import hashlib
 import json
-import random
 import re
 from pathlib import Path
 from typing import Callable
 
 from config import CREATIVE_LLM_MODELS, ENABLE_LOOP_TEASE, OPENROUTER_MODEL, PROJECTS_ROOT
-from ..question_archetype import question_archetype, is_statement_lead
+from ..question_archetype import question_archetype, is_statement_lead, is_comparison
 from .schema import Beat, Glossary, Narration
 from ._llm import call_with_chain
+from .story_verify import run_story_verify
 from .._arc import issue_index_of_page
 from .write_script import (
     _anchor_scenes_to_beats,
@@ -28,16 +28,15 @@ from .write_script import (
     _outro_is_concrete,
     _to_narration,
     _HOOK_MAX_WORDS,
-    _SCENE_MAX_WORDS,
-    _TARGET_WORDS_MAX,
-    _TARGET_WORDS_MIN,
     _WORDS_PER_SEC,
     generate_loop_tease,
     generate_outro,
 )
 
-# Explore-mode word budget (DISTINCT from recap's imported _SCENE_MAX_WORDS / band —
-# those tune a single-comic recap and don't fit a Q&A countdown). A Q&A scene now
+# Explore-mode word budget — fully self-contained. (Recap's _SCENE_MAX_WORDS / word band
+# used to be imported here but were never read; the dead imports were dropped 2026-07-27
+# when recap moved to the long variant-profile register, so Q&A can't inherit it.)
+# A Q&A scene now
 # carries a connective bridge + entity + how/why + a dry remark, so it needs room;
 # the total scales with the number of items instead of a fixed band, since a question
 # can have anywhere from 3 to 6+ answers.
@@ -162,6 +161,7 @@ HARD RULES:
   - Plain B2 English. Concrete, no purple prose, no riddles.
   - ONE EVENT PER SENTENCE. Say one thing, then stop — do NOT chain three clauses with em-dashes into a run-on. A short lead-in bridge + one plain event is the whole sentence.
   - TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY / research (what HAPPENED and WHY), NOT a description of the comic art. Never narrate the artwork ("we see", "a figure holding", "in this panel/frame", colours / poses / camera for their own sake) — write the plain STORY EVENT the panel stands for.
+  - WEAVE THE WHY. If an item carries a relationships or stakes_why note, the scene MUST state it in plain words inside the SAME sentence(s) — who the entity is to the others, and why the moment lands — so a zero-context viewer never hears an action without knowing why it matters. NEVER assume the viewer knows any character's history. This is woven-in context, not extra scenes or extra words.
   - STRIP JARGON — a stranger must know every noun. The items below WILL carry obscure proper names (realms, teams, materials, minor characters). Test each noun: would a first-time viewer know it? If not, swap the plain word ("Cancerverse" -> "a dead universe", "the Negative Zone" -> "a prison dimension") or drop it — never make the viewer hit a word they'd have to look up. (Household-name heroes/villains still keep their names — see the name rule below.)
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - EXACTLY one scene per item, in the SAME order given.
@@ -170,11 +170,12 @@ HARD RULES:
   - Total words across ALL scenes must land inside the WORD BUDGET given.
   - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
-  - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. TARGET 3 fragments per scene — a body scene of 18+ words almost always contains a third drawable moment, find it before settling for 2; use 2 only when the sentence truly has just two moments. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then) into 3 (or 2) fragments, each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words. A short single-event scene (<=12 words) may be ONE fragment = the whole "text".
+  - MINI-ARC PER ITEM: each scene moves through setup (the source comic / where we are) -> the VISUAL TURN (the action or event drawn on the page) -> the payoff (its consequence or the twist). Never flatten an item into one wiki-style fact with no beat. This is the SHAPE inside the SAME 1-2 sentences and word budget, NOT extra words — and the visual_beats below split on exactly these beats.
+  - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. ONE fragment = ONE drawable moment of ~8-14 words; split by LENGTH — a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, and a short single-event scene (<=12 words) stays ONE fragment = the whole "text". A citation / connective HEAD that opens the scene ("But in <issue name>,..." / "In <issue> #N,...") is ALWAYS its own separate short fragment — it is the establishing shot that sets the place before the action. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then), each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words.
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>", "<verbatim fragment three>"], "connective": null, "beat_id": <id>}, ...]}"""
+{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
 
 _EXPLORE_WRITE_SYSTEM_EXPLAIN = """You are QAWriter for a comic-trivia YouTube Short. The video answers ONE Why/How question as an ARGUMENT built from real comic moments — the items are stages of the answer (they may come from one story or from several different comics), given in escalation order (the revelation is the LAST item) — never re-rank them.
 
@@ -190,6 +191,7 @@ HARD RULES:
   - Plain B2 English. Concrete, no purple prose, no riddles.
   - ONE EVENT PER SENTENCE. Say one thing, then stop — do NOT chain three clauses with em-dashes into a run-on. A short lead-in bridge + one plain event is the whole sentence.
   - TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY / research (what HAPPENED and WHY), NOT a description of the comic art. Never narrate the artwork ("we see", "a figure holding", "in this panel/frame", colours / poses / camera for their own sake) — write the plain STORY EVENT the panel stands for.
+  - WEAVE THE WHY. If an item carries a relationships or stakes_why note, the scene MUST state it in plain words inside the SAME sentence(s) — who the entity is to the others, and why the moment lands — so a zero-context viewer never hears an action without knowing why it matters. NEVER assume the viewer knows any character's history. This is woven-in context, not extra scenes or extra words.
   - STRIP JARGON — a stranger must know every noun. The items below WILL carry obscure proper names (realms, teams, materials, minor characters). Test each noun: would a first-time viewer know it? If not, swap the plain word ("Cancerverse" -> "a dead universe", "the Negative Zone" -> "a prison dimension") or drop it — never make the viewer hit a word they'd have to look up. (Household-name heroes/villains still keep their names — see the name rule below.)
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - EXACTLY one scene per item, in the SAME order given.
@@ -198,11 +200,12 @@ HARD RULES:
   - Total words across ALL scenes must land inside the WORD BUDGET given.
   - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
-  - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. TARGET 3 fragments per scene — a body scene of 18+ words almost always contains a third drawable moment, find it before settling for 2; use 2 only when the sentence truly has just two moments. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then) into 3 (or 2) fragments, each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words. A short single-event scene (<=12 words) may be ONE fragment = the whole "text".
+  - MINI-ARC PER ITEM: each scene moves through setup (the source comic / where we are) -> the VISUAL TURN (the action or event drawn on the page) -> the payoff (its consequence or the twist). Never flatten an item into one wiki-style fact with no beat. This is the SHAPE inside the SAME 1-2 sentences and word budget, NOT extra words — and the visual_beats below split on exactly these beats.
+  - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. ONE fragment = ONE drawable moment of ~8-14 words; split by LENGTH — a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, and a short single-event scene (<=12 words) stays ONE fragment = the whole "text". A citation / connective HEAD that opens the scene ("But in <issue name>,..." / "In <issue> #N,...") is ALWAYS its own separate short fragment — it is the establishing shot that sets the place before the action. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then), each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words.
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>", "<verbatim fragment three>"], "connective": null, "beat_id": <id>}, ...]}"""
+{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
 
 
 # Q&A-specific outro contract (passed to write_script.generate_outro's
@@ -226,12 +229,33 @@ HARD RULES:
 Return ONLY JSON, no markdown: {"outro_line": "..."}"""
 
 
+def _viewer_context_block(answer_context: dict) -> str:
+    """The question-level WHO/WHY a zero-context viewer needs before the items land
+    (Stage 1 answer_research's viewer_context + constant_broken). "" when neither is
+    present, so an old answer_context.json yields a byte-identical writer prompt."""
+    vc = str(answer_context.get("viewer_context", "") or "").strip()
+    cb = str(answer_context.get("constant_broken", "") or "").strip()
+    parts: list[str] = []
+    if vc:
+        parts.append("VIEWER CONTEXT (a zero-context viewer must know this before the items "
+                     f"make sense — weave it into the FIRST scene): {vc}")
+    if cb:
+        parts.append(f"THE CONSTANT BEING BROKEN (the famous rule these answers violate): {cb}")
+    return ("\n".join(parts) + "\n\n") if parts else ""
+
+
 def _items_block(beats: list[Beat], items: list[dict]) -> str:
     lines = []
     for b, item in zip(beats, items):
+        # relationships / stakes_why are ADDITIVE (Stage 1 answer_research): only appended
+        # when present, so old answer_context.json without them produces the exact old block.
+        rel = str(item.get("relationships", "") or "").strip()
+        stakes = str(item.get("stakes_why", "") or "").strip()
+        extra = (f" | relationships={rel!r}" if rel else "") + \
+                (f" | stakes_why={stakes!r}" if stakes else "")
         lines.append(
             f"{b.id}. entity={b.name!r} | source_comic={item.get('source_comic', '?')!r} | "
-            f"how_or_why={b.cause!r} | moment={item.get('drawable_moment', '')!r}"
+            f"how_or_why={b.cause!r} | moment={item.get('drawable_moment', '')!r}{extra}"
         )
     return "\n".join(lines)
 
@@ -248,6 +272,7 @@ def _call_explore_writer(
     archetype: str = "list",
     thesis: str = "",
     clarity_fixes: str = "",
+    context_block: str = "",
 ) -> tuple[dict, str]:
     fix_block = ""
     if issues:
@@ -263,6 +288,7 @@ def _call_explore_writer(
     )
     user = (
         f"QUESTION being answered: {question}\n\n"
+        f"{context_block}"
         f"{thesis_block}"
         f"{fix_block}"
         f"{clarity_fixes}"
@@ -270,7 +296,7 @@ def _call_explore_writer(
         f"{_items_block(beats, items)}\n\n"
         f"WORD BUDGET: {_exp_band(len(beats))[0]}-{_exp_band(len(beats))[1]} words total across all "
         f"{len(beats)} scenes (each scene: connective bridge + entity + how/why, under {_EXP_SCENE_MAX_WORDS} words).\n"
-        f'Return JSON: {{"scenes": [{{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>", "<verbatim fragment three>"], '
+        f'Return JSON: {{"scenes": [{{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one per drawable moment>"], '
         f'"connective": null, "beat_id": {beats[0].id}}}, ... one per item ...]}}.'
     )
 
@@ -344,10 +370,13 @@ def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
 # exact same sentence ("The last one on this list shouldn't even be
 # possible.") regardless of question, which reads as repeated boilerplate
 # across a channel of Q&A Shorts (Master: vary it like a paraphrase, not a
-# fixed line). Rotated per-project (see _pick_tease) rather than per-call so
-# retries within one Stage 3 run stay stable. Keep every variant in the same
-# short/punchy register and, for LIST, avoid re-introducing a literal rank
-# word (banned by _LIST_LANGUAGE_RE-style rules used elsewhere in this file).
+# fixed line). Picked per-project (see _pick_tease), excluding whatever other
+# projects' narration.json already used, so consecutive channel videos don't
+# collide on one line. Retries within one Stage 3 run on the SAME project still
+# land on the same tease (deterministic hash, and the current project's own
+# prior hook is never counted as "used" against itself). Keep every variant in
+# the same short/punchy register and, for LIST, avoid re-introducing a literal
+# rank word (banned by _LIST_LANGUAGE_RE-style rules used elsewhere in this file).
 _LIST_TEASE_POOL = (
     "The last one on this list shouldn't even be possible.",
     "And the final one shouldn't even exist.",
@@ -364,16 +393,51 @@ _EXPLAIN_TEASE_POOL = (
     "You won't like why it's true.",
     "The reason is stranger than you'd expect.",
 )
+# COMPARISON questions ("X things Carnage can do that Venom can't") are a
+# capability escalation, not a ranked list of people — no "who"/"list"/rank
+# word belongs here (see is_comparison in question_archetype.py).
+_COMPARISON_TEASE_POOL = (
+    "The last one breaks a rule you thought was absolute.",
+    "The last one shouldn't even be possible.",
+    "Wait until you see what the last one does.",
+    "The last one is the one nobody expects.",
+    "The last one changes what he is for good.",
+)
 
 
-def _pick_tease(pool: tuple[str, ...], project_slug: str) -> str:
-    """Deterministic per-project pick from `pool`. hashlib (not the `random`
+def _used_teases(pool: tuple[str, ...], project_slug: str, projects_dir: Path | None = None) -> set[str]:
+    """Tease lines from `pool` already spent by OTHER projects' narration.json
+    `hook` (the current project is excluded so a retry on itself doesn't starve
+    its own candidate list). Unreadable/missing files are skipped, not raised —
+    this is a rotation nicety, not a correctness gate."""
+    root = projects_dir if projects_dir is not None else PROJECTS_ROOT
+    used: set[str] = set()
+    if not root.is_dir():
+        return used
+    for narration_path in root.glob("*/narration.json"):
+        if narration_path.parent.name == project_slug:
+            continue
+        try:
+            hook = json.loads(narration_path.read_text()).get("hook", "")
+        except (OSError, ValueError, AttributeError):
+            continue
+        for tease in pool:
+            if isinstance(hook, str) and hook.endswith(tease):
+                used.add(tease)
+    return used
+
+
+def _pick_tease(pool: tuple[str, ...], project_slug: str, projects_dir: Path | None = None) -> str:
+    """Deterministic per-project pick from `pool`, skipping teases other
+    projects already closed on (see _used_teases). hashlib (not the `random`
     module) so a Stage 3 retry on the SAME project reproduces the SAME tease
     — `random` would need a seed threaded through every retry path to get
-    that guarantee for free. Different projects usually land on different
-    indices so consecutive channel videos don't all close on one line."""
+    that guarantee for free."""
+    remaining = [t for t in pool if t not in _used_teases(pool, project_slug, projects_dir)]
+    if not remaining:
+        remaining = list(pool)  # every variant already used elsewhere — fall back to full pool
     digest = hashlib.md5(project_slug.strip().encode("utf-8")).hexdigest()
-    return pool[int(digest, 16) % len(pool)]
+    return remaining[int(digest, 16) % len(remaining)]
 
 
 def _build_hook(question: str, answer_context: dict, archetype: str = "list",
@@ -405,6 +469,11 @@ def _build_hook(question: str, answer_context: dict, archetype: str = "list",
         q += "?"
     if archetype == "explain":
         return " ".join((q, _pick_tease(_EXPLAIN_TEASE_POOL, project_slug)))
+    if is_comparison(question):
+        # No ranked person to tease ("who"/"list"/"name") — just the escalating
+        # capability the last item shows. Also skips the summary/"Here's the
+        # answer" clause: there's no single "answer" to hold back here.
+        return " ".join((q, _pick_tease(_COMPARISON_TEASE_POOL, project_slug)))
     summary = str(answer_context.get("summary") or answer_context.get("answer_summary") or "").strip()
     statement = summary if summary else "Here's the answer"
     statement = statement.rstrip(".") + "."
@@ -457,17 +526,22 @@ def write_explore_answer(
     archetype = question_archetype(question)
     thesis = str(answer_context.get("answer_summary", "") or "").strip()
 
+    # ADDITIVE story-context block (Stage 1 answer_research): the WHO/WHY a zero-context
+    # viewer needs. Empty string when neither field is present → old answer_context.json
+    # produces a byte-identical writer prompt.
+    context_block = _viewer_context_block(answer_context)
+
     log(f"[explore_answer] writing {len(beats)} item scene(s)… (archetype={archetype})")
     parsed, mdl = _call_explore_writer(beats, items, question, model=model, progress=progress,
                                        debug_dump=dump, archetype=archetype, thesis=thesis,
-                                       clarity_fixes=clarity_fixes)
+                                       clarity_fixes=clarity_fixes, context_block=context_block)
     issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype)
     if issues:
         log(f"[explore_answer] draft has {len(issues)} issue(s); retrying once: {issues}")
         parsed, mdl = _call_explore_writer(beats, items, question, model=model, progress=progress,
                                            debug_dump=dump, issues=issues,
                                            archetype=archetype, thesis=thesis,
-                                           clarity_fixes=clarity_fixes)
+                                           clarity_fixes=clarity_fixes, context_block=context_block)
         issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype)
         if issues:
             log(f"[explore_answer] shipping with unresolved issue(s): {issues}")
@@ -529,4 +603,14 @@ def write_explore_answer(
     final_model = mdl or model or OPENROUTER_MODEL
     nar = _to_narration(parsed, beats, Glossary(), mode, final_model)
     nar.banner_title = question  # verbatim — no LLM banner for this mode
+
+    # STORY_VERIFY (last critic before save): fact-check each body scene against the
+    # comic's OWN preprocessed evidence — the writer built these from web research and
+    # can invert the story. A CONTRADICTED claim is re-written+re-verified once; if it
+    # still contradicts, the original ships with an unresolved issue (never blocks).
+    sv_issues = run_story_verify(nar, project_name, progress)
+    dump["story_verify_issues"] = sv_issues
+    if sv_issues:
+        log(f"[explore_answer] STORY_VERIFY shipping with {len(sv_issues)} unresolved "
+            f"contradiction(s): {sv_issues}")
     return nar

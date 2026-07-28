@@ -461,6 +461,110 @@ def test_moment_present_flag_when_all_vision_low(monkeypatch, tmp_path):
     assert "moment_warn" in data["beats"][0]["source"]
 
 
+# ─── INTRO + OUTRO review rows, every mode (Master 2026-07-24) ───────────────────
+
+def _bookend_project(tmp_path, monkeypatch, slug: str, *, qa: bool, mode: str = ""):
+    """1 intro + 1 body + 1 outro narration; Q&A variant also gets 2 answer items so the
+    bookend citation borrow (intro → item 1, outro → last body beat's item) is exercised."""
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    proj = tmp_path / slug
+    proj.mkdir()
+    (proj / "narration.json").write_text(json.dumps({"mode": mode, "scenes": [
+        {"scene_id": 1, "text": "hook line", "is_intro": True, "page_ref": 10, "panel_ref": -1},
+        {"scene_id": 2, "text": "body line", "page_ref": 10, "panel_ref": 0},
+        {"scene_id": 3, "text": "closing line", "is_outro": True, "page_ref": 10, "panel_ref": 1},
+    ]}))
+    if qa:
+        (proj / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
+        (proj / "answer_context.json").write_text(json.dumps({"items": [
+            {"source_comic": "First Item #1", "source_year": "2020", "reader_url": "u1",
+             "drawable_moment": "dm1"},
+            {"source_comic": "Second Item #2", "source_year": "2021", "reader_url": "u2",
+             "drawable_moment": "dm2"},
+        ]}))
+
+    def fake_match(units, pages, cluster, *, project=None, candidates_out=None, candidates_k=12):
+        for _ in units:
+            candidates_out.append([
+                {"page": 10, "panel_idx": 0, "score": 1.0, "cosine": 0.5,
+                 "panel": {"description": "d", "bbox": {"x": 0, "y": 0, "w": 10, "h": 10}},
+                 "src": "p10.png"}])
+        return []
+
+    monkeypatch.setattr(shots, "_match_panels", fake_match)
+    monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
+    monkeypatch.setattr(rg, "_dialog_rescore", lambda cl, q, pg: cl)
+    monkeypatch.setattr(rg, "_vlm_rank_top", lambda cl, q, root, log=print: cl)
+    return json.loads(rg.build_candidates(slug, k=5).read_text())["beats"]
+
+
+@pytest.mark.parametrize("qa,mode", [(True, "explore_answer"), (False, "micro_moment"),
+                                     (False, "")])
+def test_bookend_rows_every_mode_in_video_order(tmp_path, monkeypatch, qa, mode):
+    """Q&A used to emit NO intro row and NO mode emitted an outro row — Master could not hand-pick
+    frame 1 / the last frame. Both rows now exist for every mode, first and LAST (video order),
+    single-select, with candidates and the scene's own anchor pre-selected."""
+    beats = _bookend_project(tmp_path, monkeypatch, f"bk_{qa}_{mode or 'recap'}", qa=qa, mode=mode)
+    assert [b["beat_key"] for b in beats] == ["intro", "2", "outro"]
+    intro, outro = beats[0], beats[-1]
+    assert (intro["unit"], outro["unit"]) == ("intro", "outro")
+    assert intro["narration_text"] == "hook line" and outro["narration_text"] == "closing line"
+    assert intro["candidates"] and outro["candidates"]
+    assert intro["pre_selected"] == []                            # panel_ref -1 → nothing anchored
+    assert outro["pre_selected"] == [{"page": 10, "panel": 1}]     # scene's own anchor
+
+
+def test_intro_row_prefers_cold_open_lock_over_scene_anchor(tmp_path, monkeypatch):
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    proj = tmp_path / "cok"
+    proj.mkdir()
+    (proj / "narration.json").write_text(json.dumps({"cold_open_lock": "7,3", "scenes": [
+        {"scene_id": 1, "text": "hook", "is_intro": True, "page_ref": 10, "panel_ref": 0},
+        {"scene_id": 2, "text": "body", "page_ref": 10, "panel_ref": 0}]}))
+    monkeypatch.setattr(shots, "_match_panels",
+                        lambda units, *a, candidates_out=None, **k:
+                        [candidates_out.append([]) for _ in units] and [])
+    beats = json.loads(rg.build_candidates("cok", k=5).read_text())["beats"]
+    assert beats[0]["pre_selected"] == [{"page": 7, "panel": 3}]
+
+
+def test_qa_bookends_borrow_first_and_last_item_citation(tmp_path, monkeypatch):
+    """A bookend has no answer item of its own; resolving it directly fell through to the
+    whole-comic citation. It cites the FIRST (intro) / LAST (outro) body beat's item instead.
+    Two issues → the real per-issue map decides, so this also covers the multi-issue Q&A."""
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    proj = tmp_path / "qa_cite"
+    (proj / "preprocessed").mkdir(parents=True)
+    for pn, issue in ((10, "#1"), (20, "#2")):
+        (proj / "preprocessed" / f"page_{pn:03d}.json").write_text(json.dumps({
+            "page_number": pn, "issue_label": issue, "source_image": f"p{pn}.png",
+            "page_type": "story", "image_dimensions": {"width": 600, "height": 900},
+            "panels": [{"index": 0, "bbox": {"x": 0, "y": 0, "w": 600, "h": 900},
+                        "description": "d", "characters": []}], "text_blocks": []}))
+    (proj / "narration.json").write_text(json.dumps({"mode": "explore_answer", "scenes": [
+        {"scene_id": 1, "text": "hook", "is_intro": True, "page_ref": 10, "panel_ref": -1},
+        {"scene_id": 2, "text": "item one", "page_ref": 10, "panel_ref": 0},
+        {"scene_id": 3, "text": "item two", "page_ref": 20, "panel_ref": 0},
+        {"scene_id": 4, "text": "closing", "is_outro": True, "page_ref": 20, "panel_ref": 0},
+    ]}))
+    (proj / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
+    (proj / "answer_context.json").write_text(json.dumps({"items": [
+        {"source_comic": "First Item #1", "source_year": "2020", "reader_url": "u1",
+         "drawable_moment": "dm1"},
+        {"source_comic": "Second Item #2", "source_year": "2021", "reader_url": "u2",
+         "drawable_moment": "dm2"}]}))
+    monkeypatch.setattr(shots, "_match_panels",
+                        lambda units, *a, candidates_out=None, **k:
+                        [candidates_out.append([]) for _ in units] and [])
+    monkeypatch.setattr(rg, "_dialog_rescore", lambda cl, q, pg: cl)
+    monkeypatch.setattr(rg, "_vlm_rank_top", lambda cl, q, root, log=print: cl)
+
+    beats = json.loads(rg.build_candidates("qa_cite", k=5).read_text())["beats"]
+    assert [b["beat_key"] for b in beats] == ["intro", "2", "3", "outro"]
+    assert beats[0]["source"]["title"] == "First Item #1"      # intro ← first body beat's item
+    assert beats[-1]["source"]["title"] == "Second Item #2"    # outro ← last body beat's item
+
+
 # ─── custom-image lock (v3 additive shape) ───────────────────────────────────────
 
 def test_lock_custom_image_reads_v3_shape_only():

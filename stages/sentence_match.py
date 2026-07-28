@@ -39,6 +39,10 @@ if str(_REPO_ROOT) not in sys.path:
 
 from stages.review_gate import (QA_PANEL_IMG_WEIGHT, _beat_source, _load_json, _now_iso,
                                  _project_root, load_state, lock_panels)
+# Panel TEXT-embed master switch (see config.PANEL_TEXT_EMBED). OFF (default) → distribute a
+# scene's LOCKED panels across its sentences deterministically (round-robin) instead of by cosine,
+# so the render never touches the embed backend. Bound to the module so tests can flip it.
+from config import PANEL_TEXT_EMBED
 
 # When ON (default), sentences WITHIN one scene take DISTINCT panels from the scene's
 # chosen set (optimal 1:1 via Hungarian) so an item shows visual variety instead of
@@ -164,6 +168,16 @@ def _match_sentences(sentences: list[str], spans: list[tuple], scene: dict,
             "page": None, "panel": None, "score": None}
            for i, s in enumerate(sentences)]
     if not cands or not sentences:
+        return out
+
+    # NO-EMBED: cosine is dead (Master picked the panels by hand). Spread the scene's locked panels
+    # across its sentences ROUND-ROBIN — distinct across the first len(cands) sentences, then cycle;
+    # the caller's own no-reuse guard resolves any within-beat repeat. Never touches the embed backend.
+    if not PANEL_TEXT_EMBED:
+        m = len(cands)
+        for i in range(len(sentences)):
+            key = cands[i % m][0]
+            out[i]["page"], out[i]["panel"], out[i]["score"] = int(key[0]), int(key[1]), None
         return out
 
     import numpy as np

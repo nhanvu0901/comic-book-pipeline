@@ -275,6 +275,42 @@ def _openai_tiers():
     return [t for t in order if t is not None]
 
 
+def _call_with_deadline(fn, texts: list[str], timeout: float, wall: float):
+    """Run one tier call under a HARD wall-clock cap, returning None if it blows it.
+
+    `urlopen(timeout=)` only bounds each individual socket operation, so a server
+    that trickles a few bytes every N < timeout seconds never trips it. Seen for
+    real on 2026-07-27: an OpenRouter embed call sat inside an SSL read for 31
+    minutes (4s of CPU across the whole run) and the tier fallback below never got
+    a chance to fire. This puts a real deadline on top so a wedged tier degrades
+    into "tier down" instead of hanging the pipeline.
+
+    ponytail: the abandoned worker is a daemon thread — it keeps running until its
+    own socket timeout fires, but daemon means it can never block interpreter exit.
+    Upgrade path if that ever matters: a cancellable HTTP client (httpx/requests
+    with its own connect/read/total split)."""
+    import threading
+    box: dict = {}
+
+    def _run():
+        try:
+            box["value"] = fn(texts, timeout)
+        except BaseException as exc:             # noqa: BLE001 - mirror tier semantics
+            box["error"] = exc
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(wall)
+    if worker.is_alive():
+        print(f"[embedding] hard deadline {wall:.0f}s exceeded — abandoning this tier",
+              file=sys.stderr)
+        return None
+    if "error" in box:
+        print(f"[embedding] tier raised: {box['error']}", file=sys.stderr)
+        return None
+    return box.get("value")
+
+
 _OPENAI_TIER_IDX = 0  # ponytail: sticky within this process — once a tier is
 # confirmed dead, later chunks/calls skip straight past it instead of re-timing-out
 # on it every chunk. Resets only on process restart (each pipeline run is its own
@@ -305,7 +341,9 @@ def _openai_embed(texts: list[str]):
         vecs = None
         for idx in range(_OPENAI_TIER_IDX, len(tiers)):
             name, fn, timeout = tiers[idx]
-            vecs = fn(piece, timeout)
+            # Wall cap covers the tier's own retries (2-3 attempts + short sleeps)
+            # with headroom; past that the tier is wedged, not slow.
+            vecs = _call_with_deadline(fn, piece, timeout, wall=timeout * 4)
             if vecs is not None:
                 _OPENAI_TIER_IDX = idx
                 break
