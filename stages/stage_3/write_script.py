@@ -1923,9 +1923,23 @@ def _anchor_scenes_to_beats(
     parsed: dict,
     beats: list[Beat],
     progress: Callable[[str], None] | None = None,
+    *,
+    scenes_per_beat: int = 1,
 ) -> dict:
-    """Deterministic 1 beat → 1 scene: scene[i] narrates beat[i] by POSITION so
-    that:
+    """Deterministic `scenes_per_beat` scenes → 1 beat, by POSITION.
+
+    `scenes_per_beat` defaults to 1, which is the original behaviour and what recap and
+    micro_moment still use. Q&A passes 2 (see explore_answer._SCENES_PER_ITEM): each item
+    became a CONTEXT scene plus a MOMENT scene, and both belong to that item's beat. Without
+    this the 1:1 assumption below silently dropped half the script — 6 scenes for 3 beats got
+    "both-ends aligned, middle surplus dropped" and shipped 3, which read as the writer
+    ignoring the new prompt when it had actually complied.
+
+    With scenes_per_beat > 1 the content-align pass is skipped on purpose: the pairing is
+    known by construction (the writer emits an item's two scenes adjacently, in item order),
+    so guessing it from content could only split a pair across two different beats.
+
+    With scenes_per_beat == 1, scene[i] narrates beat[i] so that:
 
       - every beat gets exactly one scene (no dropped middle beats — the Venom bug),
       - scenes follow page-sorted beat order (page_ref is monotonic),
@@ -1954,7 +1968,8 @@ def _anchor_scenes_to_beats(
     # gets the RIGHT page_ref instead of a later event's. Iterates SCENES (text/audio
     # order preserved — only page_ref moves), so the "narrate an early line late"
     # fragility of the old semantic re-pairing cannot recur. None → positional below.
-    f = _content_align_scenes([str(s.get("text", "")).strip() for s in pool], beats, log=log)
+    f = (None if scenes_per_beat > 1 else
+         _content_align_scenes([str(s.get("text", "")).strip() for s in pool], beats, log=log))
     if f is not None:
         anchored = []
         used_beats: set[int] = set()
@@ -2001,6 +2016,43 @@ def _anchor_scenes_to_beats(
     # bug (a whole beat's prose vanished with no error, since scene COUNT still
     # matched beat COUNT going in). Position is already unique by construction —
     # no dict-key collision is possible keyed this way, regardless of `.id` hygiene.
+    if scenes_per_beat > 1:
+        anchored_multi: list[dict] = []
+        gaps_multi: list[int] = []
+        for i, beat in enumerate(beats):
+            chunk = pool[i * scenes_per_beat:(i + 1) * scenes_per_beat]
+            if not chunk:
+                gaps_multi.append(beat.id)
+                continue
+            page, panel = _beat_anchor(beat)
+            for src in chunk:
+                anchored_multi.append({
+                    "text": str(src.get("text", "")).strip(),
+                    "page_ref": page, "panel_ref": panel,
+                    "connective": src.get("connective"), "beat_id": beat.id,
+                    "visual_beats": src.get("visual_beats") or [],
+                })
+        if outro_src is not None:
+            page, _ = _beat_anchor(beats[-1])
+            anchored_multi.append({
+                "text": str(outro_src.get("text", "")).strip(),
+                "page_ref": page, "panel_ref": -1,
+                "connective": None, "beat_id": beats[-1].id,
+            })
+        leftover = len(pool) - len(beats) * scenes_per_beat
+        if leftover:
+            log(f"[stage4]   ⚠ writer emitted {len(pool)} scenes for {len(beats)} beats "
+                f"x {scenes_per_beat} — {abs(leftover)} "
+                f"{'surplus dropped' if leftover > 0 else 'missing'}")
+        if gaps_multi:
+            log(f"[stage4]   ⚠ {len(gaps_multi)} beat(s) got no scene: {gaps_multi}")
+        parsed["scenes"] = anchored_multi
+        parsed["_coverage_gaps"] = gaps_multi
+        parsed["_anchor_pool_count"] = len(pool)
+        log(f"[stage4]   anchored {len(pool)} scene(s) to {len(beats)} beat(s) "
+            f"({scenes_per_beat} per beat)")
+        return parsed
+
     matched: dict[int, dict] = {}
     n_beats, n_pool = len(beats), len(pool)
     if n_pool <= n_beats:

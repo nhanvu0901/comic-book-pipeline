@@ -41,7 +41,21 @@ from .write_script import (
 # the total scales with the number of items instead of a fixed band, since a question
 # can have anywhere from 3 to 6+ answers.
 _EXP_SCENE_MAX_WORDS = 42
-_EXP_WORDS_PER_ITEM_MIN = 22
+
+# TWO scenes per item (Master 2026-07-28), not one. One scene per item forced the writer to
+# carry "who is this / why does it matter" in a subordinate clause, and the trim pass is exactly
+# what deletes subordinate clauses — so the context vanished and cold_viewer[relationship] fired
+# on video after video ("his only true friend" never named, entities appearing unintroduced).
+# Splitting the item gives context its own scene and the moment its own scene, so neither has to
+# survive at the other's expense. Measured on loki-told-the-truth: same 3 items, same facts,
+# 138w/40s (one scene each, confusing) -> 216w/56s (two scenes each, self-explaining).
+_SCENES_PER_ITEM = 2
+# Across BOTH of an item's scenes, i.e. ~17 each. LOWER per scene than the old 22, not higher:
+# 22 was sized for a scene that had to carry entity + how + why + stakes on its own. With the
+# job split, a context scene is legitimately short ("Years earlier the original Loki died." = 6w)
+# and a moment scene no longer re-explains anything. Sizing it any higher breaks the ceiling —
+# 6 items x 44w = 264w = 78s of body, past the 70s cap no matter what the seconds target says.
+_EXP_WORDS_PER_ITEM_MIN = 34
 
 # SECONDS-based soft target for the FINISHED VIDEO (hook + body + outro) — the
 # only real research we have (Paddy Galloway, 2023) puts Shorts completion at
@@ -51,8 +65,9 @@ _EXP_WORDS_PER_ITEM_MIN = 22
 # (way past the old ceiling). _exp_band() below converts this seconds target
 # into a body word band using the recap's MEASURED render pace, so it scales
 # with item count instead of hard-coding one question's numbers.
-_QA_TARGET_MIN_SEC = 40
-_QA_TARGET_MAX_SEC = 55
+# RAISED 40-55 -> 55-70 (2026-07-28): two scenes per item cannot fit the old ceiling.
+_QA_TARGET_MIN_SEC = 55
+_QA_TARGET_MAX_SEC = 70
 # Rough combined runtime of the two pieces that bookend the body and this
 # module doesn't budget directly: the deterministic hook (_build_hook, capped
 # at _HOOK_MAX_WORDS=26) and the LLM outro (thematic 4-14w + optional loop
@@ -76,12 +91,25 @@ def _exp_band(n_items: int) -> tuple[int, int]:
     sec_min_words = round(body_min_sec * _WORDS_PER_SEC)
     sec_max_words = round(body_max_sec * _WORDS_PER_SEC)
     absolute_min = n_items * _EXP_WORDS_PER_ITEM_MIN
-    absolute_max = n_items * _EXP_SCENE_MAX_WORDS
+    absolute_max = n_items * _SCENES_PER_ITEM * _EXP_SCENE_MAX_WORDS
     band_min = max(absolute_min, min(sec_min_words, absolute_max))
     band_max = max(absolute_min, min(sec_max_words, absolute_max))
     if band_max < band_min:
         band_max = band_min  # degenerate guard: very few items can't physically reach the floor
     return band_min, band_max
+
+
+def _body_scenes(scenes: list[dict]) -> list[dict]:
+    """Scenes minus a trailing channel-credit scene ("The comic is X.").
+
+    The writer emits that credit as an extra scene and _anchor_scenes_to_beats pops it off to
+    rebuild the outro — so it is NOT one of the item scenes and must not be counted as one.
+    Both count gates below were written before that was true for Q&A and rejected every
+    compliant draft as one-too-many (want 6, got 7), which surfaced only as "SDK failed".
+    One convention, three call sites: here, _valid, and the anchor helper."""
+    if scenes and "comic is" in str(scenes[-1].get("text", "")).lower():
+        return scenes[:-1]
+    return scenes
 
 
 def _ordered_items(answer_context: dict) -> list[tuple[int, dict]]:
@@ -152,19 +180,27 @@ _EXPLORE_WRITE_SYSTEM_LIST = """You are QAWriter for a comic-trivia YouTube Shor
 For EACH item, write exactly ONE scene: name the entity, give the how/why in plain words (speak the SOURCE COMIC naturally inside the sentence — "...in Ghost Rider #35..." — never as a citation, parentheses, or trailing credit), and you may end on one dry/dark remark.
 
 CONNECT THE ITEMS — this is the point of the format:
-  - The FIRST scene opens straight on its entity.
-  - EVERY scene AFTER the first must OPEN with a short connective bridge that links it to the one before and builds momentum toward the final twist — e.g. "And the next one...", "Unlike him,...", "Even stranger,...", "But this one...", "Then it gets worse —...". Vary the bridge every time; NEVER reuse the same opener, and NEVER a bare list.
+  - The bridge belongs on each item's CONTEXT scene (scene A), which is where a new entity enters. The item's MOMENT scene (scene B) needs no bridge — it continues straight out of the scene before it, which is its own setup.
+  - The FIRST scene of the whole video opens straight on its entity, no bridge.
+  - Every LATER context scene must OPEN with a short connective bridge that links it to the item before and builds momentum toward the final twist — e.g. "Years earlier,...", "Unlike him,...", "Even stranger,...", "But this one...", "Then it gets worse —...". Vary the bridge every time; NEVER reuse the same opener, and NEVER a bare list.
   - The connective is contrast or escalation, NOT a rank. So "Unlike the Punisher, Deadpool..." is good; "the next one", "number three", "third" as a POSITION word is banned.
   - After the bridge, still NAME the entity in that same scene (never a bare pronoun on first mention).
 
 HARD RULES:
+  - YOU ARE TRIMMING, NOT RESEARCHING. Every fact you need is already in the items below, verified against real sources. Your whole job is to COMPRESS that into spoken lines: keep the meaning, drop the words. Never add a fact the item does not state, never soften or hedge one it does, and never re-explain something it already says plainly. If an item's notes run three written sentences, the scene is ONE spoken sentence carrying the same meaning — same actor, same act, same consequence, fewer words.
+  - THE ITEM NOTES ARE SOURCE, NOT STYLE. They were written to be READ: headings, parentheticals, citations, long subordinate clauses, quoted dialogue. None of that survives into narration — a listener hears the line once and cannot re-read it. Take the fact; throw away the shape it arrived in. Quote at most a few words of dialogue, and only when the exact wording IS the moment.
+  - TRIMMING IS NOT VAGUENESS. When you shorten, the CONCRETE part is what stays: the name, the act, the consequence. What goes is qualifiers, background clauses, and anything an earlier scene already established. "He confessed a terrible secret" is a BAD trim of "he admitted he killed his own younger self" — the specific act IS the point of the scene.
   - Plain B2 English. Concrete, no purple prose, no riddles.
   - ONE EVENT PER SENTENCE. Say one thing, then stop — do NOT chain three clauses with em-dashes into a run-on. A short lead-in bridge + one plain event is the whole sentence.
   - TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY / research (what HAPPENED and WHY), NOT a description of the comic art. Never narrate the artwork ("we see", "a figure holding", "in this panel/frame", colours / poses / camera for their own sake) — write the plain STORY EVENT the panel stands for.
   - WEAVE THE WHY. If an item carries a relationships or stakes_why note, the scene MUST state it in plain words inside the SAME sentence(s) — who the entity is to the others, and why the moment lands — so a zero-context viewer never hears an action without knowing why it matters. NEVER assume the viewer knows any character's history. This is woven-in context, not extra scenes or extra words.
   - STRIP JARGON — a stranger must know every noun. The items below WILL carry obscure proper names (realms, teams, materials, minor characters). Test each noun: would a first-time viewer know it? If not, swap the plain word ("Cancerverse" -> "a dead universe", "the Negative Zone" -> "a prison dimension") or drop it — never make the viewer hit a word they'd have to look up. (Household-name heroes/villains still keep their names — see the name rule below.)
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
-  - EXACTLY one scene per item, in the SAME order given.
+  - Do NOT write a premise, definition or set-up scene explaining the question's subject ("Adamantium is Marvel's unbreakable metal..."). The video's spoken hook already states it, and an extra scene here silently pushes every item's panels one slot out of place. Your FIRST scene is item 1's CONTEXT scene.
+  - EXACTLY TWO scenes per item, in the SAME item order. They have different jobs and you must not merge them:
+      * SCENE A — CONTEXT. Establish WHO or WHAT this is for a viewer who has never heard the name: who the person is, what their power or role is, what situation they are in. This scene sets up the moment; it does NOT deliver it. If a later scene will hinge on someone's ability ("she can detect any lie"), on a relationship ("his own younger self"), or on a stake, THIS is where it gets stated plainly.
+      * SCENE B — THE MOMENT. The act itself and its consequence, now landing on ground the viewer already has. Do not re-explain what scene A established; assume it.
+    Scene A never spoils B, and B never needs a parenthetical to be understood. The reason this format exists: with one scene per item, context has to ride inside a subordinate clause, and shortening the line is exactly what deletes it — so the viewer hears an action with no idea who it happened to.
   - NEVER speak a countdown/rank number ("number five", "#3", "third place" — all banned).
   - Each scene is a short lead-in + one or two plain sentences; keep it under 42 words.
   - Total words across ALL scenes must land inside the WORD BUDGET given.
@@ -188,13 +224,20 @@ THE SCENES BUILD THE ANSWER — this is the point of the format:
 For EACH item, write exactly ONE scene: name who/what it is about, give the how/why in plain words (speak the SOURCE COMIC naturally inside the sentence — "...in Ghost Rider #35..." — never as a citation, parentheses, or trailing credit).
 
 HARD RULES:
+  - YOU ARE TRIMMING, NOT RESEARCHING. Every fact you need is already in the items below, verified against real sources. Your whole job is to COMPRESS that into spoken lines: keep the meaning, drop the words. Never add a fact the item does not state, never soften or hedge one it does, and never re-explain something it already says plainly. If an item's notes run three written sentences, the scene is ONE spoken sentence carrying the same meaning — same actor, same act, same consequence, fewer words.
+  - THE ITEM NOTES ARE SOURCE, NOT STYLE. They were written to be READ: headings, parentheticals, citations, long subordinate clauses, quoted dialogue. None of that survives into narration — a listener hears the line once and cannot re-read it. Take the fact; throw away the shape it arrived in. Quote at most a few words of dialogue, and only when the exact wording IS the moment.
+  - TRIMMING IS NOT VAGUENESS. When you shorten, the CONCRETE part is what stays: the name, the act, the consequence. What goes is qualifiers, background clauses, and anything an earlier scene already established. "He confessed a terrible secret" is a BAD trim of "he admitted he killed his own younger self" — the specific act IS the point of the scene.
   - Plain B2 English. Concrete, no purple prose, no riddles.
   - ONE EVENT PER SENTENCE. Say one thing, then stop — do NOT chain three clauses with em-dashes into a run-on. A short lead-in bridge + one plain event is the whole sentence.
   - TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY / research (what HAPPENED and WHY), NOT a description of the comic art. Never narrate the artwork ("we see", "a figure holding", "in this panel/frame", colours / poses / camera for their own sake) — write the plain STORY EVENT the panel stands for.
   - WEAVE THE WHY. If an item carries a relationships or stakes_why note, the scene MUST state it in plain words inside the SAME sentence(s) — who the entity is to the others, and why the moment lands — so a zero-context viewer never hears an action without knowing why it matters. NEVER assume the viewer knows any character's history. This is woven-in context, not extra scenes or extra words.
   - STRIP JARGON — a stranger must know every noun. The items below WILL carry obscure proper names (realms, teams, materials, minor characters). Test each noun: would a first-time viewer know it? If not, swap the plain word ("Cancerverse" -> "a dead universe", "the Negative Zone" -> "a prison dimension") or drop it — never make the viewer hit a word they'd have to look up. (Household-name heroes/villains still keep their names — see the name rule below.)
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
-  - EXACTLY one scene per item, in the SAME order given.
+  - Do NOT write a premise, definition or set-up scene explaining the question's subject ("Adamantium is Marvel's unbreakable metal..."). The video's spoken hook already states it, and an extra scene here silently pushes every item's panels one slot out of place. Your FIRST scene is item 1's CONTEXT scene.
+  - EXACTLY TWO scenes per item, in the SAME item order. They have different jobs and you must not merge them:
+      * SCENE A — CONTEXT. Establish WHO or WHAT this is for a viewer who has never heard the name: who the person is, what their power or role is, what situation they are in. This scene sets up the moment; it does NOT deliver it. If a later scene will hinge on someone's ability ("she can detect any lie"), on a relationship ("his own younger self"), or on a stake, THIS is where it gets stated plainly.
+      * SCENE B — THE MOMENT. The act itself and its consequence, now landing on ground the viewer already has. Do not re-explain what scene A established; assume it.
+    Scene A never spoils B, and B never needs a parenthetical to be understood. The reason this format exists: with one scene per item, context has to ride inside a subordinate clause, and shortening the line is exactly what deletes it — so the viewer hears an action with no idea who it happened to.
   - This is ONE story, not a list: NEVER use list language ("this list", "the last one", "number three" — all banned).
   - Each scene is a short lead-in + one or two plain sentences; keep it under 42 words.
   - Total words across ALL scenes must land inside the WORD BUDGET given.
@@ -292,23 +335,38 @@ def _call_explore_writer(
         f"{thesis_block}"
         f"{fix_block}"
         f"{clarity_fixes}"
-        f"ITEMS — write ONE scene per item, in this EXACT order (do not reorder):\n"
+        f"ITEMS — write {_SCENES_PER_ITEM} scenes per item (CONTEXT then MOMENT), in this EXACT order (do not reorder):\n"
         f"{_items_block(beats, items)}\n\n"
         f"WORD BUDGET: {_exp_band(len(beats))[0]}-{_exp_band(len(beats))[1]} words total across all "
-        f"{len(beats)} scenes (each scene: connective bridge + entity + how/why, under {_EXP_SCENE_MAX_WORDS} words).\n"
+        f"{len(beats) * _SCENES_PER_ITEM} scenes — {len(beats)} items x {_SCENES_PER_ITEM} scenes each (every scene under {_EXP_SCENE_MAX_WORDS} words).\n"
         f'Return JSON: {{"scenes": [{{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one per drawable moment>"], '
-        f'"connective": null, "beat_id": {beats[0].id}}}, ... one per item ...]}}.'
+        f'"connective": null, "beat_id": {beats[0].id}}}, ... TWO per item, context first then moment ...]}}.'
     )
+
+    # Must agree with _validate_explore_scenes' count gate. These are TWO separate gates —
+    # this one rejects a response and advances the model chain, that one reports issues on an
+    # accepted draft — and leaving them out of sync means a compliant answer gets thrown away
+    # and the chain exhausts into "SDK failed" with no hint that the count was the problem.
+    expected_scenes = len(beats) * _SCENES_PER_ITEM
 
     def _valid(raw: str) -> bool:
         p = _extract_json(raw)
-        return isinstance(p, dict) and isinstance(p.get("scenes"), list) and len(p["scenes"]) == len(beats)
+        if not (isinstance(p, dict) and isinstance(p.get("scenes"), list)):
+            if progress:
+                progress(f"[explore_write] validator: unparsable response")
+            return False
+        got = len(_body_scenes(p["scenes"]))
+        if got != expected_scenes and progress:
+            progress(f"[explore_write] validator: want {expected_scenes} item scenes, got {got}")
+        return got == expected_scenes
 
     system = (_EXPLORE_WRITE_SYSTEM_EXPLAIN if archetype == "explain"
               else _EXPLORE_WRITE_SYSTEM_LIST)
     chain = [model] if model else list(CREATIVE_LLM_MODELS)
     raw, mdl = call_with_chain(
-        system=system, user=user, models=chain, max_tokens=1600,
+        # Token budget scales with the scene count — 1600 was sized for one scene per item and
+        # truncates a two-scene answer mid-JSON, which reads to the validator as a bad response.
+        system=system, user=user, models=chain, max_tokens=900 * _SCENES_PER_ITEM + 800,
         progress=progress, label="explore_write", validator=_valid,
     )
     if debug_dump is not None:
@@ -338,8 +396,11 @@ def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
     EXPLAIN questions additionally require the final scene to state the answer
     (causal marker) and ban list language everywhere."""
     issues: list[str] = []
-    if len(scenes) != len(beats):
-        issues.append(f"expected {len(beats)} scenes, got {len(scenes)}")
+    scenes = _body_scenes(scenes)
+    expected = len(beats) * _SCENES_PER_ITEM
+    if len(scenes) != expected:
+        issues.append(f"expected {expected} scenes "
+                      f"({len(beats)} items x {_SCENES_PER_ITEM}), got {len(scenes)}")
     total = 0
     for i, s in enumerate(scenes):
         text = str(s.get("text", "")).strip()
@@ -347,9 +408,19 @@ def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
         total += wc
         if wc > _EXP_SCENE_MAX_WORDS:
             issues.append(f"scene {i + 1} is {wc}w (max {_EXP_SCENE_MAX_WORDS})")
-        if i < len(beats):
-            entity = beats[i].name.strip()
-            if entity and entity.split()[0].lower() not in text.lower():
+        # Scenes come in pairs: scene 2k = item k's CONTEXT, scene 2k+1 = its MOMENT.
+        # Only the CONTEXT scene must name the entity — the moment scene is written right
+        # after it and correctly says "he"/"it". Demanding the name in both spent words on a
+        # re-introduction and still logged a false "never names its entity".
+        item_idx = i // _SCENES_PER_ITEM
+        is_context = i % _SCENES_PER_ITEM == 0
+        if is_context and item_idx < len(beats):
+            entity = beats[item_idx].name.strip()
+            # Match on the bare first WORD: research entity names arrive with trailing commas
+            # and parenthetical glosses ("Nul, Breaker of Worlds (...)"), and comparing the
+            # raw token "nul," against prose that says "Nul rips" never matched.
+            key = re.sub(r"[^\w'-]", "", entity.split()[0]).lower() if entity else ""
+            if key and key not in text.lower():
                 issues.append(f"scene {i + 1} never names its entity ({entity!r})")
         if archetype == "explain" and _LIST_LANGUAGE_RE.search(text):
             issues.append(f"scene {i + 1} uses list language "
@@ -548,7 +619,8 @@ def write_explore_answer(
 
     # Deterministic 1 beat -> 1 scene (same helper narrate mode uses); page_ref/
     # panel_ref come from the beat, never the writer.
-    parsed = _anchor_scenes_to_beats(parsed, beats, progress)
+    parsed = _anchor_scenes_to_beats(parsed, beats, progress,
+                                     scenes_per_beat=_SCENES_PER_ITEM)
     body = parsed.get("scenes") or []
 
     hook_text = _build_hook(question, answer_context, archetype, project_name)

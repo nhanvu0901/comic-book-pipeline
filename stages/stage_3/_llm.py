@@ -119,20 +119,37 @@ def call_with_chain(
                 f"unavailable (not installed / not authenticated). Authenticate "
                 f"the SDK, or set FREE_MODEL=true to use the OpenRouter chain.")
         log(f"[{label}] via claude SDK ({CLAUDE_SDK_MODEL})")
-        sdk_out = sdk_complete(system, user, log=log)
-        ok = bool(sdk_out) and not _detect_inline_rate_limit(sdk_out or "")
-        if ok and validator is not None:
-            try:
-                ok = bool(validator(sdk_out))
-            except Exception:
-                ok = False
-        if ok:
-            log(f"[{label}] claude SDK returned {len(sdk_out)} chars")
-            return sdk_out, f"claude-sdk:{CLAUDE_SDK_MODEL}"
+        # RETRY the SDK (2026-07-28). There is no model chain to fall over to here, so a single
+        # attempt made one bad sample terminal — and the longer the requested JSON, the likelier
+        # a sample truncates or drops a field. Seen on the Q&A writer once it had to emit twice
+        # as many scenes: the pipeline failed repeatedly while the same call succeeded when
+        # driven directly. Sampling variance, not a broken prompt.
+        why = "empty response"
+        for attempt in (1, 2, 3):
+            sdk_out = sdk_complete(system, user, log=log)
+            if not sdk_out:
+                why = "empty response"
+            elif _detect_inline_rate_limit(sdk_out):
+                why = "rate-limit text in response"
+            elif validator is None:
+                return sdk_out, f"claude-sdk:{CLAUDE_SDK_MODEL}"
+            else:
+                try:
+                    if validator(sdk_out):
+                        log(f"[{label}] claude SDK returned {len(sdk_out)} chars"
+                            + (f" (attempt {attempt})" if attempt > 1 else ""))
+                        return sdk_out, f"claude-sdk:{CLAUDE_SDK_MODEL}"
+                    why = f"validator rejected {len(sdk_out)}-char response"
+                except Exception as exc:      # noqa: BLE001 - a raising validator is a reject
+                    why = f"validator raised {type(exc).__name__}"
+            if attempt < 3:
+                log(f"[{label}] SDK attempt {attempt}/3 unusable ({why}) — retrying")
+        # Name WHAT failed. "SDK failed (empty / rate-limited / validator rejected)" gave three
+        # possibilities and no way to tell which, which cost a long debugging detour.
         raise RuntimeError(
-            f"[{label}] Claude SDK failed (empty / rate-limited / validator "
-            f"rejected); NO OpenRouter fallback (FREE_MODEL=False). Fix the SDK "
-            f"issue or set FREE_MODEL=true.")
+            f"[{label}] Claude SDK failed after 3 attempts — last reason: {why}. "
+            f"NO OpenRouter fallback (FREE_MODEL=False). Fix the SDK issue, relax the "
+            f"validator, or set FREE_MODEL=true.")
 
     client = _client()
     total = len(chain)

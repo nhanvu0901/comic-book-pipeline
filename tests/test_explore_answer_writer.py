@@ -36,9 +36,16 @@ def _page(page_number, chapter, page_in_chapter):
 
 def _fake_writer_call(*, system, user, models=None, max_tokens=2000, progress=None,
                       label="llm", validator=None):
+    # _SCENES_PER_ITEM scenes per item: CONTEXT then MOMENT (2026-07-28). The old fixture
+    # emitted one per item and now fails the module's own count gate — which is the gate
+    # working, not the fixture being unlucky.
     raw = json.dumps({"scenes": [
+        {"text": "Wolverine is the mutant whose healing factor never stops.",
+         "connective": None, "beat_id": 1},
         {"text": "Wolverine healed through it in X-Men Legacy #1.", "connective": None, "beat_id": 1},
+        {"text": "Deadpool is the mercenary who cannot stay dead.", "connective": None, "beat_id": 2},
         {"text": "Deadpool outran it entirely in Deadpool #2.", "connective": None, "beat_id": 2},
+        {"text": "Thanos is the Titan who courts Death herself.", "connective": None, "beat_id": 3},
         {"text": "Thanos just endured it in Thanos #3.", "connective": None, "beat_id": 3},
     ]})
     if validator is not None:
@@ -85,7 +92,8 @@ def test_write_explore_answer_end_to_end(monkeypatch, project_dir):
     assert nar.banner_title == comic_context["title"]
     assert nar.title == comic_context["title"]
 
-    assert len(nar.scenes) == 5  # hook + 3 item scenes + outro
+    # hook + (3 items x _SCENES_PER_ITEM) + outro
+    assert len(nar.scenes) == 2 + 3 * ea._SCENES_PER_ITEM
     assert nar.scenes[0].is_intro
     assert nar.scenes[-1].is_outro
     # Q&A outro is meaning-first only — never a "sources linked in the description"
@@ -95,13 +103,14 @@ def test_write_explore_answer_end_to_end(monkeypatch, project_dir):
     assert "linked in the description" not in nar.scenes[-1].text
     assert nar.scenes[-1].text.strip()  # never empty
 
-    for scene, entity in zip(nar.scenes[1:4], ("Wolverine", "Deadpool", "Thanos")):
+    # one entity per PAIR — check the context scene of each item
+    for scene, entity in zip(nar.scenes[1:7:2], ("Wolverine", "Deadpool", "Thanos")):
         assert entity.lower() in scene.text.lower()
         assert not scene.is_intro and not scene.is_outro
         assert scene.beat_id != 0
 
-    body_words = sum(s.word_count for s in nar.scenes[1:4])
-    assert 10 <= body_words <= 60
+    body_words = sum(s.word_count for s in nar.scenes[1:7])
+    assert 20 <= body_words <= 120
 
 
 def test_write_explore_answer_explain_statement_lead_routes_to_explain_contract(monkeypatch, project_dir):
@@ -115,11 +124,18 @@ def test_write_explore_answer_explain_statement_lead_routes_to_explain_contract(
     def _writer_call(*, system, user, models=None, max_tokens=2000, progress=None,
                       label="llm", validator=None):
         captured["system"] = system
+        # CONTEXT + MOMENT per item, same as the LIST fixture above.
         raw = json.dumps({"scenes": [
+            {"text": "Wolverine drills the same motion until it costs him nothing.",
+             "connective": None, "beat_id": 1},
             {"text": "Wolverine trains until his body forgets pain, sealed shut before Legacy #1 ends.",
              "connective": None, "beat_id": 1},
+            {"text": "Deadpool treats that same discipline as a punchline.",
+             "connective": None, "beat_id": 2},
             {"text": "But that discipline turns cruel — Deadpool mocks the same ritual in Deadpool #2.",
              "connective": None, "beat_id": 2},
+            {"text": "Thanos learned the lesson long before either of them.",
+             "connective": None, "beat_id": 3},
             {"text": "That's why Thanos endures it without flinching in Thanos #3 — the training "
              "was never about pain.", "connective": None, "beat_id": 3},
         ]})
@@ -291,13 +307,17 @@ def test_validate_explore_scenes_is_fragment_count_agnostic(monkeypatch):
         "In Ghost Rider #35, the demon Zarathos finally cornered the boy,",
         "but the Spirit of Vengeance rose up through the flames, seized the blade "
         "from his hand, and turned the stroke back onto the master who had summoned it."]}
+    # An item is _SCENES_PER_ITEM scenes now (context + moment), so feed a full pair —
+    # otherwise the scene-count gate fires and masks what this test is actually about.
+    five_pair = [five, five]
+    two_pair = [two, two]
     # identical issues regardless of fragment count (validator ignores visual_beats)
-    assert (ea._validate_explore_scenes([five], [beat], "list")
-            == ea._validate_explore_scenes([two], [beat], "list"))
+    assert (ea._validate_explore_scenes(five_pair, [beat], "list")
+            == ea._validate_explore_scenes(two_pair, [beat], "list"))
     # with the band widened, a 5-fragment scene passes clean — there is no fragment gate
     monkeypatch.setattr(ea, "_exp_band", lambda n: (0, 500))
-    assert ea._validate_explore_scenes([five], [beat], "list") == []
-    assert ea._validate_explore_scenes([two], [beat], "list") == []
+    assert ea._validate_explore_scenes(five_pair, [beat], "list") == []
+    assert ea._validate_explore_scenes(two_pair, [beat], "list") == []
 
 
 def test_build_hook_by_archetype():
@@ -384,12 +404,13 @@ def test_exp_band_targets_seconds_not_flat_per_item():
         per_item_floor_sec = n * ea._EXP_WORDS_PER_ITEM_MIN / ea._WORDS_PER_SEC + overhead
         assert lo_total_sec <= max(ea._QA_TARGET_MIN_SEC, per_item_floor_sec) + 5
         assert hi_total_sec <= ea._QA_TARGET_MAX_SEC + 1
-    # very few items can't physically reach the floor once every scene is
-    # already maxed at the hard per-scene cap — degenerate guard collapses
-    # the band to that single achievable value instead of demanding the
-    # impossible.
+    # Since each item became _SCENES_PER_ITEM scenes, even a 2-item question can now
+    # physically reach the seconds floor (4 scenes x up to the per-scene cap), so the
+    # band is a real range rather than the collapsed single value it used to be. The
+    # degenerate guard in _exp_band stays as a safety net; nothing realistic trips it.
     lo2, hi2 = ea._exp_band(2)
-    assert lo2 == hi2 == 2 * ea._EXP_SCENE_MAX_WORDS
+    assert lo2 < hi2 <= 2 * ea._SCENES_PER_ITEM * ea._EXP_SCENE_MAX_WORDS
+    assert lo2 / ea._WORDS_PER_SEC + overhead >= ea._QA_TARGET_MIN_SEC
 
 
 # ─── ADDITIVE story-context: relationships / stakes_why per item + question-level
