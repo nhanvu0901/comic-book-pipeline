@@ -44,3 +44,7 @@ stage3-5-course/
 # You.com scout run artifacts: raw API responses + the per-day search log. Grows with
 # every run and reproduces nothing — the reports are read once and acted on.
 scout_runs/
+
+# Throwaway probes and their outputs (~37 MB of upscaler frames, crops, embedding
+# caches). The scripts here are one-off experiments, not part of any pipeline run.
+playground/
