@@ -17,6 +17,62 @@ OUTPUT_H = 1920
 TARGET_ASPECT = OUTPUT_W / OUTPUT_H
 FPS = 30
 
+# ── Output frame, per mode ───────────────────────────────────────────────────
+# The three constants above are the Shorts frame and stay the default: every Short mode renders
+# byte-identically to before this existed. `panel_walk` (long-form) renders LANDSCAPE instead —
+# all 10 of the reference channel's top videos are 16:9, verified twice (oembed reports
+# 200x113 = 1.77 for every one of them).
+#
+# ponytail: module-level mutation rather than threading a frame size through 9 functions and
+# ~66 references. Stage 5 handles one project per process, and every reader resolves these as
+# globals at call time, so one flip at pipeline entry is enough. If Stage 5 ever renders two
+# projects concurrently in one process, this becomes a frame object passed down instead.
+LONGFORM_MODES = ("panel_walk",)
+_SHORTS_FRAME = (1080, 1920)
+_LONGFORM_FRAME = (1920, 1080)
+
+
+def set_output_frame(mode: str) -> tuple[int, int]:
+    """Point the renderer at this mode's frame. Returns the (w, h) chosen."""
+    global OUTPUT_W, OUTPUT_H, TARGET_ASPECT
+    OUTPUT_W, OUTPUT_H = _LONGFORM_FRAME if mode in LONGFORM_MODES else _SHORTS_FRAME
+    TARGET_ASPECT = OUTPUT_W / OUTPUT_H
+    return OUTPUT_W, OUTPUT_H
+
+
+def widen_panels_to_tiers(pages_by_number: dict[int, dict]) -> dict[int, dict]:
+    """Long-form only: grow every panel's bbox to the bbox of the TIER (page row) it sits in.
+
+    Measured on 371 tiers across two real projects, a tier's bounding box has a median aspect of
+    1.80 against a 16:9 frame of 1.78 — it fills a landscape frame almost exactly. A lone panel
+    (median aspect ~1.0) and a whole page (~0.65) both fight it. That is why the tier, not the
+    panel, is the long-form visual unit: same reading order, same guarantee that no matcher runs,
+    but the crop now suits the frame instead of needing a blur-pad to rescue it.
+
+    Panels keep their own `index`, so a narration line still anchors to the panel it was written
+    for; only the region rendered widens. Returns a deep-enough copy — the caller's page dicts
+    are shared with the panel sheet and the review gate and must not be mutated."""
+    from ..panel_walk.narrate import tiers_of      # local: keeps Short renders off this path
+
+    out: dict[int, dict] = {}
+    for pn, page in (pages_by_number or {}).items():
+        panels = page.get("panels") or []
+        widened = []
+        for row in tiers_of(panels):
+            xs = [p["bbox"]["x"] for p in row]
+            ys = [p["bbox"]["y"] for p in row]
+            xe = [p["bbox"]["x"] + p["bbox"]["w"] for p in row]
+            ye = [p["bbox"]["y"] + p["bbox"]["h"] for p in row]
+            tier_bbox = {"x": min(xs), "y": min(ys),
+                         "w": max(xe) - min(xs), "h": max(ye) - min(ys)}
+            for p in row:
+                widened.append({**p, "bbox": dict(tier_bbox)})
+        # tiers_of drops panels with no bbox; keep them so index lookups never miss
+        widened.extend({**p} for p in panels if not (p.get("bbox") or {}).get("h"))
+        widened.sort(key=lambda p: int(p.get("index", 0)))
+        out[pn] = {**page, "panels": widened}
+    return out
+
 # ── Semantic text↔panel alignment ───────────────────────────────────────────
 # Cosine similarity from the shared embedding backend (Azure text-embedding-3-large
 # when configured, else local mxbai-embed-large-v1). Far more reliable than lexical
@@ -524,10 +580,42 @@ def build_shots(
     # cosine — see assign_custom_images). No-op (byte-identical) for any project with no
     # review/custom/custom_images.json.
     custom_map = _resolve_custom_images(project, narration) if project else {}
+    # An image that Master ADDED but never LOCKED gets placed by cosine argmax. That guess must
+    # never outrank an explicit pick: on power-fantasy-etienne a stray third sidecar entry
+    # (beat_key "4:0", added then abandoned) was argmax-assigned to "outro" and painted over the
+    # panel Master had locked there (p120/0), so the video closed on a repeat of an earlier image.
+    # A beat holding a real PANEL lock is Master's decision and is off-limits to the guesser;
+    # beats Master locked to a custom image, and unlocked beats, are still fair game.
+    if custom_map and project:
+        from ..review_gate import load_state as _load_review_state
+        _locks = (_load_review_state(project) or {}).get("locks") or {}
+        panel_locked = {k for k, v in _locks.items()
+                        if isinstance(v, dict) and not v.get("custom_image")}
+        hijacked = sorted(k for k in custom_map if k in panel_locked)
+        for k in hijacked:
+            custom_map.pop(k, None)
+        if hijacked:
+            print(f"[stage5] custom-image: refused to overwrite Master's panel lock on "
+                  f"{hijacked} with an unlocked argmax-assigned image")
     if custom_map:
-        _apply_custom_images_to_shots(shots, custom_map)
-        print(f"[stage5] custom-image: assigned {len(custom_map)} beat(s) -> "
-              f"{sorted(custom_map)}")
+        _apply_custom_images_to_shots(shots, custom_map, narration)
+        # VERIFY, do not assume. The old line printed "assigned N beat(s)" straight from the map's
+        # length — it reported success without checking a single shot, and on broken-adamantium it
+        # said 2 while the render contained 0. Master's rule (2026-07-30) is that every custom
+        # image ALWAYS reaches final.mp4, so count what actually landed and fail loudly on a gap:
+        # a render silently missing Master's own picks is worse than a stopped render.
+        landed = {str(getattr(sh, "custom_image", "") or "") for sh in shots}
+        missing = sorted(k for k, p in custom_map.items() if str(p) not in landed)
+        print(f"[stage5] custom-image: {len(custom_map) - len(missing)}/{len(custom_map)} "
+              f"beat(s) landed on a shot -> {sorted(custom_map)}")
+        if missing:
+            raise RuntimeError(
+                f"[stage5] custom image(s) for beat(s) {missing} never reached a shot — refusing "
+                f"to render a video that drops Master's own picks. Every beat_key in "
+                f"review/custom/custom_images.json must map to a shot; check that the beat still "
+                f"exists in narration.json (a re-narrate can strand a lock) and that its scene "
+                f"was not merged away."
+            )
 
     # SHOT_MAX_SECONDS (micro_moment v2): cap held shots so no panel freezes. No-op (returns the
     # list unchanged) when the knob is 0 → byte-identical to the old behavior. Runs BEFORE
@@ -643,6 +731,7 @@ def _time_split_shots(shots: list[Shot], max_seconds: float, *, loop_tail: float
                 last, shot_id=len(shots) - 1 + k, duration_seconds=d,
                 panel_bbox=dict(last.panel_bbox),
                 text_bboxes=list(getattr(last, "text_bboxes", None) or []),
+                char_bboxes=list(getattr(last, "char_bboxes", None) or []),
             ))
         return out
     tail = min(loop_tail, max_seconds) if loop_tail > 0 else 0.0
@@ -658,6 +747,7 @@ def _time_split_shots(shots: list[Shot], max_seconds: float, *, loop_tail: float
                 s, shot_id=nid, duration_seconds=d, motion=motion,
                 panel_bbox=dict(s.panel_bbox),
                 text_bboxes=list(getattr(s, "text_bboxes", None) or []),
+                char_bboxes=list(getattr(s, "char_bboxes", None) or []),
             ))
             nid += 1
     return out
@@ -692,6 +782,7 @@ def _close_loop(shots: list[Shot]) -> None:
     last.panel_bbox = dict(first.panel_bbox)
     last.source_image = first.source_image
     last.text_bboxes = list(getattr(first, "text_bboxes", None) or [])
+    last.char_bboxes = list(getattr(first, "char_bboxes", None) or [])
     last.no_mirror = getattr(first, "no_mirror", False)
     last.custom_image = getattr(first, "custom_image", "")
     last.motion = "zoom_out"
@@ -847,7 +938,12 @@ def _build_shots_per_chunk(
     units: list[tuple[dict, list, str, tuple | None]] = []   # (scene, slice_members, match_text, pin)
     for scene, members in groups:
         scene_text = str(scene.get("text", "") or "")
-        if scene.get("is_intro") or scene.get("is_outro"):
+        _bookend_frags = [c for c in (scene.get("visual_beats") or []) if _vb_text(c)]
+        if (scene.get("is_intro") or scene.get("is_outro")) and len(_bookend_frags) <= 1:
+            # A bookend with no fragments is ONE held panel — which is what the hook used to be
+            # ALWAYS, because this branch fired before the fragment paths below could see it. A
+            # 26-word hook is ~7s frozen on one drawing, at exactly the 3-second retention gate.
+            # Give the intro visual_beats and it now falls through to the normal split instead.
             # OUTRO: honor an explicit (page_ref, panel_ref) as the PIN so a chosen closing panel
             # (e.g. the mirror) renders, instead of the matcher's cold-open reuse (loop bookend).
             _opin = None
@@ -978,12 +1074,14 @@ def _build_shots_per_chunk(
         if is_whole and not is_intro:
             audit_whole.append(int(scene.get("scene_id") or 0))
         text_bboxes: list[dict] = []
+        char_bboxes: list[dict] = []
         if panel is None:
             bbox = scene.get("panel_bbox") or {}
             source_image = source_image or str(scene.get("source_image") or "")
         else:
             bbox = panel.get("bbox") or {}
             text_bboxes = _panel_text_bboxes(panel, pages_by_number or {})
+            char_bboxes = _panel_char_bboxes(panel)
         panel_bbox = {"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
                       "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))}
         caption_text = " ".join(str(m[0]) for m in slice_members).strip()
@@ -1004,7 +1102,7 @@ def _build_shots_per_chunk(
             shots.append(Shot(
                 shot_id=shot_id, scene_id=scene_id, duration_seconds=dur,
                 panel_bbox=dict(panel_bbox), source_image=source_image, motion=motion,
-                text_bboxes=text_bboxes, caption_text=caption_text,
+                text_bboxes=text_bboxes, char_bboxes=char_bboxes, caption_text=caption_text,
                 no_mirror=no_mirror, keep_contain=keep_contain, is_intro=is_intro,
                 fit_fill=fit_fill,
             ))
@@ -1336,7 +1434,98 @@ def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, st
     return {bk: str(root / f) for bk, f in by_key.items()}
 
 
-def _apply_custom_images_to_shots(shots: list, custom_map: dict[str, str]) -> None:
+def _fragment_text(narration: dict | None, sid: int, fi: int) -> str:
+    """The verbatim words of fragment `fi` of scene `sid`, or "" when unavailable."""
+    for s in ((narration or {}).get("scenes") or []):
+        if int(s.get("scene_id") or 0) != sid:
+            continue
+        vb = s.get("visual_beats") or []
+        if 0 <= fi < len(vb):
+            v = vb[fi]
+            return " ".join(str(v.get("text") if isinstance(v, dict) else v).split())
+    return ""
+
+
+def _shot_for_fragment(shots: list, idxs: list[int], frag: str) -> int | None:
+    """Index (into `shots`) of the shot whose caption CARRIES `frag` — the shot the viewer is
+    looking at while those exact words are spoken.
+
+    Why this exists (bug, 2026-07-30): the ordinal path below assumes 1 fragment == 1 shot, and
+    the shot builder MERGES adjacent fragments that land on the same panel. On broken-adamantium
+    scene 2 had five fragments but three shots — 2:1 and 2:2 merged — so `idxs[2]` pointed at the
+    shot carrying fragment 2:3 ("Doc Green, a genius variant of Hulk"). Master's custom image for
+    "and the rule is simple: nothing breaks it" played over Doc Green instead, and Doc Green's own
+    panel never appeared in the video at all. `fi` was IN range, so the out-of-range clamp added
+    earlier that day never fired and nothing was logged.
+
+    Matching on the words is immune to merging: merged or not, the shot that speaks the fragment
+    is the shot that should carry its image. Longest-overlap wins so a fragment that is a prefix
+    of another still resolves to the tighter caption."""
+    if not frag:
+        return None
+    best, best_len = None, 0
+    for i in idxs:
+        cap = " ".join(str(getattr(shots[i], "caption_text", "") or "").split())
+        if not cap:
+            continue
+        # the fragment is verbatim narration, so a merged caption CONTAINS it outright
+        if frag in cap and len(frag) > best_len:
+            best, best_len = i, len(frag)
+    if best is not None:
+        return best
+    # partial: the builder may have split a fragment across shots — take the caption sharing the
+    # longest leading run of words with it.
+    words = frag.split()
+    for i in idxs:
+        cap = " ".join(str(getattr(shots[i], "caption_text", "") or "").split())
+        run = 0
+        for w in words:
+            if w in cap:
+                run += 1
+            else:
+                break
+        if run > best_len:
+            best, best_len = i, run
+    return best if best_len >= 2 else None
+
+
+def _split_shot_at_fragment(shots: list, i: int, frag: str) -> int | None:
+    """Cut shot `i` in two where `frag` begins, and return the index of the NEW second half.
+
+    Used only when two fragments carrying DIFFERENT custom images resolve to the same shot —
+    without this one of Master's images is unreachable. Duration is divided by word count (the
+    audio is unchanged, so the split has to be proportional to how long each half is spoken) and
+    the two halves keep the same panel: the custom image replaces the visuals anyway, and the
+    first half may still be a normal panel shot. Returns None when the fragment is not a clean
+    interior boundary, in which case the caller leaves the shot alone rather than mangling it."""
+    import copy
+    sh = shots[i]
+    cap = " ".join(str(getattr(sh, "caption_text", "") or "").split())
+    frag = " ".join(str(frag).split())
+    at = cap.find(frag)
+    if at <= 0:                      # not found, or the fragment already starts this shot
+        return None
+    head, tail = cap[:at].strip(), cap[at:].strip()
+    hw, tw = len(head.split()), len(tail.split())
+    if not hw or not tw:
+        return None
+    total = float(getattr(sh, "duration_seconds", 0.0) or 0.0)
+    if total <= 0.8:                 # too short to survive halving (0.4s floor per half)
+        return None
+    head_dur = max(0.4, round(total * hw / (hw + tw), 3))
+    tail_dur = max(0.4, round(total - head_dur, 3))
+    second = copy.copy(sh)
+    sh.caption_text, sh.duration_seconds = head, head_dur
+    second.caption_text, second.duration_seconds = tail, tail_dur
+    second.custom_image = ""         # the caller sets the image it wanted here
+    shots.insert(i + 1, second)
+    for k, s in enumerate(shots):    # shot_id is positional; keep it consistent
+        s.shot_id = k
+    return i + 1
+
+
+def _apply_custom_images_to_shots(shots: list, custom_map: dict[str, str],
+                                  narration: dict | None = None) -> None:
     """Stamp each assigned beat's custom image onto its shot(s) — OVERRIDING whatever the
     matcher picked for that beat (render_shot then loads the file directly instead of
     cropping panel_bbox out of source_image; see Shot.custom_image). Grouping mirrors
@@ -1382,8 +1571,47 @@ def _apply_custom_images_to_shots(shots: list, custom_map: dict[str, str]) -> No
                 fi = int(frag_s)
             except ValueError:
                 continue
-            if 0 <= fi < len(idxs):
-                shots[idxs[fi]].custom_image = abs_path
+            # FIRST: find the shot that actually SPEAKS this fragment. The ordinal fallback below
+            # is only correct while 1 fragment == 1 shot, and merging breaks that silently — see
+            # _shot_for_fragment for the broken-adamantium case where it put Master's image over
+            # Doc Green and Doc Green never appeared.
+            frag = _fragment_text(narration, sid, fi)
+            hit = _shot_for_fragment(shots, idxs, frag)
+            if hit is not None:
+                # COLLISION: another fragment's image already claimed this shot. The Q&A builder
+                # cuts shots on caption-chunk/silence boundaries, not fragment boundaries, so two
+                # fragments routinely share one shot — on broken-adamantium 2:1 and 2:2 both landed
+                # on the shot reading "coats Wolverine's skeleton, and the rule is simple: nothing
+                # breaks it.", and one of Master's two images simply could not be shown. Split the
+                # shot at the fragment boundary so each image gets its own screen time.
+                prev = str(getattr(shots[hit], "custom_image", "") or "")
+                if prev and prev != abs_path and frag:
+                    new_i = _split_shot_at_fragment(shots, hit, frag)
+                    if new_i is not None:
+                        shots[new_i].custom_image = abs_path
+                        print(f"[stage5] custom-image: split shot {hit} so beat {beat_key} keeps "
+                              f"its own image (two fragments shared one shot)")
+                        continue
+                    print(f"[stage5] custom-image: beat {beat_key} shares a shot with another "
+                          f"custom image and could not be split — one image will not be seen")
+                shots[hit].custom_image = abs_path
+                continue
+            # NEVER silently drop a custom image (Master 2026-07-30: "I want all the custom image
+            # always have in our final mp4"). fi indexes this scene's shots in render order, which
+            # assumes 1 fragment = 1 shot. When something upstream merges fragments that invariant
+            # breaks and fi runs past the end — the old `if 0 <= fi < len(idxs)` then skipped the
+            # image with no output at all, which is how both of Master's picks vanished from
+            # broken-adamantium while the summary line still claimed they were assigned. Clamp onto
+            # the nearest real shot instead, and say so: a slightly misplaced image is recoverable,
+            # a silently missing one is not.
+            if not idxs:
+                continue
+            if fi >= len(idxs):
+                print(f"[stage5] custom-image: beat {beat_key} wanted shot #{fi} of scene {sid} "
+                      f"but it only has {len(idxs)} shot(s) — clamping to the last one so the "
+                      f"image still appears (fragments were merged upstream)")
+                fi = len(idxs) - 1
+            shots[idxs[max(0, fi)]].custom_image = abs_path
         else:
             for i in idxs:
                 shots[i].custom_image = abs_path
@@ -1442,7 +1670,12 @@ def _merge_locked_segments(segs: list[dict], min_seconds: float) -> list[dict]:
     Mutates copies; returns the merged list. ponytail: O(n²) restart loop, n≈chunks (~33) so trivial."""
     merged: list[dict] = []
     for s in segs:
+        # A segment carrying a CUSTOM image is never merged with anything but an identical one.
+        # Custom fragments all borrow the same placeholder panel (the image replaces it at render
+        # time), so without this they look like "the same panel repeated" and collapse into one
+        # shot — which is how two of Master's images became one on broken-adamantium.
         if (merged and merged[-1]["sid"] == s["sid"] and merged[-1]["src"] == s["src"]
+                and merged[-1].get("custom", "") == s.get("custom", "")
                 and _seg_bbox_key(merged[-1]["panel"]) == _seg_bbox_key(s["panel"])):
             merged[-1]["dur"] += s["dur"]
             merged[-1]["text"] = f"{merged[-1]['text']} {s['text']}".strip()
@@ -1455,6 +1688,8 @@ def _merge_locked_segments(segs: list[dict], min_seconds: float) -> list[dict]:
         for i, seg in enumerate(merged):
             if seg["dur"] >= min_seconds or len(merged) == 1:
                 continue
+            if seg.get("custom"):
+                continue      # deleting this segment would delete Master's image with it
             sid = seg["sid"]
             left = merged[i - 1] if i - 1 >= 0 and merged[i - 1]["sid"] == sid else None
             right = merged[i + 1] if i + 1 < len(merged) and merged[i + 1]["sid"] == sid else None
@@ -1778,30 +2013,61 @@ def _build_shots_per_chunk_locked(
             # panels. Resolve each part's pin directly; only a key that maps into THIS scene's own
             # preprocessed pool counts (a stale/foreign key is ignored — matcher fills that fragment
             # instead, same as an unlocked one).
+            # A CUSTOM-IMAGE lock is a pin too (bug fix, 2026-07-30). Master can replace a
+            # fragment's panel with an image of their own; that lock is shaped
+            # {"custom_image": ..., "source": "custom"} and carries NO "panels" key, so
+            # lock_panels() returns nothing for it. The old loop read that as "this fragment is
+            # unpinned", which dropped the whole scene into the PARTIAL-pin branch below — and
+            # there the matcher assigned a page panel to the very fragments Master had just
+            # replaced. Worse, partial-pin MERGES fragments, breaking the 1-fragment-1-shot
+            # invariant that _apply_custom_images_to_shots relies on to find its target shot, so
+            # the later override silently missed as well. Net effect measured on
+            # broken-adamantium: both of Master's images were absent from final.mp4 while the log
+            # cheerfully said "custom-image: assigned 2 beat(s)".
+            #
+            # A custom fragment needs no (page, panel): render_shot loads the file directly and
+            # ignores panel_bbox. It still needs SOME panel to occupy the slot, so it borrows the
+            # scene's first candidate purely as a placeholder — never rendered, only carried.
             frag_pin: dict[int, tuple[int, int]] = {}
+            frag_custom: dict[int, str] = {}
             for _t, _s, _d, fi in parts:
                 if fi is None:
                     continue
-                ps = lock_panels(locks.get(f"{sid}:{fi}"))
+                lk = locks.get(f"{sid}:{fi}") or {}
+                if isinstance(lk, dict) and lk.get("custom_image"):
+                    from ..review_gate import _project_root
+                    frag_custom[fi] = str(_project_root(project) / str(lk["custom_image"]))
+                    continue
+                ps = lock_panels(lk)
                 if not ps:
                     continue
                 pkey = (int(ps[0]["page"]), int(ps[0]["panel"]))
                 if pkey in cand_by_key:
                     frag_pin[fi] = pkey
 
-            if frag_pin and all(fi in frag_pin for _t, _s, _d, fi in parts):
+            if (frag_pin or frag_custom) and all(
+                    fi in frag_pin or fi in frag_custom for _t, _s, _d, fi in parts):
                 # EVERY fragment is individually pinned — Master's per-fragment picks are final.
                 # Skip the matcher, the VLM rerank, AND the no-reuse guard below entirely: those are
                 # heuristics for a FREE assignment and must never override an explicit hand pick
                 # (Master pinning the same panel twice in a row is deliberate, not a duplicate to
                 # dedupe away).
                 for text, _st, dur, fi in parts:
-                    _key, panel, src, _tb = cand_by_key[frag_pin[fi]]
+                    if fi in frag_pin:
+                        _key, panel, src, _tb = cand_by_key[frag_pin[fi]]
+                    else:                        # custom-image fragment: placeholder slot only
+                        _key, panel, src, _tb = cands[0]
                     segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
                                  "text": text, "dur": max(0.0, dur),
-                                 "is_intro": is_intro, "is_outro": is_outro})
+                                 "is_intro": is_intro, "is_outro": is_outro,
+                                 # Bind the image to THIS fragment here, where we still know which
+                                 # fragment it is. The alternative — letting
+                                 # _apply_custom_images_to_shots find it later by ordinal index —
+                                 # only works while 1 fragment == 1 shot, and merging breaks that.
+                                 "custom": frag_custom.get(fi, "")})
                 print(f"[stage5] qa-locked: scene {sid} pinned per-fragment "
-                      f"({len(parts)} shots, no matcher)")
+                      f"({len(parts)} shots, no matcher"
+                      + (f", {len(frag_custom)} custom image(s)" if frag_custom else "") + ")")
                 continue
 
             texts = [p[0] for p in parts]
@@ -1885,7 +2151,7 @@ def _build_shots_per_chunk_locked(
         panel, src = seg["panel"], seg["src"]
         is_intro, is_outro = seg["is_intro"], seg["is_outro"]
         is_whole = bool(panel is not None and panel.get("_whole_page"))
-        pb, src2, text_bboxes, no_mirror, keep_contain = _shot_fields(
+        pb, src2, text_bboxes, char_bboxes, no_mirror, keep_contain = _shot_fields(
             panel, src, seg["scene"], is_intro, pages_by_number or {})
         if is_intro or is_outro or is_whole:
             motion = "zoom_in"   # loop-close zoom_out is applied only by _close_loop (no normal pull-back)
@@ -1894,9 +2160,11 @@ def _build_shots_per_chunk_locked(
         shots.append(Shot(
             shot_id=k, scene_id=k + 1, duration_seconds=max(0.4, seg["dur"]),
             panel_bbox=pb, source_image=src2, motion=motion,
-            text_bboxes=text_bboxes, caption_text=seg["text"],
+            text_bboxes=text_bboxes, char_bboxes=char_bboxes, caption_text=seg["text"],
             no_mirror=no_mirror, keep_contain=keep_contain, is_intro=is_intro,
             beat_id=int(seg["sid"]),   # real narration scene → beat-boundary-only effects
+            # Set here, not by the later ordinal-index override — see the "custom" note above.
+            custom_image=seg.get("custom", "") or "",
         ))
     return shots
 
@@ -1928,24 +2196,27 @@ def _load_sentence_panels(project: str | None) -> dict | None:
 
 
 def _shot_fields(panel: dict | None, source_image: str, scene: dict, is_intro: bool,
-                 pages_by_number: dict[int, dict]) -> tuple[dict, str, list[dict], bool, bool]:
-    """The render fields (panel_bbox, source_image, text_bboxes, no_mirror, keep_contain) for a
-    chosen panel — the SAME derivation _build_shots_per_chunk uses, factored so the locked/
-    sentence builders share it verbatim. panel=None → render the scene's fallback bbox/source."""
+                 pages_by_number: dict[int, dict]) -> tuple[dict, str, list[dict], list[dict], bool, bool]:
+    """The render fields (panel_bbox, source_image, text_bboxes, char_bboxes, no_mirror,
+    keep_contain) for a chosen panel — the SAME derivation _build_shots_per_chunk uses,
+    factored so the locked/sentence builders share it verbatim. panel=None → render the
+    scene's fallback bbox/source."""
     is_whole = bool(panel is not None and panel.get("_whole_page"))
     text_bboxes: list[dict] = []
+    char_bboxes: list[dict] = []
     if panel is None:
         bbox = scene.get("panel_bbox") or {}
         source_image = source_image or str(scene.get("source_image") or "")
     else:
         bbox = panel.get("bbox") or {}
         text_bboxes = _panel_text_bboxes(panel, pages_by_number)
+        char_bboxes = _panel_char_bboxes(panel)
     panel_bbox = {"x": int(bbox.get("x", 0)), "y": int(bbox.get("y", 0)),
                   "w": int(bbox.get("w", 0)), "h": int(bbox.get("h", 0))}
     no_mirror = (panel is None or is_whole
                  or _panel_has_critical_text(panel) or is_intro)
     keep_contain = _panel_has_critical_text(panel)
-    return panel_bbox, source_image, text_bboxes, no_mirror, keep_contain
+    return panel_bbox, source_image, text_bboxes, char_bboxes, no_mirror, keep_contain
 
 
 def _build_shots_per_sentence(
@@ -2066,12 +2337,12 @@ def _build_shots_per_sentence(
             motion = "zoom_in"   # loop-close zoom_out is applied only by _close_loop (no normal pull-back)
         else:
             motion = _choose_motion(panel, dur, seq=k)
-        pb, src, text_bboxes, no_mirror, keep_contain = _shot_fields(
+        pb, src, text_bboxes, char_bboxes, no_mirror, keep_contain = _shot_fields(
             panel, seg["src"], seg["scene"], is_intro, pages_by_number or {})
         shots.append(Shot(
             shot_id=k, scene_id=seg["scene_id"], duration_seconds=dur,
             panel_bbox=pb, source_image=src, motion=motion,
-            text_bboxes=text_bboxes, caption_text=seg["caption"],
+            text_bboxes=text_bboxes, char_bboxes=char_bboxes, caption_text=seg["caption"],
             no_mirror=no_mirror, keep_contain=keep_contain, is_intro=is_intro,
         ))
     return shots
@@ -2088,11 +2359,19 @@ def _build_shots_per_sentence(
 
 def _split_members_by_clause(members: list, clauses: list[str]) -> list[list]:
     """Bucket a scene's caption-chunk members into one group PER CLAUSE, ALIGNED 1:1
-    with `clauses` (a bucket may be empty — the caller zips clauses↔buckets and drops
-    empty pairs so clause text, panel, and chunks stay aligned). Assignment is by WORD
-    position: chunks are word-fragments in reading order, so each chunk goes to the
-    clause covering its midpoint word. members = (text, start, dur). Returns [members]
-    (single group) when there's nothing to split (1 clause / <=1 chunk)."""
+    with `clauses`. Assignment is by WORD position: chunks are word-fragments in reading
+    order, so each chunk goes to the clause its words fall under. members = (text, start,
+    dur). Returns [members] (single group) when there's nothing to split (1 clause /
+    <=1 chunk).
+
+    A caption chunk is an AUDIO unit and does not respect fragment seams, so one chunk
+    routinely straddles two clauses. Such a chunk is CUT proportionally by word count and
+    each piece filed under its own clause. The old rule filed the whole chunk under the
+    clause covering its MIDPOINT word, which starved any clause short enough to sit
+    entirely inside one chunk: its bucket came back empty, the caller (`... if b`) dropped
+    it, and that fragment got no shot at all — so a per-fragment review lock, or a custom
+    image Master added for it, silently vanished from the render. Cutting keeps every
+    non-empty clause represented; total duration and verbatim word order are preserved."""
     if len(clauses) <= 1 or len(members) <= 1:
         return [members]
     clause_of_word: list[int] = []
@@ -2104,11 +2383,26 @@ def _split_members_by_clause(members: list, clauses: list[str]) -> list[list]:
     buckets: list[list] = [[] for _ in clauses]
     wptr = 0
     for m in members:
-        wc = max(1, len(str(m[0]).split()))
-        wi = min(nwords - 1, int(wptr + wc / 2.0))
-        buckets[clause_of_word[wi]].append(m)
+        words = str(m[0]).split()
+        wc = max(1, len(words))
+        spans: list[list] = []                       # [clause_idx, word_count], in order
+        for j in range(wc):
+            ci = clause_of_word[min(nwords - 1, wptr + j)]
+            if spans and spans[-1][0] == ci:
+                spans[-1][1] += 1
+            else:
+                spans.append([ci, 1])
+        if len(spans) == 1 or len(words) < 2:
+            buckets[spans[0][0]].append(m)
+        else:
+            start, used = float(m[1]), 0
+            for ci, n in spans:
+                dur = float(m[2]) * n / wc
+                buckets[ci].append((" ".join(words[used:used + n]), start, dur))
+                start += dur
+                used += n
         wptr += wc
-    return buckets   # ALIGNED to clauses (may include empty buckets)
+    return buckets   # ALIGNED to clauses (a bucket is empty only for an empty clause)
 
 
 def _align_fragments_to_words(
@@ -2235,6 +2529,20 @@ def _panel_text_bboxes(panel: dict, pages_by_number: dict[int, dict]) -> list[di
         if b.get("w") and b.get("h"):
             out.append({"x": int(b["x"]), "y": int(b["y"]),
                         "w": int(b["w"]), "h": int(b["h"])})
+    return out
+
+
+def _panel_char_bboxes(panel: dict) -> list[dict]:
+    """Page-coordinate bboxes of the CHARACTERS Magi found inside this panel.
+
+    Unlike _panel_text_bboxes these need no page lookup — Stage 2 stores them on the
+    panel itself (PanelInfo.char_boxes). Returns [] for panels preprocessed before
+    2026-08-09, which is what makes every caller degrade to the old behaviour."""
+    out: list[dict] = []
+    for cb in (panel or {}).get("char_boxes") or []:
+        if cb.get("w") and cb.get("h"):
+            out.append({"x": int(cb["x"]), "y": int(cb["y"]),
+                        "w": int(cb["w"]), "h": int(cb["h"])})
     return out
 
 
@@ -3381,6 +3689,28 @@ def _clamp_splits(splits: list[float], total: float) -> list[float]:
     return fixed
 
 
+def _to_crop_local(page_boxes, geom: dict) -> list[dict]:
+    """Page-coord boxes → the CROP's own pixel coords, clipped to the crop and
+    mirror-aware. Boxes fully outside the crop drop out.
+
+    `geom` is _crop_panel's geom_out: left/top/right/bottom of the region it took from
+    the page, plus `mirrored`. When the crop was flipped horizontally the art moved but
+    these page coords did not, so x must be reflected across the crop's width — miss
+    that and every box lands on the mirror-image of where its subject actually is."""
+    gl, gt = geom["left"], geom["top"]
+    gw = geom["right"] - gl
+    out: list[dict] = []
+    for b in (page_boxes or []):
+        bx0, by0 = int(b.get("x", 0)), int(b.get("y", 0))
+        ix0, iy0 = max(bx0, gl), max(by0, gt)
+        ix1 = min(bx0 + int(b.get("w", 0)), geom["right"])
+        iy1 = min(by0 + int(b.get("h", 0)), geom["bottom"])
+        if ix1 > ix0 and iy1 > iy0:
+            x = (gw - (ix1 - gl)) if geom.get("mirrored") else (ix0 - gl)
+            out.append({"x": x, "y": iy0 - gt, "w": ix1 - ix0, "h": iy1 - iy0})
+    return out
+
+
 def render_shot(
     shot: Shot,
     out_path: Path,
@@ -3397,6 +3727,7 @@ def render_shot(
 
     panel_png = work_dir / f"panel_{shot.shot_id:03d}.png"
     avoid: list[dict] = []
+    chars: list[dict] = []
     custom_src = getattr(shot, "custom_image", "") or ""
     if custom_src:
         # Master-added image: load it straight as the panel — no page crop (there is no
@@ -3412,18 +3743,12 @@ def render_shot(
 
         # Bubble rects → CROP-LOCAL coords (mirror-aware) so the 9:16 window can frame
         # the inpainted white blobs out (the frame-1 "empty bubble" slop, audit 2026-07-03).
+        # Character rects take the SAME trip: both are page-coord boxes the crop window
+        # needs in its own pixel space, so one helper serves both (avoid = keep OUT of
+        # frame, chars = keep IN frame).
         if geom:
-            gl, gt = geom["left"], geom["top"]
-            gw = geom["right"] - gl
-            for tb in (getattr(shot, "text_bboxes", None) or []):
-                ix0 = max(int(tb.get("x", 0)), gl); iy0 = max(int(tb.get("y", 0)), gt)
-                ix1 = min(int(tb.get("x", 0)) + int(tb.get("w", 0)), geom["right"])
-                iy1 = min(int(tb.get("y", 0)) + int(tb.get("h", 0)), geom["bottom"])
-                if ix1 > ix0 and iy1 > iy0:
-                    bx = ix0 - gl
-                    if geom.get("mirrored"):
-                        bx = gw - (ix1 - gl)
-                    avoid.append({"x": bx, "y": iy0 - gt, "w": ix1 - ix0, "h": iy1 - iy0})
+            avoid = _to_crop_local(getattr(shot, "text_bboxes", None), geom)
+            chars = _to_crop_local(getattr(shot, "char_bboxes", None), geom)
 
     # AI-upscale the crop BEFORE framing when it needs real magnification to fill
     # the frame — _prepare_panel_frame's own `cover` formula picks the same panels
@@ -3440,12 +3765,15 @@ def render_shot(
                 with Image.open(up_path) as _uim:
                     uiw, uih = _uim.size
                 rw, rh = uiw / piw, uih / pih
-                avoid = [{"x": b["x"] * rw, "y": b["y"] * rh,
-                          "w": b["w"] * rw, "h": b["h"] * rh} for b in avoid]
+                _rescale = lambda bs: [{"x": b["x"] * rw, "y": b["y"] * rh,      # noqa: E731
+                                        "w": b["w"] * rw, "h": b["h"] * rh} for b in bs]
+                avoid = _rescale(avoid)
+                chars = _rescale(chars)   # same rescale — a char box left in pre-upscale
+                                          # coords would point at a fraction of the figure
                 frame_src = up_path
 
     framed = _prepare_panel_frame(frame_src, panel_png.with_name(panel_png.stem + "_9x16.png"),
-                                  avoid_boxes=avoid,
+                                  avoid_boxes=avoid, char_boxes=chars,
                                   keep_contain=getattr(shot, "keep_contain", False),
                                   fit_mode=("fill" if getattr(shot, "fit_fill", False) else None))
 
@@ -3672,6 +4000,51 @@ def _norm_profile(v: "np.ndarray") -> "np.ndarray":
     return (v / m).astype("float32") if m > 0 else v.astype("float32")
 
 
+# Magi character boxes bound the whole FIGURE, not the face — but the reported bug is
+# faces sliced off, and a head sits at the TOP of an upright figure. So the top slice of
+# each box carries extra weight: the window prefers heads without needing a face model.
+# (General to comics, not one panel: figures are drawn upright. Set HEAD_W=1.0 to disable.)
+CHAR_HEAD_FRAC = float(os.getenv("CHAR_HEAD_FRAC", "0.35"))
+CHAR_HEAD_W = float(os.getenv("CHAR_HEAD_W", "2.0"))
+
+
+def _char_box_profile(iw: int, ih: int, char_boxes: list[dict]) -> tuple:
+    """(cols, rows) subject profiles built from Magi's CHARACTER boxes — the same shape
+    _panel_subject_profile returns, so _choose_crop_offset scores them unchanged.
+
+    Mass is box COVERAGE, which fixes the body-part trap for free: Magi emits a box for a
+    lone hand or fist as well as for a whole figure (verified on Absolute Batman p8/p10),
+    and a hand contributes a few hundred px of mass against a figure's tens of thousands —
+    so the window lands on the person, with no "biggest box wins" special case to tune.
+
+    Returns (None, None) for no boxes → caller falls back to the ink/detail profile."""
+    if not char_boxes or iw <= 0 or ih <= 0:
+        return None, None
+    try:
+        import numpy as np
+        cols = np.zeros(iw, dtype=np.float64)
+        rows = np.zeros(ih, dtype=np.float64)
+        for b in char_boxes:
+            x0 = max(0, int(b.get("x", 0))); y0 = max(0, int(b.get("y", 0)))
+            x1 = min(iw, x0 + int(b.get("w", 0))); y1 = min(ih, y0 + int(b.get("h", 0)))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            h = y1 - y0
+            head_end = min(y1, y0 + max(1, int(round(h * CHAR_HEAD_FRAC))))
+            # Column mass = weighted height of this box; row mass = its width, heavier
+            # over the head band. Both axes stay consistent so a window that keeps the
+            # head scores higher on BOTH.
+            cols[x0:x1] += (head_end - y0) * CHAR_HEAD_W + (y1 - head_end)
+            rows[y0:head_end] += (x1 - x0) * CHAR_HEAD_W
+            rows[head_end:y1] += (x1 - x0)
+        if cols.max() <= 0 or rows.max() <= 0:
+            return None, None
+        return cols / cols.max(), rows / rows.max()
+    except Exception as exc:                     # never break a render over framing
+        print(f"[stage5] char-box profile failed ({exc}) — ink profile")
+        return None, None
+
+
 def _panel_subject_profile(im) -> tuple:
     """Where the DRAWN SUBJECT sits in a PIL panel, as (cols, rows) profiles for
     _choose_crop_offset. (None, None) on any failure → framing falls back to center.
@@ -3881,7 +4254,8 @@ def _ai_upscale_panel(panel_png: Path) -> Path:
 def _prepare_panel_frame(panel_png: Path, out_path: Path,
                          avoid_boxes: list[dict] | None = None,
                          *, keep_contain: bool = False,
-                         fit_mode: str | None = None) -> Path:
+                         fit_mode: str | None = None,
+                         char_boxes: list[dict] | None = None) -> Path:
     """Fit the panel into 1080×1920.
 
     `avoid_boxes` — inpainted-bubble rects in the CROP's own pixel coords; the
@@ -3889,6 +4263,13 @@ def _prepare_panel_frame(panel_png: Path, out_path: Path,
     white blobs out of frame (see _choose_crop_offset). None/[] → dead center,
     byte-identical to the old behavior. The blur-bg path ignores them: the sharp
     foreground is the WHOLE panel (can't crop it) and background bubbles blur out.
+
+    `char_boxes` — Magi character rects, same coord space. These say where the FIGURES
+    are, so the window no longer has to infer the subject from ink density. That matters
+    because ink density cannot tell a person from lettering: big SFX ("THOOM", "BLAM")
+    is high-contrast, high-detail ink, so the old profile could frame a sound effect and
+    cut the face off. None/[] (old projects, or a panel with no character) → ink profile,
+    unchanged.
 
     Default = cover-scale (fill frame, crop overflow). Reference channels favor
     this when the panel is large enough to fill the frame without much upscale.
@@ -3933,11 +4314,16 @@ def _prepare_panel_frame(panel_png: Path, out_path: Path,
                  "w": int(b["w"] * cover), "h": int(b["h"] * cover)}
                 for b in (avoid_boxes or [])
             ]
-            # Where the subject is (thumbnail profile of THIS panel, mapped by position
-            # fraction so the scaled window coords need no conversion) — without it the
-            # window only knows where bubbles are and slices faces off.
-            d_cols, d_rows = (_panel_subject_profile(im) if SUBJECT_AWARE_CROP
-                              else (None, None))
+            # Where the subject is. Magi's character boxes FIRST (it detected the figures
+            # during Stage 2; on Western comics it beats every off-the-shelf detector —
+            # 76.3 vs YOLO's 64.9 mAP, CoMix NeurIPS 2024). Only when a panel carries no
+            # character box do we fall back to guessing from the pixels. Both are mapped
+            # by position fraction, so scaled window coords need no conversion.
+            d_cols, d_rows = (None, None)
+            if SUBJECT_AWARE_CROP:
+                d_cols, d_rows = _char_box_profile(iw, ih, char_boxes or [])
+                if d_cols is None:
+                    d_cols, d_rows = _panel_subject_profile(im)
             x0, y0 = _choose_crop_offset(new_w, new_h, OUTPUT_W, OUTPUT_H, scaled_avoid,
                                          detail_cols=d_cols, detail_rows=d_rows)
             frame = scaled.crop((x0, y0, x0 + OUTPUT_W, y0 + OUTPUT_H))

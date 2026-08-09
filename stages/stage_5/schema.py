@@ -14,6 +14,11 @@ class Shot:
     # Text-block bboxes (page coords) overlapping this panel — used by Stage 5 to
     # inpaint the comic's own speech-bubble text out before rendering.
     text_bboxes: list[dict] = field(default_factory=list)
+    # Magi character bboxes (page coords) inside this panel — where the FIGURES are.
+    # Same coord space and mirror handling as text_bboxes; the 9:16 cover-crop window
+    # centers on these instead of guessing the subject from ink density. Empty (old
+    # projects, or a panel with no character) → the ink-profile fallback, unchanged.
+    char_bboxes: list[dict] = field(default_factory=list)
     # The caption words actually spoken over THIS shot (the clause-slice text).
     # Stored so shots.json labels each shot correctly — shot count no longer
     # equals caption-chunk count, so indexing caption_chunks[shot_id] is wrong.

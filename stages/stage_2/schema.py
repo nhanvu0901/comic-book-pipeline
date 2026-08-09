@@ -19,6 +19,13 @@ class PanelInfo:
     cluster_ids: list[int] = field(default_factory=list)
     # cluster_id → name mapping is per-project, not per-panel; resolved during
     # Stage 5 scoring via projects/<name>/cluster_to_name.json
+    # WHERE those characters are drawn, in PAGE coords: [{"x","y","w","h","cluster_id"}].
+    # Magi already computes these (panel_detect._parse_magi_page) and we used to drop
+    # them, keeping only cluster_ids — so Stage 5's 9:16 crop had to GUESS the subject
+    # from ink density and sliced faces off. Empty on pages preprocessed before
+    # 2026-08-09 (and on the ~15% of panels Magi finds no character in); every consumer
+    # falls back to the old ink-profile path, so old projects render unchanged.
+    char_boxes: list = field(default_factory=list)
     # All of this panel's text lives HERE (nested, 2026-06-27) — no separate page-level
     # text_blocks. Each entry: {text, type, speaker, speaker_cluster_id, bbox}.
     dialog: list = field(default_factory=list)

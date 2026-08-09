@@ -1283,11 +1283,24 @@ def _assemble_page_dict(
         panel_infos = []
         for i, p in enumerate(panels_raw):
             cluster_ids = []
+            char_boxes = []
             for char_idx in panel_chars.get(i, []):
                 if 0 <= char_idx < len(magi_chars_list):
                     cid = magi_chars_list[char_idx].get("cluster_id", -1)
                     if cid >= 0:
                         cluster_ids.append(cid)
+                    # Keep the BOX too, not just the cluster id: Stage 5's 9:16 crop
+                    # needs to know WHERE the figure is. Unclustered chars (cid -1) still
+                    # get a box — for framing, "a person is here" is the whole point;
+                    # knowing WHICH person is not (Magi's re-id collapses on Western
+                    # comics anyway: 15% vs 57% on manga, CoMix NeurIPS 2024).
+                    cb = magi_chars_list[char_idx].get("bbox") or {}
+                    if cb.get("w") and cb.get("h"):
+                        char_boxes.append({
+                            "x": int(cb["x"]), "y": int(cb["y"]),
+                            "w": int(cb["w"]), "h": int(cb["h"]),
+                            "cluster_id": int(cid),
+                        })
             entry = vlm_panel_map.get(i, {})
             panel_infos.append(PanelInfo(
                 index=i, bbox=p["bbox"],
@@ -1295,6 +1308,7 @@ def _assemble_page_dict(
                 characters=entry.get("characters") or [],
                 dominant_emotion=str(entry.get("dominant_emotion") or ""),
                 cluster_ids=cluster_ids,  # NEW v5 Phase 2
+                char_boxes=char_boxes,
             ))
 
         # Dialog/text, PREFERRING the VLM transcription over Magi's OCR (Magi garbles

@@ -40,3 +40,7 @@ tools/
 scratchpad/
 *.bak*
 stage3-5-course/
+
+# You.com scout run artifacts: raw API responses + the per-day search log. Grows with
+# every run and reproduces nothing — the reports are read once and acted on.
+scout_runs/
