@@ -21,6 +21,7 @@ from .schema import Beat, Glossary, Narration
 from ._llm import call_with_chain
 from .story_verify import run_story_verify
 from .._arc import issue_index_of_page
+from .beat_split import split_hook_fragments
 from .write_script import (
     _anchor_scenes_to_beats,
     _append_loop_tease,
@@ -55,7 +56,10 @@ _SCENES_PER_ITEM = 2
 # job split, a context scene is legitimately short ("Years earlier the original Loki died." = 6w)
 # and a moment scene no longer re-explains anything. Sizing it any higher breaks the ceiling —
 # 6 items x 44w = 264w = 78s of body, past the 70s cap no matter what the seconds target says.
-_EXP_WORDS_PER_ITEM_MIN = 34
+_EXP_WORDS_PER_ITEM_MIN = 33   # tracks config.POST_ATEMPO (1.30). A WORD floor, so it
+                               # must move with the tempo: a slower render turns the same
+                               # words into more seconds and pushes the band past
+                               # _QA_TARGET_MAX_SEC (seen at 34 when the pace was 1.10).
 
 # SECONDS-based soft target for the FINISHED VIDEO (hook + body + outro) — the
 # only real research we have (Paddy Galloway, 2023) puts Shorts completion at
@@ -208,10 +212,35 @@ HARD RULES:
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
   - MINI-ARC PER ITEM: each scene moves through setup (the source comic / where we are) -> the VISUAL TURN (the action or event drawn on the page) -> the payoff (its consequence or the twist). Never flatten an item into one wiki-style fact with no beat. This is the SHAPE inside the SAME 1-2 sentences and word budget, NOT extra words — and the visual_beats below split on exactly these beats.
   - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. ONE fragment = ONE drawable moment of ~8-14 words; split by LENGTH — a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, and a short single-event scene (<=12 words) stays ONE fragment = the whole "text". A citation / connective HEAD that opens the scene ("But in <issue name>,..." / "In <issue> #N,...") is ALWAYS its own separate short fragment — it is the establishing shot that sets the place before the action. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then), each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words.
+  - FIDELITY IS ABSOLUTE — do not invert, do not invent (Master 2026-07-30). The research handed to
+    you is the source of truth and someone else wrote it on purpose. Two failures are banned
+    outright because both have already shipped:
+      * INVERTING a fact. Real case: the research said his BODY is destroyed and his MIND survives;
+        the draft wrote "his body survives" and then "his mind doesn't go with it" — backwards, and
+        self-contradicting one scene later. Before writing a scene, name to yourself which thing the
+        research says is destroyed and which survives, then keep them that way round.
+      * ADDING a belief or motive the research never states. Real case: "but he believes no one
+        should have the powers he does" — plausible, absent from the source, therefore banned.
+    If the research is thin on a point, write LESS. Never fill a gap with something reasonable.
+
+  - WRITE THE TITLE, THE HOOK AND THE OUTRO TOO. These are yours, not templates:
+      * "title" — 4-8 words, a statement. No question mark, no emoji, no hashtag, no issue number,
+        no series name. Name the SUBJECT and the thing that makes them worth 60 seconds.
+      * "hook" — the FIRST spoken line, at most 26 words. State the CONCRETE broken constant: the
+        rule everyone assumes, then the fact that breaks it. A viewer must be able to say what the
+        video is about after hearing only this line.
+        BANNED — content-free clickbait, which is exactly why this field now exists:
+        "wait until you see/hear...", "you won't believe...", "shouldn't even be possible",
+        "the last one on this list...", "number one...", "makes no sense", or any line promising a
+        surprise without naming anything. If the hook would still make sense pasted onto a
+        different video, it is wrong. Never speak a rank or countdown position.
+      * "outro" — the LAST spoken line, 6-16 words. It must NOT restate the final scene in other
+        words (real failure: the outro repeated the last scene almost verbatim). Say what the whole
+        thing MEANS, or land one hard image the body earned.
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
+{"title": "...", "hook": "...", "outro": "...", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
 
 _EXPLORE_WRITE_SYSTEM_EXPLAIN = """You are QAWriter for a comic-trivia YouTube Short. The video answers ONE Why/How question as an ARGUMENT built from real comic moments — the items are stages of the answer (they may come from one story or from several different comics), given in escalation order (the revelation is the LAST item) — never re-rank them.
 
@@ -245,10 +274,35 @@ HARD RULES:
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
   - MINI-ARC PER ITEM: each scene moves through setup (the source comic / where we are) -> the VISUAL TURN (the action or event drawn on the page) -> the payoff (its consequence or the twist). Never flatten an item into one wiki-style fact with no beat. This is the SHAPE inside the SAME 1-2 sentences and word budget, NOT extra words — and the visual_beats below split on exactly these beats.
   - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. ONE fragment = ONE drawable moment of ~8-14 words; split by LENGTH — a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, and a short single-event scene (<=12 words) stays ONE fragment = the whole "text". A citation / connective HEAD that opens the scene ("But in <issue name>,..." / "In <issue> #N,...") is ALWAYS its own separate short fragment — it is the establishing shot that sets the place before the action. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then), each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words.
+  - FIDELITY IS ABSOLUTE — do not invert, do not invent (Master 2026-07-30). The research handed to
+    you is the source of truth and someone else wrote it on purpose. Two failures are banned
+    outright because both have already shipped:
+      * INVERTING a fact. Real case: the research said his BODY is destroyed and his MIND survives;
+        the draft wrote "his body survives" and then "his mind doesn't go with it" — backwards, and
+        self-contradicting one scene later. Before writing a scene, name to yourself which thing the
+        research says is destroyed and which survives, then keep them that way round.
+      * ADDING a belief or motive the research never states. Real case: "but he believes no one
+        should have the powers he does" — plausible, absent from the source, therefore banned.
+    If the research is thin on a point, write LESS. Never fill a gap with something reasonable.
+
+  - WRITE THE TITLE, THE HOOK AND THE OUTRO TOO. These are yours, not templates:
+      * "title" — 4-8 words, a statement. No question mark, no emoji, no hashtag, no issue number,
+        no series name. Name the SUBJECT and the thing that makes them worth 60 seconds.
+      * "hook" — the FIRST spoken line, at most 26 words. State the CONCRETE broken constant: the
+        rule everyone assumes, then the fact that breaks it. A viewer must be able to say what the
+        video is about after hearing only this line.
+        BANNED — content-free clickbait, which is exactly why this field now exists:
+        "wait until you see/hear...", "you won't believe...", "shouldn't even be possible",
+        "the last one on this list...", "number one...", "makes no sense", or any line promising a
+        surprise without naming anything. If the hook would still make sense pasted onto a
+        different video, it is wrong. Never speak a rank or countdown position.
+      * "outro" — the LAST spoken line, 6-16 words. It must NOT restate the final scene in other
+        words (real failure: the outro repeated the last scene almost verbatim). Say what the whole
+        thing MEANS, or land one hard image the body earned.
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
+{"title": "...", "hook": "...", "outro": "...", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
 
 
 # Q&A-specific outro contract (passed to write_script.generate_outro's
@@ -527,10 +581,21 @@ def _build_hook(question: str, answer_context: dict, archetype: str = "list",
     a "?" onto the former reads wrong ("...himself?"), so that register keeps
     its own punctuation (see `is_statement_lead`).
 
+    DEPRECATED 2026-07-30 — kept only as the FALLBACK for when the writer returns
+    no "hook". Master banned the tease format outright ("dont use the trash format
+    wait until you ...."), and the pools below are all content-free by construction:
+    every line ("wait until you see who did it last", "you won't believe who pulled
+    off the last one") would fit any video on the channel, which is what makes it
+    boilerplate rather than a hook. Retention forensics 2026-07-19 measured the same
+    thing from the other side: a hook must be ONE CONCRETE PARADOX, and abstract
+    lines lose at the 3-second door. The real hook is now written by the LLM writer
+    alongside the title and outro, against the concrete `constant_broken` — see the
+    prompt's "WRITE THE TITLE, THE HOOK AND THE OUTRO TOO" block. This function only
+    runs if that field comes back empty.
+
     ponytail: a real paraphrase of an arbitrary question needs grammar this
     template can't fake, so the "statement" clause is a generic placeholder
-    unless Stage 1 supplied an explicit one-line summary. Upgrade to an LLM hook
-    later (design doc addendum v2) if this reads too flat."""
+    unless Stage 1 supplied an explicit one-line summary."""
     q = question.strip()
     if archetype == "explain" and is_statement_lead(question):
         if q and not re.search(r"[.!?]$", q):
@@ -623,11 +688,22 @@ def write_explore_answer(
                                      scenes_per_beat=_SCENES_PER_ITEM)
     body = parsed.get("scenes") or []
 
-    hook_text = _build_hook(question, answer_context, archetype, project_name)
+    # HOOK: the writer's own line, built against `constant_broken` (concrete rule + the fact that
+    # breaks it). Falls back to the old template only if the field comes back empty — see
+    # _build_hook's deprecation note for why the tease pools are no longer the primary path.
+    hook_text = str(parsed.get("hook") or "").strip()
+    if hook_text:
+        log(f"[explore_answer] hook from writer: {hook_text!r}")
+    else:
+        hook_text = _build_hook(question, answer_context, archetype, project_name)
+        log("[explore_answer] writer returned no hook — fell back to the deprecated template")
     hook_page = beats[0].page_refs[0] if beats[0].page_refs else 0
     intro_scene = {
         "text": hook_text, "page_ref": hook_page, "panel_ref": -1,
         "connective": None, "beat_id": 0, "is_intro": True,
+        # Fragment the hook so it cuts across panels instead of freezing on one for ~7s
+        # (stage_5 gives a fragment-less bookend exactly ONE unit). Verbatim, no LLM.
+        "visual_beats": split_hook_fragments(hook_text),
     }
 
     outro_page = beats[-1].page_refs[0] if beats[-1].page_refs else 0
@@ -639,6 +715,14 @@ def write_explore_answer(
         "text": "", "page_ref": outro_page, "panel_ref": -1,
         "connective": None, "beat_id": beats[-1].id, "is_outro": True,
     }
+    # OUTRO: the writer's own closing line first (it wrote the body, so it knows what the last
+    # scene already said and was told not to restate it — a real failure this replaces: the outro
+    # repeated the final scene almost verbatim). The two LLM helpers below stay as the fallback.
+    writer_outro = str(parsed.get("outro") or "").strip()
+    if writer_outro:
+        outro_scene["text"] = writer_outro
+        log(f"[explore_answer] outro from writer: {writer_outro!r}")
+
     tone_scenes = [intro_scene] + body  # context for the outro/tease LLM helpers
     # Q&A-specific grounding: the recap outro contract has no idea this video
     # answered ONE question with items from several comics (see _QA_OUTRO_SYSTEM's
@@ -649,12 +733,13 @@ def write_explore_answer(
         f"ITEMS (in order, last = payoff):\n"
         + "\n".join(f"- {b.name}: {b.summary[:200]}" for b in beats)
     )
-    thematic = generate_outro(comic_context, tone_scenes, model=model,
-                              progress=progress, debug_dump=dump, direction=direction,
-                              system_override=_QA_OUTRO_SYSTEM, extra_user_context=items_ctx)
-    if thematic and _outro_is_concrete(thematic, comic_context):
-        outro_scene["text"] = thematic
-        log(f"[explore_answer] outro: thematic -> {thematic!r}")
+    if not outro_scene["text"].strip():
+        thematic = generate_outro(comic_context, tone_scenes, model=model,
+                                  progress=progress, debug_dump=dump, direction=direction,
+                                  system_override=_QA_OUTRO_SYSTEM, extra_user_context=items_ctx)
+        if thematic and _outro_is_concrete(thematic, comic_context):
+            outro_scene["text"] = thematic
+            log(f"[explore_answer] outro: thematic -> {thematic!r}")
     if ENABLE_LOOP_TEASE:
         tease = generate_loop_tease(comic_context, tone_scenes, model=model,
                                     progress=progress, debug_dump=dump, direction=direction)
@@ -670,11 +755,19 @@ def write_explore_answer(
 
     parsed["scenes"] = [intro_scene] + body + [outro_scene]
     parsed["hook"] = hook_text
-    parsed["title"] = question
+
+    # TITLE: the writer's own, else the question. It used to be the question verbatim, which on a
+    # hand-filled answer_context reads as whatever comic_context happened to hold — on
+    # power-fantasy-etienne that was the series name, so the title shipped as "The Power Fantasy
+    # 2024" and the hook opened "The Power Fantasy 2024?". A written title has no such failure mode.
+    writer_title = str(parsed.get("title") or "").strip()
+    parsed["title"] = writer_title or question
+    if writer_title:
+        log(f"[explore_answer] title from writer: {writer_title!r}")
 
     final_model = mdl or model or OPENROUTER_MODEL
     nar = _to_narration(parsed, beats, Glossary(), mode, final_model)
-    nar.banner_title = question  # verbatim — no LLM banner for this mode
+    nar.banner_title = parsed["title"]
 
     # STORY_VERIFY (last critic before save): fact-check each body scene against the
     # comic's OWN preprocessed evidence — the writer built these from web research and

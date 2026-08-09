@@ -28,6 +28,8 @@ the NEW captions.
 """
 from __future__ import annotations
 
+from config import POST_ATEMPO
+
 import argparse
 import json
 import os
@@ -82,7 +84,7 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
         # hand-edited to fill missing reader_urls) — rebuild comic_context from it
         # instead of paying for a fresh SDK research call. The file's shape is a
         # superset of research_answer()'s return, so it feeds build_contexts as-is.
-        from config import get_project_dirs
+        from config import POST_ATEMPO, get_project_dirs
         from stages.stage_1.answer_research import build_contexts
 
         answer_path = get_project_dirs(args.project)["root"] / "answer_context.json"
@@ -216,8 +218,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Optional grounding hint for the research agent (e.g. the likely story/issue a "
         "scout already identified). Verified against sources, not trusted blindly — "
         "abstract 'Why/How' questions wander without one."))
-    parser.add_argument("--atempo", type=float, default=1.35,
-                        help="ffmpeg atempo for Stage 4 TTS (pitch-preserving speed-up). Default 1.35.")
+    parser.add_argument("--atempo", type=float, default=POST_ATEMPO,
+                        help="ffmpeg atempo for Stage 4 TTS (pitch-preserving speed-up). Default from config.POST_ATEMPO.")
     parser.add_argument("--rebuild-contexts", action="store_true",
                         help="Rebuild comic_context.json from the project's existing "
                              "answer_context.json (e.g. after hand-filling reader_urls) "

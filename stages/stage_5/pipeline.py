@@ -15,7 +15,9 @@ from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
 from .panel_sheet import build_panel_sheet
 from .schema import AssemblyResult
-from .shots import build_shots, render_shot, OUTPUT_W, OUTPUT_H
+from . import shots as _shots            # module, not values: set_output_frame() rebinds
+from .shots import (build_shots, render_shot, set_output_frame, widen_panels_to_tiers,
+                    LONGFORM_MODES)     # OUTPUT_W/H read via _shots.* — see set_output_frame
 from .verify_frames import VERIFY_FRAMES, verify_frames
 
 
@@ -30,7 +32,9 @@ def assemble_project(
     panels_only: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> AssemblyResult:
-    """Build the final 1080x1920 H.264 MP4 from narration + audio + panels."""
+    """Build the final H.264 MP4 from narration + audio + panels.
+
+    1080x1920 for the Short modes; 1920x1080 for long-form (see shots.set_output_frame)."""
     log = progress or (lambda m: print(m))
     ensure_reviewed(project_name, skip_review, log=log)
     _require_ffmpeg()
@@ -79,6 +83,15 @@ def assemble_project(
         json.loads(caption_chunks_path.read_text()) if caption_chunks_path.exists() else []
     )
     pages_by_number = _load_preprocessed_pages(root)
+
+    # Long-form renders LANDSCAPE and crops per TIER, not per panel. Both are no-ops for every
+    # Short mode (set_output_frame returns the 1080x1920 default), so recap / micro_moment /
+    # explore_answer come out byte-identical to before this branch existed.
+    mode = str(narration.get("mode") or "")
+    fw, fh = set_output_frame(mode)
+    if mode in LONGFORM_MODES:
+        pages_by_number = widen_panels_to_tiers(pages_by_number)
+        log(f"[stage5] long-form: {fw}x{fh} frame, panel crops widened to page tiers")
 
     # v5 Phase 2: load Magi cluster → character name mapping for hybrid scoring
     cluster_to_name_path = root / "cluster_to_name.json"
@@ -639,6 +652,7 @@ def _build_whip_bridge(prev_clip: Path, next_clip: Path, out_path: Path,
     match the pipeline's h.264/yuv420p/30fps output so it splices into the concat
     chain cleanly."""
     from PIL import Image
+    from .shots import OUTPUT_W, OUTPUT_H   # at call time: set_output_frame may have rebound them
     ff = _require_ffmpeg()
     tmp = out_path.parent / f"_whip_frames_{out_path.stem}"
     tmp.mkdir(parents=True, exist_ok=True)

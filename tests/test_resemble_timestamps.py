@@ -13,6 +13,32 @@ def _silence_wav_b64(dur: float = 2.0, sr: int = 44100) -> str:
     return base64.b64encode(_wrap_pcm_as_wav(pcm, sample_rate=sr, sampwidth=2, channels=1)).decode()
 
 
+def test_chunk_cap_stays_under_the_measured_generation_timeout():
+    """The server caps GENERATION TIME near 60s, not character count. Measured 2026-07-29:
+    1491 chars took 39.8s and 2189 chars 504'd at 62.7s, i.e. ≈0.025 s/char + ~5s overhead.
+    A cap that projects past ~55s would 504 and then burn another 60s on the retry."""
+    projected_seconds = rt._MAX_SYNTH_CHARS * 0.025 + 5
+    assert projected_seconds < 55, (
+        f"_MAX_SYNTH_CHARS={rt._MAX_SYNTH_CHARS} projects to {projected_seconds:.0f}s "
+        f"generation — too close to the ~60s server cap")
+
+
+def test_a_typical_short_now_fits_in_one_chunk():
+    """Our Shorts run 1000-1300 chars (5 shipped projects: 1010, 1080, 1104, 1110, 1278). At the
+    old 700-char cap every one of them split in two; at 1200 most are a single generation."""
+    for chars in (1010, 1080, 1104, 1110):
+        text = " ".join(["word"] * (chars // 5)) + "."
+        assert len(rt._split_chunks(text, rt._MAX_SYNTH_CHARS)) == 1, chars
+
+
+def test_split_chunks_never_exceeds_the_cap_and_loses_no_words():
+    text = " ".join(f"Sentence {i} says something here." for i in range(400))
+    chunks = rt._split_chunks(text, rt._MAX_SYNTH_CHARS)
+    assert len(chunks) > 1
+    assert all(len(c) <= rt._MAX_SYNTH_CHARS for c in chunks)
+    assert " ".join(chunks).split() == text.split()
+
+
 def test_words_from_empty_graphemes_is_empty():
     assert _words_from_graphemes({}) == []
     assert _words_from_graphemes({"graph_chars": [], "graph_times": []}) == []

@@ -81,6 +81,23 @@ def write_script(
         log(f"[stage4] direction spec loaded: {sorted(direction.keys())}")
 
     debug_dump: dict = {"project": project_name, "mode": mode, "hook_hint": hook_hint}
+    # MASTER-WRITTEN NARRATION (2026-07-31). When the project carries master_narration.md the
+    # writer's job shrinks to Q&A size: trim, then add a title/hook/outro. The body is Master's
+    # and is never re-written. explore_answer already works this way from its own research file.
+    from .provided_narration import provided_narration_path, write_from_provided
+    provided = None if mode == "explore_answer" else provided_narration_path(project_name)
+    if provided is not None:
+        log(f"[stage4] using Master-written narration → {provided.name} "
+            f"(writer trims + frames only)")
+        debug_dump["provided_narration"] = str(provided)
+        nar = write_from_provided(ctx, story, mode, provided.read_text(), progress=progress)
+        nar.source_project = project_name
+        _write_run_dump(project_name, debug_dump, narration=nar)
+        # The transparency critic still runs (flag-only) — but its feedback RETRY is skipped
+        # below: re-writing is exactly what this path exists to prevent.
+        for f in _transparency_critic(nar, ctx, mode, progress=progress):
+            log(f"[stage4] ⚠ {f}")
+        return nar
     try:
         nar = _write_script(ctx, story, mode, hook_hint=hook_hint,
                             all_pages=pages, direction=direction,

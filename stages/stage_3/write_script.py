@@ -17,7 +17,7 @@ from ._llm import call_with_chain
 from .._embedding import semantic_sim as _semantic_sim
 from .._panel_index import panel_embed_text as _panel_embed_text
 from .story_architect import render_story_map_block, _tokens
-from .beat_split import _verbatim_ok
+from .beat_split import _verbatim_ok, split_hook_fragments
 
 
 # CALIBRATED FROM 3 REAL RENDERS (Resemble Carl voice + the default --atempo 1.35,
@@ -46,7 +46,12 @@ from .beat_split import _verbatim_ok
 # validator demanded 230-290) — the validator won and pulled output to ~283
 # words of long, compound, multi-event sentences. All three now read these
 # constants / the validator band below.
-_WORDS_PER_SEC = 3.4     # MEASURED at the shipped --atempo 1.35 pace (3 renders above); was 2.88 at the unused 1.1 pace
+_WORDS_PER_SEC = 3.40    # At config.POST_ATEMPO = 1.30, the SHORT pace (Master 2026-08-01;
+                         # measured 2.88 at 1.10, scaled by 1.30/1.10). Longform does NOT use
+                         # this — panel_walk has its own 3.05 at POST_ATEMPO_LONGFORM.
+                         # This is the WORD BUDGET, not a display value: leave it behind when
+                         # the tempo moves and the writer sizes every script to a pace the
+                         # render no longer plays. Retune with the tempo or not at all.
                          # SHARED — explore_answer.py imports this to size the Q&A band, and Q&A
                          # measures 3.19-3.50 wps across shipped renders, so 3.4 is right THERE.
                          # Do not retune it for recap; recap has its own rate below.
@@ -57,9 +62,11 @@ _WORDS_PER_SEC = 3.4     # MEASURED at the shipped --atempo 1.35 pace (3 renders
 # format's 53-61s window. The gap is the register itself (long paratactic lines read faster
 # than Q&A's countdown cadence), not the tempo, which stays at --atempo 1.35.
 # n=1 so far: re-measure after the next recap ships and correct this if it drifts.
-_RECAP_WORDS_PER_SEC = 3.98
-_TARGET_WORDS_MIN = 211   # body floor: 211 + 4 intro = 215 final ≈ 54s at 3.98 wps.
-_TARGET_WORDS_MAX = 243   # body ceiling: 243 + ~9 intro = 252 final ≈ 63s at 3.98 wps.
+_RECAP_WORDS_PER_SEC = 3.83   # tracks config.POST_ATEMPO (1.30). DERIVED by scaling, not
+                              # measured — re-measure off the next recap that actually ships
+                              # on Chatterbox, since it reads a touch slower than Resemble did.
+_TARGET_WORDS_MIN = 199   # body floor: 199 + 4 intro = 203 final ≈ 53s at 3.83 wps (atempo 1.30).
+_TARGET_WORDS_MAX = 214   # body ceiling: 214 + ~9 intro = 223 final ≈ 58s at 3.83 wps (atempo 1.30).
                           # RAISED 191-206 → 211-243 (2026-07-28, Master: "53-61s for recap").
                           # The old band matched the competitor's WORD count; at our faster
                           # recap pace that lands ~50s. Matching their DURATION needs more
@@ -1098,6 +1105,9 @@ def write_script(
             "connective": None,
             "beat_id": 0,
             "is_intro": True,
+            # Fragment the hook so it cuts across panels instead of freezing on one for
+            # ~7s (stage_5 gives a fragment-less bookend exactly ONE unit). Verbatim.
+            "visual_beats": split_hook_fragments(intro_line),
         }
         parsed["scenes"] = [intro_scene] + body
         parsed["hook"] = intro_line  # thumbnail / opening line is now the teaser
@@ -2706,7 +2716,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      beats you were given exceed it, MERGE the ones that share a cause — never keep every
      beat and shave every line, which just breaks both rules at once.
    - **{_TARGET_WORDS_MIN}-{_TARGET_WORDS_MAX} words TOTAL — this is a HARD CEILING, not a target to fill.** At the
-     MEASURED render pace (~{_RECAP_WORDS_PER_SEC} words/sec at our shipped 1.35 atempo) that + the teaser
+     MEASURED render pace (~{_RECAP_WORDS_PER_SEC} words/sec at our shipped atempo) that + the teaser
      intro is ~{round((_TARGET_WORDS_MIN + 14) / _RECAP_WORDS_PER_SEC)}-{round((_TARGET_WORDS_MAX + 14) / _RECAP_WORDS_PER_SEC)}s finished — inside the 48-71s viral cluster. Going over makes the
      Short drag. Aim for the MIDDLE (≈{(_TARGET_WORDS_MIN + _TARGET_WORDS_MAX) // 2}w) unless the arc genuinely needs more.
    - Before returning JSON, COUNT your total words. If > {_TARGET_WORDS_MAX}, you MUST cut: drop

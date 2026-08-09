@@ -27,10 +27,13 @@ def test_intro_band_is_named_and_short_enough_to_protect_the_length_band():
     assert (_INTRO_MIN_WORDS, _INTRO_MAX_WORDS) == (4, 9)
     assert (_HOOK_MIN_WORDS, _HOOK_MAX_WORDS) == (8, 26)
     assert _INTRO_MAX_WORDS < _HOOK_MAX_WORDS
-    # 3.98 = the MEASURED recap rate (see write_script._RECAP_WORDS_PER_SEC); the shared
-    # 3.4 estimate belongs to Q&A and undershot recap by ~8s per video until 2026-07-28.
-    lo_sec = (_TARGET_WORDS_MIN + _INTRO_MIN_WORDS) / 3.98
-    hi_sec = (_TARGET_WORDS_MAX + _INTRO_MAX_WORDS) / 3.98
+    # Read the rate from the module, never a literal: it tracks config.POST_ATEMPO (3.24 at
+    # atempo 1.10 since 2026-08-01, 3.98 at the old 1.35). A copied number here would pass
+    # while the writer budgets for a tempo the render no longer uses — the seconds are what
+    # this test is actually guarding.
+    from stages.stage_3.write_script import _RECAP_WORDS_PER_SEC
+    lo_sec = (_TARGET_WORDS_MIN + _INTRO_MIN_WORDS) / _RECAP_WORDS_PER_SEC
+    hi_sec = (_TARGET_WORDS_MAX + _INTRO_MAX_WORDS) / _RECAP_WORDS_PER_SEC
     assert 53 <= lo_sec and hi_sec <= 64, (lo_sec, hi_sec)
 
 

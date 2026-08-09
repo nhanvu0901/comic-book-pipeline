@@ -8,10 +8,14 @@ import wave
 from pathlib import Path
 
 from config import (
+    LONGFORM_TTS_MODES,
+    POST_ATEMPO,
+    POST_ATEMPO_LONGFORM,
     CARTESIA_MODEL,
     CARTESIA_VOICE_ID,
     FFMPEG_BIN,
     PROJECTS_ROOT,
+    RESEMBLE_AUTO_SELECT_VOICE,
     RESEMBLE_VOICE_UUID,
     TTS_PROVIDER,
 )
@@ -133,13 +137,11 @@ def synthesize_project(
     flat: bool = False,          # True → old single-emotion behavior, no per-scene SSML tags
     voice_id: str | None = None,
     model: str | None = None,
-    post_atempo: float = 1.35,  # ffmpeg atempo — pitch-preserving tempo boost.
-                                # 1.35 = the channel default (Carl voice reads slow; Stage 3's
-                                # word budget assumes ~3.4 wps AT 1.35). The old 1.1 default
-                                # survived here after every explicit caller moved to 1.35 — so
-                                # the UI's Synthesize button (which passed nothing) silently
-                                # shipped ~24%-overlong audio ("--force re-TTS reverts to 1.1").
-                                # Single source of truth: callers only override deliberately.
+    post_atempo: float | None = None,  # ffmpeg atempo — pitch-preserving tempo change.
+                                # Single source of truth is config.POST_ATEMPO (1.10 since
+                                # 2026-08-01). It used to be hard-coded here, which is how the
+                                # UI's Synthesize button once shipped audio at a different pace
+                                # from every CLI caller — a knob duplicated is a knob that drifts.
     force: bool = False,
     skip_review: bool = False,
 ) -> TTSResult:
@@ -151,6 +153,13 @@ def synthesize_project(
         raise FileNotFoundError(f"narration.json missing: {narration_path}. Run Stage 3 first.")
 
     narration = json.loads(narration_path.read_text())
+    # Pace is chosen by MODE, not by caller convenience: a 45-second Short and a 19-minute
+    # longform want different reading speeds, and the caller usually does not know which it
+    # is holding. None (the default) means "ask the narration".
+    if post_atempo is None:
+        post_atempo = (POST_ATEMPO_LONGFORM
+                       if str(narration.get("mode") or "") in LONGFORM_TTS_MODES
+                       else POST_ATEMPO)
     scenes = narration.get("scenes") or []
     if not scenes:
         raise ValueError("narration.json has no scenes")
@@ -177,12 +186,33 @@ def synthesize_project(
             print("[stage4] narration.json changed since audio.wav was rendered — "
                   "auto-regenerating (kills stale-audio-under-new-captions)")
         base_emotion = (emotion or _base_emotion_for(narration)).strip().lower()
-        if TTS_PROVIDER == "resemble":
+        if TTS_PROVIDER == "chatterbox":
+            # LOCAL Chatterbox (NOT the hosted "resemble" provider, which is also Chatterbox).
+            # Runs in .venv-chatterbox; the reason to use it is the per-chunk emotion knob.
+            # Master 2026-07-31: longform is the trial ground — the three Short modes stay on
+            # the pinned Resemble voice until this is proven over a 19-minute read.
+            from .chatterbox_tts import (CHATTERBOX_CFG_WEIGHT, CHATTERBOX_EXAGGERATION,
+                                         CHATTERBOX_VOICE_WAV)
+            from .chatterbox_tts import synthesize as _synthesize
+            full_text = _normalize_for_tts(
+                " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text")))
+            print(f"[stage4] synthesizing {len(full_text)} chars via LOCAL Chatterbox")
+            result = _synthesize(full_text, voice_id=voice_id or None, log=print)
+            (root / "tts_voice.json").write_text(json.dumps({
+                "provider": "chatterbox-local",
+                "voice_wav": voice_id or CHATTERBOX_VOICE_WAV or "(built-in)",
+                "exaggeration": CHATTERBOX_EXAGGERATION,
+                "cfg_weight": CHATTERBOX_CFG_WEIGHT,
+            }, indent=2))
+        elif TTS_PROVIDER == "resemble":
             from .resemble_tts import synthesize as _synthesize, select_voice
             # Resemble has no Cartesia <emotion> SSML — speak plain normalized text.
             full_text = _normalize_for_tts(
                 " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text")))
-            if selected_voice is None:   # auto-pick via Claude SDK (reads narration + context, NOT bubbles)
+            # Voice: the PINNED channel voice unless auto-selection is explicitly switched on.
+            # Auto-selection is what shipped three different narrators across five videos; see
+            # config.RESEMBLE_AUTO_SELECT_VOICE.
+            if selected_voice is None and RESEMBLE_AUTO_SELECT_VOICE:
                 cc = {}
                 cc_path = root / "comic_context.json"
                 if cc_path.exists():
@@ -191,10 +221,19 @@ def synthesize_project(
                     except Exception:
                         cc = {}
                 selected_voice, chosen_name = select_voice(narration, cc, log=print)
-                print(f"[stage4] auto-selected Resemble voice: {chosen_name} ({selected_voice})")
-            print(f"[stage4] synthesizing {len(full_text)} chars via Resemble "
-                  f"(voice={selected_voice or RESEMBLE_VOICE_UUID})")
-            result = _synthesize(full_text, voice_id=selected_voice, log=print)
+                print(f"[stage4] auto-selected Resemble voice: {chosen_name} ({selected_voice}) "
+                      f"— RESEMBLE_AUTO_SELECT_VOICE=1, this run does NOT use the channel voice")
+            used_voice = selected_voice or RESEMBLE_VOICE_UUID
+            print(f"[stage4] synthesizing {len(full_text)} chars via Resemble (voice={used_voice}"
+                  f"{'' if selected_voice else ' — pinned channel voice'})")
+            result = _synthesize(full_text, voice_id=used_voice, log=print)
+            # Record WHICH voice spoke. Nothing used to persist this: when five shipped projects
+            # turned out to have three different narrators, the only way to find out which was
+            # which was measuring F0 off the WAV. One small sidecar makes it readable.
+            (root / "tts_voice.json").write_text(json.dumps({
+                "provider": "resemble", "voice_uuid": used_voice,
+                "auto_selected": bool(selected_voice) and RESEMBLE_AUTO_SELECT_VOICE,
+            }, indent=2))
         else:
             from .cartesia_tts import synthesize as _synthesize
             if flat:

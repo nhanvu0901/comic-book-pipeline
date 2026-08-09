@@ -13,7 +13,8 @@ from .screens import (
     s1_identify, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video,
     s6_review, s_review_gate,
 )
-from .state import AppState, list_projects, load_state, save_state
+from .state import (AppState, PICKER_STAGE, list_projects, load_state,
+                    save_state)
 from .theme import BG, BG_PANEL, BORDER, ACCENT, TEXT_MUTED, TEXT_PRIMARY, apply_theme
 
 
@@ -56,6 +57,13 @@ async def main(page: ft.Page):
         page.update()
 
     def goto_stage(stage: int):
+        # PICKER_STAGE is the "back to the project list" sentinel (see ui/state.py). Until
+        # this existed the picker was reachable ONLY at launch, and only when no project was
+        # resolved — so opening a comic was a one-way door for the whole session.
+        if stage == PICKER_STAGE:
+            save_state(state)               # never lose the current project's stage/approvals
+            _show_project_picker(page, state, render_current)
+            return
         if stage < 1 or stage > 8:
             return
         state.current_stage = stage
@@ -125,7 +133,7 @@ def _show_project_picker(page: ft.Page, state: AppState, on_selected):
         rows.append(ft.Text("No existing projects found.", color=TEXT_MUTED, size=12))
         rows.append(ft.Container(height=8))
 
-    rows.append(
+    actions: list[ft.Control] = [
         ft.ElevatedButton(
             "+ New project",
             on_click=new_project,
@@ -134,8 +142,19 @@ def _show_project_picker(page: ft.Page, state: AppState, on_selected):
                 shape=ft.RoundedRectangleBorder(radius=6),
                 padding=ft.padding.symmetric(horizontal=20, vertical=14),
             ),
-        )
-    )
+        ),
+    ]
+    # Reached from a stage screen rather than at launch → let the user back out. Without
+    # this, opening the picker by mistake forces a project choice, which is the same
+    # one-way-door the picker button was added to remove.
+    if state.project_name:
+        def cancel(_e):
+            page.views.clear()
+            on_selected()
+        actions.append(ft.TextButton(f"Cancel — back to {state.project_name}",
+                                     on_click=cancel))
+    rows.append(ft.Row(actions, spacing=12,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
     page.views.clear()
     page.views.append(

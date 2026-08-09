@@ -46,6 +46,55 @@ def _verbatim_ok(text: str, beats: list[str]) -> bool:
     return bool(beats) and _word_tokens(" ".join(beats)) == _word_tokens(text)
 
 
+_HOOK_MIN_WORDS_TO_SPLIT = 13   # below this the hook is one drawable moment
+_HOOK_FRAG_MIN_WORDS = 5        # never leave a fragment too short to hold a panel
+# Split points, in order of preference: a hard clause break beats a bare conjunction.
+_HOOK_SPLIT_RE = re.compile(
+    r"(?<=[,;:])\s+|\s+—\s+|\s+-\s+|\s+(?=(?:and|but|then|until|because|so|yet|while)\s)",
+    re.IGNORECASE)
+
+
+def split_hook_fragments(hook: str) -> list[str]:
+    """Split the spoken HOOK into drawable fragments, verbatim, WITHOUT an LLM call.
+
+    Why this exists: all three modes emitted the intro as one scene with `visual_beats: []`,
+    and stage_5's bookend branch turns a fragment-less scene into exactly ONE unit — so a
+    26-word hook sat ~7 seconds on a single frozen drawing, across the 3-second gate where
+    the channel measurably loses viewers. Fragments let it cut.
+
+    No LLM: a hook is one or two sentences, the split points are punctuation and a short
+    conjunction list, and every LLM touch is a chance to reword the line Master approved.
+    Returns [] when the hook is too short to be worth cutting (caller keeps the old
+    single-panel behaviour), and never returns a split that is not verbatim."""
+    text = " ".join(str(hook or "").split())
+    if len(text.split()) < _HOOK_MIN_WORDS_TO_SPLIT:
+        return []
+    parts = [p.strip() for p in _HOOK_SPLIT_RE.split(text) if p and p.strip()]
+    merged: list[str] = []
+    for p in parts:
+        # Fold a runt into its neighbour rather than shipping a 2-word shot.
+        if merged and len(p.split()) < _HOOK_FRAG_MIN_WORDS:
+            merged[-1] = f"{merged[-1]} {p}"
+        elif merged and len(merged[-1].split()) < _HOOK_FRAG_MIN_WORDS:
+            merged[-1] = f"{merged[-1]} {p}"
+        else:
+            merged.append(p)
+    if len(merged) < 2:
+        # No comma, dash or conjunction anywhere — common in a punchy hook ("Batman falls
+        # from the moon without a single gadget left to save him"). Left whole it is one
+        # frozen panel for the entire opening, which is the shot the 3-second gate judges.
+        # Cut at the word nearest the midpoint: verbatim by construction, since the split
+        # only ever falls BETWEEN words.
+        words = text.split()
+        mid = len(words) // 2
+        if min(mid, len(words) - mid) < _HOOK_FRAG_MIN_WORDS:
+            return []
+        merged = [" ".join(words[:mid]), " ".join(words[mid:])]
+    if not _verbatim_ok(text, merged):
+        return []
+    return merged
+
+
 def _extract_obj(raw: str) -> dict | None:
     m = re.search(r"\{.*\}", raw or "", re.DOTALL)
     if not m:

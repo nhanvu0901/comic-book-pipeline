@@ -6,6 +6,7 @@ Usage:
     python -m stages.stage_4 --project foo --speed 1.1
     python -m stages.stage_4 --project foo --voice <voice_id> --force
 """
+from config import POST_ATEMPO
 import argparse
 import sys
 import textwrap
@@ -30,8 +31,8 @@ def main():
     parser.add_argument("--project", required=True)
     parser.add_argument("--speed", type=float, default=1.0,
                         help="Cartesia speed 0.6-1.5 (capped near 1.2 in practice). Default 1.0.")
-    parser.add_argument("--atempo", type=float, default=1.35,
-                        help="ffmpeg atempo factor (preserves pitch). Default 1.35 → "
+    parser.add_argument("--atempo", type=float, default=POST_ATEMPO,
+                        help="ffmpeg atempo factor (preserves pitch). Default from config.POST_ATEMPO → "
                              "~3.3 wps, the user-chosen snappy pace (the slow Carl voice "
                              "needs it). 1.0 disables.")
     parser.add_argument("--voice", default=None, help="Cartesia voice UUID (overrides default)")
@@ -70,10 +71,11 @@ def main():
     print(f"   duration:        {result.audio_duration_seconds:.2f}s")
     print(f"   scenes aligned:  {len(result.scene_timings)}")
     print(f"   caption chunks:  {len(result.caption_chunks)}")
-    # micro_moment may legitimately run long (whole-moment story); recap / Q&A still
-    # flag >58s. Soft note only.
-    soft_cap = 100 if result.mode == "micro_moment" else 58
-    if result.audio_duration_seconds > soft_cap:
+    # micro_moment may legitimately run long (whole-moment story); recap / Q&A still flag >58s.
+    # panel_walk is not a Short at all — it is minutes long by design, so the note would fire on
+    # every run and mean nothing. Soft note only either way.
+    soft_cap = {"micro_moment": 100, "panel_walk": 0}.get(result.mode, 58)
+    if soft_cap and result.audio_duration_seconds > soft_cap:
         print(f"   ⚠️  audio > {soft_cap}s — algo-unfriendly for Shorts; consider higher --speed")
 
 

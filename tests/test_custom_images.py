@@ -17,6 +17,7 @@ import pytest
 
 from stages.stage_5.schema import Shot
 from stages.stage_5 import shots
+from stages.stage_5 import shots as shots_
 from stages.stage_5.panel_sheet import build_panel_sheet
 from ui.custom_image import add_custom_image, enrich_custom_image, list_custom_images
 
@@ -244,10 +245,22 @@ def test_apply_custom_images_uses_beat_id_when_set():
     assert shot_list[2].custom_image == ""
 
 
-def test_apply_custom_images_unmatched_key_is_noop_not_raise():
+def test_apply_custom_images_key_for_a_missing_scene_is_noop_not_raise():
+    """A stale lock naming a scene that no longer exists has nowhere to go — skip, never raise."""
     shot_list = [_shot(0, 1)]
-    shots._apply_custom_images_to_shots(shot_list, {"99": "/abs/x.jpg", "1:5": "/abs/y.jpg"})
+    shots._apply_custom_images_to_shots(shot_list, {"99": "/abs/x.jpg"})
     assert shot_list[0].custom_image == ""
+
+
+def test_fragment_index_past_the_end_clamps_instead_of_dropping_the_image(capsys):
+    """CHANGED 2026-07-30 (was: silently a no-op). fi indexes a scene's shots in render order,
+    which assumes 1 fragment = 1 shot; when something upstream merges fragments, fi overruns and
+    the old code dropped Master's image with no output. Master's rule is that a custom image
+    ALWAYS reaches final.mp4, so clamp onto the nearest real shot and say so."""
+    shot_list = [_shot(0, 1)]
+    shots._apply_custom_images_to_shots(shot_list, {"1:5": "/abs/y.jpg"})
+    assert shot_list[0].custom_image == "/abs/y.jpg", "clamped, not dropped"
+    assert "clamping" in capsys.readouterr().out, "a misplaced image must be reported"
 
 
 def test_apply_custom_images_empty_map_or_shots_is_noop():
@@ -369,3 +382,96 @@ def test_build_shots_no_custom_images_is_byte_identical(tmp_path, monkeypatch):
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ─── guarantee: a custom image must NEVER vanish silently (Master 2026-07-30) ─────
+
+def test_build_shots_raises_when_a_custom_image_reaches_no_shot(monkeypatch):
+    """The old summary line printed "assigned N beat(s)" straight from the map length — it
+    reported success without inspecting one shot, and on broken-adamantium it said 2 while the
+    render contained 0. Master: "I want all the custom image always have in our final mp4", so a
+    gap must stop the render rather than ship a video missing Master's own picks."""
+    narration = {"mode": "explore_answer", "scenes": [{"scene_id": 1, "text": "a"}]}
+    monkeypatch.setattr(shots, "_resolve_custom_images",
+                        lambda *_a, **_k: {"77:0": "/abs/never-lands.jpg"})
+    monkeypatch.setattr(shots, "_build_shots_per_scene",
+                        lambda *_a, **_k: [_shot(0, 1)])
+    monkeypatch.setattr(shots, "_apply_review_locks", lambda *_a, **_k: None)
+    with pytest.raises(RuntimeError, match="never reached a shot"):
+        shots.build_shots(narration, project="p")
+
+
+def test_build_shots_reports_how_many_custom_images_actually_landed(monkeypatch, capsys):
+    narration = {"mode": "explore_answer", "scenes": [{"scene_id": 1, "text": "a"}]}
+    monkeypatch.setattr(shots, "_resolve_custom_images", lambda *_a, **_k: {"1": "/abs/x.jpg"})
+    monkeypatch.setattr(shots, "_build_shots_per_scene", lambda *_a, **_k: [_shot(0, 1)])
+    monkeypatch.setattr(shots, "_apply_review_locks", lambda *_a, **_k: None)
+    shots.build_shots(narration, project="p")
+    assert "1/1 beat(s) landed on a shot" in capsys.readouterr().out
+
+
+# ─── fragment→shot must follow the WORDS, not the ordinal (Master 2026-07-30) ──────
+
+def _capshot(i, cap, dur=2.0, beat_id=2):
+    return Shot(shot_id=i, scene_id=i + 1, duration_seconds=dur,
+                panel_bbox={"x": 0, "y": 0, "w": 9, "h": 9}, source_image="p.png",
+                motion="zoom_in", caption_text=cap, beat_id=beat_id)
+
+
+_ADAMANTIUM_NARRATION = {"scenes": [{"scene_id": 2, "visual_beats": [
+    {"text": "Adamantium is Marvel's indestructible metal —"},
+    {"text": "it coats Wolverine's skeleton,"},
+    {"text": "and the rule is simple: nothing breaks it."},
+    {"text": "Doc Green, a genius variant of Hulk powered by a super-serum,"},
+    {"text": "decided to test that."},
+]}]}
+
+
+def _adamantium_shots():
+    """The REAL shot list broken-adamantium rendered: the Q&A builder cuts on caption-chunk and
+    silence boundaries, so five fragments became three shots and the cuts fall MID-fragment."""
+    return [
+        _capshot(0, "Adamantium is Marvel's indestructible metal — it", 2.4),
+        _capshot(1, "coats Wolverine's skeleton, and the rule is simple: nothing breaks it.", 3.6),
+        _capshot(2, "Doc Green, a genius variant of Hulk powered by a super-serum, "
+                    "decided to test that.", 4.7),
+    ]
+
+
+def test_fragment_image_never_lands_on_a_later_fragments_shot():
+    """The shipped bug: ordinal lookup sent 2:2's image to idxs[2] — the shot reading
+    "Doc Green, a genius variant of Hulk" — so Master's image played over Doc Green and Doc
+    Green's own panel never appeared in the video. fi was IN range, so the out-of-range clamp
+    never fired and nothing was logged."""
+    shots = _adamantium_shots()
+    shots_._apply_custom_images_to_shots(shots, {"2:2": "/SHIELD.jpg"}, _ADAMANTIUM_NARRATION)
+    carrying = [s for s in shots if s.custom_image == "/SHIELD.jpg"]
+    assert len(carrying) == 1
+    assert "the rule is simple" in carrying[0].caption_text
+    assert "Doc Green" not in carrying[0].caption_text, "must not cover the next fragment's panel"
+
+
+def test_two_images_sharing_one_shot_split_it_instead_of_one_being_lost():
+    """2:1 and 2:2 both resolve to the middle shot. Without a split only one image can ever be
+    seen — Master locked two and expects two."""
+    shots = _adamantium_shots()
+    before = round(sum(s.duration_seconds for s in shots), 3)
+    shots_._apply_custom_images_to_shots(
+        shots, {"2:1": "/SKELETON.jpg", "2:2": "/SHIELD.jpg"}, _ADAMANTIUM_NARRATION)
+
+    imgs = [s.custom_image for s in shots if s.custom_image]
+    assert sorted(imgs) == ["/SHIELD.jpg", "/SKELETON.jpg"], "both images must survive"
+    by_img = {s.custom_image: s.caption_text for s in shots if s.custom_image}
+    assert "coats Wolverine's skeleton" in by_img["/SKELETON.jpg"]
+    assert "the rule is simple" in by_img["/SHIELD.jpg"]
+    # the audio is untouched, so the split must not change total screen time
+    assert round(sum(s.duration_seconds for s in shots), 3) == before
+    assert [s.shot_id for s in shots] == list(range(len(shots))), "shot_id stays positional"
+
+
+def test_doc_green_keeps_its_own_panel_after_the_split():
+    shots = _adamantium_shots()
+    shots_._apply_custom_images_to_shots(
+        shots, {"2:1": "/SKELETON.jpg", "2:2": "/SHIELD.jpg"}, _ADAMANTIUM_NARRATION)
+    dg = [s for s in shots if "Doc Green" in s.caption_text]
+    assert len(dg) == 1 and not dg[0].custom_image, "Doc Green's panel must be visible again"

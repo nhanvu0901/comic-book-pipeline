@@ -58,6 +58,20 @@ GRID_EXTENT = 130   # max cell width → Flutter uses ceil(width / max_extent) c
 GRID_ASPECT = 0.67  # cell width / height
 GRID_SPACING = 8
 GRID_H = 560        # grid viewport height — fixed so the card can't grow unbounded
+# How many candidate tiles may be built up front, summed across ALL beats. A tile is ~8
+# flet controls, and GridView's build_controls_on_demand only defers the Flutter widget —
+# the Control objects and their JSON are created and shipped regardless. A 131-page Q&A
+# pool (23 beats x 487 candidates) is ~90k controls and the window simply never paints.
+# Beats past the budget start collapsed and build their tiles on first click, so the
+# candidate POOL stays whole (Master picks any panel in the project for any beat) and only
+# the rendering is deferred.
+#
+# 4000, not the 1200 this shipped with: at 1200 a perfectly ordinary 13-row micro project
+# (13 x 111 = 1443 tiles) left its LAST THREE rows collapsed, and a collapsed gallery reads
+# as "this beat has no panels" — Master hit exactly that on s5 and the outro. 4000 clears
+# every normal project in one paint while still capping the 131-page Q&A pool (23 x 487 =
+# 11k tiles) that made the window never appear.
+LAZY_TILE_BUDGET = 4000
 
 
 def _anchor_key(page_ref, panel_ref) -> tuple[int, int]:
@@ -93,6 +107,37 @@ def _normalize_lock_panels(raw: dict | None) -> list[dict]:
     if "page" in raw:
         return [{"page": int(raw["page"]), "panel": int(raw["panel"])}]
     return []
+
+
+def splice_locked_orphans(cands: list[dict], lock: dict | None,
+                          hidden: frozenset | set = frozenset()) -> list[dict]:
+    """`cands` plus a synthetic entry for every LOCKED panel that is missing from it.
+
+    A locked panel with no candidate entry gets no tile in the gallery, so the beat card
+    renders as "nothing picked" and Master's next click silently overwrites the lock — the
+    selection is lost with nothing anywhere saying so. That happens whenever
+    candidates.json was rebuilt with a cap (review_gate.build_candidates k>0) AFTER the lock
+    was written: under manual-first every score is 0.0, so a cap is just "the first k panels
+    of the comic" and any lock outside that window vanishes from the UI.
+
+    `hidden` is the project-wide "never show me this panel again" blacklist, and it WINS over
+    a lock: a hidden panel is absent from `cands` on purpose, so re-adding it here would
+    resurrect exactly what Master hid. This matters because a lock can be re-created
+    automatically (source "pre_selected" — the auto-suggested anchor) and would otherwise
+    drag the hidden panel back onto the card on the next open.
+
+    The synthetic entry carries only what a tile needs — page, panel, and the thumb path the
+    exporter uses (review_gate writes `review/thumbs/p{page:03d}_{panel}.jpg`), so a thumb
+    built by any earlier full run is picked up. Returns a NEW list; `cands` is untouched."""
+    have = {(int(c.get("page", -1)), int(c.get("panel", -1))) for c in (cands or [])}
+    orphans = []
+    for p in _normalize_lock_panels(lock):
+        key = (int(p["page"]), int(p["panel"]))
+        if key not in have and key not in (hidden or frozenset()):
+            have.add(key)   # a lock listing the same panel twice must not double-tile
+            orphans.append({"page": key[0], "panel": key[1],
+                            "thumb": f"review/thumbs/p{key[0]:03d}_{key[1]}.jpg"})
+    return list(cands or []) + orphans
 
 
 def _normalize_lock_custom_image(raw: dict | None) -> str | None:
@@ -141,8 +186,16 @@ def _row_label(beat: dict, beat_key: str, unit: str) -> str:
     if unit == "outro":
         return f"OUTRO: {text}"
     if unit == "fragment":
+        n = _frag_idx_from_key(beat_key) + 1
+        # A fragmented bookend is still a fragment row (own text box, single-select) but must
+        # SAY it is the cold open / outro — otherwise the hook reads as body line s1.
+        bookend = str(beat.get("bookend") or "")
+        if bookend == "intro":
+            return f"INTRO (cold-open) · mảnh {n}: {text}"
+        if bookend == "outro":
+            return f"OUTRO · mảnh {n}: {text}"
         scene_id = int(beat.get("scene_id") or 0)
-        return f"s{scene_id} · mảnh {_frag_idx_from_key(beat_key) + 1}: {text}"
+        return f"s{scene_id} · mảnh {n}: {text}"
     return text
 
 
@@ -327,6 +380,51 @@ def apply_fragment_edits(narration: dict, edits: dict[tuple[int, int], str]) -> 
     return narration
 
 
+def apply_scene_text_edits(narration: dict, edits: dict[int, str],
+                           skip: set[int] | None = None) -> dict:
+    """Write whole-scene text edits — the per-scene box on scene/intro/outro rows — and
+    RESYNC everything derived from that text.
+
+    Writing only `text` is what desynced Stage 4 twice: stages/stage_4/chunker.py reads
+    `word_count`, never the text, so a stale count shifts every downstream shot boundary
+    by seconds while narration.json still LOOKS right.
+
+    `visual_beats` is re-derived as [text] whenever the current fragments no longer
+    concatenate back to it — Stage 5 buckets shots by word position and needs
+    text == " ".join(fragments) to hold (the same invariant apply_fragment_edits keeps by
+    construction). A scene whose fragments still match is left untouched, so its
+    per-fragment panel pins survive.
+
+    `skip` = scene_ids that ALSO have fragment edits; those belong to
+    apply_fragment_edits, which re-derives their text from the fragments and would just
+    overwrite anything written here."""
+    skip = skip or set()
+    wps = float(narration.get("words_per_second") or 3.4)
+    touched = False
+    for s in narration.get("scenes") or []:
+        sid = int(s.get("scene_id") or 0)
+        if sid not in edits or sid in skip:
+            continue
+        text = str(edits[sid]).strip()
+        if not text:
+            continue        # blanking a scene is the trash icon's job, not the text box's
+        s["text"] = text
+        s["word_count"] = len(text.split())
+        s["target_seconds"] = round(s["word_count"] / wps, 2) if wps else 0.0
+        # Repair STALE fragments; never invent them. An empty visual_beats means the scene
+        # simply isn't fragmented (intro/outro rows normally aren't) and Stage 5 has its own
+        # path for that — writing [text] there would change the scene's shape.
+        frags = list(s.get("visual_beats") or [])
+        if frags and " ".join(_frag_text(vb) for vb in frags).strip() != text:
+            s["visual_beats"] = [text]
+        touched = True
+    if touched:
+        total = sum(int(s.get("word_count") or 0) for s in narration.get("scenes") or [])
+        narration["total_word_count"] = total
+        narration["estimated_duration_seconds"] = round(total / wps, 2) if wps else 0.0
+    return narration
+
+
 def insert_scene_at(narration: dict, list_index: int, text: str, neighbor: dict) -> dict:
     """Insert a brand-new scene into narration["scenes"] at list_index. scene_id is
     max(existing)+1 — existing ids are NEVER renumbered (locks.json keys off them and
@@ -491,27 +589,36 @@ def reconcile_beats(beats: list[dict], narration: dict, *, qa_mode: bool) -> lis
     too (its intro/outro panel used to be auto-picked from subject_panels.json)."""
     by_key = {str(b.get("beat_key") or ""): b for b in beats}
 
-    def _row(bk: str, unit: str, scene: dict, text: str) -> dict:
+    def _row(bk: str, unit: str, scene: dict, text: str, bookend: str = "") -> dict:
         sid = int(scene.get("scene_id") or 0)
         old = by_key.get(bk)
         if old is not None:
             row = dict(old)                     # keep candidates/source/page_ref/pre_selected
             row["beat_key"], row["unit"], row["scene_id"] = bk, unit, sid
             row["narration_text"] = text        # (c) refresh from narration
+            # Set from NARRATION, not copied from candidates.json — the export can predate
+            # the hook being fragmentable, and a stale/absent tag loses the INTRO label.
+            row["bookend"] = bookend
             return row
         return {                                # (b) new empty row = zero-candidate fallback
-            "scene_id": sid, "narration_text": text,
+            "scene_id": sid, "narration_text": text, "bookend": bookend,
             "page_ref": scene.get("page_ref") if scene.get("page_ref") is not None else None,
             "panel_ref": None, "source": {}, "candidates": [],
             "beat_key": bk, "pre_selected": [], "unit": unit,
         }
 
+    # Bookend rows come from stages.review_gate.bookend_row_keys — the SAME function the
+    # exporter uses. This used to be a hard-coded single "intro" row here, which stopped
+    # matching the moment the hook became fragmentable: the exporter wrote 1:0/1:1/1:2, this
+    # looked for "intro", missed, and drew an empty "No candidates" card over three real rows.
+    from stages.review_gate import bookend_row_keys
     scenes = narration.get("scenes") or []
     out: list[dict] = []
     intro = next((s for s in scenes if s.get("is_intro")), None)
     outro = next((s for s in scenes if s.get("is_outro")), None)
     if intro is not None:
-        out.append(_row("intro", "intro", intro, str(intro.get("text", "") or "")))
+        for bk, unit, txt in bookend_row_keys(intro, "intro"):
+            out.append(_row(bk, unit, intro, txt, "intro"))
     for s in scenes:
         if s.get("is_intro") or s.get("is_outro"):
             continue
@@ -523,7 +630,8 @@ def reconcile_beats(beats: list[dict], narration: dict, *, qa_mode: bool) -> lis
         else:
             out.append(_row(str(sid), "scene", s, str(s.get("text", "") or "")))
     if outro is not None:
-        out.append(_row("outro", "outro", outro, str(outro.get("text", "") or "")))
+        for bk, unit, txt in bookend_row_keys(outro, "outro"):
+            out.append(_row(bk, unit, outro, txt, "outro"))
     return out
 
 
@@ -903,14 +1011,11 @@ def build(
         current = load_narration(project)
         if not current:
             return
-        # Per-SCENE box first (scene/intro/outro rows — they have no fragments), but NEVER for a
-        # scene whose fragments were edited: apply_fragment_edits re-derives that scene's text
-        # from its fragments, so a per-scene write there would just be overwritten.
+        # Per-SCENE box first (scene/intro/outro rows), but NEVER for a scene whose fragments
+        # were edited: apply_fragment_edits re-derives that scene's text from its fragments,
+        # so a per-scene write there would just be overwritten.
         frag_sids = {sid for sid, _ in frag_edits}
-        for s in current.get("scenes") or []:
-            sid = int(s.get("scene_id") or 0)
-            if sid in edited_text and sid not in frag_sids:
-                s["text"] = edited_text[sid]
+        apply_scene_text_edits(current, edited_text, skip=frag_sids)
         apply_fragment_edits(current, frag_edits)
         save_narration_edits(project, current)
         nonlocal narration
@@ -973,7 +1078,6 @@ def build(
         """Lightbox: same crop, shown large, with an Add/Remove toggle so
         selecting stays reachable without leaving the dialog."""
         def _handler(_e):
-            desc = str(c.get("desc") or "")
             dialog_line = c.get("dialog")
 
             def _toggle(_e2, bk=beat_key, u=unit, k=key):
@@ -986,8 +1090,6 @@ def build(
                     alignment=ft.Alignment.CENTER, expand=True,
                 ),
             ]
-            if desc:
-                body.append(ft.Text(desc, size=12, color=TEXT_MUTED))
             if dialog_line:
                 body.append(ft.Text(f"“{dialog_line}”", size=12,
                                      color=TEXT_PRIMARY, italic=True))
@@ -1013,7 +1115,7 @@ def build(
                           curve=ft.AnimationCurve.EASE_OUT)
         return _click
 
-    def _beat_card(beat: dict) -> ft.Control:
+    def _beat_card(beat: dict, *, auto_open: bool = True) -> ft.Control:
         scene_id = int(beat.get("scene_id") or 0)
         beat_key = _beat_key(beat)
         unit = _beat_unit(beat)
@@ -1028,7 +1130,9 @@ def build(
         if unit == "fragment":
             frag_idx = _frag_idx_from_key(beat_key)
             frag_field = ft.TextField(
-                label=f"s{scene_id} · mảnh {frag_idx + 1}",
+                label=({"intro": "INTRO (cold-open)", "outro": "OUTRO"}
+                       .get(str(beat.get("bookend") or ""), f"s{scene_id}")
+                       + f" · mảnh {frag_idx + 1}"),
                 value=frag_edits.get((scene_id, frag_idx),
                                      str(beat.get("narration_text", ""))),
                 multiline=True, min_lines=2, max_lines=5,
@@ -1112,118 +1216,138 @@ def build(
         # ORDER: always PAGE order (p, panel) — the panel is hand-picked by eye now, so a
         # predictable page-by-page browse beats a cosine/vlm ranking (which is empty under
         # PANEL_TEXT_EMBED=0 anyway). Old projects that still carry scores also sort page-order.
-        _cands = beat.get("candidates") or []
+        # splice_locked_orphans: a lock outside this beat's candidate list would otherwise
+        # have no tile, and the card would read as "nothing picked" — see that docstring.
+        _cands = splice_locked_orphans(beat.get("candidates") or [], locks.get(beat_key), hidden)
         _ordered = sorted(_cands, key=lambda c: (int(c.get("page") or 0), int(c.get("panel") or 0)))
-        cand_tiles: list[ft.Control] = []
-        for c in _ordered:
-            key = (int(c.get("page", -1)), int(c.get("panel", -1)))
-            is_selected = key in selected
-            is_anchor = key == anchor_key
-            tooltip = str(c.get("desc") or "")
-            if c.get("dialog"):
-                tooltip = f"{tooltip}\n\n“{c['dialog']}”"
-            # Score goes in the TOOLTIP, not on the tile: a grid cell is ~120px wide and
-            # under PANEL_TEXT_EMBED=0 there is no score at all (old cosine/vlm projects
-            # still get it, just on hover).
-            score = " · ".join(
-                ([f"vlm {float(c['vlm']):.0f}"] if c.get("vlm") is not None else [])
-                + ([f"cos {float(c.get('score') or 0):.2f}"]
-                   if float(c.get("score") or 0) > 0 else []))
-            if score:
-                tooltip = f"{tooltip}\n\n{score}" if tooltip else score
-
-            def _pick(_e, bk=beat_key, k=key, u=unit):
-                _toggle_candidate(bk, k[0], k[1], u)
-
-            def _hide(_e, k=key):
-                _hide_panel(k[0], k[1])
-
-            lock_icon = ft.IconButton(
-                icon=ft.Icons.CHECK_CIRCLE if is_selected else ft.Icons.RADIO_BUTTON_UNCHECKED,
-                icon_color=ACCENT if is_selected else TEXT_MUTED, icon_size=14,
-                width=22, height=22, tooltip="Select this panel", on_click=_pick,
-                style=ft.ButtonStyle(padding=ft.padding.all(0)),
-            )
-            icons[key] = lock_icon
-            hide_btn = ft.IconButton(
-                ft.Icons.CLOSE, icon_size=14, icon_color=TEXT_MUTED, width=22, height=22,
-                tooltip="Ẩn panel này khỏi MỌI beat", on_click=_hide,
-                style=ft.ButtonStyle(padding=ft.padding.all(0)),
-            )
-
-            meta: list[ft.Control] = [
-                ft.Text(f"p{key[0]:02d}·{key[1]}", size=9, color=TEXT_MUTED,
-                        font_family="Menlo"),
-            ]
-            if is_anchor:
-                meta.append(ft.Text("⚓", size=9, color=ACCENT, tooltip="anchor panel"))
-            meta += [ft.Container(expand=True), hide_btn, lock_icon]
-
-            tile = ft.Container(
-                content=ft.Column([
-                    ft.Container(content=_thumb(c.get("thumb", "")), ink=True,
-                                 on_click=_open_preview(beat_key, unit, scene_id, key, c),
-                                 tooltip=tooltip or None),
-                    ft.Row(meta, spacing=1,
-                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=3, border=ft.border.all(2 if is_selected else 1,
-                                                 ACCENT if is_selected else BORDER),
-                border_radius=4, bgcolor=BG_ELEVATED if is_selected else None,
-            )
-            tiles[key] = tile
-            cand_tiles.append(tile)
-
-        # Custom images (Master-added, this beat's card only) — PREPENDED so they lead the
-        # gallery. Rendered like a candidate tile but with a "CUSTOM" chip instead of a score
-        # (there is no matcher cosine to show — see module docstring: cosine only decides
-        # PLACEMENT for an UNLOCKED custom image, never shown as a per-tile number here).
         locked_custom = _normalize_lock_custom_image(locks.get(beat_key))
+        _custom_entries = [e for e in custom_by_beat.get(beat_key, []) if e.get("file")]
         custom_tiles: dict[str, dict] = {}
-        custom_controls: list[ft.Control] = []
-        for entry in custom_by_beat.get(beat_key, []):
-            rel_path = str(entry.get("file") or "")
-            if not rel_path:
-                continue
-            is_selected = rel_path == locked_custom
-
-            def _pick_custom(_e, bk=beat_key, rp=rel_path):
-                _toggle_custom(bk, rp)
-
-            custom_icon = ft.IconButton(
-                icon=ft.Icons.CHECK_CIRCLE if is_selected else ft.Icons.RADIO_BUTTON_UNCHECKED,
-                icon_color=ACCENT if is_selected else TEXT_MUTED, icon_size=16,
-                tooltip="Select this custom image", on_click=_pick_custom,
-                style=ft.ButtonStyle(padding=ft.padding.all(0)),
-            )
-            custom_tile = ft.Container(
-                content=ft.Column([
-                    ft.Container(content=_thumb(rel_path), ink=True, on_click=_pick_custom,
-                                 tooltip=str(entry.get("desc") or "") or None),
-                    ft.Row([_chip("CUSTOM", ACCENT), custom_icon], spacing=4,
-                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=6, border=ft.border.all(2 if is_selected else 1,
-                                                 ACCENT if is_selected else BORDER),
-                border_radius=4, bgcolor=BG_ELEVATED if is_selected else None,
-            )
-            custom_tiles[rel_path] = {"tile": custom_tile, "icon": custom_icon}
-            custom_controls.append(custom_tile)
-        cand_tiles = custom_controls + cand_tiles
-        # Page of each tile, parallel to cand_tiles (custom images lead the gallery and
-        # belong to no comic page → -1) — the page-jump's index lookup.
-        tile_pages = [-1] * len(custom_controls) + [int(c.get("page", -1)) for c in _ordered]
+        # Page of each tile, parallel to cand_row.controls (custom images lead the gallery
+        # and belong to no comic page → -1) — the page-jump's index lookup. Filled by
+        # _build_tiles alongside the controls it indexes.
+        tile_pages: list[int] = []
+        n_tiles = len(_ordered) + len(_custom_entries)
 
         # VERTICAL GridView (was a 1-row horizontal ListView showing ~4 tiles): ~18-24
         # tiles on screen at once, which is the whole point — the candidate pool is the
-        # same for every beat, so Master re-skims it once per beat. GridView keeps
-        # build_controls_on_demand=True so a 200-candidate beat still only builds the
-        # visible cells (a wrap Row would build all 200 → decode every thumb).
+        # same for every beat, so Master re-skims it once per beat.
+        #
+        # Starts EMPTY and is filled by _build_tiles on first open. GridView's own
+        # build_controls_on_demand only defers the FLUTTER widget; the flet Control
+        # objects and their JSON are built and shipped regardless, and a tile is ~8 of
+        # them. Building every beat's tiles up front is what made a 131-page Q&A project
+        # (23 beats x 487 candidates = 11k tiles, ~90k controls) never finish painting —
+        # which is why the pool used to get filtered per issue. The pool stays WHOLE now;
+        # only the rendering is deferred.
         cand_row = ft.GridView(
-            cand_tiles, max_extent=GRID_EXTENT, child_aspect_ratio=GRID_ASPECT,
+            [], max_extent=GRID_EXTENT, child_aspect_ratio=GRID_ASPECT,
             spacing=GRID_SPACING, run_spacing=GRID_SPACING, height=GRID_H,
-            cache_extent=600,
+            cache_extent=600, visible=False,
         )
+
+        def _build_tiles() -> None:
+            if cand_row.controls or not n_tiles:
+                return          # already built (or nothing to build) — idempotent
+            selected = _selected_keys(beat_key)
+            cand_tiles: list[ft.Control] = []
+            for c in _ordered:
+                key = (int(c.get("page", -1)), int(c.get("panel", -1)))
+                is_selected = key in selected
+                is_anchor = key == anchor_key
+                # VLM panel descriptions are NOT shown (Master 2026-07-31). Panels are
+                # picked by eye from the thumbnail; a generated sentence about the drawing
+                # adds nothing a look does not already give, and generating it costs a full
+                # VLM pass over every page. Dialogue is OCR (Magi), so it stays.
+                tooltip = f"“{c['dialog']}”" if c.get("dialog") else ""
+                # Score goes in the TOOLTIP, not on the tile: a grid cell is ~120px wide and
+                # under PANEL_TEXT_EMBED=0 there is no score at all (old cosine/vlm projects
+                # still get it, just on hover).
+                score = " · ".join(
+                    ([f"vlm {float(c['vlm']):.0f}"] if c.get("vlm") is not None else [])
+                    + ([f"cos {float(c.get('score') or 0):.2f}"]
+                       if float(c.get("score") or 0) > 0 else []))
+                if score:
+                    tooltip = f"{tooltip}\n\n{score}" if tooltip else score
+
+                def _pick(_e, bk=beat_key, k=key, u=unit):
+                    _toggle_candidate(bk, k[0], k[1], u)
+
+                def _hide(_e, k=key):
+                    _hide_panel(k[0], k[1])
+
+                lock_icon = ft.IconButton(
+                    icon=ft.Icons.CHECK_CIRCLE if is_selected else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                    icon_color=ACCENT if is_selected else TEXT_MUTED, icon_size=14,
+                    width=22, height=22, tooltip="Select this panel", on_click=_pick,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                )
+                icons[key] = lock_icon
+                hide_btn = ft.IconButton(
+                    ft.Icons.CLOSE, icon_size=14, icon_color=TEXT_MUTED, width=22, height=22,
+                    tooltip="Ẩn panel này khỏi MỌI beat", on_click=_hide,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                )
+
+                meta: list[ft.Control] = [
+                    ft.Text(f"p{key[0]:02d}·{key[1]}", size=9, color=TEXT_MUTED,
+                            font_family="Menlo"),
+                ]
+                if is_anchor:
+                    meta.append(ft.Text("⚓", size=9, color=ACCENT, tooltip="anchor panel"))
+                meta += [ft.Container(expand=True), hide_btn, lock_icon]
+
+                tile = ft.Container(
+                    content=ft.Column([
+                        ft.Container(content=_thumb(c.get("thumb", "")), ink=True,
+                                     on_click=_open_preview(beat_key, unit, scene_id, key, c),
+                                     tooltip=tooltip or None),
+                        ft.Row(meta, spacing=1,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=3, border=ft.border.all(2 if is_selected else 1,
+                                                     ACCENT if is_selected else BORDER),
+                    border_radius=4, bgcolor=BG_ELEVATED if is_selected else None,
+                )
+                tiles[key] = tile
+                cand_tiles.append(tile)
+
+            # Custom images (Master-added, this beat's card only) — PREPENDED so they lead
+            # the gallery. Rendered like a candidate tile but with a "CUSTOM" chip instead of
+            # a score (there is no matcher cosine to show — see module docstring: cosine only
+            # decides PLACEMENT for an UNLOCKED custom image, never a per-tile number here).
+            custom_controls: list[ft.Control] = []
+            for entry in _custom_entries:
+                rel_path = str(entry.get("file") or "")
+                is_selected = rel_path == locked_custom
+
+                def _pick_custom(_e, bk=beat_key, rp=rel_path):
+                    _toggle_custom(bk, rp)
+
+                custom_icon = ft.IconButton(
+                    icon=ft.Icons.CHECK_CIRCLE if is_selected else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                    icon_color=ACCENT if is_selected else TEXT_MUTED, icon_size=16,
+                    tooltip="Select this custom image", on_click=_pick_custom,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                )
+                custom_tile = ft.Container(
+                    content=ft.Column([
+                        ft.Container(content=_thumb(rel_path), ink=True,
+                                     on_click=_pick_custom),
+                        ft.Row([_chip("CUSTOM", ACCENT), custom_icon], spacing=4,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=6, border=ft.border.all(2 if is_selected else 1,
+                                                     ACCENT if is_selected else BORDER),
+                    border_radius=4, bgcolor=BG_ELEVATED if is_selected else None,
+                )
+                custom_tiles[rel_path] = {"tile": custom_tile, "icon": custom_icon}
+                custom_controls.append(custom_tile)
+
+            cand_row.controls = custom_controls + cand_tiles
+            tile_pages[:] = ([-1] * len(custom_controls)
+                             + [int(c.get("page", -1)) for c in _ordered])
+
         jump_field = ft.TextField(
             width=70, height=38, hint_text="trang", text_size=12, content_padding=8,
             border_color=BORDER, focused_border_color=ACCENT,
@@ -1235,6 +1359,7 @@ def build(
             if not raw.isdigit():
                 _show_snack("Nhập số trang, ví dụ 14.")
                 return
+            _open_gallery()     # jumping into a collapsed gallery opens it first
             want = int(raw)
             idx = next((i for i, p in enumerate(pages) if p == want), None)
             if idx is None:
@@ -1243,6 +1368,54 @@ def build(
             page.run_task(grid.scroll_to, offset=grid_scroll_offset(idx, _grid_w()),
                           duration=350, curve=ft.AnimationCurve.EASE_OUT)
         jump_field.on_submit = _jump
+
+        # Gallery open/close. Collapsed cards cost ~0 controls; opening one builds its
+        # tiles once and keeps them (card_refs caches the whole card across rebuilds).
+        gallery_btn = ft.TextButton(
+            f"▼ Bấm để mở {n_tiles} panel", on_click=lambda _e: _toggle_gallery(),
+            style=ft.ButtonStyle(padding=ft.padding.symmetric(horizontal=6)),
+        )
+        gallery_bar = ft.Row([
+            gallery_btn,
+            ft.Text("· nhảy tới trang", size=10, color=TEXT_MUTED),
+            jump_field,
+            ft.IconButton(ft.Icons.ARROW_FORWARD, icon_size=16, tooltip="Go",
+                          on_click=_jump,
+                          style=ft.ButtonStyle(padding=ft.padding.all(0))),
+            ft.Container(expand=True),
+            # ponytail: no trackpad here — ▲/▼ page the grid by a full viewport
+            # (the old ◀/▶ nudged the horizontal strip by ~1.5 tiles).
+            ft.IconButton(ft.Icons.KEYBOARD_ARROW_UP, icon_size=20,
+                          tooltip="Lên 1 màn", on_click=_scroll_step(cand_row, -GRID_H),
+                          style=ft.ButtonStyle(padding=ft.padding.all(0))),
+            ft.IconButton(ft.Icons.KEYBOARD_ARROW_DOWN, icon_size=20,
+                          tooltip="Xuống 1 màn", on_click=_scroll_step(cand_row, GRID_H),
+                          style=ft.ButtonStyle(padding=ft.padding.all(0))),
+        ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def _open_gallery() -> None:
+            if cand_row.visible:
+                return
+            _build_tiles()
+            cand_row.visible = True
+            gallery_btn.text = f"▲ Thu gọn ({n_tiles} panel)"
+            for ctl in (cand_row, gallery_btn, gallery_bar):
+                try:
+                    ctl.update()
+                except Exception:
+                    pass
+
+        def _toggle_gallery() -> None:
+            if cand_row.visible:
+                cand_row.visible = False
+                gallery_btn.text = f"▼ Bấm để mở {n_tiles} panel"
+                for ctl in (cand_row, gallery_btn, gallery_bar):
+                    try:
+                        ctl.update()
+                    except Exception:
+                        pass
+            else:
+                _open_gallery()
 
         has_pick = bool(selected) or bool(locked_custom)
         auto_badge = _chip("auto", TEXT_MUTED, visible=not has_pick)
@@ -1255,7 +1428,10 @@ def build(
         card_refs[beat_key] = {"tiles": tiles, "icons": icons, "cand_row": cand_row,
                                "auto_badge": auto_badge, "dup_badge": dup_badge,
                                "count_chip": count_chip, "warn_chip": warn_chip,
-                               "unit": unit, "custom_tiles": custom_tiles}
+                               "unit": unit, "custom_tiles": custom_tiles,
+                               "open_gallery": _open_gallery, "n_tiles": n_tiles}
+        if auto_open:
+            _open_gallery()
 
         def _add_image_click(_e, bk=beat_key):
             page.run_task(_do_add_custom, bk)
@@ -1306,24 +1482,8 @@ def build(
         if drawable_moment:
             children.append(ft.Text(f"Looking for: {drawable_moment}", size=11,
                                      color=TEXT_MUTED, italic=True))
-        if cand_tiles:
-            children.append(ft.Row([
-                ft.Text(f"{len(cand_tiles)} panel · nhảy tới trang", size=10,
-                        color=TEXT_MUTED),
-                jump_field,
-                ft.IconButton(ft.Icons.ARROW_FORWARD, icon_size=16, tooltip="Go",
-                              on_click=_jump,
-                              style=ft.ButtonStyle(padding=ft.padding.all(0))),
-                ft.Container(expand=True),
-                # ponytail: no trackpad here — ▲/▼ page the grid by a full viewport
-                # (the old ◀/▶ nudged the horizontal strip by ~1.5 tiles).
-                ft.IconButton(ft.Icons.KEYBOARD_ARROW_UP, icon_size=20,
-                              tooltip="Lên 1 màn", on_click=_scroll_step(cand_row, -GRID_H),
-                              style=ft.ButtonStyle(padding=ft.padding.all(0))),
-                ft.IconButton(ft.Icons.KEYBOARD_ARROW_DOWN, icon_size=20,
-                              tooltip="Xuống 1 màn", on_click=_scroll_step(cand_row, GRID_H),
-                              style=ft.ButtonStyle(padding=ft.padding.all(0))),
-            ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        if n_tiles:
+            children.append(gallery_bar)
             children.append(cand_row)
         else:
             # A beat with zero candidates (e.g. a brand-new Master-inserted scene) —
@@ -1662,18 +1822,30 @@ def build(
     def _build_card_controls(dirty: frozenset = frozenset()) -> list[ft.Control]:
         beats_list = review.get("beats") or []
         controls: list[ft.Control] = []
+        # Auto-open galleries top-down until the tile budget runs out; the rest start
+        # collapsed and build on click. A normal project (a few hundred tiles total)
+        # therefore opens fully, exactly as before — the budget only bites on the big
+        # Q&A pools that used to make the window never paint.
+        budget = LAZY_TILE_BUDGET
         for i, b in enumerate(beats_list):
             controls.append(_add_row(i, beats_list))
             bk = _beat_key(b)
-            cached = card_refs.get(bk, {}).get("card")
+            refs = card_refs.get(bk) or {}
+            cached = refs.get("card")
             if cached is not None and bk not in dirty:
                 # REUSE the already-rendered card (same control object) for an
                 # unchanged beat: flet then diffs it as identical and never re-sends
                 # its ~100 candidate-tile images. Rebuilding fresh cards for every
                 # survivor was serializing ~2500 Images on each delete → the freeze.
                 controls.append(cached)
+                grid = refs.get("cand_row")
+                if grid is not None and grid.visible:
+                    budget -= int(refs.get("n_tiles") or 0)
             else:
-                controls.append(_beat_card(b))
+                n = len(b.get("candidates") or [])
+                controls.append(_beat_card(b, auto_open=n <= budget))
+                if n <= budget:
+                    budget -= n
         controls.append(_add_row(len(beats_list), beats_list))
         return controls
 

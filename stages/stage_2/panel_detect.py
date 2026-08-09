@@ -95,6 +95,36 @@ def detect_panels(image_path: Path | str) -> list[dict]:
     return full["panels"]
 
 
+# MAGI_PANELS=0 → skip Magi entirely and hand every caller ONE panel that IS the whole page.
+# Master 2026-07-30, for the Q&A lane: "from now on Q&A dont use magi clear that". Under the
+# manual-first pivot Master picks the region by hand in the review UI anyway, so paying for
+# automatic panel detection buys nothing — and it is the single most expensive block in Stage 2
+# (131 pages of The Power Fantasy took minutes of local forward passes; a 508-page book would be
+# far worse). Downstream needs a VALID bbox and index to crop and to lock, so a whole-page panel
+# keeps the review gate and Stage 5 working unchanged rather than leaving `panels: []`.
+#
+# Consequences, all deliberate:
+#   * no OCR either — `texts` and `characters` come back empty, so dialogue-based panel search and
+#     the cluster namer have nothing to work with. Fine for manual picking; NOT fine for any mode
+#     that needs dialogue truth (recap/micro still default to MAGI_PANELS=1).
+#   * every page is one candidate, so the review UI shows pages, not panels.
+# Default stays 1 — no other mode changes behaviour unless the env is set.
+MAGI_PANELS = os.getenv("MAGI_PANELS", "1").strip().lower() not in ("0", "false", "no", "")
+
+
+def _whole_page_result(image_path: Path | str) -> dict:
+    """The no-Magi stand-in: one panel covering the full page, no OCR, no characters."""
+    with Image.open(image_path) as im:
+        page_w, page_h = im.size
+    return {
+        "panels": [{"bbox": {"x": 0, "y": 0, "w": int(page_w), "h": int(page_h)},
+                    "confidence": 1.0}],
+        "characters": [],
+        "texts": [],
+        "page_size": {"width": int(page_w), "height": int(page_h)},
+    }
+
+
 def detect_full(image_path: Path | str) -> dict:
     """Run Magi v3 FULL detection + OCR on a single image.
 
@@ -107,7 +137,11 @@ def detect_full(image_path: Path | str) -> dict:
 
     Coordinates are pixels, origin top-left. character + text bboxes use the same
     {x,y,w,h} format as panels.
+
+    MAGI_PANELS=0 returns one whole-page panel WITHOUT loading the model (see the knob above).
     """
+    if not MAGI_PANELS:
+        return _whole_page_result(image_path)
     model, processor = _load_model()
     img = Image.open(image_path).convert("RGB")
     img_array = np.array(img)
@@ -133,7 +167,13 @@ def detect_full_batch(image_paths: list[Path | str], batch_size: int = 3,
 
     Chunked by `batch_size` so only that many images' activations are resident at once
     (a 16GB Mac OOMs on a whole 40-page issue in one pass). Returns one dict per input
-    path, in order. batch_size <= 1 → one image per pass (== per-page detect_full)."""
+    path, in order. batch_size <= 1 → one image per pass (== per-page detect_full).
+
+    MAGI_PANELS=0 returns one whole-page panel per path WITHOUT loading the model."""
+    if not MAGI_PANELS:
+        if log:
+            log(f"[magi] MAGI_PANELS=0 — skipping detection, {len(image_paths)} whole-page panel(s)")
+        return [_whole_page_result(p) for p in image_paths]
     model, processor = _load_model()
     out: list[dict] = []
     step = max(1, int(batch_size))

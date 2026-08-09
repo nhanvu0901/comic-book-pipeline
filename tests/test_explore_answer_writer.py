@@ -445,3 +445,62 @@ def test_viewer_context_block_present_and_empty():
     assert "THE CONSTANT BEING BROKEN" in blk
     # Old context with neither field -> empty string (byte-identical prompt path).
     assert ea._viewer_context_block({}) == ""
+
+
+# ─── writer now owns title / hook / outro (Master 2026-07-30) ─────────────────────
+# "we still need writter but it wont change munch what the google give just shorten it
+#  give it an title and outro, dont use the trash format wait until you ...."
+
+def _flat(text: str) -> str:
+    """Prompt text is hard-wrapped, so a phrase can straddle a newline + indent. Normalise
+    whitespace before substring-matching or the assertion tests the line breaks, not the rule."""
+    return " ".join(str(text).split()).lower()
+
+
+def test_both_prompts_ban_the_content_free_tease_format():
+    """The tease pools are content-free by construction — every line would fit any video on
+    the channel, which is what made them boilerplate. The prompt must name them as banned,
+    because the prompt is what actually enforces it at generation time."""
+    for prompt in (ea._EXPLORE_WRITE_SYSTEM_LIST, ea._EXPLORE_WRITE_SYSTEM_EXPLAIN):
+        low = _flat(prompt)
+        assert "wait until you" in low, "the banned phrase must be named to be banned"
+        assert "you won't believe" in low
+        assert "shouldn't even be possible" in low
+        assert "content-free clickbait" in low
+        # and it must say WHY, so the next editor does not reintroduce it
+        assert "pasted onto a different video" in low
+
+
+def test_both_prompts_demand_title_hook_outro_in_the_return_shape():
+    for prompt in (ea._EXPLORE_WRITE_SYSTEM_LIST, ea._EXPLORE_WRITE_SYSTEM_EXPLAIN):
+        assert '"title": "..."' in prompt
+        assert '"hook": "..."' in prompt
+        assert '"outro": "..."' in prompt
+
+
+def test_both_prompts_forbid_inverting_or_inventing_facts():
+    """Both failures below actually shipped on power-fantasy-etienne: the draft inverted
+    'body destroyed / mind survives' into 'body survives', and invented a motive
+    ('he believes no one should have the powers he does') absent from the research."""
+    for prompt in (ea._EXPLORE_WRITE_SYSTEM_LIST, ea._EXPLORE_WRITE_SYSTEM_EXPLAIN):
+        low = _flat(prompt)
+        assert "fidelity is absolute" in low
+        assert "invert" in low
+        assert "his body survives" in low, "name the real inversion so it is recognisable"
+        assert "no one should have the powers" in low, "name the real invention"
+        assert "write less" in low, "the instruction for a thin source is to write LESS"
+
+
+def test_outro_rule_forbids_restating_the_final_scene():
+    for prompt in (ea._EXPLORE_WRITE_SYSTEM_LIST, ea._EXPLORE_WRITE_SYSTEM_EXPLAIN):
+        assert "must not restate the final scene" in _flat(prompt)
+
+
+def test_build_hook_is_now_only_the_fallback():
+    """_build_hook still works (it is the fallback when the writer returns no hook) but its
+    docstring must say so, or someone will assume the tease pools are still the live path."""
+    assert "DEPRECATED" in ea._build_hook.__doc__
+    assert "FALLBACK" in ea._build_hook.__doc__
+    # still functional — a fallback that raises is worse than a flat hook
+    h = ea._build_hook("Who survived X", {"answer_summary": "s"}, "list", "p")
+    assert h and h.endswith(tuple(ea._LIST_TEASE_POOL))

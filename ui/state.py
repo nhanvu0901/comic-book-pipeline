@@ -13,6 +13,12 @@ from typing import Any
 from config import PROJECTS_ROOT
 
 
+# Not a stage — the sentinel a screen passes to its `on_go` callback to ask the app to
+# reopen the project picker. `on_go` is the ONE navigation callback already threaded to
+# every screen, so widening it costs nothing; a separate callback would have to be added
+# to three_col() and all eight builders to reach the same place.
+PICKER_STAGE = 0
+
 STAGE_NAMES = {
     1: "Identify Comic",
     2: "Download Comic",

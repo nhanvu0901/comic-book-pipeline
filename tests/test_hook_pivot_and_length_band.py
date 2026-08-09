@@ -26,11 +26,11 @@ def test_thought_until_pivot_lands_in_allowed_archetype():
 
 def test_length_band_targets_the_competitor_53_61s_video():
     # VARIANT-PROFILE REGISTER. The six biggest hits of the format run 53-61s of audio.
-    # Until 2026-07-28 the band copied their WORD count (195-215) instead — but recap
-    # renders at 3.98 wps, not the shared 3.4 estimate, so a "57s" script shipped at
-    # 49.5s (gambit-new-sun, first render of this register). Master 2026-07-28: match
-    # their DURATION, which at our pace needs more words.
-    assert (_TARGET_WORDS_MIN, _TARGET_WORDS_MAX) == (211, 243)
+    # The band tracks their DURATION, never their word count: the words are whatever our
+    # render pace needs to fill those seconds. So when atempo moved 1.35 -> 1.10 (Master
+    # 2026-08-01) the band moved with it: 1.35 -> 1.10 shrank it to 168-182, then Shorts went
+    # to 1.30 and it came back to 199-214. Seconds are the target; words follow the tempo.
+    assert (_TARGET_WORDS_MIN, _TARGET_WORDS_MAX) == (199, 214)
     lo_total = _TARGET_WORDS_MIN + 4    # shortest teaser: "Who is Deadpool 2099?"
     hi_total = _TARGET_WORDS_MAX + 9    # longest allowed teaser
     assert 53 <= lo_total / _RECAP_WORDS_PER_SEC <= 56, lo_total / _RECAP_WORDS_PER_SEC
@@ -39,8 +39,9 @@ def test_length_band_targets_the_competitor_53_61s_video():
 
 def test_recap_rate_is_separate_so_qa_keeps_the_shared_estimate():
     """Retuning recap must not move Q&A: explore_answer imports _WORDS_PER_SEC to size its
-    own band, and Q&A actually measures 3.19-3.50 wps, so 3.4 is correct THERE."""
-    assert _WORDS_PER_SEC == 3.4
+    own band. Both rates track config.POST_ATEMPO — 3.40 / 3.83 at atempo 1.30 — but they
+    stay SEPARATE numbers, because Q&A and recap measure different paces at the same tempo."""
+    assert _WORDS_PER_SEC == 3.40
     assert _RECAP_WORDS_PER_SEC != _WORDS_PER_SEC
     assert _wps_for("explore_answer") == _WORDS_PER_SEC
     assert _wps_for("micro_moment") == _WORDS_PER_SEC

@@ -42,13 +42,16 @@ GATE is necessary, the TITLE must be short and state the flip directly.
 The #1 criterion is NOT drama or shock. It is: **a well-executed, highly-rated
 story that is EASY TO TELL.** Model case: Joker "The Last Smile" (Paul Dini) —
 a nightmare and a breakup; dead simple, zero lore, lands in 45s.
-- **ZERO-LORE**: a viewer who only knows the character's NAME must follow the
-  whole story with no explanation. BAN: multiverse/variant characters (a
-  "Batman from another universe" killed a video on 2026-07-11 — Master himself
-  had to ask who that was), crossover-event context, retcon chains, mantle
-  history. If the summary needs a "who is this?" clause, reject.
-- **TELL-IN-TWO-SENTENCES**: the full story (setup + turn + landing) fits in 2
-  plain B2 sentences. If it needs three, it is a recap, not a moment.
+- **LOW-LORE (loosened 2026-07-18 by Master)**: ONE short orientation clause of
+  context is allowed ("a cursed team-up", "during an alien invasion") — the
+  viewer needs the character's NAME plus at most that one clause. Still AVOID:
+  multiverse/variant leads that need a "who is this?" paragraph, retcon chains,
+  mantle history. Anthology shorts, backup stories, and SELF-CONTAINED scenes
+  inside mini-events are explicitly IN SCOPE now — judge the SCENE's lore load,
+  not the event's.
+- **TELL-IN-FOUR-SENTENCES (loosened 2026-07-18, was two)**: the full story
+  (setup + turn + landing) fits in 4 plain B2 sentences. If it needs FIVE, it
+  is a recap, not a moment.
 - **WELL-EXECUTED / HIGH-RATED**: prefer acclaimed self-contained stories —
   praised one-shots/anthology shorts, named writers (Dini-tier), high review
   scores, "best short stories" lists. Quality of the STORY beats size of the
@@ -79,11 +82,12 @@ a nightmare and a breakup; dead simple, zero lore, lands in 45s.
    spans multiple panels (a 1-panel background beat can't fill 30-50s).
 6. **Scrapable**: issue live on batcave.biz (verify series/reader URL;
    `chapters[].pages`, not `reader["images"]` — known empty-field bug).
-7. **Coverage — HARD GATE (Master 2026-07-13: "we find our own")**: ANY
-   EN-narration Short/video on this moment (any framing) DISQUALIFIES.
-   We only produce untapped moments no channel has made a Short of yet.
-   Foreign-language coverage does not disqualify. Long-form recap of the
-   whole comic does NOT disqualify a single-moment cut — ranking signal only.
+7. **Coverage — RANKING SIGNAL ONLY (Master 2026-07-18, hard gate REMOVED)**:
+   EN coverage no longer disqualifies a pick. Record what exists (Shorts,
+   long-form) with view counts and rank uncovered/under-covered moments higher —
+   a saturated mega-viral moment still ranks near the bottom, but a good story
+   with some coverage is now a VALID pick. Produced/banned entries in
+   comic_candidates.csv + qa_question_banlist.md still hard-block re-suggests.
 
 ## STEP 0 — dedup/ban
 Read `comic_candidates.csv` (produced/rejected/banned rows), `qa_question_banlist.md`
@@ -111,9 +115,12 @@ d. **Demand-without-supply signals** (fresh-lane proof, since Shorts are banned
    mandatory.
 c. **Meme spread**: KnowYourMeme / viral panel compilations — a panel that
    became a meme is pre-validated.
-Record for every candidate: the NUMBER (upvotes/views) + URL as interest proof.
-No number → not a candidate. Rank by (interest number × both-names-famous ×
-simplicity), keep ≤5.
+Record interest proof where it EXISTS: number (upvotes/views) + URL.
+LOOSENED (Master 2026-07-18): a number is a RANKING BOOST, not a hard gate — a
+well-executed, high-rated self-contained story (praised one-shot / anthology
+short / named writer / strong review score) qualifies WITHOUT social-proof
+numbers. Rank by (story quality × both-names-famous × simplicity × interest
+number nếu có), keep ≤5.
 
 ## STEP 2 — verify each finalist (≤ 3 searches each)
 (a) exact issue + year + what is drawn on the page (multiple panels?);
@@ -139,10 +146,7 @@ Top pick command:
 ```
 End with: 1 câu vì sao top pick thắng + các candidate bị LOẠI kèm lý do.
 
-## RETELL-PROVEN LANE — REVOKED (Master 2026-07-13)
-The 2026-07-12 retell lane is DEAD: "from now on we wont find those that
-already have short we find our own." Rule 7 is a hard gate for EVERY pick.
-Produced retell videos (damian-wayne-death, batman-killer-croc, joker-last-smile)
-stay — but no new retell picks. Proof of interest now comes from
-demand-without-supply signals (Step 1a/c/d), never from an existing Short
-covering the same moment.
+## COVERAGE POLICY HISTORY
+2026-07-12 retell lane → revoked 2026-07-13 ("we find our own", coverage = hard
+gate) → 2026-07-18 Master loosened again: coverage is a RANKING SIGNAL (see
+rule 7). Prefer untapped; don't auto-reject covered.

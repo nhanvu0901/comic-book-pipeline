@@ -173,9 +173,17 @@ CARTESIA_API_VERSION = os.getenv("CARTESIA_API_VERSION", "2026-03-01")
 CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "c961b81c-a935-4c17-bfb3-ba2239de8c2f")
 
 # ─── TTS provider selector ──────────────────────────────────────────────────
-# Which engine Stage 4 uses: "cartesia" (default) | "resemble". Switch freely via
-# the TTS_PROVIDER env var — no code change needed.
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "cartesia").strip().lower()
+# Which engine Stage 4 uses: "resemble" (default — Resemble AI's Chatterbox, what we ship with)
+# | "cartesia" (legacy, no longer used; kept so an old project can be re-rendered on its
+# original voice). Switch via the TTS_PROVIDER env var — no code change needed.
+# Default flipped cartesia→resemble 2026-07-29 (Master: "we dont use cartesia_tts.py anymore use
+# chatterbox"). .env already set resemble, so nothing about the shipped behaviour changes — this
+# only stops a fresh checkout from silently reaching for the engine we stopped using.
+# Master 2026-08-01: LOCAL Chatterbox is the default engine for every mode. It clones the
+# channel voice from CHATTERBOX_VOICE_WAV, so the narrator does not change — what changes is
+# that we get a per-chunk emotion knob and stop paying per render. "resemble" (hosted) and
+# "cartesia" still work by env override.
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "chatterbox").strip().lower()
 
 # ─── Comic Vine (structured comic DB — issue/character cross-check) ──────────
 # Free API key (comicvine.gamespot.com/api). Used to VERIFY a Q&A answer item's exact
@@ -185,8 +193,31 @@ COMIC_VINE_API_KEY = os.getenv("COMIC_VINE_API_KEY", "")
 # ─── TTS (Resemble AI — Chatterbox) ─────────────────────────────────────────
 RESEMBLE_API_KEY = os.getenv("RESEMBLE_API_KEY", "")
 RESEMBLE_SYNTH_URL = os.getenv("RESEMBLE_SYNTH_URL", "https://f.cluster.resemble.ai/synthesize")
-RESEMBLE_VOICE_UUID = os.getenv("RESEMBLE_VOICE_UUID", "28f1626c")  # Rupert — fallback when no map/SDK
-# Voice catalog (name/uuid/vibe) the Claude SDK reads to auto-pick a narrator per story.
+# THE CHANNEL VOICE. Arthur (warm, classic, emotive; measured F0 ≈121 Hz) — pinned by Master
+# 2026-07-29 after we measured that voice auto-selection had shipped THREE different narrators
+# across five videos (CarlBishop ≈95 Hz, Arthur ≈130 Hz, Rupert ≈88 Hz). A 88-vs-130 Hz gap is a
+# different person to the ear, and a channel's voice is its strongest recognition asset — the
+# reference channel Master picked runs one voice across its whole catalogue. Story-fit was worth
+# far less than identity. See project_audio_inconsistency_diagnosed_2026-07-29.
+RESEMBLE_VOICE_UUID = os.getenv("RESEMBLE_VOICE_UUID", "9de11312")
+
+# ffmpeg atempo applied AFTER TTS (pitch-preserving). TWO numbers, because reading pace is a
+# property of the FORMAT, not of the voice — Master judged both by ear on 2026-08-01:
+#   Shorts   1.30 (~201 wpm) — 45 seconds, pace is what holds the viewer; 1.10 dragged.
+#   Longform 1.10 (~183 wpm) — 19 minutes, pace is what tires them; 1.35 read like a race.
+# One shared number cannot serve both, which is what the old single 1.35 got wrong in the
+# other direction. Stage 3's words-per-second constants are MEASURED AT THESE PACES and must
+# move with them, or the writer budgets words for a tempo the render no longer plays.
+POST_ATEMPO = float(os.getenv("POST_ATEMPO", "1.30"))
+POST_ATEMPO_LONGFORM = float(os.getenv("POST_ATEMPO_LONGFORM", "1.10"))
+# Narration modes that take the longform pace. Mirrors review_gate.GATE_EXEMPT_MODES.
+LONGFORM_TTS_MODES = ("panel_walk",)
+# Per-story voice auto-selection (an SDK call that reads the narration and picks from the catalog
+# below). OFF by default — it is what produced the three-narrator problem. Set to 1 only for a
+# deliberate one-off; a normal run must use the pinned voice above.
+RESEMBLE_AUTO_SELECT_VOICE = os.getenv("RESEMBLE_AUTO_SELECT_VOICE", "0").strip().lower() in (
+    "1", "true", "yes")
+# Voice catalog (name/uuid/vibe) the Claude SDK reads when auto-selection is explicitly enabled.
 RESEMBLE_VOICE_MAP = os.getenv(
     "RESEMBLE_VOICE_MAP",
     str(Path(__file__).resolve().parent / "voice_samples" / "voice_map.json"),

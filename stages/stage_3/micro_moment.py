@@ -37,7 +37,7 @@ from config import (CREATIVE_LLM_MODELS, ENABLE_TITLE_BANNER, FIDELITY_LLM_MODEL
                     OPENROUTER_MODEL)
 from .schema import Beat, Glossary, Narration
 from ._llm import call_with_chain
-from .beat_split import _verbatim_ok
+from .beat_split import _verbatim_ok, split_hook_fragments
 from .write_script import (
     _anchor_scenes_to_beats,
     _beat_anchor,
@@ -1403,6 +1403,9 @@ def write_micro_moment(
     intro_scene = {
         "text": hook_text, "page_ref": hook_page, "panel_ref": -1,
         "connective": None, "beat_id": 0, "is_intro": True,
+        # Fragment the hook so it cuts across panels instead of freezing on one for ~7s
+        # (stage_5 gives a fragment-less bookend exactly ONE unit). Verbatim, no LLM.
+        "visual_beats": split_hook_fragments(hook_text),
     }
 
     scenes = [intro_scene] + body

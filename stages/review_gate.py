@@ -160,6 +160,28 @@ def load_state(project) -> dict:
     return st
 
 
+def bookend_row_keys(scene: dict, unit: str) -> list[tuple[str, str, str]]:
+    """(beat_key, unit, text) for each review row an intro/outro scene produces.
+
+    ONE definition, called by BOTH row builders — build_candidates here and the UI's
+    reconcile_beats. They used to hold separate copies, and the copies drifted the moment
+    the hook became fragmentable: the exporter wrote "1:0"/"1:1"/"1:2" while the UI still
+    rebuilt a single hard-coded "intro" row, found no match, and rendered an empty
+    "No candidates" card — silently dropping all three real rows.
+
+    A bookend with 2+ fragments becomes ordinary "<sid>:<fi>" fragment rows. That key is
+    the one stage_5's lock applier already resolves (its by_id covers every scene, bookends
+    included); an "intro:0" namespace would hit `int("intro")` and be dropped without a
+    word. One fragment or none keeps the legacy "intro"/"outro" key so locks.json files
+    written before this keep resolving."""
+    from stages.stage_5.shots import _vb_text
+    frags = [b for b in (scene.get("visual_beats") or []) if _vb_text(b)]
+    if len(frags) < 2:
+        return [(unit, unit, str(scene.get("text", "") or ""))]
+    sid = int(scene.get("scene_id") or 0)
+    return [(f"{sid}:{i}", "fragment", _vb_text(b)) for i, b in enumerate(frags)]
+
+
 def lock_panels(lock: dict | None) -> list[dict]:
     """A scene's locks.json entry as a normalised list of {"page","panel"} dicts, handling
     BOTH the v2 multi-panel shape ({"panels": [{"page","panel"}, ...]}) and the old v1 single
@@ -253,6 +275,21 @@ def _plot_source(project) -> str:
 
 # ─── gate ─────────────────────────────────────────────────────────────────────
 
+# Modes whose panels are fixed by construction rather than chosen by a matcher. ONLY long-form
+# qualifies: it narrates page by page in reading order. Every Short mode stays hard-gated.
+GATE_EXEMPT_MODES = ("panel_walk",)
+
+
+def _narration_mode(project) -> str:
+    np_ = _project_root(project) / "narration.json"
+    if not np_.exists():
+        return ""
+    try:
+        return str(json.loads(np_.read_text()).get("mode") or "")
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+
 def ensure_reviewed(project, skip_flag: bool = False, *, log=print) -> None:
     """Raise SystemExit unless the project is approved in the review UI. Called at the top of
     Stage 4 (TTS) and Stage 5 (render). HARD GATE for ALL modes (recap, micro_moment, Q&A) —
@@ -264,6 +301,18 @@ def ensure_reviewed(project, skip_flag: bool = False, *, log=print) -> None:
         return
     if skip_flag:
         log("[review-gate] --skip-review ignored (hard gate all modes, Master 2026-07-14)")
+    mode = _narration_mode(project)
+    if mode in GATE_EXEMPT_MODES:
+        # The gate exists because a MATCHER picks the panels and can pick wrong ones, so Master
+        # has to see them first. Long-form has no matcher: it walks the pages in reading order,
+        # so a line's page is fixed by construction and there is no wrong choice to catch. What
+        # the gate would ask Master to do here is hand-confirm several hundred rows that nothing
+        # chose. The narration text is still worth reading before Stage 4 — narration.json, not
+        # a 300-row UI (Master's own habit; see feedback_read_narration_before_render).
+        log(f"[review-gate] '{project}' mode={mode} — EXEMPT (no matcher runs, panels follow "
+            f"reading order). Read narration.json before Stage 4; REVIEW_GATE stays hard for "
+            f"every matcher-driven mode.")
+        return
     state = load_state(project)
     if not state.get("approved"):
         raise SystemExit(
@@ -796,7 +845,7 @@ def _page_sorted_candidates(sub_pages: dict) -> list[dict]:
              "panel": panel, "src": src} for (key, panel, src, _tb) in rows]
 
 
-def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
+def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     """Score every review ROW against every panel with the EXISTING Stage-5 matcher and write
     review/candidates.json + thumbs. Reuses _match_panels' own ranked scores (no duplicate
     scoring). Needs the embed backend up (LM Studio Qwen), same as Stage 5's matcher.
@@ -913,13 +962,28 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
 
     # ── Build review ROWS (mode-aware). Each row: scene, unit, beat_key, query, narration_text,
     #    pre_selected. recap/Q&A rows == story scenes (byte-identical matcher input). ─────────
+    def _bookend_rows(scene: dict, unit: str, pre_selected: list) -> list[dict]:
+        out = []
+        for fi, (bk, u, txt) in enumerate(bookend_row_keys(scene, unit)):
+            pin = _vb_pin((scene.get("visual_beats") or [None] * (fi + 1))[fi]) \
+                if u == "fragment" else None
+            out.append({"scene": scene, "unit": u, "beat_key": bk,
+                        # A fragmented hook keeps unit="fragment" (that is what gives each
+                        # m:mảnh its own editable text box and single-select), so the row
+                        # needs a separate marker or the UI labels it "s1 · mảnh 1" and the
+                        # cold open becomes invisible among the body rows.
+                        "bookend": unit,
+                        "query": txt, "narration_text": txt,
+                        "pre_selected": ([{"page": pin[0], "panel": pin[1]}] if pin
+                                         else (pre_selected if fi == 0 else []))})
+        return out
+
     rows: list[dict] = []
     if intro_scene is not None:
-        hook = str(intro_scene.get("text", "") or "")
-        rows.append({"scene": intro_scene, "unit": "intro", "beat_key": "intro",
-                     "query": hook, "narration_text": hook,
-                     "pre_selected": (_lock_pair_list(narration.get("cold_open_lock"))
-                                      or _scene_pre_selected(intro_scene))})
+        rows.extend(_bookend_rows(
+            intro_scene, "intro",
+            _lock_pair_list(narration.get("cold_open_lock"))
+            or _scene_pre_selected(intro_scene)))
     for s in story:
         sid = int(s.get("scene_id") or 0)
         # ANY mode that emitted visual_beats gets one review ROW per fragment (was micro-only) —
@@ -945,10 +1009,8 @@ def build_candidates(project_name: str, k: int = 10, *, log=print) -> Path:
                          "query": _query_text(s), "narration_text": str(s.get("text", "") or ""),
                          "pre_selected": _scene_pre_selected(s)})
     if outro_scene is not None:
-        tail = str(outro_scene.get("text", "") or "")
-        rows.append({"scene": outro_scene, "unit": "outro", "beat_key": "outro",
-                     "query": tail, "narration_text": tail,
-                     "pre_selected": _scene_pre_selected(outro_scene)})
+        rows.extend(_bookend_rows(outro_scene, "outro",
+                                  _scene_pre_selected(outro_scene)))
 
     # Group rows by their scene's issue, preserving order; score each group against only that
     # issue's pages. Rows with an unknown/blank issue fall back to the full pool ("" group).
@@ -1098,9 +1160,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--project", required=True, help="Project slug under projects/.")
     ap.add_argument("--build-candidates", action="store_true",
                     help="Score panels and write review/candidates.json + thumbs.")
-    ap.add_argument("--k", type=int, default=10,
-                    help="Candidate CAP per beat. Default 10. Use 0 (or --all) for ALL panels "
-                         "of the beat's own issue, ranked best-first.")
+    ap.add_argument("--k", type=int, default=0,
+                    help="Candidate CAP per beat. Default 0 = ALL panels. A cap only made "
+                         "sense while cosine ranked the pool; under manual-first every score "
+                         "is 0.0, so a cap degenerates into 'the first k panels of the comic' "
+                         "— the same k for every beat — and any lock outside it loses its tile.")
     ap.add_argument("--all", action="store_true",
                     help="Emit ALL panels of each beat's issue, ranked (same as --k 0).")
     args = ap.parse_args(argv)

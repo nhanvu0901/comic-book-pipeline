@@ -57,14 +57,18 @@ The question must sit between two rejected extremes:
   stories). Proven instance: "Who has survived Ghost Rider's Penance Stare?"
   Both the CONSTANT and the ANSWER characters must be famous.
 
-## EMOTIONAL PARADOX GATE (Master 2026-07-10 — research-backed, HARD GATE)
+## EMOTIONAL PARADOX — STRONG BONUS, NOT A HARD GATE (downgraded 2026-07-19 by Master)
 Same-channel forensics (2026-07-10, measured live: 404-860-sub channels) showed a
-10-25× view gap decided by topic+title alone. Every candidate must pass BOTH:
-- **A-tier subject** (criterion 1) **PLUS an emotional paradox / broken constant**:
-  the question must flip something the audience "knows" is absolute — unbreakable
-  broken (Mjolnir), unstoppable stopped (Juggernaut), unkillable killed (Deadpool),
-  the punisher-of-evil in evil hands (GR curse), the fearless in tears. A famous
-  power/reputation being DEFIED is the paradox; a power being DESCRIBED is not.
+10-25× view gap decided by topic+title alone — a paradox/broken-constant framing
+WHEN THE STORY HAS ONE is a big ranking boost. BUT (Master 2026-07-19): do NOT
+auto-reject a strong A-tier enumerable question just because it lacks a neat
+"broken constant". Clarity + a famous subject + a genuinely-asked fan question +
+strong visual answers is enough. Over-indexing on paradox was hindering discovery
+(too many good questions killed for "not ironic enough"). So:
+- **A-tier subject (criterion 1) is still REQUIRED.** Emotional paradox / broken
+  constant (unbreakable broken, unstoppable stopped, fearless in tears...) is a
+  RANKING BONUS — rank paradox questions higher, but a clear enumerable question
+  without one still qualifies.
 - **DEAD-FORMULA BAN (auto-reject, no exceptions):** obscure variants/what-ifs as
   subject ("How Powerful is Red Hulk 2099?", "Who Is VENOMHULK!" — 1-2k ceiling,
   measured), counting trivia ("How many versions of X exist?"), identity-intro
@@ -95,9 +99,10 @@ when it falls out of a search:
   / "Here's why..." count too) and **"Why does [A-tier] always [behavior]?"**
   (interrogative lead). Both classify as "explain" in
   `stages/question_archetype.py`.
-- NO exceptions to the other gates: still needs the EMOTIONAL PARADOX GATE
-  (the trait/habit must flip something the audience assumes is absolute —
-  training as self-punishment, a code that's really a cage), criterion 0
+- Paradox is a BONUS here too (downgraded 2026-07-19), not a gate: prefer a
+  trait/habit that flips something absolute (training as self-punishment, a code
+  that's really a cage) but don't reject a clear A-tier explainer without one. Still
+  REQUIRES criterion 0
   MULTI-SOURCE (argued across 2010+ instances from SEVERAL different comics —
   one issue explaining one habit is a recap, reject it here), and PANEL
   DENSITY (each stage needs the subject as main/near-main of that issue).

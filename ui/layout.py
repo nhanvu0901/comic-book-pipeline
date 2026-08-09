@@ -6,7 +6,7 @@ from typing import Callable
 
 import flet as ft
 
-from .state import AppState, STAGE_NAMES
+from .state import AppState, PICKER_STAGE, STAGE_NAMES
 from .theme import (
     ACCENT, BG, BG_ELEVATED, BG_PANEL, BORDER, STATUS_DIRTY, STATUS_DONE,
     STATUS_PENDING, STATUS_REVIEW, TEXT_MUTED, TEXT_PRIMARY,
@@ -43,6 +43,14 @@ def stepper_nav(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
                     ft.Text("PROJECT", size=9, color=TEXT_MUTED),
                     ft.Text(state.project_name, size=12, color=TEXT_PRIMARY,
                             weight=ft.FontWeight.W_500, selectable=True),
+                    # The only way back to the project list. Opening a comic used to be a
+                    # one-way door: the picker was built at launch and never again.
+                    ft.TextButton(
+                        "← All projects",
+                        icon=ft.Icons.ARROW_BACK,
+                        on_click=lambda _e: on_go(PICKER_STAGE),
+                        style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                    ),
                 ], spacing=4),
                 padding=ft.padding.symmetric(horizontal=20, vertical=14),
                 margin=ft.margin.only(top=12),

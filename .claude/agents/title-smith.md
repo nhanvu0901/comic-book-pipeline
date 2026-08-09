@@ -64,7 +64,9 @@ High-performing comic Shorts use a **casual, spoken, reaction register** — lik
 - **Meme/relatable vocab is allowed but sparingly** and only where it fits dark tone: "beef", "bro", "villain arc", "cooked", "menace", "the way", "lowkey". Never force it; one per title max. A genuinely horrifying story can stay sincere and still be catchy.
 - **Curiosity > spoiler.** Tease, don't reveal the twist/ending.
 
-**Anti-patterns (never do):** documentary headlines ("The Story of…", "Explained"), our internal working title verbatim, clickbait promising a beat not in the narration, two+ emoji, ALL CAPS walls, hashtags inside the title.
+**CTR DATA (2026-07-19, measured on this channel — the spread is 7×):** high-CTR titles = curiosity + 1 emoji + famous character up front: "Why Doctor Doom Wears the Mask 💀" 5.49%, "Moon Knight hired the haunted house 💀" 5.17%, "Magik's Childhood Hero Became the Monster She Had to Kill" 3.64%. LOW-CTR titles = descriptive/literal + no curiosity gap + hashtag-stuffed: "The Punisher Made The Juggernaut Cry 😭" 0.75%, "Batman Arrived Seconds Too Late to Save His Son 😭" 0.73%, "3 Times Thor's Unbreakable Mjolnir Actually Shattered" 0.80%. LESSON: a title that STATES the whole outcome flatly (no question left in the viewer's head) tanks CTR. Always leave one thing the viewer must click to find out. Lead with the famous name, promise a mystery, one emoji.
+
+**Anti-patterns (never do):** documentary headlines ("The Story of…", "Explained"), our internal working title verbatim, clickbait promising a beat not in the narration, two+ emoji, ALL CAPS walls, hashtags inside the title, stating the full outcome so there's nothing left to click for.
 
 ## Step 3 — Tone-match to THIS comic
 Read the narration's actual mood and pick the register: cosmic-dread, body-horror, tragic, monster-horror, dark-comedy. The title must FEEL like the video. Grimframe is dark — even the meme-y titles carry menace, not goofiness (unless the comic itself is comedic).

@@ -310,3 +310,60 @@ def test_no_page_update_in_rebuild_path():
     hits = [ln for ln in body.splitlines()
             if "page.update()" in ln and not ln.strip().startswith("#")]
     assert hits == [], hits
+
+
+# ─── whole-scene text box (intro/outro/scene rows) ───────────────────────────
+# The per-scene box used to write scene["text"] and nothing else. stage_4/chunker.py
+# times shots off word_count, never the text, so a stale count silently shifted every
+# downstream shot boundary by seconds — the desync that hit two projects.
+
+def test_scene_text_edit_resyncs_word_count_and_totals():
+    nar = _str_narration()
+    out = sg.apply_scene_text_edits(nar, {1: "a much longer hook line than before"})
+    intro = out["scenes"][0]
+    assert intro["text"] == "a much longer hook line than before"
+    assert intro["word_count"] == 7                      # was 2
+    assert intro["target_seconds"] == round(7 / 3.4, 2)
+    assert out["total_word_count"] == 7 + 3 + 2 + 2      # recomputed from every scene
+    assert out["estimated_duration_seconds"] == round(14 / 3.4, 2)
+
+
+def test_scene_text_edit_keeps_verbatim_invariant():
+    """Editing a fragmented scene through the whole-scene box must leave
+    text == " ".join(visual_beats) — Stage 5 buckets shots by word position."""
+    nar = _str_narration()
+    out = sg.apply_scene_text_edits(nar, {2: "alpha beta gamma delta"})
+    scene = out["scenes"][1]
+    assert _verbatim_ok(scene["text"], scene["visual_beats"])
+    assert scene["visual_beats"] == ["alpha beta gamma delta"]
+
+
+def test_scene_text_edit_leaves_matching_fragments_alone():
+    """Text unchanged from its fragments → per-fragment panel pins survive."""
+    nar = _str_narration()
+    out = sg.apply_scene_text_edits(nar, {2: "alpha beta gamma"})
+    assert out["scenes"][1]["visual_beats"] == ["alpha", "beta", "gamma"]
+
+
+def test_scene_text_edit_skips_fragment_edited_scenes():
+    """A scene with fragment edits belongs to apply_fragment_edits, which re-derives
+    its text from the fragments — a per-scene write there would be overwritten."""
+    nar = _str_narration()
+    out = sg.apply_scene_text_edits(nar, {2: "IGNORED"}, skip={2})
+    assert out["scenes"][1]["text"] == "alpha beta gamma"
+    assert out["total_word_count"] == 9                  # untouched → no recompute
+
+
+def test_scene_text_edit_ignores_blank():
+    nar = _str_narration()
+    out = sg.apply_scene_text_edits(nar, {1: "   "})
+    assert out["scenes"][0]["text"] == "hook line"
+    assert out["scenes"][0]["word_count"] == 2
+
+
+def test_scene_text_edit_never_invents_fragments():
+    """An unfragmented scene (intro/outro) stays unfragmented — Stage 5 has its own
+    path for those, and writing [text] would change the scene's shape."""
+    nar = _str_narration()
+    out = sg.apply_scene_text_edits(nar, {1: "brand new hook"})
+    assert out["scenes"][0].get("visual_beats") in (None, [])
