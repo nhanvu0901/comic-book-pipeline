@@ -33,7 +33,6 @@ class PhaseResult:
     max_attempts: int
     data: dict | None
     raw_text: str
-    is_final_confirm: bool = False
 
 
 @dataclass
@@ -63,7 +62,7 @@ class ScriptAgent:
         self.model = model
         self.mode = mode
         self.system_prompt = load_system_prompt()
-        self.history = SessionHistory(context_limit=128_000)
+        self.history = SessionHistory()
         self.phase_index = 0
         self.query_plan: dict | None = None
         self.search_result: dict | None = None
@@ -74,11 +73,6 @@ class ScriptAgent:
         self._on_token: Callable[[str], None] | None = None
         _tools.init(self.client, self.model)
 
-    @property
-    def current_phase(self) -> str:
-        if self.phase_index >= len(self.PHASES):
-            return "done"
-        return self.PHASES[self.phase_index]
 
     def send_to_llm(self, user_message: str, tools: list | None = None) -> str:
         self.history.add("user", user_message)
@@ -292,7 +286,6 @@ class ScriptAgent:
             max_attempts=MAX_PHASE_RETRIES,
             data=self.comic_context,
             raw_text="",
-            is_final_confirm=True,
         )
 
     def _build_comic_context(self) -> dict:
@@ -349,7 +342,3 @@ class ScriptAgent:
         from pathlib import Path
         self.history.save(Path(project_path) / "session_history.json")
 
-    @classmethod
-    def load_session(cls, project_path, api_key: str, base_url: str, model: str) -> SessionHistory:
-        from pathlib import Path
-        return SessionHistory.load(Path(project_path) / "session_history.json")

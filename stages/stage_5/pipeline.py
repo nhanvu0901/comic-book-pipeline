@@ -15,9 +15,8 @@ from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
 from .panel_sheet import build_panel_sheet
 from .schema import AssemblyResult
-from . import shots as _shots            # module, not values: set_output_frame() rebinds
 from .shots import (build_shots, render_shot, set_output_frame, widen_panels_to_tiers,
-                    LONGFORM_MODES)     # OUTPUT_W/H read via _shots.* — see set_output_frame
+                    LONGFORM_MODES)
 from .verify_frames import VERIFY_FRAMES, verify_frames
 
 

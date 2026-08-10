@@ -21,7 +21,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import wave
 from dataclasses import dataclass, field

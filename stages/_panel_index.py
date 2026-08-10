@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import sys
 
-EMBED_DIM = 3072  # Azure text-embedding-3-large
 
 # DIALOG_TRUTH: use Magi's pixel-OCR (the `ocr` field on each dialog block) as the
 # AUTHORITATIVE dialog when embedding a panel — the batch VLM fabricates the `text`

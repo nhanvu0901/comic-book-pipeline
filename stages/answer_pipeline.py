@@ -84,7 +84,7 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
         # hand-edited to fill missing reader_urls) — rebuild comic_context from it
         # instead of paying for a fresh SDK research call. The file's shape is a
         # superset of research_answer()'s return, so it feeds build_contexts as-is.
-        from config import POST_ATEMPO, get_project_dirs
+        from config import get_project_dirs
         from stages.stage_1.answer_research import build_contexts
 
         answer_path = get_project_dirs(args.project)["root"] / "answer_context.json"

@@ -33,7 +33,7 @@ from config import PROJECTS_ROOT
 from ..bridge import (
     image_b64, is_answer_project, load_hidden_panels, load_narration, load_preprocessed,
     load_review_candidates, load_review_locks, list_review_projects, narration_sha1,
-    review_thumb_b64, review_thumb_path, run_blocking, save_hidden_panels,
+    review_thumb_path, run_blocking, save_hidden_panels,
     save_narration_edits, save_review_locks,
 )
 from ..custom_image import add_custom_image, enrich_custom_image, list_custom_images

@@ -146,7 +146,6 @@ CLUSTER_NAME_WORKERS = int(os.getenv("CLUSTER_NAME_WORKERS", "6"))
 # pages runs concurrently too. 1 = old strictly-serial per-page loop.
 VLM_PAGE_WORKERS = int(os.getenv("VLM_PAGE_WORKERS", "4"))
 
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 _DEFAULT_FANDOM_CHAIN = (
     "marvel.fandom.com,dc.fandom.com,imagecomics.fandom.com,"
@@ -491,9 +490,7 @@ _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
 
 # ─── Comic Scraper ──────────────────────────────────────────────────────────
-ENABLE_COMIC_SCRAPER = os.getenv("ENABLE_COMIC_SCRAPER", "true").lower() in ("true", "1", "yes")
 # headless=False opens a visible Chrome window — much more reliable against Cloudflare
-COMIC_SCRAPER_HEADLESS = os.getenv("COMIC_SCRAPER_HEADLESS", "false").lower() in ("true", "1", "yes")
 
 # ─── Project Storage ────────────────────────────────────────────────────────
 PROJECTS_ROOT = Path(__file__).parent / "projects"

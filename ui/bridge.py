@@ -357,18 +357,6 @@ def review_thumb_path(project_name: str, rel_path: str) -> str:
     return str(full) if full.exists() else ""
 
 
-def review_thumb_b64(project_name: str, rel_path: str) -> str:
-    """Base64 of a candidate thumb, or "" if missing.
-
-    ft.Image(src=<absolute path>) only works in desktop mode — in web mode
-    the browser fetches from Flet's web server, which can't serve arbitrary
-    filesystem paths. Passing a base64 string as `src` instead embeds the
-    bytes directly, so it works in both.
-    """
-    import base64
-    full = review_thumb_path(project_name, rel_path)
-    return base64.b64encode(Path(full).read_bytes()).decode() if full else ""
-
 
 def image_b64(abs_path: str) -> str:
     """Base64 of an image file at an ABSOLUTE path (for ft.Image src), or "" if
