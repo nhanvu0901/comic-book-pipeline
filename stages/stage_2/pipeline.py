@@ -490,6 +490,22 @@ def preprocess_project(
     log(f"[preprocess] cache: {cached_count}/{len(page_states)} pages have valid results — "
         f"{len(page_states) - cached_count} need VLM")
 
+    # The cache key is the IMAGE hash alone — deliberately, since Master toggles config
+    # (VLM on/off per Q&A rules, gutter split, …) between runs on the same project, and
+    # auto-invalidating on config change would re-run 30+ min of Magi every toggle. The
+    # failure mode to kill is the SILENT one: VLM is on now, the cache was built with it
+    # off, the log said "88/88 valid" and Stage 2 reported success while every
+    # description stayed a placeholder. Say it out loud and name the fix instead.
+    if VLM_EXTRACT:
+        _no_vlm = sum(1 for s in page_states
+                      if s["cached"] is not None
+                      and str(s["cached"].get("vlm_model_used") or "") in ("", "magi-only")
+                      and str(s["cached"].get("page_type") or "") == "story")
+        if _no_vlm:
+            log(f"[preprocess] ⚠ VLM is ON but {_no_vlm} cached story page(s) were built "
+                f"WITHOUT it (magi-only) — their descriptions are placeholders. "
+                f"Re-run with --force to redo them.")
+
     # Per-issue (start_pn, end_pn) bounds, keyed off page_states so Fix 3 below can tell
     # whether page i sits near the start/end of ITS OWN issue. Single-issue projects get
     # exactly one entry here, so `_multi_issue` is False and the per-issue window never
@@ -894,7 +910,7 @@ def _demote_credits_pages(
         p["page_type"] = "skip"
         p["is_story_page"] = False
         p["skip_reason"] = "credits_title"
-        p["panels"] = []
+        _stash_demoted_panels(p)
         h = str(p.get("content_hash", "") or "")
         if h:
             try:
@@ -923,13 +939,26 @@ def _demote_backmatter_tail_one(p: dict, project_root: Path, cut: int, log: Call
     p["page_type"] = "skip"
     p["is_story_page"] = False
     p["skip_reason"] = "back_matter_tail"
-    p["panels"] = []
+    _stash_demoted_panels(p)
     h = str(p.get("content_hash", "") or "")
     if h:
         try:
             save_cached(project_root, pn, h, p)
         except Exception as exc:
             log(f"[preprocess]   ⚠ couldn't persist tail-demotion for p{pn}: {exc}")
+
+
+def _stash_demoted_panels(p: dict) -> None:
+    """Blank p["panels"] but keep the originals under _demoted_panels.
+
+    Both demotion paths used to write panels=[] straight into the page cache, which
+    DESTROYED the Magi results: a wrong demotion (real precedent — the tail-cut once ate
+    34 story pages of a saga, see _find_tail_cut's docstring) could only be recovered by
+    a full Magi re-run. Consumers all filter on is_story_page before touching panels, so
+    the blank list preserves behavior; the stash makes a bad call reversible by hand."""
+    if p.get("panels"):
+        p["_demoted_panels"] = p["panels"]
+    p["panels"] = []
 
 
 def _has_strong_story_signal(p: dict) -> bool:

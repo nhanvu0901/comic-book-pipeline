@@ -138,3 +138,18 @@ def test_credits_demote_still_catches_real_credits_page(tmp_path):
     _demote_credits_pages(pages, tmp_path, log=lambda *_: None)
     assert pages[0]["is_story_page"] is False
     assert pages[0]["skip_reason"] == "credits_title"
+
+
+def test_demotion_stashes_panels_instead_of_destroying_them(tmp_path):
+    """Both demote paths used to write panels=[] straight into the page cache — a wrong
+    demotion (the tail-cut once ate 34 story pages, see _find_tail_cut's docstring) was
+    unrecoverable without a full Magi re-run. The originals now survive in the stash."""
+    panels = [{"index": 0, "bbox": {"x": 1, "y": 2, "w": 3, "h": 4},
+               "dialog": [{"text": "WOULD YOU KNOW MORE? CREATED BY STAN LEE", "ocr": ""}]}]
+    pages = [_pg(9, True, panels=[dict(panels[0])])]
+    _demote_credits_pages(pages, tmp_path, log=lambda *_: None)
+
+    assert pages[0]["is_story_page"] is False
+    assert pages[0]["panels"] == [], "runtime behavior unchanged: consumers see no panels"
+    assert pages[0]["_demoted_panels"][0]["bbox"] == {"x": 1, "y": 2, "w": 3, "h": 4}, \
+        "the Magi results must survive the demotion"
