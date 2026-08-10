@@ -44,9 +44,8 @@ def _load_sidecar(project_root: Path) -> dict:
 
 
 def _save_sidecar(project_root: Path, doc: dict) -> None:
-    p = _sidecar_path(project_root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
+    from .bridge import write_json_atomic
+    write_json_atomic(_sidecar_path(project_root), doc)
 
 
 def _slug(text: str) -> str:

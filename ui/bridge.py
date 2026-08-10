@@ -4,6 +4,7 @@ them off the event loop via page.run_task().
 """
 import asyncio
 import json
+import os
 import queue
 import re
 import traceback
@@ -12,6 +13,21 @@ from pathlib import Path
 from typing import Any, Callable
 
 from config import PROJECTS_ROOT
+from utils.atomic_json import write_json_atomic   # re-exported: ui.state / ui.custom_image import it from here
+
+
+def _quarantine_corrupt(path: Path, what: str) -> None:
+    """Move a corrupt JSON file aside instead of letting the next save overwrite it.
+
+    The old code swallowed JSONDecodeError and returned an EMPTY doc, so the UI drew
+    every beat as unselected and the first click wrote that emptiness to disk —
+    turning a recoverable file into permanent loss. Renaming keeps the bytes around."""
+    try:
+        dead = path.with_name(path.name + ".corrupt")
+        os.replace(path, dead)
+        print(f"[ui] {what} is corrupt — moved to {dead.name}. Selections could not be loaded.")
+    except OSError as exc:
+        print(f"[ui] {what} is corrupt and could not be set aside ({exc}).")
 
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
@@ -247,9 +263,7 @@ def load_narration(project_name: str) -> dict | None:
 
 
 def save_narration_edits(project_name: str, narration: dict) -> None:
-    p = PROJECTS_ROOT / project_name / "narration.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(narration, indent=2, ensure_ascii=False))
+    write_json_atomic(PROJECTS_ROOT / project_name / "narration.json", narration)
 
 
 def is_answer_project(project_name: str) -> bool:
@@ -298,14 +312,14 @@ def load_review_locks(project_name: str) -> dict:
         try:
             return json.loads(p.read_text())
         except json.JSONDecodeError:
-            pass
+            # Do NOT fall through silently: the empty doc below reads as "nothing was
+            # ever picked", and the next click would save that over the damaged file.
+            _quarantine_corrupt(p, "review/locks.json")
     return {"approved": False, "approved_at": None, "narration_sha1": None, "locks": {}}
 
 
 def save_review_locks(project_name: str, locks_doc: dict) -> None:
-    p = PROJECTS_ROOT / project_name / "review" / "locks.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(locks_doc, indent=2, ensure_ascii=False))
+    write_json_atomic(PROJECTS_ROOT / project_name / "review" / "locks.json", locks_doc)
 
 
 def load_hidden_panels(project_name: str) -> dict:
@@ -323,9 +337,7 @@ def load_hidden_panels(project_name: str) -> dict:
 
 
 def save_hidden_panels(project_name: str, doc: dict) -> None:
-    p = PROJECTS_ROOT / project_name / "review" / "hidden_panels.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
+    write_json_atomic(PROJECTS_ROOT / project_name / "review" / "hidden_panels.json", doc)
 
 
 def narration_sha1(project_name: str) -> str | None:

@@ -18,6 +18,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from utils.atomic_json import write_json_atomic
+
 
 def image_hash(image_path: Path | str) -> str:
     """SHA-256 of image bytes, truncated to 16 hex chars."""
@@ -89,6 +91,8 @@ def load_cached(
 
 
 def save_cached(project_root: Path, page_number: int, h: str, data: dict) -> Path:
-    p = cache_path(project_root, page_number, h)
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    return p
+    # Atomic: an interrupted run used to leave a truncated page JSON here, and BOTH
+    # readers (stage_3/pipeline.py, stage_5/pipeline.py) skip unparseable pages with a
+    # bare `except: continue` — so the page silently vanished from the panel pool and
+    # every lock pointing at it slid onto a different panel, mid-render, with no log.
+    return write_json_atomic(cache_path(project_root, page_number, h), data)

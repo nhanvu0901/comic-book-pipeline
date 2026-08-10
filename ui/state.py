@@ -96,9 +96,8 @@ def load_state(project_name: str) -> AppState:
 def save_state(s: AppState) -> None:
     if not s.project_name:
         return
-    p = state_path(s.project_name)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(s.to_dict(), indent=2, ensure_ascii=False))
+    from .bridge import write_json_atomic   # local: state.py must not import bridge at module load
+    write_json_atomic(state_path(s.project_name), s.to_dict())
 
 
 def list_projects() -> list[str]:
