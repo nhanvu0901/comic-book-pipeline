@@ -98,6 +98,23 @@ def _prevlm_gate(
     Panel count can't tell a cover from a splash (both are one full-page box), position
     can. Safety: >=2 panels or any speech balloon on that first page reads as a
     cold-open story page (cover missing from the scan) → fall through to the VLM.
+
+    KNOWN WEAK (measured 2026-08-10, deliberately NOT changed): Rule A almost never
+    fires — 11 of 15 projects on disk carry their cover into the panel pool as a story
+    page. Two reasons. (1) `has_speech` reads panel_detect's `type`, which is not a
+    bubble classifier: it says "speech" whenever Magi could tie the text to ANY
+    character box, and a cover's figure fills the frame, so the trade dress ties to it
+    (cap-shield-broken p001 arrives as {"ocr": "MARTEL www.marvel.com 5 of 7",
+    "type": "speech"}). (2) `n_panels` over-counts, because Magi emits nested boxes and
+    nothing dedupes them.
+
+    Both are real, and the obvious repairs were tried and reverted: this rule's failure
+    mode is DELETING a genuine page-1, and the data does not support a safe threshold.
+    Covers here have 0-2 outer panels and 0-10 words in their longest text block, but 63
+    real story pages are single-panel splashes and 67 of 160 have an equally short
+    longest block — so neither panel count nor any word threshold separates them. The
+    cost of the current bug is a cover sitting in a manually-reviewed panel pool; the
+    cost of getting it wrong is losing a page. Left alone on purpose.
     Rule B — non-story: no panels AND no character boxes AND no speech balloons is not
     sequential art (house ad / letters / text page). All three must hold: whole-page
     story renders exist with 0 panels, but Magi still sees characters or speech there.
@@ -1248,13 +1265,27 @@ def _assemble_page_dict(
     # honest — if the page's own text reads like an ad, force skip regardless
     # of what the VLM said.
     if page_type == "story":
+        # Magi's own text entries key the string as "ocr" (panel_detect._parse_magi_page);
+        # reading "text" here returned "" for EVERY one of them, so with the VLM off — the
+        # normal setup for Q&A — this whole corpus was empty and both guards below bailed
+        # on their `if not low: return False`. The filter had never actually run. The two
+        # other readers in this file (lines 114, 927) already accept both spellings.
         _ocr_corpus = " ".join(
-            [str(t.get("text", "")) for t in (magi_data or {}).get("texts", [])]
+            [str(t.get("ocr", "") or t.get("text", "")) for t in (magi_data or {}).get("texts", [])]
             + [str(tb.get("text", "")) for tb in vlm_text_blocks]
         )
+        # Real story content beats a phrase match — the same rule _has_strong_story_signal
+        # applies downstream. A genuine story page's LAST panel routinely carries the
+        # "TO BE CONTINUED" caption, and _looks_like_backmatter matches that phrase no
+        # matter what else is on the page. Without this guard, merely fixing the key above
+        # deletes climax pages: measured on disk, cap-shield-broken p25 (the Fear Itself
+        # climax, 3 panels of dialogue), wonder-woman-lasso-lies p27, asm-kraven-buried p47.
+        # Ads are NOT gated this way — _looks_like_ad keys off sales copy ("on sale",
+        # "subscribe"), which real story pages do not carry, and ad pages do have art.
+        _strong_story = len(panels_raw) >= 2 and bool(_ocr_corpus.strip())
         if _looks_like_ad(_ocr_corpus):
             page_type, skip_reason = "skip", "advertisement"
-        elif _looks_like_backmatter(_ocr_corpus):
+        elif _looks_like_backmatter(_ocr_corpus) and not _strong_story:
             page_type, skip_reason = "skip", "back_matter"
 
     # Build Magi assignments: which panel each char/text bbox belongs to.
