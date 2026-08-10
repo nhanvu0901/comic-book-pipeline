@@ -311,7 +311,27 @@ def merge_fragment_into_prev(scene: dict, frag_idx: int) -> None:
         scene["visual_beats"] = beats[:frag_idx - 1] + [merged] + beats[frag_idx + 1:]
 
 
-def drop_fragment(scene: dict, frag_idx: int) -> bool:
+def _resync_scene_timing(scene: dict, wps: float) -> None:
+    """Re-derive word_count/target_seconds from scene["text"].
+
+    MUST be called by every path that rewrites a scene's text. Stage 4
+    (stages/stage_4/chunker.align_scenes_to_words) walks the TTS word-timestamp stream
+    consuming EXACTLY word_count words per scene, in order — so a scene that claims more
+    words than it actually speaks eats the head of the next scene's words and every
+    later scene drifts. Two projects shipped with this drift (asm-kraven-buried scene 5
+    claimed 30 words for 24; asm-spider-goblin scene 6 claimed 19 for 9)."""
+    scene["word_count"] = len(str(scene.get("text", "")).split())
+    scene["target_seconds"] = round(scene["word_count"] / wps, 2) if wps else 0.0
+
+
+def _resync_narration_totals(narration: dict, wps: float) -> None:
+    """Re-sum the document-level totals after any scene's word_count changed."""
+    total = sum(int(s.get("word_count") or 0) for s in narration.get("scenes") or [])
+    narration["total_word_count"] = total
+    narration["estimated_duration_seconds"] = round(total / wps, 2) if wps else 0.0
+
+
+def drop_fragment(scene: dict, frag_idx: int, *, wps: float = 3.4) -> bool:
     """Delete scene["visual_beats"][frag_idx] OUTRIGHT — its words are GONE, not folded
     into a sibling (that's merge_fragment_into_prev). scene["text"] is REDEFINED as the
     concat of the surviving fragments (str: joined by " "; dict {"text","page","panel"}:
@@ -330,10 +350,13 @@ def drop_fragment(scene: dict, frag_idx: int) -> bool:
     remaining = beats[:frag_idx] + beats[frag_idx + 1:]
     scene["visual_beats"] = remaining
     scene["text"] = " ".join(_frag_text(vb) for vb in remaining).strip()
+    # The text just got SHORTER; leaving the old word_count is what desynced Stage 4.
+    _resync_scene_timing(scene, wps)
     return True
 
 
-def apply_fragment_edits(narration: dict, edits: dict[tuple[int, int], str]) -> dict:
+def apply_fragment_edits(narration: dict, edits: dict[tuple[int, int], str],
+                         dropped_out: list | None = None) -> dict:
     """Write PER-FRAGMENT text edits into `narration` — MUTATES it in place and returns it
     (the caller owns a fresh load_narration() dict).
 
@@ -349,7 +372,13 @@ def apply_fragment_edits(narration: dict, edits: dict[tuple[int, int], str]) -> 
     An edit naming a scene_id or frag_idx that no longer exists is silently SKIPPED (the card
     list can be one op behind narration.json). A fragment edited to blank is dropped — it would
     render a wordless shot; blanking EVERY fragment of a scene is ignored instead, deleting a
-    whole beat is the trash icon's job, not the text box's."""
+    whole beat is the trash icon's job, not the text box's.
+
+    `dropped_out` (out-param, same shape as _crop_panel's geom_out) collects
+    (scene_id, frag_idx) for every fragment removed by blanking, HIGHEST index first.
+    Dropping a fragment renumbers the ones after it, so the caller MUST remap its
+    fragment locks and beat rows — skipping that is what pushed every later line's panel
+    down one slot and dropped the last line's panel entirely."""
     by_sid: dict[int, dict[int, str]] = {}
     for (sid, idx), text in (edits or {}).items():
         by_sid.setdefault(int(sid), {})[int(idx)] = str(text)
@@ -365,18 +394,21 @@ def apply_fragment_edits(narration: dict, edits: dict[tuple[int, int], str]) -> 
             continue
         for i in hits:
             frags[i] = _frag_with_text(frags[i], pending[i].strip())
+        blanked = [i for i, vb in enumerate(frags) if not _frag_text(vb)]
         frags = [vb for vb in frags if _frag_text(vb)]
         if not frags:
             continue
+        if dropped_out is not None:
+            sid_i = int(s.get("scene_id") or 0)
+            # Highest index first so the caller can apply the shifts one at a time
+            # without each remap invalidating the indices of the ones still queued.
+            dropped_out.extend((sid_i, i) for i in reversed(blanked))
         s["visual_beats"] = frags
         s["text"] = " ".join(_frag_text(vb) for vb in frags).strip()
-        s["word_count"] = len(s["text"].split())
-        s["target_seconds"] = round(s["word_count"] / wps, 2) if wps else 0.0
+        _resync_scene_timing(s, wps)
         touched = True
     if touched:
-        total = sum(int(s.get("word_count") or 0) for s in narration.get("scenes") or [])
-        narration["total_word_count"] = total
-        narration["estimated_duration_seconds"] = round(total / wps, 2) if wps else 0.0
+        _resync_narration_totals(narration, wps)
     return narration
 
 
@@ -1016,15 +1048,33 @@ def build(
         # so a per-scene write there would just be overwritten.
         frag_sids = {sid for sid, _ in frag_edits}
         apply_scene_text_edits(current, edited_text, skip=frag_sids)
-        apply_fragment_edits(current, frag_edits)
+        dropped: list = []
+        apply_fragment_edits(current, frag_edits, dropped_out=dropped)
         save_narration_edits(project, current)
-        nonlocal narration
+        nonlocal narration, locks
         narration = current
+        # Blanking a fragment's box DELETES it, which renumbers every later fragment of
+        # that scene. Without this, "<sid>:<frag>" locks kept pointing at their old slot:
+        # each following line took the panel of the line below it, and the last line's
+        # panel vanished (its index no longer exists). Every OTHER fragment op already
+        # remapped; this path was the one that didn't.
+        for sid_i, idx in dropped:
+            locks = remap_fragment_locks(locks, sid_i, idx, -1)
+            review["beats"] = _remap_beats_list(review.get("beats") or [], sid_i, idx, -1)
+        if dropped:
+            locks_doc["locks"] = locks
         # narration.json changed on disk → un-approve so Master must re-approve before render,
         # same as every other op here that rewrites it.
         locks_doc["approved"] = False
         locks_doc["approved_at"] = None
         save_review_locks(project, locks_doc)
+        if dropped:
+            # The card list still shows a row per OLD fragment; typing into one of those
+            # ghost rows silently wrote nothing. A full rebuild is the cheapest way to
+            # redraw the surviving rows against the new visual_beats.
+            _show_snack(f"Đã xóa {len(dropped)} dòng trống — panel của các dòng sau đã dời theo.")
+            on_state_change()
+            return
         _refresh_approve_ui(push=False)   # sets a default status → overwrite it right after
         status_text.value = "Đã lưu narration — cần re-approve trước khi render."
         status_text.color = WARN
@@ -1607,8 +1657,9 @@ def build(
         if scene is None:
             _show_snack("Scene not found — reload the project.")
             return
+        wps = float(current.get("words_per_second") or 3.4)
         try:
-            dropped = drop_fragment(scene, frag_idx)
+            dropped = drop_fragment(scene, frag_idx, wps=wps)
         except ValueError as exc:
             _show_snack(f"Cannot drop line: {exc}")
             return
@@ -1622,6 +1673,7 @@ def build(
                 confirm_body="Đây là dòng cuối của beat — xóa nó sẽ xóa CẢ beat khỏi "
                              "narration.json. Cần re-approve trước khi render.")
             return
+        _resync_narration_totals(current, wps)
         save_narration_edits(project, current)
         nonlocal narration, locks
         narration = current
