@@ -67,6 +67,42 @@ def test_panels_in_one_row_all_render_the_row_bbox():
     assert boxes[0] == {"x": 0, "y": 0, "w": 900, "h": 310}
 
 
+def test_dialog_widens_with_the_bbox_so_the_whole_tier_gets_inpainted():
+    """The render region is the TIER, but each panel used to keep only its own bubbles —
+    so the inpaint mask (_panel_text_bboxes reads panel["dialog"]) cleaned one panel's
+    text while the crop showed the row's. Measured on the-autumnal: >=29% of bubbles in
+    multi-panel tiers rendered uncleaned while the audit reported the shots inpainted."""
+    a = dict(_panel(0, 0, 0), dialog=[{"text": "left bubble", "bbox": {"x": 10, "y": 10, "w": 50, "h": 20}}])
+    b = dict(_panel(1, 500, 10), dialog=[{"text": "right bubble", "bbox": {"x": 510, "y": 20, "w": 50, "h": 20}}])
+    out = sh.widen_panels_to_tiers({1: {"page_number": 1, "panels": [a, b]}})
+
+    for p in out[1]["panels"]:
+        texts = sorted(d["text"] for d in p["dialog"])
+        assert texts == ["left bubble", "right bubble"], \
+            "every panel of the tier must carry the tier's full bubble set"
+
+    # And the mask helper actually sees both rects for either panel.
+    boxes = sh._panel_text_bboxes(dict(out[1]["panels"][0], _page_number=1), {1: out[1]})
+    assert len(boxes) == 2
+
+
+def test_dialog_does_not_leak_across_tiers():
+    a = dict(_panel(0, 0, 0), dialog=[{"text": "top", "bbox": {"x": 1, "y": 1, "w": 5, "h": 5}}])
+    b = dict(_panel(1, 0, 900), dialog=[{"text": "bottom", "bbox": {"x": 1, "y": 901, "w": 5, "h": 5}}])
+    out = sh.widen_panels_to_tiers({1: {"page_number": 1, "panels": [a, b]}})
+    assert [d["text"] for d in out[1]["panels"][0]["dialog"]] == ["top"]
+    assert [d["text"] for d in out[1]["panels"][1]["dialog"]] == ["bottom"]
+
+
+def test_merged_dialog_entries_are_copies_not_shared_refs():
+    a = dict(_panel(0, 0, 0), dialog=[{"text": "x", "bbox": {"x": 1, "y": 1, "w": 5, "h": 5}}])
+    b = dict(_panel(1, 500, 10), dialog=[])
+    out = sh.widen_panels_to_tiers({1: {"page_number": 1, "panels": [a, b]}})
+    out[1]["panels"][0]["dialog"][0]["text"] = "mutated"
+    assert a["dialog"][0]["text"] == "x", "caller's page dicts must not be mutated"
+    assert out[1]["panels"][1]["dialog"][0]["text"] == "x", "siblings must hold their own copies"
+
+
 def test_separate_rows_keep_separate_bboxes():
     pages = {1: {"page_number": 1, "panels": [_panel(0, 0, 0), _panel(1, 0, 900)]}}
     out = sh.widen_panels_to_tiers(pages)

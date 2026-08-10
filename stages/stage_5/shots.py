@@ -65,8 +65,17 @@ def widen_panels_to_tiers(pages_by_number: dict[int, dict]) -> dict[int, dict]:
             ye = [p["bbox"]["y"] + p["bbox"]["h"] for p in row]
             tier_bbox = {"x": min(xs), "y": min(ys),
                          "w": max(xe) - min(xs), "h": max(ye) - min(ys)}
+            # The DIALOG must widen with the bbox. The render region is now the whole
+            # tier, but each panel still carried only its own bubbles — so the inpaint
+            # mask (_panel_text_bboxes reads panel["dialog"]) cleaned one panel's text
+            # while the crop showed the row's. Measured on the-autumnal: 653 bubbles sit
+            # inside multi-panel tiers, a single panel masks at best 461 — at least 29%
+            # of bubbles rendered uncleaned, while the audit (which only checks that
+            # text_bboxes is non-empty) kept reporting the shots as inpainted.
+            row_dialog = [d for p in row for d in (p.get("dialog") or [])]
             for p in row:
-                widened.append({**p, "bbox": dict(tier_bbox)})
+                widened.append({**p, "bbox": dict(tier_bbox),
+                                "dialog": [dict(d) for d in row_dialog]})
         # tiers_of drops panels with no bbox; keep them so index lookups never miss
         widened.extend({**p} for p in panels if not (p.get("bbox") or {}).get("h"))
         widened.sort(key=lambda p: int(p.get("index", 0)))
