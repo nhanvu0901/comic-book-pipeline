@@ -27,8 +27,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent.parent
-_VENV = Path(os.getenv("CHATTERBOX_VENV", _REPO / ".venv-chatterbox")) / "bin" / "python"
 _WORKER = Path(__file__).resolve().parent / "_chatterbox_worker.py"
+
+
+def _venv_python(venv_dir=None) -> Path:
+    """The isolated venv's interpreter.
+
+    A venv lays its interpreter out differently per platform — POSIX `bin/python`, Windows
+    `Scripts/python.exe` — so PROBE for the one that exists rather than hard-coding either
+    (this repo is developed on both). The Windows miss was silent and total: a `bin`
+    junction pointed at `Scripts` so the DIRECTORY resolved, but the file is `python.exe`,
+    so `bin/python` never existed, available() stayed False and every Chatterbox render
+    died on "venv missing" while the worker itself ran fine when invoked directly.
+
+    Resolved per CALL, not once at import, so a venv created mid-session is picked up (the
+    old module constant only late-bound its .exists() check, not the path). Falls back to
+    the POSIX layout when neither is present, so the error message still names a sane path."""
+    d = Path(venv_dir) if venv_dir else Path(
+        os.getenv("CHATTERBOX_VENV", _REPO / ".venv-chatterbox"))
+    for rel in (("bin", "python"), ("Scripts", "python.exe")):
+        p = d.joinpath(*rel)
+        if p.exists():
+            return p
+    return d / "bin" / "python"
+
 
 # Emotion knobs (Chatterbox's own scale). 0.5/0.5 is the model's neutral default; the
 # narration can override per scene once we know what a long read sounds like.
@@ -59,7 +81,7 @@ class ChatterboxResult:
 def available() -> bool:
     """True when the isolated venv exists. Checked before a run so the failure is a clear
     message instead of a FileNotFoundError deep inside subprocess."""
-    return _VENV.exists()
+    return _venv_python().exists()
 
 
 def _chunks(text: str) -> list[str]:
@@ -123,11 +145,12 @@ def synthesize(
     _log = log or (lambda _m: None)
     if not text or not text.strip():
         raise ValueError("synthesize() called with empty text")
-    if not available():
+    venv_py = _venv_python()
+    if not venv_py.exists():
         raise RuntimeError(
-            f"Chatterbox venv missing at {_VENV.parent.parent}. Create it with:\n"
+            f"Chatterbox venv missing at {venv_py.parent.parent}. Create it with:\n"
             f"  python3 -m venv .venv-chatterbox && "
-            f".venv-chatterbox/bin/python -m pip install chatterbox-tts")
+            f"{venv_py} -m pip install chatterbox-tts")
 
     chunks = _chunks(text)
     ex = CHATTERBOX_EXAGGERATION if exaggeration is None else float(exaggeration)
@@ -146,7 +169,7 @@ def synthesize(
         "device": CHATTERBOX_DEVICE or None,
     }))
 
-    proc = subprocess.Popen([str(_VENV), str(_WORKER), str(job)],
+    proc = subprocess.Popen([str(venv_py), str(_WORKER), str(job)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, bufsize=1)
     done, failed, tail = 0, [], []
