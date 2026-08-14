@@ -4,6 +4,9 @@
 __pycache__/
 .venv/
 venv/
+# Isolated per-tool venvs: chatterbox (TTS) and acestep (music) each pull a dependency
+# tree that would fight the main one — see stages/stage_4/chatterbox_tts.py for why.
+.venv-*/
 
 # OS
 .DS_Store
@@ -48,3 +51,8 @@ scout_runs/
 # Throwaway probes and their outputs (~37 MB of upscaler frames, crops, embedding
 # caches). The scripts here are one-off experiments, not part of any pipeline run.
 playground/
+
+# macOS AppleDouble resource forks — the repo was copied from a Mac; these are dead
+# weight on Windows and 5148 of them once drowned every git status.
+._*
+.DS_Store
