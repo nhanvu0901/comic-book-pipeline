@@ -1019,8 +1019,14 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
         # INTRO/OUTRO always get the FULL pool (group ""): a bookend panel belongs to no
         # answer item, so scoping it to the issue its placeholder page_ref happens to land in
         # would hide every other issue's panels from the hook/closing pick.
-        groups.setdefault("" if r["unit"] in ("intro", "outro") else _pool_issue_of(r["scene"]),
-                          []).append(r)
+        # Keyed on the "bookend" MARKER, not on `unit`: a hook/closer split into 2+ visual
+        # beats comes back from bookend_row_keys as unit "fragment" (that is what gives each
+        # fragment its own text box), so a unit-only test dropped every FRAGMENTED bookend
+        # back into per-issue scoping without a word — and in Q&A that pinned the whole cold
+        # open to whichever issue the intro's placeholder page_ref happened to land in (the
+        # same meaningless page_ref the PANEL_FWD_BIAS note below zeroes the prior for).
+        is_bookend = bool(r.get("bookend")) or r["unit"] in ("intro", "outro")
+        groups.setdefault("" if is_bookend else _pool_issue_of(r["scene"]), []).append(r)
 
     # FIX B: a Q&A drawable_moment query is a visual description, so trust the SigLIP image
     # signal more than the recap default. Bump _img_index.PANEL_IMG_WEIGHT (read late-bound
@@ -1075,7 +1081,10 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     cands_by_id: dict = {}
     money_groups: dict[str, list] = {}
     for r in rows:
-        if r["unit"] in ("intro", "outro"):
+        # Same bookend marker as the pool grouping above, for the same reason: a FRAGMENTED
+        # bookend arrives as unit "fragment", so a unit-only test let it into the funnel keyed
+        # on its placeholder page_ref's issue.
+        if r.get("bookend") or r["unit"] in ("intro", "outro"):
             continue
         key = id(r["scene"])
         if key in cands_by_id:

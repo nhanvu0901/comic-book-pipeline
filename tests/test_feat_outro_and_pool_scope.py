@@ -63,16 +63,27 @@ def _page(n: int, issue: str) -> dict:
     }
 
 
-def _project(tmp_path, slug: str, *, qa: bool) -> None:
+def _project(tmp_path, slug: str, *, qa: bool, bookends: bool = False) -> None:
     root = tmp_path / slug
     (root / "preprocessed").mkdir(parents=True)
     for n, issue in ((1, "#1"), (2, "#1"), (3, "#2"), (4, "#2")):
         (root / "preprocessed" / f"page_{n:03d}_x.json").write_text(json.dumps(_page(n, issue)))
     # one body scene per issue, no bookends (those always get the full pool by design)
-    (root / "narration.json").write_text(json.dumps({"scenes": [
+    scenes = [
         {"scene_id": 2, "text": "first", "page_ref": 1, "panel_ref": 0},
         {"scene_id": 3, "text": "second", "page_ref": 3, "panel_ref": 0},
-    ]}))
+    ]
+    if bookends:
+        # A FRAGMENTED hook/closer — bookend_row_keys hands these back as unit "fragment",
+        # not "intro"/"outro". page_ref 1 is the Q&A placeholder anchor (it lands in issue
+        # #1), which is exactly what used to silo the whole cold open to that one issue.
+        scenes.insert(0, {"scene_id": 1, "is_intro": True, "text": "hook a, and hook b",
+                          "page_ref": 1, "panel_ref": -1,
+                          "visual_beats": ["hook a,", "and hook b"]})
+        scenes.append({"scene_id": 4, "is_outro": True, "text": "close a, and close b",
+                       "page_ref": 1, "panel_ref": -1,
+                       "visual_beats": ["close a,", "and close b"]})
+    (root / "narration.json").write_text(json.dumps({"scenes": scenes}))
     ctx = {"plot_source": "answer_research"} if qa else {"title": "Arc"}
     (root / "comic_context.json").write_text(json.dumps(ctx))
     if qa:
@@ -84,7 +95,7 @@ def _project(tmp_path, slug: str, *, qa: bool) -> None:
         ]}))
 
 
-def _pools_seen(tmp_path, monkeypatch, slug: str, *, qa: bool) -> list[set]:
+def _pools_seen(tmp_path, monkeypatch, slug: str, *, qa: bool, bookends: bool = False) -> list[set]:
     """Page-number sets handed to the matcher — one entry per candidate GROUP."""
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
     monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
@@ -97,7 +108,7 @@ def _pools_seen(tmp_path, monkeypatch, slug: str, *, qa: bool) -> list[set]:
         return []
 
     monkeypatch.setattr(shots, "_match_panels", fake_match)
-    _project(tmp_path, slug, qa=qa)
+    _project(tmp_path, slug, qa=qa, bookends=bookends)
     rg.build_candidates(slug, k=5)
     return pools
 
@@ -112,3 +123,40 @@ def test_qa_still_scopes_each_row_to_its_cited_issue(tmp_path, monkeypatch):
     pools = _pools_seen(tmp_path, monkeypatch, "qa_arc", qa=True)
     assert len(pools) == 2, f"Q&A keeps one group per cited issue, got {len(pools)}"
     assert sorted(sorted(p) for p in pools) == [[1, 2], [3, 4]], pools
+
+
+# ─── fragmented bookends keep the whole-project pool ─────────────────────────
+# The "bookends always get the full pool" rule was written against unit "intro"/"outro"
+# only. A hook or closer split into 2+ visual beats comes back from bookend_row_keys as
+# unit "fragment" (that split is what gives each fragment its own text box), so it fell
+# through to per-issue scoping — and in Q&A that pinned every cold-open fragment to
+# whichever issue the intro's PLACEHOLDER page_ref happened to land in. The grouping now
+# keys on the "bookend" marker the row already carries.
+
+def test_fragmented_bookend_keeps_the_whole_project_pool(tmp_path, monkeypatch):
+    pools = _pools_seen(tmp_path, monkeypatch, "qa_frag_bookend", qa=True, bookends=True)
+    assert {1, 2, 3, 4} in pools, (
+        f"a fragmented intro/outro must still see every issue's pages, got {pools}")
+    assert sorted(sorted(p) for p in pools) == [[1, 2], [1, 2, 3, 4], [3, 4]], (
+        f"bookends share ONE full pool, body rows stay per-issue, got {pools}")
+
+
+def test_fragmented_bookend_pool_holds_on_the_no_embed_path(tmp_path, monkeypatch):
+    """PANEL_TEXT_EMBED is OFF in production (conftest pins it back ON so the cosine suites
+    keep exercising the matcher), so the branch Master actually reviews through is
+    _page_sorted_candidates — assert the real candidates.json, not the matcher spy."""
+    slug = "qa_frag_noembed"
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(rg, "PANEL_TEXT_EMBED", False)
+    monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
+    _project(tmp_path, slug, qa=True, bookends=True)
+    rg.build_candidates(slug, k=0)
+
+    beats = json.loads(
+        (tmp_path / slug / "review" / "candidates.json").read_text())["beats"]
+    by_key = {b["beat_key"]: b for b in beats}
+    for bk in ("1:0", "1:1", "4:0", "4:1"):
+        pages = {c["page"] for c in by_key[bk]["candidates"]}
+        assert pages == {1, 2, 3, 4}, f"bookend fragment {bk} saw only pages {pages}"
+    assert {c["page"] for c in by_key["2"]["candidates"]} == {1, 2}, (
+        "a Q&A body row must stay scoped to its cited issue")
