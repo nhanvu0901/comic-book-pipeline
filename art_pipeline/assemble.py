@@ -584,8 +584,8 @@ def assemble_art_video(
     else:
         captions.write_text(build_ass(word_timestamps, audio_duration))
     mixed = root / "audio_mixed.wav"
-    bgm = _resolve_bgm(bg_music_path, enable_music, log)
-    mix_audio(root / "audio.wav", bgm, mixed, progress=log)
+    bgm = _resolve_bgm(bg_music_path, enable_music, log, root=root)
+    mix_audio(root / "audio.wav", mixed, bg_music_path=bgm, progress=log)
     log(f"[assemble] final encode → {final_path.name}")
     _final_encode(silent, mixed, final_path)
     duration = _probe_duration(final_path)

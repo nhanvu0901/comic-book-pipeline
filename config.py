@@ -486,6 +486,90 @@ COLD_OPEN = os.getenv("COLD_OPEN", "true").lower() in ("true", "1", "yes")
 # generation call (write_script.py / micro_moment.py) — off skips the LLM call.
 ENABLE_TITLE_BANNER = os.getenv("ENABLE_TITLE_BANNER", "true").lower() in ("true", "1", "yes")
 
+# ─── Stage 5: background music bed ──────────────────────────────────────────
+# Inert until a music file actually resolves (see stage_5.pipeline._resolve_bgm): with no
+# file the render is narration-only and byte-identical to before this existed.
+#
+# The numbers below are CRAFT, not standards — measured on 2026-08-12 that no standards body
+# (W3C / EBU / ATSC / Netflix) specifies a music-vs-speech level at all; ATSC A/85's own mixer
+# guide says "always mix relying on your hearing". See MUSIC_SCORING_RESEARCH_2026-08-12.md.
+#
+# BG_MUSIC_OFFSET_LU is how far BELOW the narration's own integrated loudness the bed sits, so
+# the bed self-calibrates to whatever the TTS delivered instead of assuming a fixed dBFS. That
+# also mirrors EBU Tech 3343's advice to set the speech anchor FIRST and place background under
+# it. Measured on a real 61s render: the bed moves final integrated loudness by only 0.11 LU at
+# -15 and 0.04 LU at -20, so anything in this band is free to tune BY EAR — it cannot break the
+# -14 LUFS normalisation.
+ENABLE_BG_MUSIC = os.getenv("ENABLE_BG_MUSIC", "true").lower() in ("true", "1", "yes")
+
+# ─── Music GENRE (per project, chosen in the Review Beats UI) ────────────────
+# The style brief a generator is asked for. "minimal dark cinematic" is the default because
+# it is the only register that survived a listening test on a real render: six dense beds
+# (epic / drill / synthwave / lo-fi / trap / ambient) laid under the same narration at the
+# same level were all inaudible, while a SPARSE one came through. Narration here occupies
+# almost the whole timeline (measured: one continuous speech region, real silences only
+# 0.26-0.75s), so music that leaves gaps is heard and music that fills every moment is not.
+# MUSIC_GENRES is only the dropdown's preset list — the field is editable, so any string
+# a generator understands is valid. Per-project choice lives in projects/<slug>/music.json.
+MUSIC_GENRE = os.getenv("MUSIC_GENRE", "minimal dark cinematic")
+_DEFAULT_MUSIC_GENRES = (
+    "minimal dark cinematic,minimal horror piano,dark ambient drone,sparse dark strings,"
+    "epic hybrid orchestral,dark trap,uk drill,dark synthwave,dark lo-fi"
+)
+MUSIC_GENRES: list[str] = [
+    g.strip() for g in os.getenv("MUSIC_GENRES", _DEFAULT_MUSIC_GENRES).split(",") if g.strip()
+]
+
+# ─── Music generation (stages/music_bed.py → ACE-Step in .venv-acestep) ──────
+# The LLM that reads the narration and writes the ACE-Step tag list. A CHAIN, not one model:
+# measured 5/6 successful calls on deepseek-v4-flash — one returned empty, which config.py
+# already warns about above. Called through OpenRouter directly, NOT the SDK, and it does not
+# touch the global FREE_MODEL switch — same treatment as BEAT_SPLIT_MODELS.
+MUSIC_BRIEF_MODELS: list[str] = [
+    m.strip() for m in os.getenv(
+        "MUSIC_BRIEF_MODELS",
+        "deepseek/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash,google/gemma-4-31b-it:free"
+    ).split(",") if m.strip()
+]
+# Diffusion steps. 27 is ACE-Step's own reference figure and measures ~2.4x realtime on this
+# CPU-only box (63s of audio in 149s); 8 steps runs at 1.3x but the output is visibly rougher.
+ACESTEP_STEPS = int(os.getenv("ACESTEP_STEPS", "27"))
+# Prompt adherence. 15.0 is the model default; higher makes it obey the tag list more strictly
+# at the cost of naturalness. Raise this when a generation ignores the genre it was asked for.
+ACESTEP_GUIDANCE = float(os.getenv("ACESTEP_GUIDANCE", "15.0"))
+# Fixed seed so the same brief yields the same track — verified byte-identical across runs
+# (same prompt + seed + guidance → same sha1). Re-render must not reshuffle the music.
+ACESTEP_SEED = int(os.getenv("ACESTEP_SEED", "42"))
+# `.env` has carried BG_MUSIC_PATH since the original music path was written, but nothing read
+# it after that code was removed — it was dead config until now. Relative paths resolve against
+# the repo root so the shipped `assets/bgm/...` default works from any working directory.
+_BGM_RAW = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
+BG_MUSIC_PATH = _BGM_RAW if os.path.isabs(_BGM_RAW) else str(Path(__file__).parent / _BGM_RAW)
+# 8.0 chosen by ear on a real render (Master, 2026-08-13) after A/B-ing 18/14/10/8/6/4/2/0 LU
+# under the same narration. Measured at that setting: the bed sits ~23 LU down during the
+# gaps and moves the level under speech by 0.07 dB, so it is present without crowding.
+BG_MUSIC_OFFSET_LU = float(os.getenv("BG_MUSIC_OFFSET_LU", "8.0"))
+# Extra attenuation applied while speech is present. Small on purpose: the bed already sits far
+# under the voice, so the duck is a nudge for presence, not a rescue.
+BG_MUSIC_DUCK_DB = float(os.getenv("BG_MUSIC_DUCK_DB", "-6.0"))
+BG_MUSIC_DUCK_RAMP_S = float(os.getenv("BG_MUSIC_DUCK_RAMP_S", "0.25"))
+# Only lift the bed for a gap LONGER than this. Measured: this narration's real silences run
+# 0.26-0.75s, and lifting for a 0.3s gap (with a 0.25s ramp each side) never reaches full level
+# before ducking again — that is exactly what reads as pumping. Short gaps stay ducked.
+BG_MUSIC_DUCK_MIN_GAP_S = float(os.getenv("BG_MUSIC_DUCK_MIN_GAP_S", "0.6"))
+# How many lifts the duck curve carries — a LIMIT, not a taste knob, and audio.py clamps it to
+# its own hard ceiling regardless of what is set here. Two walls sit behind this, both measured:
+# ffmpeg's expression evaluator refuses more than 31 lifts ("Missing ')' or too many args"), and
+# Windows' CreateProcess refuses a command line over 32767 chars (WinError 206) — a 19-minute
+# long-form has ~380 qualifying gaps, which would build a 44k-character expression. The LONGEST
+# pauses are kept, being the ones a listener registers. A 61s Short has ~2 gaps and never
+# reaches this at all, so the ceiling only ever bites long-form.
+BG_MUSIC_DUCK_MAX_GAPS = int(os.getenv("BG_MUSIC_DUCK_MAX_GAPS", "24"))
+# Silence detector threshold for finding the REAL speech/silence structure. Note this reads the
+# rendered audio, NOT word_timestamps.json — those timings are interpolated evenly inside each
+# sentence (measured: all 170 inter-word gaps are exactly 0.0), so they cannot locate silence.
+BG_MUSIC_SILENCE_DB = float(os.getenv("BG_MUSIC_SILENCE_DB", "-35"))
+
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
 

@@ -200,10 +200,20 @@ def assemble_project(
         _assemble_video(shots, shot_paths, silent_video_path,
                         outro_card=outro_card, outro_dur=outro_dur, project=project_name)
 
-    if audio_mixed_path.exists() and not force:
+    # Reuse only if the mix is NEWER than every input it was built from — the narration audio
+    # AND the music bed. A bare exists() check shipped stale audio whenever Stage 4 was re-run
+    # with --force and Stage 5 without it: the hash guard above passes (Stage 4 refreshes the
+    # sidecar), so nothing else catches it. The bed has to be in that comparison too, or
+    # generating a new bgm.wav and re-rendering silently keeps the old music.
+    bgm = _resolve_bgm(log=log, root=root)
+    _inputs = [audio_path] + ([bgm] if bgm else [])
+    if (audio_mixed_path.exists() and not force
+            and all(audio_mixed_path.stat().st_mtime >= p.stat().st_mtime for p in _inputs)):
         log(f"[stage5] reusing {audio_mixed_path.name}")
     else:
-        mix_audio(audio_path, audio_mixed_path, progress=log)
+        if bgm:
+            log(f"[stage5] music bed: {bgm.name}")
+        mix_audio(audio_path, audio_mixed_path, bg_music_path=bgm, progress=log)
         if outro_dur > 0:
             try:
                 _pad_audio_tail(audio_mixed_path, outro_dur, audio_mixed_path.with_suffix(".pad.wav"))
@@ -950,6 +960,36 @@ def _probe_duration(path: Path) -> float:
         return float((res.stdout or "0").strip())
     except ValueError:
         return 0.0
+
+
+def _resolve_bgm(bg_music_path=None, enable_music: bool = True, log=print, *,
+                 root: Path | None = None) -> Path | None:
+    """Pick the background-music file for a render, or None for narration-only.
+
+    Order: explicit argument → `bgm.*` sitting in the project folder → config.BG_MUSIC_PATH.
+    A path that does not exist resolves to None rather than raising: no music is a valid
+    render, and it is the state every project is in until someone drops a file in.
+
+    Kept in this module (not audio.py) because art_pipeline/assemble.py imports it from here —
+    it was removed along with the original music path and has been an ImportError since, which
+    is why the art pipeline's assemble step could not even be imported.
+    """
+    from config import BG_MUSIC_PATH, ENABLE_BG_MUSIC
+    if not (enable_music and ENABLE_BG_MUSIC):
+        return None
+    if bg_music_path and not Path(bg_music_path).exists():
+        # Say so. Falling through silently means a caller who NAMED a track (art_pipeline
+        # passes the user's pick) gets a different one rendered under their video and never
+        # learns the path was wrong.
+        log(f"[music] requested bed not found: {bg_music_path} — falling back")
+    candidates = [bg_music_path] if bg_music_path else []
+    if root is not None:
+        candidates += [root / f"bgm.{ext}" for ext in ("mp3", "m4a", "wav", "ogg", "flac")]
+    candidates.append(BG_MUSIC_PATH)
+    for c in candidates:
+        if c and Path(c).exists():
+            return Path(c)
+    return None
 
 
 def _require_ffmpeg() -> str:

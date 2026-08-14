@@ -29,12 +29,12 @@ import flet as ft
 
 from pathlib import Path
 
-from config import PROJECTS_ROOT
+from config import MUSIC_GENRE, MUSIC_GENRES, PROJECTS_ROOT
 from ..bridge import (
-    image_b64, is_answer_project, load_hidden_panels, load_narration, load_preprocessed,
-    load_review_candidates, load_review_locks, list_review_projects, narration_sha1,
-    review_thumb_path, run_blocking, save_hidden_panels,
-    save_narration_edits, save_review_locks,
+    image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
+    load_preprocessed, load_review_candidates, load_review_locks, list_review_projects,
+    narration_sha1, review_thumb_path, run_blocking, save_hidden_panels,
+    save_music_config, save_narration_edits, save_review_locks,
 )
 from ..custom_image import add_custom_image, enrich_custom_image, list_custom_images
 from ..intro_import import import_intro_image, remove_intro_image
@@ -2030,6 +2030,46 @@ def build(
                      padding=ft.padding.symmetric(horizontal=28, vertical=12)),
     ], spacing=0, expand=True)
 
+    # ─── Music genre (per project) ──────────────────────────────────────────
+    # Chosen HERE because this is the last screen before the render, and it is where Master
+    # already has the narration in front of them — the genre is a reaction to the story, not
+    # a project-setup decision. Saved on change (no extra save button): a dropdown that
+    # silently forgets is worse than one that writes eagerly, and the file is tiny.
+    music_doc = load_music_config(project) if project else {}
+
+    def _save_genre(_e=None):
+        # `text` before `value`: in Flet 0.86 Dropdown.value is the KEY of the selected
+        # OPTION, while whatever Master typed lives in Dropdown.text (see flet's own
+        # dropdown.py — "The text entered in the text field"). Reading value alone threw
+        # away every custom brief the moment focus left the field, which is precisely what
+        # editable=True exists to allow.
+        chosen = (genre_dd.text or "").strip() or (genre_dd.value or "").strip() or MUSIC_GENRE
+        save_music_config(project, {**music_doc, "genre": chosen})
+        music_doc["genre"] = chosen
+        status_text.value = f"Music genre → {chosen}"
+        status_text.color = SUCCESS
+        try:
+            status_text.update()
+        except Exception:      # not mounted yet (first paint) — value is already set
+            pass
+
+    _saved_genre = str(music_doc.get("genre") or MUSIC_GENRE)
+    genre_dd = ft.Dropdown(
+        # value only when it names a real option — a hand-typed brief is not a valid option
+        # key and setting it there renders the field blank. text carries it either way.
+        value=_saved_genre if _saved_genre in MUSIC_GENRES else None,
+        text=_saved_genre,
+        options=[ft.DropdownOption(g) for g in MUSIC_GENRES],
+        editable=True,            # presets are a starting point, not the whole vocabulary
+        # on_select fires when a preset is picked; on_blur commits a TYPED brief when the
+        # field loses focus. Deliberately NOT on_text_change — that fires per keystroke and
+        # would write the file thirty times while Master types one phrase.
+        on_select=_save_genre,
+        on_blur=_save_genre,
+        width=270,
+        text_size=12,
+    )
+
     right = ft.Column([
         ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
@@ -2046,6 +2086,19 @@ def build(
         approve_btn,
         ft.Container(height=14),
         continue_btn,
+        ft.Container(height=18),
+        ft.Divider(height=1, color=BORDER),
+        ft.Container(height=10),
+        ft.Text("MUSIC", size=10, color=TEXT_MUTED),
+        genre_dd,
+        # Says what the field does NOT do on its own. Saving here only records the choice —
+        # nothing in this screen or Stage 5 regenerates the bed, so without this line a genre
+        # change reports success, the render is re-run, and the music is identical.
+        ft.Text("Style brief for the score. Editable — type anything the generator "
+                "understands. Sparse styles are heard under narration; dense ones are not.\n"
+                "Saving only records the choice — run  python -m stages.music_bed "
+                "--project <slug>  to actually regenerate the music.",
+                size=11, color=TEXT_MUTED),
     ], spacing=8, expand=True)
 
     _refresh_approve_ui()

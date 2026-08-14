@@ -340,6 +340,24 @@ def save_hidden_panels(project_name: str, doc: dict) -> None:
     write_json_atomic(PROJECTS_ROOT / project_name / "review" / "hidden_panels.json", doc)
 
 
+def load_music_config(project_name: str) -> dict:
+    """music.json — the project's music brief ({"genre": str}). A missing file means the
+    genre was never chosen for this project, and the caller falls back to config.MUSIC_GENRE.
+    Kept at the project root rather than under review/ because it outlives the review step:
+    the render reads it, and a later cue map will sit beside it."""
+    p = PROJECTS_ROOT / project_name / "music.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def save_music_config(project_name: str, doc: dict) -> None:
+    write_json_atomic(PROJECTS_ROOT / project_name / "music.json", doc)
+
+
 def narration_sha1(project_name: str) -> str | None:
     p = PROJECTS_ROOT / project_name / "narration.json"
     if not p.exists():
