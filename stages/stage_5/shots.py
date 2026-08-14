@@ -4431,6 +4431,81 @@ def _load_custom_panel(src_path: str, out_path: Path) -> Path:
     return out_path
 
 
+def _expected_fill(region):
+    """What SHOULD be behind the lettering in this region — used to sanity-check an inpaint.
+
+    Told apart by SHAPE, not by brightness. A first attempt used "the brightest quarter of the
+    pixels" as the background, which is right for black ink on a white bubble and exactly
+    backwards for WHITE lettering on dark art (a caption box, a bright SFX): there the bright
+    quarter IS the lettering, so a correct dark fill got judged implausible and the region was
+    repainted bright — worse than the bug it was added to stop.
+
+    Paper and lettering are told apart by how the BRIGHT pixels are laid out. Measured over
+    every text region in cap-shield-broken (8) plus rendered light lettering at four sizes:
+
+        paper (bubble)   bright 71-80% in 2-10 blobs, the biggest holding 94-99% of them
+        paper, dense text  bright 18-20% shattered into 10-25 slivers, biggest only 8-19%
+        light lettering  bright 3-22% in 2-5 solid glyphs, biggest holding 25-72%
+
+    So paper is present when the bright pixels either DOMINATE the region, or are many small
+    slivers with no single dominant blob — the gaps a dense block of lettering leaves in the
+    paper. Light lettering is neither: few pixels, few pieces, one of them dominant.
+
+    Calibrated on 12 samples from one comic, and the middle rule's margin is the narrow one
+    (biggest-blob 19% for a real bubble against 25% for lettering). When it guesses wrong the
+    cost is one flat patch, never a failed render.
+    """
+    import cv2
+    import numpy as np
+
+    flat = region.reshape(-1, 3)
+    bright = (region.mean(axis=2) >= 170).astype(np.uint8)
+    if bright.any():
+        n, _lab, st, _c = cv2.connectedComponentsWithStats(bright, 8)
+        pieces = n - 1
+        biggest = (st[1:, 4].max() / bright.sum()) if pieces else 0.0
+        if bright.mean() >= 0.60 or (pieces >= 8 and biggest < 0.22):
+            return region[bright.astype(bool)].reshape(-1, 3).mean(axis=0)
+    return np.median(flat, axis=0)
+
+
+def _apply_inpaint(crop, filled, boxes: list[dict]):
+    """Paste an inpaint result back — ONLY inside the boxes, and only when it is believable.
+
+    Two failures this exists to stop, both measured on cap-shield-broken:
+
+    WHOLE-FRAME REWRITE. LaMa returns a reconstruction of the entire image, and the previous
+    code adopted it wholesale. Measured: 22-49% of a panel's pixels changed while the mask
+    covered ~1%, i.e. the artwork was silently re-rendered (through a resize round-trip on big
+    crops) every time one speech bubble was erased. Pasting per box keeps the other 99%
+    bit-identical to the scan.
+
+    HALLUCINATED FILL. A bubble's text bbox hugs the bubble, so a few pixels outside it is
+    dark art. LaMa continues THAT and paints the bubble black — measured mean 61 -> 10, a
+    black blob far worse than leaving the dialogue readable. There is no need to guess what
+    belongs there: a bubble's own interior is flat paper. So when the fill lands far from the
+    region's own background tone, drop it and repaint that tone, which reads as an empty
+    bubble — exactly what the panels LaMa handled correctly already look like.
+    """
+    import numpy as np
+
+    out = crop.copy()
+    ch, cw = crop.shape[:2]
+    for b in boxes:
+        x0, y0 = max(0, int(b["x"]) - 2), max(0, int(b["y"]) - 2)
+        x1 = min(cw, int(b["x"]) + int(b["w"]) + 2)
+        y1 = min(ch, int(b["y"]) + int(b["h"]) + 2)
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            continue
+        src_reg, new_reg = crop[y0:y1, x0:x1], filled[y0:y1, x0:x1]
+        expected = _expected_fill(src_reg)
+        if abs(float(new_reg.reshape(-1, 3).mean(axis=1).mean()) - float(expected.mean())) > 60:
+            out[y0:y1, x0:x1] = expected.astype(out.dtype)   # implausible → repaint flat
+        else:
+            out[y0:y1, x0:x1] = new_reg
+    return out
+
+
 def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
                 text_bboxes: list[dict] | None = None,
                 skip_mirror: bool = False,
@@ -4511,7 +4586,7 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
             if local:
                 cleaned = _lama_clean(crop, local, cw, ch)
                 if cleaned is not None:
-                    crop = cleaned
+                    crop = _apply_inpaint(crop, cleaned, local)
                 else:
                     mask = np.zeros((ch, cw), np.uint8)
                     for tb in local:
@@ -4520,7 +4595,12 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
                                       (min(cw, cx + tb["w"] + 4), min(ch, cy + tb["h"] + 4)),
                                       255, -1)
                     if mask.any():
-                        crop = cv2.inpaint(crop, mask, 6, cv2.INPAINT_NS)
+                        # Through the same guard as the LaMa path. cv2's Navier-Stokes fill
+                        # only touches the mask, so there is no whole-frame rewrite here — but
+                        # it diffuses the SURROUNDING pixels inward, which for a bubble ringed
+                        # by dark art smears that art across the paper just as badly.
+                        crop = _apply_inpaint(
+                            crop, cv2.inpaint(crop, mask, 6, cv2.INPAINT_NS), local)
         # 3. Mirror horizontally — UNLESS this panel has story-critical readable
         #    text baked into the art (gravestone/sign), which a flip would reverse.
         if MIRROR_PANELS and not skip_mirror:
