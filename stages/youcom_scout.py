@@ -14,6 +14,7 @@ authoritative filters stay on our side.
 Usage:
     python -m stages.youcom_scout digest                    # print the SCOUTED digest
     python -m stages.youcom_scout discover                  # 5 angled queries -> candidates
+    python -m stages.youcom_scout micro [--years "in 2025 or 2026"]   # single MOMENTS
     python -m stages.youcom_scout enumerate --question "..." [--have "item1; item2"]
     python -m stages.youcom_scout confirm --issue "Series #N (year)" --claim "..."
 
@@ -312,6 +313,122 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned → {report}")
 
 
+# ─── MICRO — one scene, one issue (the other mode) ───────────────────────────────
+# DISCOVER's whole premise is a question whose answer spans 3+ DIFFERENT comics. A micro
+# moment is the exact opposite: ONE drawn beat inside ONE issue. So it needs its own plan —
+# reusing discover's prompt returns listicles, which is what a one-off run outside the repo
+# produced before this landed.
+MICRO_ANGLES = [
+    "an A-list hero doing something shockingly out of character in a single panel sequence "
+    "fans keep sharing",
+    "a famously unbeatable character humiliated or broken in one scene readers called the "
+    "most brutal page of the year",
+    "a villain doing something so unexpected that reviewers singled out that one page",
+    "scenes fans call 'peak' or 'insane' — one specific issue, one specific page, never a "
+    "whole storyline",
+]
+
+_MICRO_PROPS = {
+    "moment": {"type": "string"},
+    "character": {"type": "string"},
+    "series_issue_year": {"type": "string"},
+    "what_visibly_happens": {"type": "string"},
+    "why_it_lands": {"type": "string"},
+    "constant_broken": {"type": "string"},     # the thing everyone "knows" about them
+    "evidence_urls": {"type": "array", "items": {"type": "string"}},
+}
+
+
+def _series_of(series_issue_year: str) -> str:
+    """"Absolute Batman #11 (2025)" -> "absolute batman". Issue number and year removed."""
+    s = re.split(r"#|\(", str(series_issue_year or ""))[0]
+    return " ".join(w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) > 1)
+
+
+def _series_burned(series_issue_year: str, digest: str) -> str | None:
+    """The digest line naming this SERIES, or None.
+
+    is_burned() is not usable here: it needs >=60% token containment and >=2 non-format
+    shared tokens, thresholds tuned for whole questions. "Absolute Batman #11 (2025)" carries
+    four tokens, two of which ("absolute", "things") are format words — so a series already
+    produced from scores 50% and slips through. A micro candidate identifies itself by SERIES,
+    so match the series name directly: being in that lane at all is the signal, whichever
+    issue it is.
+    """
+    words = _series_of(series_issue_year).split()
+    if len(words) < 2:                   # a one-word series name is too generic to match on
+        return None
+    # The lane is the first two words, not the whole string. Annuals and specials fold the
+    # year and "Annual" into the series field ("Absolute Batman 2025 Annual"), so matching
+    # the full name misses the very siblings this is meant to catch.
+    lane = " ".join(words[:2])
+    for line in digest.splitlines():
+        if line.startswith("- ") and lane in " ".join(
+                re.findall(r"[a-z0-9]+", line.lower())):
+            return line[2:][:120]
+    return None
+
+
+def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
+    """Scout single MOMENTS for micro_moment mode. Same three-part shape as run_discover:
+    our plan fans out, You.com digs, our filters decide."""
+    digest = build_scouted_digest()
+    rows, kept = [], []
+    for i, angle in enumerate(MICRO_ANGLES, 1):
+        prompt = (
+            f"{digest}\n\n=== TASK ===\n"
+            "Find ONE comic-book MICRO MOMENT: a single drawn beat inside a SINGLE issue — "
+            "not a plot, not a crossover, not a character arc. It must be VISUALLY dramatic "
+            "(something a reader SEES happen on the page), star a widely-known character, "
+            f"and be published {years}.\n"
+            "The strongest micro moment breaks a CONSTANT — the one thing everyone 'knows' "
+            "about that character — inside that single scene. Name the constant.\n"
+            "REJECT: talking-heads scenes, moments that need prior lore to follow, whole "
+            "storylines, solicitations or previews for unpublished issues, and anything "
+            "where you cannot give the exact series, issue number and year.\n"
+            f"Angle for THIS search: {angle}."
+        )
+        print(f"[micro {i}/{len(MICRO_ANGLES)}] {angle[:60]}…", flush=True)
+        resp = _call_logged(key, prompt, effort, _schema(_MICRO_PROPS), outdir, f"micro{i}")
+        for c in _cands(resp):
+            c["_angle"] = angle
+            rows.append(c)
+    for c in rows:
+        # Burn-check on series+issue AND on the moment text: the same scene resurfaces
+        # under a different phrasing across angles, and a sibling issue of an already-
+        # produced series is the commonest false lead (measured: 3 of 7 candidates in the
+        # first run were Absolute Batman, a series already produced from and noted in the
+        # ban list as having 8 breakdowns in one week).
+        hit = (_series_burned(c.get("series_issue_year", ""), digest)
+               or is_burned(c.get("moment", ""), digest))
+        if hit:
+            c["_dropped_as_burned"] = hit
+        else:
+            kept.append(c)
+
+    report = outdir / "micro_report.md"
+    lines = ["# MICRO MOMENTS — candidates for Master\n"]
+    for c in kept:
+        lines += [f"## {c.get('character')} — {c.get('series_issue_year')}",
+                  f"- moment: {str(c.get('moment', ''))[:300]}",
+                  f"- constant broken: {c.get('constant_broken', '')}",
+                  f"- what is SEEN: {str(c.get('what_visibly_happens', ''))[:300]}",
+                  f"- why it lands: {str(c.get('why_it_lands', ''))[:300]}",
+                  f"- evidence: {' '.join(c.get('evidence_urls') or [])}", ""]
+    dropped = [c for c in rows if c.get("_dropped_as_burned")]
+    if dropped:
+        lines += ["## Dropped as burned (our hard filter, not You.com's)"]
+        lines += [f"- {c.get('series_issue_year')}  ⇒ collides with: {c['_dropped_as_burned']}"
+                  for c in dropped]
+    lines += ["",
+              "## STILL UNVERIFIED — do these before producing",
+              "- on batcave.biz? (Cloudflare 403s plain HTTP; needs the nodriver scraper)",
+              "- narration coverage: search AGAIN with different phrasing before trusting a "
+              "clean verdict (see .claude/memory/scout_jeff_narration_missed.md)"]
+    report.write_text("\n".join(lines), encoding="utf-8")
+    print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned → {report}")
+
+
 def run_enumerate(key: str, outdir: Path, question: str, have: list[str], effort: str) -> None:
     angles = [
         "in OTHER heroes' own comics (Iron Man, Avengers, X-Men, Fantastic Four books), "
@@ -457,6 +574,10 @@ def main() -> None:
     sub.add_parser("digest")
     d = sub.add_parser("discover")
     d.add_argument("--effort", default="standard")
+    m = sub.add_parser("micro", help="scout single MOMENTS for micro_moment mode")
+    m.add_argument("--effort", default="deep")
+    m.add_argument("--years", default="2010 or later, strongly preferring the last two years",
+                   help='publication window phrasing, e.g. "in 2025 or 2026"')
     e = sub.add_parser("enumerate")
     e.add_argument("--question", required=True)
     e.add_argument("--have", default="", help="semicolon-separated items already found")
@@ -475,6 +596,8 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     if args.cmd == "discover":
         run_discover(key, outdir, args.effort)
+    elif args.cmd == "micro":
+        run_micro(key, outdir, args.effort, args.years)
     elif args.cmd == "enumerate":
         have = [s.strip() for s in args.have.split(";") if s.strip()]
         run_enumerate(key, outdir, args.question, have, args.effort)
