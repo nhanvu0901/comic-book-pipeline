@@ -14,7 +14,7 @@ from typing import Callable
 
 import flet as ft
 
-from ..bridge import (
+from ..bridge import (asset_src, 
     ensure_panel_thumbs, format_exception, is_answer_project, load_narration,
     page_numbers, panels_for_page, render_scene_panel_path, run_blocking,
     run_stage6_render, save_narration_edits,
@@ -41,7 +41,7 @@ def _panel_label(page: int, panel_ref: int) -> str:
 
 def _thumb_image(path: str, *, width: int) -> ft.Control:
     if path and Path(path).exists():
-        return ft.Image(src=path, width=width, fit=ft.BoxFit.CONTAIN, border_radius=2)
+        return ft.Image(src=asset_src(path), width=width, fit=ft.BoxFit.CONTAIN, border_radius=2)
     return ft.Container(
         width=width, height=int(width * 0.62), bgcolor=BG_ELEVATED,
         border=ft.border.all(1, BORDER), border_radius=2, alignment=ft.Alignment.CENTER,

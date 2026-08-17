@@ -12,7 +12,7 @@ from typing import Callable
 
 import flet as ft
 
-from ..bridge import format_exception, load_preprocessed, run_blocking, run_stage_2
+from ..bridge import asset_src, format_exception, load_preprocessed, run_blocking, run_stage_2
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
@@ -234,7 +234,7 @@ def _thumbnail(pg: dict, *, on_click: Callable) -> ft.Control:
         tag_color = STATUS_PENDING
 
     img_ctl = (
-        ft.Image(src=img_path, width=160, height=200, fit=ft.BoxFit.COVER,
+        ft.Image(src=asset_src(img_path), width=160, height=200, fit=ft.BoxFit.COVER,
                  border_radius=4)
         if img_path and Path(img_path).exists()
         else ft.Container(width=160, height=200, bgcolor=BG_PANEL, border_radius=4)

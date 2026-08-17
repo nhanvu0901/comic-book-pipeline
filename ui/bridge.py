@@ -366,13 +366,46 @@ def narration_sha1(project_name: str) -> str | None:
     return hashlib.sha1(p.read_bytes()).hexdigest()
 
 
+# Set once at launch by `python -m ui --lan`. Desktop stays False, so its behaviour — and
+# every path below — is byte-identical to before this existed.
+WEB_MODE = False
+
+
+def set_web_mode(on: bool) -> None:
+    global WEB_MODE
+    WEB_MODE = bool(on)
+
+
+def asset_src(abs_path: str | Path) -> str:
+    """An `ft.Image(src=...)` value that works in whichever mode the UI is running in.
+
+    DESKTOP: the absolute path. The Flutter client reads it off disk lazily as the ListView
+    scrolls, which is the whole reason this screen does not use base64 — embedding every tile
+    up front (100+ per beat × 25 beats) once killed the client outright.
+
+    WEB: a path RELATIVE to PROJECTS_ROOT, which `--lan` hands to flet as its assets_dir. The
+    browser then fetches each thumb over HTTP, lazily, for the same reason. A local absolute
+    path as src is simply unreachable from another device — that is why the review screen
+    showed no images at all over the LAN.
+    """
+    p = Path(abs_path or "")
+    if not p.exists():
+        return ""
+    if not WEB_MODE:
+        return str(p)
+    try:
+        return "/" + p.resolve().relative_to(PROJECTS_ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(p)          # outside projects/ — nothing to serve it from
+
+
 def review_thumb_path(project_name: str, rel_path: str) -> str:
-    """Resolve a candidate's "review/thumbs/..." path to an absolute path,
-    or "" if missing."""
+    """Resolve a candidate's "review/thumbs/..." path to something ft.Image can load,
+    or "" if missing. Mode-aware — see asset_src."""
     if not rel_path:
         return ""
     full = PROJECTS_ROOT / project_name / rel_path
-    return str(full) if full.exists() else ""
+    return asset_src(full)
 
 
 

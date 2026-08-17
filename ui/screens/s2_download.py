@@ -11,7 +11,7 @@ from typing import Callable
 
 import flet as ft
 
-from ..bridge import (
+from ..bridge import (asset_src, 
     format_exception, load_raw_pages, run_blocking,
     run_stage_download, run_stage_download_from_url, run_stage_download_saga,
 )
@@ -311,7 +311,7 @@ def build(
 def _thumbnail(img_path: Path, label: str) -> ft.Control:
     name = img_path.name if img_path.exists() else "?"
     img_ctl = (
-        ft.Image(src=str(img_path), width=130, height=180, fit=ft.BoxFit.COVER,
+        ft.Image(src=asset_src(img_path), width=130, height=180, fit=ft.BoxFit.COVER,
                  border_radius=4)
         if img_path.exists()
         else ft.Container(width=130, height=180, bgcolor=BG_PANEL, border_radius=4)
