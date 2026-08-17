@@ -130,6 +130,17 @@ VLM_BATCH_SIZE = int(os.getenv("VLM_BATCH_SIZE", "3"))  # pages per VLM call
 #   1 = re-enable the VLM OpenRouter desc extraction (old behaviour, byte-identical).
 VLM_EXTRACT = os.getenv("VLM_EXTRACT", "0").strip().lower() not in ("0", "false", "no", "")
 
+# Master 2026-08-13: the VLM pass that NAMES Magi's character clusters is DISABLED via this
+# knob, NOT deleted — same treatment as VLM_EXTRACT above. It is dead cost: reference-counted
+# by hand, cluster_to_name.json is loaded in two places, threaded through six signatures in
+# stage_5/shots.py, and lands in _match_panels(), which never reads the argument. Nothing maps
+# a cluster id to a name anywhere else either — speaker_cluster_id appears only inside Stage 2,
+# and Stage 3 never touches clusters. So the names reach no render decision, while the pass
+# itself costs ~8 VLM calls per project and was measured naming ALL 8 clusters "Hulk" on
+# hulk-smash-asteroid — a book whose dialogue is largely the Leader's.
+# CLUSTER_NAMER=1 restores it byte-for-byte.
+CLUSTER_NAMER = os.getenv("CLUSTER_NAMER", "0").strip().lower() not in ("0", "false", "no", "")
+
 # ─── Stage 2 perf (2026-07-06) ──────────────────────────────────────────────
 # Magi panel-detection is a LOCAL model (Florence-2, float32 on Mac MPS) run once
 # per page — the biggest local-compute block of Stage 2. Its API already takes a

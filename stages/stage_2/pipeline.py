@@ -24,7 +24,8 @@ from typing import Callable
 
 from PIL import Image
 
-from config import VLM_BATCH_SIZE, VLM_EXTRACT, VLM_MODEL, VLM_PAGE_WORKERS, get_project_dirs
+from config import (CLUSTER_NAMER, VLM_BATCH_SIZE, VLM_EXTRACT, VLM_MODEL, VLM_PAGE_WORKERS,
+                    get_project_dirs)
 from .._panel_index import DIALOG_TRUTH
 from .cache import image_hash, load_cached, save_cached
 from .panel_detect import assign_to_panels, detect_full
@@ -795,6 +796,9 @@ def _resolve_clusters_after_preprocess(
 ) -> None:
     """v5 Phase 2: VLM-name Magi character clusters. Skips if no clusters found
     or cluster_to_name.json already exists."""
+    if not CLUSTER_NAMER:
+        log("[preprocess] cluster naming SKIPPED (CLUSTER_NAMER=0 — nothing reads the names)")
+        return
     out_path = project_root / "cluster_to_name.json"
     if out_path.exists():
         log(f"[preprocess] cluster_to_name.json already exists — skipping naming")
