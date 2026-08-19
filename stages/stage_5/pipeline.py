@@ -205,7 +205,7 @@ def assemble_project(
     # with --force and Stage 5 without it: the hash guard above passes (Stage 4 refreshes the
     # sidecar), so nothing else catches it. The bed has to be in that comparison too, or
     # generating a new bgm.wav and re-rendering silently keeps the old music.
-    bgm = _resolve_bgm(log=log, root=root)
+    bgm = _ensure_music_bed(project_name, root=root, log=log)
     _inputs = [audio_path] + ([bgm] if bgm else [])
     if (audio_mixed_path.exists() and not force
             and all(audio_mixed_path.stat().st_mtime >= p.stat().st_mtime for p in _inputs)):
@@ -990,6 +990,35 @@ def _resolve_bgm(bg_music_path=None, enable_music: bool = True, log=print, *,
         if c and Path(c).exists():
             return Path(c)
     return None
+
+
+def _ensure_music_bed(project_name: str, *, root: Path, log=print) -> Path | None:
+    """Return a project bed, generating it on the normal Stage 5 path when needed.
+
+    A project-local bed is stable and wins. Otherwise the optional generator creates its
+    narration-length bed before the normal resolver is allowed to fall back to a shared file.
+    Music is deliberately fail-soft: a failed LLM/ACE-Step call must never block a video.
+    """
+    from config import AUTO_GENERATE_BG_MUSIC, ENABLE_BG_MUSIC
+
+    local = next((root / f"bgm.{ext}" for ext in ("mp3", "m4a", "wav", "ogg", "flac")
+                  if (root / f"bgm.{ext}").exists()), None)
+    if local or not (AUTO_GENERATE_BG_MUSIC and ENABLE_BG_MUSIC):
+        return _resolve_bgm(log=log, root=root)
+
+    try:
+        from .. import music_bed
+        log("[stage5] no project music bed — generating score")
+        if music_bed.build_brief(project_name, log=log) is None:
+            log("[stage5] music brief unavailable — narration-only")
+        else:
+            bed = music_bed.generate_bed(project_name, log=log)
+            if bed and bed.exists():
+                return bed
+            log("[stage5] music generation unavailable — narration-only")
+    except Exception as exc:  # a score is optional; renderer remains reliable
+        log(f"[stage5] music generation failed ({exc}) — narration-only")
+    return _resolve_bgm(log=log, root=root)
 
 
 def _require_ffmpeg() -> str:

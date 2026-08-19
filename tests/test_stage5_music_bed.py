@@ -13,7 +13,7 @@ import subprocess
 import pytest
 
 from stages.stage_5.audio import _duck_expr, _require_ffmpeg, _silences, mix_audio
-from stages.stage_5.pipeline import _resolve_bgm
+from stages.stage_5.pipeline import _ensure_music_bed, _resolve_bgm
 
 
 def _tone(path, *, freq=220, dur=3.0, vol=0.4, gaps=False):
@@ -64,6 +64,30 @@ def test_resolve_bgm_keeps_the_three_positional_call_art_pipeline_makes():
     """art_pipeline/assemble.py:588 calls _resolve_bgm(path, enable, log) positionally.
     That call site is why this function lives in stage_5.pipeline at all."""
     assert _resolve_bgm(None, False, lambda _m: None) is None
+
+
+def test_stage5_generates_a_missing_project_bed_before_mixing(tmp_path, monkeypatch):
+    """Normal Stage 5 owns generation: genre may be absent, in which case its LLM brief
+    chooses it; a successful ACE-Step result is the file that Stage 5 then resolves."""
+    from stages import music_bed
+
+    monkeypatch.setattr("config.AUTO_GENERATE_BG_MUSIC", True, raising=False)
+    monkeypatch.setattr("stages.stage_5.pipeline.PROJECTS_ROOT", tmp_path)
+    root = tmp_path / "project"
+    root.mkdir()
+    bed = root / "bgm.wav"
+    calls = []
+
+    monkeypatch.setattr(music_bed, "build_brief", lambda project, log: calls.append(("brief", project)) or {"prompt": "x"})
+    def _generate(project, log):
+        calls.append(("bed", project))
+        bed.write_bytes(b"generated")
+        return bed
+
+    monkeypatch.setattr(music_bed, "generate_bed", _generate)
+
+    assert _ensure_music_bed("project", root=root, log=lambda _m: None) == bed
+    assert calls == [("brief", "project"), ("bed", "project")]
 
 
 # ─── duck curve ──────────────────────────────────────────────────────────────

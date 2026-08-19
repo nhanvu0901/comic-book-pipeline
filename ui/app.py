@@ -10,16 +10,17 @@ from __future__ import annotations
 import flet as ft
 
 from .screens import (
-    s1_identify, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video,
+    s1_identify, s1_research_scout, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video,
     s6_review, s_review_gate,
 )
+from .bridge import list_scout_sessions
 from .state import (AppState, PICKER_STAGE, list_projects, load_state,
                     save_state)
 from .theme import BG, BG_PANEL, BORDER, ACCENT, TEXT_MUTED, TEXT_PRIMARY, apply_theme
 
 
 STAGE_BUILDERS = {
-    1: s1_identify.build,
+    1: s1_research_scout.build,
     2: s2_download.build,
     3: s2_preprocess.build,
     4: s3_narrate.build,
@@ -100,6 +101,9 @@ def _show_project_picker(page: ft.Page, state: AppState, on_selected):
     def new_project(_e):
         # leave project empty — screen 1 will slug-create one from the prompt
         state.project_name = ""
+        state.scout_session_id = ""
+        state.scout_mode = "qa"
+        state.last_prompt = ""
         state.current_stage = 1
         state.approved = {}
         state.dirty = {}
@@ -131,6 +135,42 @@ def _show_project_picker(page: ft.Page, state: AppState, on_selected):
         rows.append(ft.Container(height=8))
     else:
         rows.append(ft.Text("No existing projects found.", color=TEXT_MUTED, size=12))
+        rows.append(ft.Container(height=8))
+
+    scout_sessions = list_scout_sessions()
+    if scout_sessions:
+        rows.extend([
+            ft.Text("UNFINISHED RESEARCH", size=10, color=TEXT_MUTED,
+                    weight=ft.FontWeight.BOLD),
+            ft.Text("Resume a scout session without creating a project yet.",
+                    size=12, color=TEXT_MUTED),
+        ])
+
+        def resume(session):
+            state.project_name = ""
+            state.scout_session_id = session.id
+            state.scout_mode = session.mode.value
+            state.last_prompt = session.user_intent
+            state.current_stage = 1
+            page.views.clear()
+            on_selected()
+
+        for session in scout_sessions:
+            rows.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
+                                size=13, color=TEXT_PRIMARY),
+                        ft.Text(f"{session.id} · {session.state.value}",
+                                size=10, color=TEXT_MUTED),
+                    ], spacing=3),
+                    padding=ft.padding.symmetric(horizontal=14, vertical=10),
+                    border=ft.border.all(1, BORDER),
+                    border_radius=6,
+                    ink=True,
+                    on_click=lambda _e, s=session: resume(s),
+                )
+            )
         rows.append(ft.Container(height=8))
 
     actions: list[ft.Control] = [

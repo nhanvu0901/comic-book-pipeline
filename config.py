@@ -29,6 +29,7 @@ MAX_PHASE_RETRIES = int(os.getenv("MAX_PHASE_RETRIES", "3"))
 # ─── LLM (OpenRouter, OpenAI-compatible) ────────────────────────────────────
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+SCOUT_EVIDENCE_MODEL = os.getenv("SCOUT_EVIDENCE_MODEL", "deepseek/deepseek-v4-flash")
 
 _DEFAULT_LLM_CHAIN = (
     "minimax/minimax-m2.5:free,"
@@ -512,6 +513,10 @@ ENABLE_TITLE_BANNER = os.getenv("ENABLE_TITLE_BANNER", "true").lower() in ("true
 # -15 and 0.04 LU at -20, so anything in this band is free to tune BY EAR — it cannot break the
 # -14 LUFS normalisation.
 ENABLE_BG_MUSIC = os.getenv("ENABLE_BG_MUSIC", "true").lower() in ("true", "1", "yes")
+# Normal Stage 5 renders own their score: when a project has no generated `bgm.*`, create a
+# brief from the final narration (respecting a Review Beats genre pick when present) and ask
+# ACE-Step for the bed. Failures remain soft — narration-only is always renderable.
+AUTO_GENERATE_BG_MUSIC = os.getenv("AUTO_GENERATE_BG_MUSIC", "true").lower() in ("true", "1", "yes")
 
 # ─── Music GENRE (per project, chosen in the Review Beats UI) ────────────────
 # The style brief a generator is asked for. "minimal dark cinematic" is the default because
@@ -531,7 +536,9 @@ MUSIC_GENRES: list[str] = [
     g.strip() for g in os.getenv("MUSIC_GENRES", _DEFAULT_MUSIC_GENRES).split(",") if g.strip()
 ]
 
-# ─── Music generation (stages/music_bed.py → ACE-Step in .venv-acestep) ──────
+# ─── Music generation (stages/music_bed.py → ACE-Step DirectML runtime) ──────
+# Production defaults to the isolated DirectML venv. Relative overrides resolve from the repo.
+ACESTEP_VENV = os.getenv("ACESTEP_VENV", ".venv-acestep-directml")
 # The LLM that reads the narration and writes the ACE-Step tag list. A CHAIN, not one model:
 # measured 5/6 successful calls on deepseek-v4-flash — one returned empty, which config.py
 # already warns about above. Called through OpenRouter directly, NOT the SDK, and it does not
@@ -590,6 +597,7 @@ FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__f
 # ─── Project Storage ────────────────────────────────────────────────────────
 PROJECTS_ROOT = Path(__file__).parent / "projects"
 PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+RESEARCH_SESSIONS_ROOT = Path(__file__).parent / "research_sessions"
 
 
 def get_project_path(project_name: str) -> Path:

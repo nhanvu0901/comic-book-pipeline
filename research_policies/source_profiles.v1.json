@@ -1,0 +1,28 @@
+{
+  "general_research": {
+    "domains": [
+      "marvel.fandom.com",
+      "dc.fandom.com",
+      "comicbookroundup.com",
+      "aiptcomics.com",
+      "multiversitycomics.com",
+      "cbr.com",
+      "leagueofcomicgeeks.com",
+      "reddit.com"
+    ],
+    "purpose": "Discover broad candidate questions and moments from comic-focused sources."
+  },
+  "specific_web_search": {
+    "domains": [
+      "marvel.fandom.com",
+      "dc.fandom.com",
+      "comicbookroundup.com",
+      "aiptcomics.com",
+      "multiversitycomics.com",
+      "cbr.com",
+      "leagueofcomicgeeks.com",
+      "reddit.com"
+    ],
+    "purpose": "Verify a selected candidate with targeted web searches."
+  }
+}

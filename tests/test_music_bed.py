@@ -5,6 +5,8 @@ project with no music renders narration-only, which is what every project shippe
 this existed does, so a broken generator must never be able to fail a render.
 """
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +39,82 @@ def test_venv_python_probes_both_layouts(tmp_path):
 
     missing = tmp_path / "c"
     assert music_bed._venv_python(missing) == missing / "bin" / "python"
+
+
+def test_default_acestep_runtime_is_directml(monkeypatch):
+    monkeypatch.delenv("ACESTEP_VENV", raising=False)
+    assert music_bed._venv_python().parent.parent.name == ".venv-acestep-directml"
+
+
+def test_worker_reports_directml_success_and_selects_device(monkeypatch, tmp_path, capsys):
+    """The worker must expose the backend/device it actually selected."""
+    from stages import _acestep_worker as worker
+
+    selected = {}
+
+    class _Pipeline:
+        checkpoint_dir = str(tmp_path / "checkpoints")
+
+        def __init__(self, **kwargs):
+            selected["dtype"] = kwargs["dtype"]
+            self.device = None
+
+        def load_checkpoint(self, _checkpoint_dir):
+            selected["load_device"] = str(self.device)
+
+        def __call__(self, **kwargs):
+            Path(kwargs["save_path"]).write_bytes(b"RIFF")
+
+    class _DirectML:
+        @staticmethod
+        def device():
+            return "privateuseone:0"
+
+    monkeypatch.setitem(sys.modules, "soundfile", type("_SoundFile", (), {}))
+    monkeypatch.setitem(sys.modules, "torchaudio", type("_TorchAudio", (), {}))
+    monkeypatch.setitem(sys.modules, "torch_directml", _DirectML)
+    monkeypatch.setitem(sys.modules, "acestep.pipeline_ace_step", type(
+        "_AceStepModule", (), {"ACEStepPipeline": _Pipeline}))
+    monkeypatch.setattr(sys, "argv", ["worker", str(tmp_path / "job.json")])
+    job = {"prompt": "minimal dark cinematic", "seconds": 2, "out": str(tmp_path / "out.wav")}
+    (tmp_path / "job.json").write_text(json.dumps(job), encoding="utf-8")
+
+    assert worker.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["backend"] == "directml"
+    assert payload["device"] == "privateuseone:0"
+    assert selected["dtype"] == "float16"
+    assert selected["load_device"] == "privateuseone:0"
+
+
+def test_worker_error_contains_traceback_and_backend(monkeypatch, tmp_path, capsys):
+    """A worker crash must be diagnosable even when ACE-Step fails before writing audio."""
+    from stages import _acestep_worker as worker
+
+    class _DirectML:
+        @staticmethod
+        def device():
+            return "privateuseone:0"
+
+    class _Pipeline:
+        def __init__(self, **_kwargs):
+            raise RuntimeError("synthetic ACE-Step failure")
+
+    monkeypatch.setitem(sys.modules, "soundfile", type("_SoundFile", (), {}))
+    monkeypatch.setitem(sys.modules, "torchaudio", type("_TorchAudio", (), {}))
+    monkeypatch.setitem(sys.modules, "torch_directml", _DirectML)
+    monkeypatch.setitem(sys.modules, "acestep.pipeline_ace_step", type(
+        "_AceStepModule", (), {"ACEStepPipeline": _Pipeline}))
+    monkeypatch.setattr(sys, "argv", ["worker", str(tmp_path / "job.json")])
+    (tmp_path / "job.json").write_text(json.dumps({"out": str(tmp_path / "out.wav")}),
+                                        encoding="utf-8")
+
+    assert worker.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["backend"] == "directml"
+    assert payload["device"] == "privateuseone:0"
+    assert "RuntimeError: synthetic ACE-Step failure" in payload["traceback"]
 
 
 # ─── length ─────────────────────────────────────────────────────────────────
@@ -129,6 +207,63 @@ def test_generate_without_a_brief_is_a_no_op(tmp_path, monkeypatch):
     monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
     _project(tmp_path, "p")
     assert music_bed.generate_bed("p", log=lambda _m: None) is None
+
+
+def test_generate_uses_target_python_worker_command_and_json_protocol(tmp_path, monkeypatch):
+    """Generation passes the job file to the worker executed by the selected venv."""
+    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
+    root = _project(tmp_path, "p")
+    (root / "music.json").write_text(json.dumps({"prompt": "x, instrumental",
+                                                 "length_seconds": 2}))
+    py = tmp_path / "venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: py)
+    seen = {}
+
+    class _R:
+        stdout = json.dumps({"ok": True, "backend": "directml",
+                             "device": "privateuseone:0", "elapsed": 0.1})
+        returncode = 0
+
+    def _run(argv, **_kwargs):
+        seen["argv"] = argv
+        job = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        Path(job["out"]).write_bytes(b"RIFF")
+        return _R()
+
+    monkeypatch.setattr(music_bed.subprocess, "run", _run)
+    out = music_bed.generate_bed("p", force=True, log=lambda _m: None)
+
+    assert out == root / "bgm.wav"
+    assert seen["argv"][:2] == [str(py), str(music_bed._WORKER)]
+    assert Path(seen["argv"][2]).name == "job.json"
+
+
+def test_generate_rejects_a_non_directml_worker_success(tmp_path, monkeypatch):
+    """A worker success from CPU or an unknown backend must never create a production bed."""
+    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
+    root = _project(tmp_path, "p")
+    (root / "music.json").write_text(json.dumps({"prompt": "x, instrumental",
+                                                 "length_seconds": 2}))
+    py = tmp_path / "venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: py)
+
+    def _run(argv, **_kwargs):
+        job = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        Path(job["out"]).write_bytes(b"CPU-BED")
+
+        class _R:
+            stdout = json.dumps({"ok": True, "backend": "cpu", "device": "cpu"})
+            returncode = 0
+
+        return _R()
+
+    monkeypatch.setattr(music_bed.subprocess, "run", _run)
+    assert music_bed.generate_bed("p", force=True, log=lambda _m: None) is None
+    assert not (root / "bgm.wav").exists()
 
 
 def _stamp_for(prompt: str, genre: str = "") -> str:

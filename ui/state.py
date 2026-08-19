@@ -41,6 +41,10 @@ class AppState:
     # Stage 1
     last_prompt: str = ""
     pipeline_mode: str = "narrate_1_comic"
+    # Research Scout sessions live independently of projects, so this identity
+    # remains available while Stage 1 is still collecting evidence.
+    scout_session_id: str = ""
+    scout_mode: str = "qa"
     # Stage 3
     chosen_mode: str = ""
     chosen_hook: str = ""

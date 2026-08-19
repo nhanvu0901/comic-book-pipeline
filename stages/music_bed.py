@@ -36,8 +36,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from config import (ACESTEP_GUIDANCE, ACESTEP_SEED, ACESTEP_STEPS, MUSIC_BRIEF_MODELS,
-                    MUSIC_GENRE, PROJECTS_ROOT)
+from config import (ACESTEP_GUIDANCE, ACESTEP_SEED, ACESTEP_STEPS, ACESTEP_VENV,
+                    MUSIC_BRIEF_MODELS, MUSIC_GENRE, PROJECTS_ROOT)
 
 _WORKER = Path(__file__).resolve().parent / "_acestep_worker.py"
 
@@ -45,8 +45,10 @@ _WORKER = Path(__file__).resolve().parent / "_acestep_worker.py"
 def _venv_python(venv_dir=None) -> Path:
     """The ACE-Step venv's interpreter. Same probe as chatterbox_tts._venv_python — POSIX
     lays it out as bin/python, Windows as Scripts/python.exe."""
-    d = Path(venv_dir) if venv_dir else Path(
-        os.getenv("ACESTEP_VENV", _REPO_ROOT / ".venv-acestep"))
+    configured = os.getenv("ACESTEP_VENV", ACESTEP_VENV)
+    d = Path(venv_dir) if venv_dir else Path(configured)
+    if not d.is_absolute():
+        d = _REPO_ROOT / d
     for rel in (("bin", "python"), ("Scripts", "python.exe")):
         p = d.joinpath(*rel)
         if p.exists():
@@ -237,7 +239,7 @@ def generate_bed(project: str, *, force: bool = False, log=print) -> Path | None
         "steps": ACESTEP_STEPS, "guidance": ACESTEP_GUIDANCE, "seed": ACESTEP_SEED,
     }), encoding="utf-8")
 
-    log(f"[music] generating {seconds:.0f}s bed (~{seconds * 2.4 / 60:.1f} min on CPU)…")
+    log(f"[music] generating {seconds:.0f}s bed (~{seconds * 2.4 / 60:.1f} min on DirectML)…")
     # Clear the old bed and its stamp BEFORE generating. Otherwise a worker that dies without
     # printing (OOM, a DLL that fails to load — see _acestep_worker's own note on torchcodec)
     # leaves the previous genre's wav sitting there, `out.exists()` reads as success, and it
@@ -256,12 +258,21 @@ def generate_bed(project: str, *, force: bool = False, log=print) -> Path | None
         except json.JSONDecodeError:
             continue
         if msg.get("error"):
-            log(f"[music] generation failed: {msg['error']} — no bed")
+            detail = msg["error"]
+            if msg.get("traceback"):
+                detail += f"\n{msg['traceback']}"
+            log(f"[music] generation failed: {detail} — no bed")
             out.unlink(missing_ok=True)
             return None
         if msg.get("ok"):
+            if msg.get("backend") != "directml" or not msg.get("device"):
+                log(f"[music] rejected worker success from unsupported backend/device: "
+                    f"{msg.get('backend')}/{msg.get('device')} — no bed")
+                out.unlink(missing_ok=True)
+                return None
             produced = True
-            log(f"[music] bed written in {msg.get('elapsed')}s → {out.name}")
+            log(f"[music] bed written in {msg.get('elapsed')}s via "
+                f"{msg.get('backend', 'unknown')}/{msg.get('device', 'unknown')} → {out.name}")
     # BOTH conditions: the worker has to have SAID it finished and the wav has to be there.
     # Trusting the file alone let a crashed run inherit whatever was on disk.
     if not (produced and out.exists()):

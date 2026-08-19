@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from config import PROJECTS_ROOT
+from config import PROJECTS_ROOT, RESEARCH_SESSIONS_ROOT
 from utils.atomic_json import write_json_atomic   # re-exported: ui.state / ui.custom_image import it from here
 
 
@@ -39,6 +39,129 @@ def _strip_ansi(text: str) -> str:
 async def run_blocking(fn: Callable[..., Any], *args, **kwargs) -> Any:
     """Run a blocking callable in a worker thread."""
     return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+# ─── Stage 1: Research Scout bridge ────────────────────────────────────────
+
+def _scout_store(root: Path | None = None):
+    from stages.research_scout.storage import SessionStore
+
+    return SessionStore(root or RESEARCH_SESSIONS_ROOT)
+
+
+def _scout_workflow(root: Path | None = None):
+    from stages.research_scout.workflow import ScoutWorkflow
+
+    return ScoutWorkflow(store=_scout_store(root))
+
+
+def start_scout_session(mode: str, user_intent: str):
+    from stages.research_scout.models import ScoutMode
+
+    intent = str(user_intent or "").strip()
+    if not intent:
+        raise ValueError("Research intent must not be empty")
+    return _scout_workflow().start(ScoutMode(mode), intent)
+
+
+def run_scout_general(session_id: str):
+    return _scout_workflow().run_general(session_id)
+
+
+def run_scout_specific(session_id: str):
+    return _scout_workflow().research_specific(session_id)
+
+
+def approve_scout_general(session_id: str, candidate_id: str):
+    return _scout_workflow().approve_general(session_id, candidate_id)
+
+
+def approve_scout_specific(
+    session_id: str,
+    candidate_ids: list[str] | tuple[str, ...],
+    feedback: str = "",
+):
+    return _scout_workflow().decide_specific(session_id, candidate_ids, feedback=feedback)
+
+
+def archive_scout_session(session_id: str, reason: str = "Research restarted"):
+    workflow = _scout_workflow()
+    try:
+        return workflow.archive(session_id, reason)
+    except Exception as exc:
+        # A newly created GENERAL_DRAFT has no normal review transition yet,
+        # but starting over must still archive it rather than delete its data.
+        from stages.research_scout.models import SessionState
+        from stages.research_scout.workflow import InvalidTransition
+
+        if not isinstance(exc, InvalidTransition):
+            raise
+        session = workflow.store.load(session_id)
+        if session.state is not SessionState.GENERAL_DRAFT:
+            raise
+        session.state = SessionState.ARCHIVED
+        return workflow.store.save(
+            session,
+            event="session_archived",
+            detail={"reason": reason},
+        )
+
+
+def create_scout_project(session_id: str, project_slug: str) -> str:
+    from stages.research_scout.project_factory import create_project_from_session
+
+    return create_project_from_session(session_id, project_slug)
+
+
+def list_scout_sessions(root: Path | None = None) -> list[Any]:
+    """Return unfinished sessions, including sessions with no project yet."""
+    from stages.research_scout.models import SessionState
+
+    store = _scout_store(root)
+    sessions = []
+    for session_dir in sorted(store.root.iterdir()):
+        if not session_dir.is_dir() or not (session_dir / "session.json").exists():
+            continue
+        try:
+            session = store.load(session_dir.name)
+        except Exception:
+            continue
+        if session.state not in {SessionState.ARCHIVED, SessionState.COMPLETE}:
+            sessions.append(session)
+    return sessions
+
+
+def load_scout_session(session_id: str, root: Path | None = None):
+    return _scout_store(root).load(session_id)
+
+
+def load_scout_candidates(session_id: str, root: Path | None = None) -> list[dict]:
+    store = _scout_store(root)
+    path = store.artifact_path(session_id, "general/candidates.v1.json")
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    candidates = data.get("candidates", []) if isinstance(data, dict) else []
+    return [dict(candidate) for candidate in candidates if isinstance(candidate, dict)]
+
+
+def load_scout_gates(session_id: str, root: Path | None = None) -> list[dict]:
+    store = _scout_store(root)
+    path = store.artifact_path(session_id, "specific/evidence_gate.v1.json")
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        return [dict(gate) for gate in data if isinstance(gate, dict)]
+    if isinstance(data, dict) and isinstance(data.get("gates"), list):
+        return [dict(gate) for gate in data["gates"] if isinstance(gate, dict)]
+    return [data] if isinstance(data, dict) else []
 
 
 # ─── Phase approval bridge (new interactive agent flow) ────────────────────

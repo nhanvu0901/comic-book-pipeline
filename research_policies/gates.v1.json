@@ -1,0 +1,7 @@
+{
+  "qa_min_items": 3,
+  "qa_max_items": 5,
+  "micro_exact_issue_required": true,
+  "search_query_max_words": 45,
+  "search_query_max_chars": 360
+}
