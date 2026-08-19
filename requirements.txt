@@ -3,6 +3,7 @@ openai>=1.50.0
 requests>=2.31.0
 tavily-python>=0.3.0
 python-dotenv>=1.0.0
+gradio_client>=2.6.0
 # Claude Agent SDK — Stage 1/3 text LLM routes through the local Claude Code
 # engine (subscription auth via ~/.claude.json) via claude_agent_sdk.query(),
 # falling back to the OpenRouter chain when unavailable. Streaming connection,

@@ -200,20 +200,12 @@ def assemble_project(
         _assemble_video(shots, shot_paths, silent_video_path,
                         outro_card=outro_card, outro_dur=outro_dur, project=project_name)
 
-    # Reuse only if the mix is NEWER than every input it was built from — the narration audio
-    # AND the music bed. A bare exists() check shipped stale audio whenever Stage 4 was re-run
-    # with --force and Stage 5 without it: the hash guard above passes (Stage 4 refreshes the
-    # sidecar), so nothing else catches it. The bed has to be in that comparison too, or
-    # generating a new bgm.wav and re-rendering silently keeps the old music.
-    bgm = _ensure_music_bed(project_name, root=root, log=log)
-    _inputs = [audio_path] + ([bgm] if bgm else [])
-    if (audio_mixed_path.exists() and not force
-            and all(audio_mixed_path.stat().st_mtime >= p.stat().st_mtime for p in _inputs)):
+    # Phase one deliberately has no score. It creates a valid narration-only final MP4 first;
+    # its measured duration is the only duration passed to MiniMax in phase two.
+    if audio_mixed_path.exists() and not force and audio_mixed_path.stat().st_mtime >= audio_path.stat().st_mtime:
         log(f"[stage5] reusing {audio_mixed_path.name}")
     else:
-        if bgm:
-            log(f"[stage5] music bed: {bgm.name}")
-        mix_audio(audio_path, audio_mixed_path, bg_music_path=bgm, progress=log)
+        mix_audio(audio_path, audio_mixed_path, bg_music_path=None, progress=log)
         if outro_dur > 0:
             try:
                 _pad_audio_tail(audio_mixed_path, outro_dur, audio_mixed_path.with_suffix(".pad.wav"))
@@ -225,6 +217,8 @@ def assemble_project(
     log(f"[stage5] final encode → {final_path.name}")
     _final_encode(silent_video_path, audio_mixed_path, final_path)
 
+    duration = _probe_duration(final_path)
+    _score_final_video(project_name, root, silent_video_path, audio_path, final_path, log=log)
     duration = _probe_duration(final_path)
     log(f"[stage5] done: {final_path} ({duration:.2f}s)")
     _write_title_file(root, narration)
@@ -964,61 +958,68 @@ def _probe_duration(path: Path) -> float:
 
 def _resolve_bgm(bg_music_path=None, enable_music: bool = True, log=print, *,
                  root: Path | None = None) -> Path | None:
-    """Pick the background-music file for a render, or None for narration-only.
-
-    Order: explicit argument → `bgm.*` sitting in the project folder → config.BG_MUSIC_PATH.
-    A path that does not exist resolves to None rather than raising: no music is a valid
-    render, and it is the state every project is in until someone drops a file in.
-
-    Kept in this module (not audio.py) because art_pipeline/assemble.py imports it from here —
-    it was removed along with the original music path and has been an ImportError since, which
-    is why the art pipeline's assemble step could not even be imported.
-    """
-    from config import BG_MUSIC_PATH, ENABLE_BG_MUSIC
-    if not (enable_music and ENABLE_BG_MUSIC):
+    """Return only a deliberate, explicit author-supplied bed; never substitute a fallback."""
+    from config import ENABLE_BG_MUSIC
+    if not (enable_music and ENABLE_BG_MUSIC) or not bg_music_path:
         return None
-    if bg_music_path and not Path(bg_music_path).exists():
-        # Say so. Falling through silently means a caller who NAMED a track (art_pipeline
-        # passes the user's pick) gets a different one rendered under their video and never
-        # learns the path was wrong.
-        log(f"[music] requested bed not found: {bg_music_path} — falling back")
-    candidates = [bg_music_path] if bg_music_path else []
-    if root is not None:
-        candidates += [root / f"bgm.{ext}" for ext in ("mp3", "m4a", "wav", "ogg", "flac")]
-    candidates.append(BG_MUSIC_PATH)
-    for c in candidates:
-        if c and Path(c).exists():
-            return Path(c)
-    return None
+    path = Path(bg_music_path)
+    if not path.is_file():
+        log(f"[music] requested bed not found: {path} — narration-only")
+        return None
+    return path
 
 
-def _ensure_music_bed(project_name: str, *, root: Path, log=print) -> Path | None:
-    """Return a project bed, generating it on the normal Stage 5 path when needed.
+def _remux_audio(video_path: Path, audio_path: Path, out_path: Path) -> Path:
+    """Replace audio while stream-copying the already-rendered video."""
+    ff = _require_ffmpeg()
+    _run([ff, "-y", "-i", str(video_path), "-i", str(audio_path),
+          "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+          "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart",
+          "-shortest", str(out_path)])
+    return out_path
 
-    A project-local bed is stable and wins. Otherwise the optional generator creates its
-    narration-length bed before the normal resolver is allowed to fall back to a shared file.
-    Music is deliberately fail-soft: a failed LLM/ACE-Step call must never block a video.
-    """
+
+def _score_final_video(project_name: str, root: Path, silent_video_path: Path,
+                       narration_path: Path, narration_only_final: Path, *, log=print) -> Path | None:
+    """Score an existing narration-only final MP4, preserving it intact on every failure."""
     from config import AUTO_GENERATE_BG_MUSIC, ENABLE_BG_MUSIC
-
-    local = next((root / f"bgm.{ext}" for ext in ("mp3", "m4a", "wav", "ogg", "flac")
-                  if (root / f"bgm.{ext}").exists()), None)
-    if local or not (AUTO_GENERATE_BG_MUSIC and ENABLE_BG_MUSIC):
-        return _resolve_bgm(log=log, root=root)
-
+    if not (AUTO_GENERATE_BG_MUSIC and ENABLE_BG_MUSIC):
+        return None
+    duration = _probe_duration(narration_only_final)
+    if duration <= 0:
+        log("[stage5] final MP4 duration unavailable — narration-only")
+        return None
+    score_audio = root / ".music.narration.wav"
+    score_mix = root / ".music.mixed.wav"
+    remuxed = root / ".final.music.tmp.mp4"
     try:
         from .. import music_bed
-        log("[stage5] no project music bed — generating score")
-        if music_bed.build_brief(project_name, log=log) is None:
-            log("[stage5] music brief unavailable — narration-only")
+        brief = music_bed.build_brief(project_name, duration, log=log)
+        if brief is None:
+            return None
+        bed = music_bed.generate_bed(project_name, brief, log=log)
+        if bed is None:
+            return None
+        narration_duration = _wav_duration(narration_path)
+        if duration > narration_duration:
+            _pad_audio_tail(narration_path, duration - narration_duration, score_audio)
         else:
-            bed = music_bed.generate_bed(project_name, log=log)
-            if bed and bed.exists():
-                return bed
-            log("[stage5] music generation unavailable — narration-only")
-    except Exception as exc:  # a score is optional; renderer remains reliable
-        log(f"[stage5] music generation failed ({exc}) — narration-only")
-    return _resolve_bgm(log=log, root=root)
+            score_audio = narration_path
+        mix_audio(score_audio, score_mix, bg_music_path=bed, progress=log)
+        _remux_audio(narration_only_final, score_mix, remuxed)
+        if _probe_duration(remuxed) <= 0:
+            raise RuntimeError("scored remux is not probeable")
+        remuxed.replace(narration_only_final)
+        log(f"[stage5] scored final.mp4 with {bed.name}")
+        return narration_only_final
+    except Exception as exc:
+        log(f"[stage5] music scoring failed ({exc}) — keeping narration-only final.mp4")
+        return None
+    finally:
+        if score_audio != narration_path:
+            score_audio.unlink(missing_ok=True)
+        score_mix.unlink(missing_ok=True)
+        remuxed.unlink(missing_ok=True)
 
 
 def _require_ffmpeg() -> str:

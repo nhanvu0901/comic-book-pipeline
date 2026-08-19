@@ -121,11 +121,6 @@ def test_youtube_chapters_text():
     assert txt.splitlines() == ["00:00 The Storm", "01:35 The Painter"]
 
 
-def test_discover_bgm(tmp_path):
-    from art_pipeline.video import discover_bgm
-    assert discover_bgm(tmp_path) is None
-    (tmp_path / "bgm.mp3").write_bytes(b"x")
-    assert discover_bgm(tmp_path).name == "bgm.mp3"
 
 
 def test_fingerprint_includes_length():

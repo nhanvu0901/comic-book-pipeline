@@ -2091,13 +2091,10 @@ def build(
         ft.Container(height=10),
         ft.Text("MUSIC", size=10, color=TEXT_MUTED),
         genre_dd,
-        # Says what the field does NOT do on its own. Saving here only records the choice —
-        # nothing in this screen or Stage 5 regenerates the bed, so without this line a genre
-        # change reports success, the render is re-run, and the music is identical.
         ft.Text("Style brief for the score. Editable — type anything the generator "
                 "understands. Sparse styles are heard under narration; dense ones are not.\n"
-                "Saving only records the choice — run  python -m stages.music_bed "
-                "--project <slug>  to actually regenerate the music.",
+                "Stage 5 analyzes the final narration and generates the score after its "
+                "narration-only video render is complete.",
                 size=11, color=TEXT_MUTED),
     ], spacing=8, expand=True)
 

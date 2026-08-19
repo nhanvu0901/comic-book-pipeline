@@ -1,448 +1,139 @@
-"""Guards for stages/music_bed.py — the LLM brief + ACE-Step bed.
-
-The contract that matters most: EVERY failure path produces no bed and no exception. A
-project with no music renders narration-only, which is what every project shipped before
-this existed does, so a broken generator must never be able to fail a render.
-"""
+"""Music-brief orchestration: LLM Studio state plus stale-score protection."""
 import json
-import sys
-from pathlib import Path
 
-import pytest
-
+import config
 from stages import music_bed
 
 
-def _project(tmp_path, slug, *, scenes=None, est=50.0):
+def _project(tmp_path, slug="p", *, genre="minimal dark cinematic", text="Hulk survives impact"):
     root = tmp_path / slug
-    root.mkdir(parents=True)
+    root.mkdir()
     (root / "narration.json").write_text(json.dumps({
-        "mode": "explore_answer", "title": "T",
-        "estimated_duration_seconds": est,
-        "scenes": scenes or [{"text": "first line"}, {"text": "second line"}],
+        "mode": "micro_moment", "title": "Hulk: Smash Everything",
+        "scenes": [{"text": text}],
+        "beats": [{"id": 1, "function": "COLD_OPEN", "summary": "Asteroid impact"}],
     }), encoding="utf-8")
+    (root / "music.json").write_text(json.dumps({"genre": genre}), encoding="utf-8")
     return root
 
 
-# ─── interpreter probe (same layout question as the chatterbox venv) ─────────
-
-def test_venv_python_probes_both_layouts(tmp_path):
-    posix = tmp_path / "a"
-    (posix / "bin").mkdir(parents=True)
-    (posix / "bin" / "python").write_text("")
-    assert music_bed._venv_python(posix) == posix / "bin" / "python"
-
-    win = tmp_path / "b"
-    (win / "Scripts").mkdir(parents=True)
-    (win / "Scripts" / "python.exe").write_text("")
-    assert music_bed._venv_python(win) == win / "Scripts" / "python.exe"
-
-    missing = tmp_path / "c"
-    assert music_bed._venv_python(missing) == missing / "bin" / "python"
+def _payload():
+    return json.dumps({
+        "genre": "epic hybrid orchestral",
+        "minimax_state": {
+            "mode": "studio", "description": "Primal cinematic score.",
+            "instrumental": True, "title": "Hulk impact", "lyrics": "[intro]\n[instrumental]",
+            "global_meta": "120 BPM, D minor.", "vocals": "Instrumental only. No vocals.",
+            "arrangement": "Brass and percussion build into a cosmic finale.",
+        },
+        "reasoning": "The story escalates from destruction to cosmic danger.",
+    })
 
 
-def test_default_acestep_runtime_is_directml(monkeypatch):
-    monkeypatch.delenv("ACESTEP_VENV", raising=False)
-    assert music_bed._venv_python().parent.parent.name == ".venv-acestep-directml"
-
-
-def test_worker_reports_directml_success_and_selects_device(monkeypatch, tmp_path, capsys):
-    """The worker must expose the backend/device it actually selected."""
-    from stages import _acestep_worker as worker
-
-    selected = {}
-
-    class _Pipeline:
-        checkpoint_dir = str(tmp_path / "checkpoints")
-
-        def __init__(self, **kwargs):
-            selected["dtype"] = kwargs["dtype"]
-            self.device = None
-
-        def load_checkpoint(self, _checkpoint_dir):
-            selected["load_device"] = str(self.device)
-
-        def __call__(self, **kwargs):
-            Path(kwargs["save_path"]).write_bytes(b"RIFF")
-
-    class _DirectML:
-        @staticmethod
-        def device():
-            return "privateuseone:0"
-
-    monkeypatch.setitem(sys.modules, "soundfile", type("_SoundFile", (), {}))
-    monkeypatch.setitem(sys.modules, "torchaudio", type("_TorchAudio", (), {}))
-    monkeypatch.setitem(sys.modules, "torch_directml", _DirectML)
-    monkeypatch.setitem(sys.modules, "acestep.pipeline_ace_step", type(
-        "_AceStepModule", (), {"ACEStepPipeline": _Pipeline}))
-    monkeypatch.setattr(sys, "argv", ["worker", str(tmp_path / "job.json")])
-    job = {"prompt": "minimal dark cinematic", "seconds": 2, "out": str(tmp_path / "out.wav")}
-    (tmp_path / "job.json").write_text(json.dumps(job), encoding="utf-8")
-
-    assert worker.main() == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is True
-    assert payload["backend"] == "directml"
-    assert payload["device"] == "privateuseone:0"
-    assert selected["dtype"] == "float16"
-    assert selected["load_device"] == "privateuseone:0"
-
-
-def test_worker_error_contains_traceback_and_backend(monkeypatch, tmp_path, capsys):
-    """A worker crash must be diagnosable even when ACE-Step fails before writing audio."""
-    from stages import _acestep_worker as worker
-
-    class _DirectML:
-        @staticmethod
-        def device():
-            return "privateuseone:0"
-
-    class _Pipeline:
-        def __init__(self, **_kwargs):
-            raise RuntimeError("synthetic ACE-Step failure")
-
-    monkeypatch.setitem(sys.modules, "soundfile", type("_SoundFile", (), {}))
-    monkeypatch.setitem(sys.modules, "torchaudio", type("_TorchAudio", (), {}))
-    monkeypatch.setitem(sys.modules, "torch_directml", _DirectML)
-    monkeypatch.setitem(sys.modules, "acestep.pipeline_ace_step", type(
-        "_AceStepModule", (), {"ACEStepPipeline": _Pipeline}))
-    monkeypatch.setattr(sys, "argv", ["worker", str(tmp_path / "job.json")])
-    (tmp_path / "job.json").write_text(json.dumps({"out": str(tmp_path / "out.wav")}),
-                                        encoding="utf-8")
-
-    assert worker.main() == 1
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["backend"] == "directml"
-    assert payload["device"] == "privateuseone:0"
-    assert "RuntimeError: synthetic ACE-Step failure" in payload["traceback"]
-
-
-# ─── length ─────────────────────────────────────────────────────────────────
-
-def test_length_falls_back_to_the_stage3_estimate_before_tts(tmp_path):
-    """Before Stage 4 there is no audio.wav, so the estimate is all there is."""
-    root = _project(tmp_path, "p", est=44.0)
-    assert music_bed.audio_seconds(root) == 44.0
-
-
-def test_length_is_zero_when_the_project_is_empty(tmp_path):
-    assert music_bed.audio_seconds(tmp_path / "nothing") == 0.0
-
-
-# ─── brief ──────────────────────────────────────────────────────────────────
-
-def _fake_llm(monkeypatch, payload):
+def _fake_llm(monkeypatch, payload, seen=None):
     monkeypatch.setattr("stages.stage_3._llm._client", lambda: object())
+
+    def _call(_client, model, system, user, timeout):
+        if seen is not None:
+            seen.update(model=model, system=system, user=user, timeout=timeout)
+        return payload
+
+    monkeypatch.setattr("stages.stage_3._llm._call_with_deadline", _call)
+
+
+def test_brief_gives_llm_final_narration_beats_genre_and_video_duration(tmp_path, monkeypatch):
+    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
+    _project(tmp_path)
+    seen = {}
+    _fake_llm(monkeypatch, _payload(), seen)
+
+    doc = music_bed.build_brief("p", 58.97, log=lambda _: None)
+
+    assert "Hulk survives impact" in seen["user"]
+    assert "Asteroid impact" in seen["user"]
+    assert "minimal dark cinematic" in seen["user"]
+    assert "58.97" in seen["user"]
+    assert doc["minimax_state"]["arrangement"]
+    assert doc["duration_seconds"] == 58.97
+
+
+def test_brief_uses_review_beats_default_genre_when_no_project_setting_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
+    root = _project(tmp_path)
+    (root / "music.json").unlink()
+    seen = {}
+    _fake_llm(monkeypatch, _payload(), seen)
+
+    doc = music_bed.build_brief("p", 59.0, log=lambda _: None)
+
+    assert config.MUSIC_GENRE in seen["user"]
+    assert doc["genre"] == config.MUSIC_GENRE
+
+
+def test_brief_identity_changes_with_narration_genre_beats_or_duration(tmp_path, monkeypatch):
+    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
+    root = _project(tmp_path)
+    _fake_llm(monkeypatch, _payload())
+    original = music_bed.build_brief("p", 59.0, log=lambda _: None)
+
+    changed_duration = music_bed.build_brief("p", 60.0, log=lambda _: None)
+    assert original["identity"] != changed_duration["identity"]
+
+    narration = json.loads((root / "narration.json").read_text())
+    narration["scenes"][0]["text"] = "Hulk reaches the black hole"
+    (root / "narration.json").write_text(json.dumps(narration))
+    changed_narration = music_bed.build_brief("p", 60.0, log=lambda _: None)
+    assert changed_duration["identity"] != changed_narration["identity"]
+
+
+def test_matching_final_inputs_reuse_the_existing_llm_brief(tmp_path, monkeypatch):
+    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
+    _project(tmp_path)
+    _fake_llm(monkeypatch, _payload())
+    first = music_bed.build_brief("p", 59.0, log=lambda _: None)
+
     monkeypatch.setattr("stages.stage_3._llm._call_with_deadline",
-                        lambda *a, **k: payload)
+                        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("LLM called")))
+    assert music_bed.build_brief("p", 59.0, log=lambda _: None) == first
 
 
-def test_brief_writes_music_json(tmp_path, monkeypatch):
+def test_llm_failure_writes_no_replacement_brief(tmp_path, monkeypatch):
     monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    _project(tmp_path, "p")
-    _fake_llm(monkeypatch, json.dumps({
-        "genre": "dark trap", "bpm": 140,
-        "prompt": "dark trap, 808 sub bass, brooding, instrumental, 140 bpm",
-        "reasoning": "because"}))
+    root = _project(tmp_path)
+    _fake_llm(monkeypatch, "not json")
 
-    doc = music_bed.build_brief("p", log=lambda _m: None)
-    assert doc["genre"] == "dark trap" and doc["bpm"] == 140
-    on_disk = json.loads((tmp_path / "p" / "music.json").read_text())
-    assert on_disk["prompt"].endswith("140 bpm")
+    assert music_bed.build_brief("p", 59.0, log=lambda _: None) is None
+    assert json.loads((root / "music.json").read_text()) == {"genre": "minimal dark cinematic"}
 
 
-def test_a_missing_instrumental_tag_is_repaired(tmp_path, monkeypatch):
-    """Without it the generator sings, and a vocal bed under a voice-over is unusable —
-    a silent failure that only shows up after 2.5 minutes of generation."""
+def test_generate_bed_reuses_only_matching_brief_and_never_keeps_stale_output(tmp_path, monkeypatch):
     monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    _project(tmp_path, "p")
-    _fake_llm(monkeypatch, json.dumps({"genre": "g", "bpm": 90,
-                                       "prompt": "epic orchestral, 90 bpm"}))
-    doc = music_bed.build_brief("p", log=lambda _m: None)
-    assert "instrumental" in doc["prompt"]
+    root = _project(tmp_path)
+    _fake_llm(monkeypatch, _payload())
+    brief = music_bed.build_brief("p", 59.0, log=lambda _: None)
+    out = root / "bgm.mp3"
+    calls = []
+
+    def _generate(state, seconds, target, *, log):
+        calls.append((state, seconds, target))
+        target.write_bytes(b"MP3")
+        return target
+
+    monkeypatch.setattr("stages.minimax_music.generate_music", _generate)
+    assert music_bed.generate_bed("p", brief, log=lambda _: None) == out
+    assert music_bed.generate_bed("p", brief, log=lambda _: None) == out
+    assert len(calls) == 1
+
+    stale = dict(brief, identity="different")
+    monkeypatch.setattr("stages.minimax_music.generate_music", lambda *_a, **_k: None)
+    assert music_bed.generate_bed("p", stale, log=lambda _: None) is None
+    assert not out.exists()
 
 
-def test_a_genre_chosen_in_the_ui_is_binding(tmp_path, monkeypatch):
-    """The Review Beats dropdown is an instruction, so the steer must reach the model."""
+def test_invalid_minimax_payload_is_rejected_without_hardcoded_prompt(tmp_path, monkeypatch):
     monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"genre": "dark ambient drone"}))
-    seen = {}
+    _project(tmp_path)
+    invalid = json.dumps({"genre": "x", "minimax_state": {"description": "x"}})
+    _fake_llm(monkeypatch, invalid)
 
-    monkeypatch.setattr("stages.stage_3._llm._client", lambda: object())
-
-    def _capture(_c, _model, _system, user, _max):
-        seen["user"] = user
-        return json.dumps({"genre": "dark ambient drone", "bpm": 70,
-                           "prompt": "dark ambient drone, instrumental, 70 bpm"})
-
-    monkeypatch.setattr("stages.stage_3._llm._call_with_deadline", _capture)
-    music_bed.build_brief("p", log=lambda _m: None)
-    assert "REQUIRED GENRE: dark ambient drone" in seen["user"]
-
-
-def test_llm_failure_yields_no_brief_and_no_raise(tmp_path, monkeypatch):
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    _project(tmp_path, "p")
-    monkeypatch.setattr("stages.stage_3._llm._client", lambda: object())
-
-    def _boom(*_a, **_k):
-        raise RuntimeError("rate limited")
-
-    monkeypatch.setattr("stages.stage_3._llm._call_with_deadline", _boom)
-    assert music_bed.build_brief("p", log=lambda _m: None) is None
-    assert not (tmp_path / "p" / "music.json").exists()
-
-
-def test_unparseable_llm_output_yields_no_brief(tmp_path, monkeypatch):
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    _project(tmp_path, "p")
-    _fake_llm(monkeypatch, "I'm afraid I can't do that")
-    assert music_bed.build_brief("p", log=lambda _m: None) is None
-
-
-# ─── bed ────────────────────────────────────────────────────────────────────
-
-def test_generate_without_a_brief_is_a_no_op(tmp_path, monkeypatch):
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    _project(tmp_path, "p")
-    assert music_bed.generate_bed("p", log=lambda _m: None) is None
-
-
-def test_generate_uses_target_python_worker_command_and_json_protocol(tmp_path, monkeypatch):
-    """Generation passes the job file to the worker executed by the selected venv."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"prompt": "x, instrumental",
-                                                 "length_seconds": 2}))
-    py = tmp_path / "venv" / "Scripts" / "python.exe"
-    py.parent.mkdir(parents=True)
-    py.write_text("")
-    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: py)
-    seen = {}
-
-    class _R:
-        stdout = json.dumps({"ok": True, "backend": "directml",
-                             "device": "privateuseone:0", "elapsed": 0.1})
-        returncode = 0
-
-    def _run(argv, **_kwargs):
-        seen["argv"] = argv
-        job = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
-        Path(job["out"]).write_bytes(b"RIFF")
-        return _R()
-
-    monkeypatch.setattr(music_bed.subprocess, "run", _run)
-    out = music_bed.generate_bed("p", force=True, log=lambda _m: None)
-
-    assert out == root / "bgm.wav"
-    assert seen["argv"][:2] == [str(py), str(music_bed._WORKER)]
-    assert Path(seen["argv"][2]).name == "job.json"
-
-
-def test_generate_rejects_a_non_directml_worker_success(tmp_path, monkeypatch):
-    """A worker success from CPU or an unknown backend must never create a production bed."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"prompt": "x, instrumental",
-                                                 "length_seconds": 2}))
-    py = tmp_path / "venv" / "Scripts" / "python.exe"
-    py.parent.mkdir(parents=True)
-    py.write_text("")
-    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: py)
-
-    def _run(argv, **_kwargs):
-        job = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
-        Path(job["out"]).write_bytes(b"CPU-BED")
-
-        class _R:
-            stdout = json.dumps({"ok": True, "backend": "cpu", "device": "cpu"})
-            returncode = 0
-
-        return _R()
-
-    monkeypatch.setattr(music_bed.subprocess, "run", _run)
-    assert music_bed.generate_bed("p", force=True, log=lambda _m: None) is None
-    assert not (root / "bgm.wav").exists()
-
-
-def _stamp_for(prompt: str, genre: str = "") -> str:
-    """Mirror of the stamp generate_bed writes. GENRE is in it as well as the prompt: the
-    review UI writes only `genre` and leaves the old `prompt`, so a prompt-only hash never
-    noticed a genre change."""
-    import hashlib
-    return hashlib.sha1(f"{genre}|{prompt}|{music_bed.ACESTEP_STEPS}|"
-                        f"{music_bed.ACESTEP_GUIDANCE}|{music_bed.ACESTEP_SEED}"
-                        .encode("utf-8")).hexdigest()
-
-
-def test_generate_reuses_a_bed_built_from_the_same_brief(tmp_path, monkeypatch):
-    """Reuse is keyed on the brief, not on the file existing — see the genre-change
-    regression below for why. An unstamped bed is NOT trusted."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"prompt": "x, instrumental",
-                                                 "length_seconds": 30}))
-    bed = root / "bgm.wav"
-    bed.write_bytes(b"RIFF")
-    (root / "bgm.prompt.sha1").write_text(_stamp_for("x, instrumental"))
-
-    assert music_bed.generate_bed("p", log=lambda _m: None) == bed
-    assert bed.read_bytes() == b"RIFF", "a matching bed must not be regenerated"
-
-
-def test_generate_degrades_when_the_venv_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"prompt": "x, instrumental",
-                                                 "length_seconds": 30}))
-    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: tmp_path / "nope" / "python")
-    assert music_bed.generate_bed("p", log=lambda _m: None) is None
-
-
-@pytest.mark.parametrize("payload", ['{"error": "CUDA out of memory"}', "", "not json"])
-def test_worker_failure_yields_no_bed(tmp_path, monkeypatch, payload):
-    """A generator that dies must leave the render narration-only, never half a wav."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"prompt": "x, instrumental",
-                                                 "length_seconds": 30}))
-    py = tmp_path / "venv" / "Scripts" / "python.exe"
-    py.parent.mkdir(parents=True)
-    py.write_text("")
-    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: py)
-
-    class _R:
-        stdout, returncode = payload, 1
-
-    monkeypatch.setattr(music_bed.subprocess, "run", lambda *_a, **_k: _R())
-    assert music_bed.generate_bed("p", log=lambda _m: None) is None
-
-
-# ─── regressions from the 2026-08-13 review ──────────────────────────────────
-
-def test_changing_the_genre_invalidates_an_existing_bed(tmp_path, monkeypatch):
-    """The bug the genre dropdown was invisible behind: reuse keyed on out.exists() alone, so
-    picking a new genre and re-running logged "reusing bgm.wav" and shipped the OLD genre's
-    music. The UI looked like it worked and the video did not change."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"genre": "epic", "prompt": "epic, instrumental",
-                                                 "length_seconds": 30}))
-    (root / "bgm.wav").write_bytes(b"OLD-EPIC-BED")
-    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: tmp_path / "nope" / "python")
-
-    # No stamp at all (a bed from before this guard existed) → must not be trusted.
-    msgs = []
-    music_bed.generate_bed("p", log=msgs.append)
-    assert any("brief changed" in m for m in msgs)
-
-    # Stamp matching the CURRENT brief → reuse.
-    (root / "bgm.wav").write_bytes(b"OLD-EPIC-BED")     # the failed run above cleared it
-    (root / "bgm.prompt.sha1").write_text(_stamp_for("epic, instrumental", "epic"))
-    assert music_bed.generate_bed("p", log=lambda _m: None) == root / "bgm.wav"
-
-    # Genre changed → the stamp no longer matches → regenerate, do not ship the old bed.
-    (root / "music.json").write_text(json.dumps({"genre": "ambient",
-                                                 "prompt": "ambient, instrumental",
-                                                 "length_seconds": 30}))
-    msgs = []
-    assert music_bed.generate_bed("p", log=msgs.append) is None
-    assert any("brief changed" in m for m in msgs)
-
-
-def test_a_corrupt_music_json_does_not_raise(tmp_path, monkeypatch):
-    """Contract: every failure path yields no bed and no exception. This one raised
-    JSONDecodeError straight out of generate_bed."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text("{corrupt")
-    assert music_bed.generate_bed("p", log=lambda _m: None) is None
-
-
-def test_audio_seconds_survives_a_machine_with_no_ffprobe(tmp_path, monkeypatch):
-    """ffprobe was invoked bare and only ValueError was caught, so a box without it on PATH
-    raised FileNotFoundError out of the brief."""
-    root = _project(tmp_path, "p", est=44.0)
-    (root / "audio.wav").write_bytes(b"RIFF")
-    monkeypatch.setattr(music_bed.shutil, "which", lambda _n: None)
-    assert music_bed.audio_seconds(root) == 44.0      # falls back to the Stage 3 estimate
-
-
-def test_the_default_genre_still_binds(tmp_path, monkeypatch):
-    """The steer used to be skipped when the pick equalled MUSIC_GENRE — but that value is
-    both the dropdown's initial state and the one register measured to survive under
-    narration, so choosing the best option was the single case that stopped binding."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"genre": music_bed.MUSIC_GENRE}))
-    seen = {}
-    monkeypatch.setattr("stages.stage_3._llm._client", lambda: object())
-
-    def _capture(_c, _m, _s, user, _mx):
-        seen["user"] = user
-        return json.dumps({"genre": "something else", "bpm": 100,
-                           "prompt": "x, instrumental, 100 bpm"})
-
-    monkeypatch.setattr("stages.stage_3._llm._call_with_deadline", _capture)
-    doc = music_bed.build_brief("p", log=lambda _m: None)
-    assert f"REQUIRED GENRE: {music_bed.MUSIC_GENRE}" in seen["user"]
-    assert doc["genre"] == music_bed.MUSIC_GENRE, "Master's pick must not be renamed by the model"
-
-
-def test_brief_before_stage_3_does_not_raise(tmp_path, monkeypatch):
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    (tmp_path / "p").mkdir()
-    assert music_bed.build_brief("p", log=lambda _m: None) is None
-
-
-def test_changing_only_the_genre_invalidates_the_bed(tmp_path, monkeypatch):
-    """The Review Beats dropdown writes ONLY `genre` and leaves the old `prompt` in place, so
-    a hash over the prompt alone never noticed. Combined with a failed brief call that meant
-    picking a new genre silently shipped the previous genre's music."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"genre": "epic", "prompt": "x, instrumental",
-                                                 "length_seconds": 30}))
-    (root / "bgm.wav").write_bytes(b"OLD")
-    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: tmp_path / "nope" / "python")
-
-    import hashlib
-
-    def stamp_for(genre, prompt):
-        return hashlib.sha1(f"{genre}|{prompt}|{music_bed.ACESTEP_STEPS}|"
-                            f"{music_bed.ACESTEP_GUIDANCE}|{music_bed.ACESTEP_SEED}"
-                            .encode("utf-8")).hexdigest()
-
-    (root / "bgm.prompt.sha1").write_text(stamp_for("epic", "x, instrumental"))
-    assert music_bed.generate_bed("p", log=lambda _m: None) == root / "bgm.wav"
-
-    # Only the genre changes — the prompt is untouched, exactly as the UI leaves it.
-    (root / "music.json").write_text(json.dumps({"genre": "ambient", "prompt": "x, instrumental",
-                                                 "length_seconds": 30}))
-    msgs = []
-    assert music_bed.generate_bed("p", log=msgs.append) is None
-    assert any("brief changed" in m for m in msgs)
-
-
-def test_a_silent_worker_crash_does_not_bless_the_previous_bed(tmp_path, monkeypatch):
-    """A worker killed before it can print (OOM, a DLL that will not load) leaves no JSON. The
-    old wav was then read as success and stamped with the NEW brief — the wrong music, locked
-    in, and reported forever after as "reusing bgm.wav (same brief)"."""
-    monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
-    root = _project(tmp_path, "p")
-    (root / "music.json").write_text(json.dumps({"genre": "g", "prompt": "x, instrumental",
-                                                 "length_seconds": 30}))
-    (root / "bgm.wav").write_bytes(b"PREVIOUS-GENRE")
-    py = tmp_path / "venv" / "Scripts" / "python.exe"
-    py.parent.mkdir(parents=True)
-    py.write_text("")
-    monkeypatch.setattr(music_bed, "_venv_python", lambda *_a: py)
-
-    class _Killed:
-        stdout, returncode = "", -9        # no output at all
-
-    monkeypatch.setattr(music_bed.subprocess, "run", lambda *_a, **_k: _Killed())
-    assert music_bed.generate_bed("p", force=True, log=lambda _m: None) is None
-    assert not (root / "bgm.wav").exists(), "the stale bed must not survive a failed run"
-    assert not (root / "bgm.prompt.sha1").exists()
+    assert music_bed.build_brief("p", 59.0, log=lambda _: None) is None

@@ -513,9 +513,9 @@ ENABLE_TITLE_BANNER = os.getenv("ENABLE_TITLE_BANNER", "true").lower() in ("true
 # -15 and 0.04 LU at -20, so anything in this band is free to tune BY EAR — it cannot break the
 # -14 LUFS normalisation.
 ENABLE_BG_MUSIC = os.getenv("ENABLE_BG_MUSIC", "true").lower() in ("true", "1", "yes")
-# Normal Stage 5 renders own their score: when a project has no generated `bgm.*`, create a
-# brief from the final narration (respecting a Review Beats genre pick when present) and ask
-# ACE-Step for the bed. Failures remain soft — narration-only is always renderable.
+# Normal Stage 5 renders own their score after the narration-only MP4 is finished. The
+# private MiniMax Space receives the measured final-video duration; failures remain soft —
+# narration-only is always renderable.
 AUTO_GENERATE_BG_MUSIC = os.getenv("AUTO_GENERATE_BG_MUSIC", "true").lower() in ("true", "1", "yes")
 
 # ─── Music GENRE (per project, chosen in the Review Beats UI) ────────────────
@@ -536,10 +536,9 @@ MUSIC_GENRES: list[str] = [
     g.strip() for g in os.getenv("MUSIC_GENRES", _DEFAULT_MUSIC_GENRES).split(",") if g.strip()
 ]
 
-# ─── Music generation (stages/music_bed.py → ACE-Step DirectML runtime) ──────
-# Production defaults to the isolated DirectML venv. Relative overrides resolve from the repo.
-ACESTEP_VENV = os.getenv("ACESTEP_VENV", ".venv-acestep-directml")
-# The LLM that reads the narration and writes the ACE-Step tag list. A CHAIN, not one model:
+# ─── Music generation (stages/music_bed.py → private HF MiniMax Space) ───────
+# The LLM reads final narration + beats and writes the complete MiniMax Studio state.
+# A CHAIN, not one model:
 # measured 5/6 successful calls on deepseek-v4-flash — one returned empty, which config.py
 # already warns about above. Called through OpenRouter directly, NOT the SDK, and it does not
 # touch the global FREE_MODEL switch — same treatment as BEAT_SPLIT_MODELS.
@@ -549,20 +548,10 @@ MUSIC_BRIEF_MODELS: list[str] = [
         "deepseek/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash,google/gemma-4-31b-it:free"
     ).split(",") if m.strip()
 ]
-# Diffusion steps. 27 is ACE-Step's own reference figure and measures ~2.4x realtime on this
-# CPU-only box (63s of audio in 149s); 8 steps runs at 1.3x but the output is visibly rougher.
-ACESTEP_STEPS = int(os.getenv("ACESTEP_STEPS", "27"))
-# Prompt adherence. 15.0 is the model default; higher makes it obey the tag list more strictly
-# at the cost of naturalness. Raise this when a generation ignores the genre it was asked for.
-ACESTEP_GUIDANCE = float(os.getenv("ACESTEP_GUIDANCE", "15.0"))
-# Fixed seed so the same brief yields the same track — verified byte-identical across runs
-# (same prompt + seed + guidance → same sha1). Re-render must not reshuffle the music.
-ACESTEP_SEED = int(os.getenv("ACESTEP_SEED", "42"))
-# `.env` has carried BG_MUSIC_PATH since the original music path was written, but nothing read
-# it after that code was removed — it was dead config until now. Relative paths resolve against
-# the repo root so the shipped `assets/bgm/...` default works from any working directory.
-_BGM_RAW = os.getenv("BG_MUSIC_PATH", "assets/bgm/default.mp3")
-BG_MUSIC_PATH = _BGM_RAW if os.path.isabs(_BGM_RAW) else str(Path(__file__).parent / _BGM_RAW)
+HF_MUSIC_SPACE = os.getenv("HF_MUSIC_SPACE", "Neopet2001/MiniMax-Music3")
+HF_MUSIC_STEPS = int(os.getenv("HF_MUSIC_STEPS", "30"))
+HF_MUSIC_GUIDANCE = float(os.getenv("HF_MUSIC_GUIDANCE", "1.7"))
+HF_MUSIC_HEADROOM = float(os.getenv("HF_MUSIC_HEADROOM", "0"))
 # 8.0 chosen by ear on a real render (Master, 2026-08-13) after A/B-ing 18/14/10/8/6/4/2/0 LU
 # under the same narration. Measured at that setting: the bed sits ~23 LU down during the
 # gaps and moves the level under speech by 0.07 dB, so it is present without crowding.

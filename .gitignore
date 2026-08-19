@@ -4,7 +4,7 @@
 __pycache__/
 .venv/
 venv/
-# Isolated per-tool venvs: chatterbox (TTS) and acestep (music) each pull a dependency
+# Isolated per-tool venvs (such as chatterbox TTS) pull a dependency
 # tree that would fight the main one — see stages/stage_4/chatterbox_tts.py for why.
 .venv-*/
 

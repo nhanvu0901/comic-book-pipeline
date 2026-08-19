@@ -13,7 +13,8 @@ import subprocess
 import pytest
 
 from stages.stage_5.audio import _duck_expr, _require_ffmpeg, _silences, mix_audio
-from stages.stage_5.pipeline import _ensure_music_bed, _resolve_bgm
+from stages.stage_5 import pipeline as P
+from stages.stage_5.pipeline import _resolve_bgm, _score_final_video
 
 
 def _tone(path, *, freq=220, dur=3.0, vol=0.4, gaps=False):
@@ -30,31 +31,27 @@ def _tone(path, *, freq=220, dur=3.0, vol=0.4, gaps=False):
     return path
 
 
-# ─── _resolve_bgm: resolution order ──────────────────────────────────────────
+# ─── explicit BGM only ───────────────────────────────────────────────────────
 
-def test_resolve_bgm_returns_none_when_nothing_exists(tmp_path, monkeypatch):
+def test_resolve_bgm_returns_none_when_nothing_exists(tmp_path):
     """The state every project ships in today. No music is a valid render, not an error."""
-    monkeypatch.setattr("config.BG_MUSIC_PATH", str(tmp_path / "nope.mp3"))
     assert _resolve_bgm(log=lambda _m: None, root=tmp_path) is None
 
 
-def test_resolve_bgm_prefers_explicit_then_project_then_config(tmp_path, monkeypatch):
+def test_missing_explicit_bgm_never_substitutes_project_or_library_file(tmp_path):
     explicit = tmp_path / "explicit.mp3"
     project = tmp_path / "bgm.mp3"
-    fallback = tmp_path / "config.mp3"
-    for p in (explicit, project, fallback):
+    for p in (explicit, project):
         p.write_bytes(b"x")
-    monkeypatch.setattr("config.BG_MUSIC_PATH", str(fallback))
 
     assert _resolve_bgm(str(explicit), log=lambda _m: None, root=tmp_path) == explicit
-    assert _resolve_bgm(log=lambda _m: None, root=tmp_path) == project
-    assert _resolve_bgm(log=lambda _m: None) == fallback
+    assert _resolve_bgm(str(tmp_path / "missing.mp3"), log=lambda _m: None, root=tmp_path) is None
+    assert _resolve_bgm(log=lambda _m: None, root=tmp_path) is None
 
 
 def test_resolve_bgm_honours_the_off_switches(tmp_path, monkeypatch):
     f = tmp_path / "bgm.mp3"
     f.write_bytes(b"x")
-    monkeypatch.setattr("config.BG_MUSIC_PATH", str(f))
     assert _resolve_bgm(enable_music=False, log=lambda _m: None) is None
     monkeypatch.setattr("config.ENABLE_BG_MUSIC", False)
     assert _resolve_bgm(log=lambda _m: None) is None
@@ -66,28 +63,35 @@ def test_resolve_bgm_keeps_the_three_positional_call_art_pipeline_makes():
     assert _resolve_bgm(None, False, lambda _m: None) is None
 
 
-def test_stage5_generates_a_missing_project_bed_before_mixing(tmp_path, monkeypatch):
-    """Normal Stage 5 owns generation: genre may be absent, in which case its LLM brief
-    chooses it; a successful ACE-Step result is the file that Stage 5 then resolves."""
+def test_score_uses_duration_of_existing_narration_only_final_before_generating(tmp_path, monkeypatch):
     from stages import music_bed
-
-    monkeypatch.setattr("config.AUTO_GENERATE_BG_MUSIC", True, raising=False)
-    monkeypatch.setattr("stages.stage_5.pipeline.PROJECTS_ROOT", tmp_path)
-    root = tmp_path / "project"
-    root.mkdir()
-    bed = root / "bgm.wav"
+    root = tmp_path / "project"; root.mkdir()
+    silent, audio, final = root / "video_silent.mp4", root / "audio.wav", root / "final.mp4"
+    silent.write_bytes(b"VIDEO"); audio.write_bytes(b"AUDIO"); final.write_bytes(b"NARRATION_ONLY")
+    bed = root / "bgm.mp3"; bed.write_bytes(b"MUSIC")
     calls = []
+    monkeypatch.setattr(P, "_probe_duration", lambda path: 58.97 if path == final else 58.97)
+    monkeypatch.setattr(P, "_wav_duration", lambda _path: 59.0)
+    monkeypatch.setattr(music_bed, "build_brief", lambda project, seconds, log: calls.append(("brief", project, seconds)) or {"identity": "x"})
+    monkeypatch.setattr(music_bed, "generate_bed", lambda project, brief, log: calls.append(("bed", project)) or bed)
+    monkeypatch.setattr(P, "mix_audio", lambda _a, out, **_k: out.write_bytes(b"MIX") or out)
+    monkeypatch.setattr(P, "_remux_audio", lambda _v, _a, out: out.write_bytes(b"SCORED") or out)
 
-    monkeypatch.setattr(music_bed, "build_brief", lambda project, log: calls.append(("brief", project)) or {"prompt": "x"})
-    def _generate(project, log):
-        calls.append(("bed", project))
-        bed.write_bytes(b"generated")
-        return bed
+    assert _score_final_video("project", root, silent, audio, final, log=lambda _m: None) == final
+    assert calls == [("brief", "project", 58.97), ("bed", "project")]
+    assert final.read_bytes() == b"SCORED"
 
-    monkeypatch.setattr(music_bed, "generate_bed", _generate)
 
-    assert _ensure_music_bed("project", root=root, log=lambda _m: None) == bed
-    assert calls == [("brief", "project"), ("bed", "project")]
+def test_score_failure_preserves_narration_only_final(tmp_path, monkeypatch):
+    from stages import music_bed
+    root = tmp_path / "project"; root.mkdir()
+    silent, audio, final = root / "video_silent.mp4", root / "audio.wav", root / "final.mp4"
+    silent.write_bytes(b"VIDEO"); audio.write_bytes(b"AUDIO"); final.write_bytes(b"NARRATION_ONLY")
+    monkeypatch.setattr(P, "_probe_duration", lambda _path: 59.0)
+    monkeypatch.setattr(music_bed, "build_brief", lambda *_a, **_k: None)
+
+    assert _score_final_video("project", root, silent, audio, final, log=lambda _m: None) is None
+    assert final.read_bytes() == b"NARRATION_ONLY"
 
 
 # ─── duck curve ──────────────────────────────────────────────────────────────

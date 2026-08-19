@@ -59,3 +59,11 @@ def test_default_is_a_sparse_style_and_presets_contain_it():
     assert config.MUSIC_GENRE == "minimal dark cinematic"
     assert config.MUSIC_GENRE in config.MUSIC_GENRES
     assert len(config.MUSIC_GENRES) >= 2
+
+
+def test_music_generation_targets_the_private_minimax_space_without_legacy_runtime_config():
+    """The production scorer is remote MiniMax; its old local runtime is not configured."""
+    assert config.HF_MUSIC_SPACE == "Neopet2001/MiniMax-Music3"
+    assert config.HF_MUSIC_STEPS == 30
+    assert config.HF_MUSIC_GUIDANCE == 1.7
+    assert not hasattr(config, "ACE" + "STEP_VENV")

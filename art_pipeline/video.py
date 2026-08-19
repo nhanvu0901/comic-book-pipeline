@@ -48,16 +48,6 @@ def build_youtube_chapters(chapters: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def discover_bgm(root: Path) -> Path | None:
-    """User-supplied music: first bgm.* in the project folder (user decision:
-    manual per-video pick, no auto library)."""
-    for ext in ("mp3", "m4a", "wav", "ogg", "flac"):
-        p = root / f"bgm.{ext}"
-        if p.exists():
-            return p
-    return None
-
-
 def structure_fingerprint(narration: dict) -> str:
     # Format v2 (2026-06-12): mode|count|short/longform|intro/cold|outro/hard-end.
     # Rows logged before this date are 4-field v1; v1 never matches v2 —
@@ -99,12 +89,6 @@ def assemble_art(project_name: str, **kwargs):
 
     root = get_art_project_path(project_name)
     longform = (root / "chapters.json").exists()
-    if longform and not kwargs.get("bg_music_path"):
-        bgm = discover_bgm(root)
-        if bgm:
-            kwargs["bg_music_path"] = str(bgm)
-        else:
-            print("[assemble] WARNING: long-form without BGM — drop bgm.mp3 into the project")
 
     # render_shot's crop path still honors these comic globals — never mirror
     # or inpaint a real artwork; long-form additionally renders 16:9.
