@@ -1,0 +1,8 @@
+{
+  "source": "planner",
+  "unit": "one feat",
+  "cardinality": "exhaustive",
+  "ranking": "most impressive based on scale (e.g., lifting celestial body, destroying planet, overpowering cosmic entities)",
+  "extra_fields": [],
+  "research_prompt": "Find and list the best strength feats of the Hulk across all Marvel comics. Focus on feats that demonstrate raw physical strength (lifting, striking, holding, etc.) rather than durability or other powers. Rank them by how impressive they are in terms of scale (mass lifted, force exerted, entity overpowered). Include explicit on-panel displays; do not rely on statements alone. For each feat, provide the exact issue title, issue number, and year, a brief summary of what happened, and a direct description of what visibly happens on the page. Cite evidence with specific issue references."
+}

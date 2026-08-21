@@ -1,0 +1,81 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_6"
+            ],
+            "means_of_resistance": "Explicit on-panel immunity: Shilo Norman explains that the painted symbol on his face is a New Gods alphabet letter meaning \"freedom from restriction,\" and this lets him resist the Anti-Life Equation.",
+            "series_issue_year": "Final Crisis #6 (2009)",
+            "summary": "Full resistance. Shilo Norman, as Mister Miracle, is shown explicitly resisting the Anti-Life Equation on-panel through a freedom symbol and explanation of how it works.",
+            "title": "Mister Miracle (Shilo Norman)",
+            "what_visibly_happens": "At Checkmate Castle, Shilo tells the others why he can resist the Equation, then the issue shows the wider battle continuing around him as the Anti-Life crisis unfolds."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4"
+            ],
+            "means_of_resistance": "Part of the remaining human resistance against Darkseid after the Anti-Life Equation has been broadcast worldwide; the source lists Green Arrow among the group still fighting back.",
+            "series_issue_year": "Final Crisis #4 (2008)",
+            "summary": "Partial resistance. The source does not describe a personal immunity mechanism, but it does place Green Arrow in one of the few surviving resistance pockets after the Anti-Life broadcast.",
+            "title": "Green Arrow (Oliver Queen)",
+            "what_visibly_happens": "In the resistance pocket at the Hall of Justice, Green Arrow is among the heroes still active while Darkseid's forces overrun Earth."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4"
+            ],
+            "means_of_resistance": "Part of the remaining human resistance against Darkseid after the Anti-Life Equation has been broadcast worldwide; the source lists Black Canary among the group still fighting back.",
+            "series_issue_year": "Final Crisis #4 (2008)",
+            "summary": "Partial resistance. The retrieved source shows Black Canary as part of a surviving resistance cell, but it does not give a separate immunity explanation.",
+            "title": "Black Canary (Dinah Lance)",
+            "what_visibly_happens": "Black Canary is shown with the other holdouts at the Hall of Justice, still opposing Darkseid's occupation while most of Earth is enslaved."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4"
+            ],
+            "means_of_resistance": "Part of the remaining human resistance against Darkseid after the Anti-Life Equation has been broadcast worldwide; the source lists Oracle among the group still fighting back.",
+            "series_issue_year": "Final Crisis #4 (2008)",
+            "summary": "Partial resistance. Oracle is included in the last surviving resistance group, but the retrieved text does not state a unique anti-Equation immunity.",
+            "title": "Oracle (Barbara Gordon)",
+            "what_visibly_happens": "Oracle is present with the other survivors at the Hall of Justice, coordinating with the resistance while Darkseid's forces dominate the planet."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4"
+            ],
+            "means_of_resistance": "Part of the remaining human resistance against Darkseid after the Anti-Life Equation has been broadcast worldwide; the source specifically names Joan Garrick with the resistance group.",
+            "series_issue_year": "Final Crisis #4 (2008)",
+            "summary": "Partial resistance. Joan Garrick is explicitly named as part of the remaining resistance, though the source does not describe a solo resistance feat or immunity detail.",
+            "title": "Joan Garrick",
+            "what_visibly_happens": "Joan Garrick appears among the few still resisting at the Hall of Justice as the Anti-Life takeover continues across Earth."
+          }
+        ],
+        "notes": "Conservative sweep of the retrieved sources only: included characters who are explicitly named as resisting, or who are directly described as able to resist, the Anti-Life Equation on-panel. Full resistance is only clearly supported for Mister Miracle/Shilo Norman. The others are partial/group resistance cases from the Hall of Justice resistance pocket; the retrieved snippets do not provide unique immunity mechanisms for them. I did not add characters that were merely discussed in commentary, fan replies, or adjacent Darkseid stories without explicit on-panel Anti-Life resistance evidence."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+          "title": "Final Crisis (2008) #4 | DC Database | Fandom",
+          "snippets": [
+            "\"Darkseid Says\": One month after the Anti-Life Equation was broadcast over every medium on Earth, the majority of humanity has fallen under the control of the Dark Gods. Ignorance reigns supreme, with only the Daily Planet left as a source of information. Final Crisis #4 is an issue of the series Final Crisis (Volume 1) with a cover date of November, 2008.\nIt's the Super Young Team, bearing Mister Miracle, who holds the key to defeating the Anti-Life Equation. However, he is shot by one of the pawns. In the Command-D Bunker, Turpin reaches the point of no return, when he must decide whether to continue struggling and die in agony, or give in and become Darkseid. Once the news of Mister Miracle's apparent demise reaches him, he decides there's really no choice at all. As the skies rain blood, the Dark God of Apokolips is reborn. ... This issue is reprinted in Final Crisis and Final Crisis New Edition.\nThe events from this issue take place after the events chronicled in Final Crisis: Submit #1. DC Comics solicitation reads: It's one month after the Anti-Life Equation was released worldwide. Millions now toil as slaves of Darkseid, while the Justifier shock troops of Apokolips lay waste to the planet Earth and hunt down its protectors.\nOne month after the Anti-Life Equation was broadcast over every medium on Earth, the majority of humanity has fallen under the control of the Dark Gods. Ignorance reigns supreme, with only the Daily Planet left as a source of information. Ray Terril arrives at the Hall of Justice, bringing with him Mark Richards, the Tattooed Man. It is there that he finds one of the few remaining pockets of resistance, consisting of Green Arrow, Black Canary, Oracle, the West family, and Joan Garrick."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_6",
+          "title": "Final Crisis (2008) #6 | DC Database | Fandom",
+          "snippets": [
+            "\"How to Murder the Earth\": In the 31st Century, Brainiac 5 leads Superman to the Legion armory. Superman doesn't understand why he is still there, as he helped the Legion defeat [[Kal-El (Earth-Prime) Final Crisis #6 is an issue of the series Final Crisis (Volume 1) with a cover date of January, 2009.\nAt Checkmate Castle, Shilo Norman explains how he is able to resist the Anti-Life Equation, saying that the painted symbol on his face is a letter from the alphabet of the New Gods meaning \"freedom from restriction\".\nI made a very solemn vow about firearms. But for you, I'm making a once-in-a lifetime exception. ... Final Crisis #6 is an issue of the series Final Crisis (Volume 1) with a cover date of January, 2009.\nAs the lines of space and time begin to break down, multiple events occur at once: Outside of Command-D, the Female Furies launch an attack, with the Anti-Life infected Wonder Woman releasing the Morticoccus Virus, which begins negating the heroes' powers. The Green Lantern Corps continues its descent toward Earth, and their rings are running low."
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}

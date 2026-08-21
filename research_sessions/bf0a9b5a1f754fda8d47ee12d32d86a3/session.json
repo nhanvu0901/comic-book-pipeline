@@ -1,0 +1,11 @@
+{
+  "id": "bf0a9b5a1f754fda8d47ee12d32d86a3",
+  "mode": "qa",
+  "user_intent": "Who has actually resisted Darkseid's Anti-Life Equation?",
+  "state": "general_review",
+  "revision": 1,
+  "selected_general_candidate_id": null,
+  "selected_specific_candidate_ids": [],
+  "created_project": null,
+  "feedback_log": []
+}

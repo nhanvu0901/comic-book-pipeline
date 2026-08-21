@@ -1,0 +1,214 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "character_or_thing": "Scott Free / Mister Miracle",
+            "evidence_urls": [
+              "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/",
+              "https://dc.fandom.com/wiki/Scott_Free_(New_Earth)",
+              "https://dc.fandom.com/wiki/Anti-Life_Equation"
+            ],
+            "series_issue_year": "Seven Soldiers: Mister Miracle (2005); Final Crisis (2008)",
+            "summary": "Full resistance. Scott Free learns the complete Anti-Life Equation but refuses to use it; later stories describe him as one of the very few people able to resist its temptation or break free from its influence. This is the clearest published case of resisting Anti-Life itself, not just surviving a side effect.",
+            "title": "Mister Miracle resists the Equation",
+            "what_visibly_happens": "He is shown coming into possession of the full formula, but does not seize control of others with it; later, he breaks free of Anti-Life influence and is associated with freedom imagery that helps others resist too."
+          },
+          {
+            "character_or_thing": "Shilo Norman / Mister Miracle",
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Anti-Life_Equation",
+              "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/"
+            ],
+            "series_issue_year": "Seven Soldiers: Mister Miracle (2005)",
+            "summary": "Full resistance, with assistance. Shilo Norman is described as breaking free from Anti-Life with Metron's help and gaining immunity from the Equation afterward. This is a concrete resistance feat, but it is assisted rather than solo.",
+            "title": "Shilo Norman breaks free and gains immunity",
+            "what_visibly_happens": "He escapes the Equation’s mental hold instead of staying under it, and the source explicitly says he gains immunity in the process."
+          },
+          {
+            "character_or_thing": "Orion",
+            "evidence_urls": [
+              "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/",
+              "https://dc.fandom.com/wiki/Anti-Life_Equation"
+            ],
+            "series_issue_year": "unspecified in retrieved sources",
+            "summary": "Temporary/limited resistance by choice. Orion uses Anti-Life with good intentions to force happiness, then realizes suppressing free will is wrong and forces himself to give it up. This is not immunity, but it is an actual refusal to continue using the Equation.",
+            "title": "Orion relinquishes Anti-Life",
+            "what_visibly_happens": "He uses the Equation, then visibly abandons its power instead of continuing to dominate others with it."
+          },
+          {
+            "character_or_thing": "Batman",
+            "evidence_urls": [
+              "https://www.reddit.com/r/batman/comments/16sgwfq/batman_defeats_darkseid_final_crisis_6/",
+              "https://www.reddit.com/r/DCcomics/comments/2ifd5h/explain_like_im_five_final_crisis/",
+              "https://www.cbr.com/batman-darkseid-omega-beams-final-crisis-survival/"
+            ],
+            "series_issue_year": "Final Crisis #6 (2008)",
+            "summary": "Partial, temporary resistance. Batman is not described as immune to Anti-Life, but he resists Darkseid’s torture, stays mentally resolute, and gets close enough to shoot Darkseid with the god-bullet. The sources frame this as a feat of will and survival under Anti-Life conditions rather than outright immunity.",
+            "title": "Batman resists long enough to act",
+            "what_visibly_happens": "He breaks free enough to pick up the gun and fire the bullet at Darkseid despite being in the middle of Darkseid’s Anti-Life domination of Earth."
+          },
+          {
+            "character_or_thing": "Wonder Woman",
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis",
+              "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/"
+            ],
+            "series_issue_year": "Final Crisis (2008)",
+            "summary": "Partial, assisted resistance. Wonder Woman is under Anti-Life’s control, but Superman breaks the Equation’s hold over her, after which she uses the Lasso of Truth on Darkseid and helps free Earth. She does not independently shrug off the Equation, but she does recover enough to resist it after help.",
+            "title": "Wonder Woman is freed from Anti-Life and turns the tables",
+            "what_visibly_happens": "After Superman breaks Anti-Life’s hold on her, she binds Darkseid with the Lasso of Truth on-panel."
+          },
+          {
+            "character_or_thing": "Superman",
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis",
+              "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/",
+              "https://www.cbr.com/justice-league-infinity-darkseid-anti-life-equation/"
+            ],
+            "series_issue_year": "Final Crisis (2008); Justice League Infinity #4 (2021)",
+            "summary": "Partial resistance and counter-force. One source says Superman battled Darkseid while he had the Equation and was able to battle the Equation itself; another says Superman breaks Anti-Life’s hold over Wonder Woman and later defeats Darkseid by singing a counter-frequency. This is resistance through power and countermeasure, not immunity.",
+            "title": "Superman counters Anti-Life",
+            "what_visibly_happens": "He fights Darkseid despite the Equation, frees Wonder Woman from its grip, and later sings a note that shatters Darkseid’s essence."
+          },
+          {
+            "character_or_thing": "Barry Allen / The Flash",
+            "evidence_urls": [
+              "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/",
+              "https://www.reddit.com/r/DCcomics/comments/2ifd5h/explain_like_im_five_final_crisis/"
+            ],
+            "series_issue_year": "Final Crisis (2008)",
+            "summary": "Assisted resistance. Barry is cited as using the Speed Force to free his wife from Darkseid’s control and, in the broader Final Crisis discussion, as part of the resistance against Anti-Life. The sources support him as someone who can break free others from Anti-Life’s influence.",
+            "title": "The Flash breaks Anti-Life’s hold with Speed Force",
+            "what_visibly_happens": "He uses speed-force power to pull someone out from Darkseid’s control instead of remaining under the Equation."
+          },
+          {
+            "character_or_thing": "Big Barda",
+            "evidence_urls": [
+              "https://www.cbr.com/dc-superheroes-villains-control-not-corrupted-anti-life-equation/",
+              "https://dc.fandom.com/wiki/Anti-Life_Equation"
+            ],
+            "series_issue_year": "unspecified in retrieved sources",
+            "summary": "Mental resistance. The sources say she has the mental wherewithal to resist Anti-Life and keep it from the wrong hands, but the retrieved context does not give a specific on-panel issue for the feat. This is a strong non-corruption case, but the citations here are character-profile/analysis based.",
+            "title": "Big Barda resists the lure",
+            "what_visibly_happens": "She is described as refusing the Equation’s influence and guarding it instead of succumbing to it."
+          },
+          {
+            "character_or_thing": "Barbara Gordon / Oracle",
+            "evidence_urls": [
+              "https://www.cbr.com/dc-superheroes-villains-control-not-corrupted-anti-life-equation/"
+            ],
+            "series_issue_year": "unspecified in retrieved sources",
+            "summary": "Mental resistance. The source says she would be able to resist Anti-Life’s allure and never cave in to the despair it represents. This is presented as a character-based judgment, not a directly cited scene in the retrieved context.",
+            "title": "Oracle can resist Anti-Life",
+            "what_visibly_happens": "No specific panel is cited in the retrieved material; the source simply states she could resist its lure and despair."
+          },
+          {
+            "character_or_thing": "Martian Manhunter",
+            "evidence_urls": [
+              "https://www.cbr.com/dc-superheroes-villains-control-not-corrupted-anti-life-equation/",
+              "https://dc.fandom.com/wiki/Anti-Life_Equation"
+            ],
+            "series_issue_year": "unspecified in retrieved sources",
+            "summary": "Implied resistance / candidate guardian, not a demonstrated on-page breakthrough in the retrieved context. The source flags him as one of the heroes who could handle the Equation’s power, but the specific issue of resistance is not shown here.",
+            "title": "Martian Manhunter as a likely resister",
+            "what_visibly_happens": "No specific visible Anti-Life resistance scene is provided in the retrieved context."
+          },
+          {
+            "character_or_thing": "Static",
+            "evidence_urls": [
+              "https://www.cbr.com/dc-darkseid-anti-life-equation-trivia-fan-should-know/"
+            ],
+            "series_issue_year": "unspecified in retrieved sources",
+            "summary": "Immunity claim. The retrieved source says Static is immune to Anti-Life control because it fails to piggyback on his brain’s electrical impulses. This is an analysis claim in a secondary source, but it is still a distinct candidate in the research set.",
+            "title": "Static is immune to Anti-Life control",
+            "what_visibly_happens": "No on-panel scene is given in the retrieved context; the article states the Equation fails to control him."
+          },
+          {
+            "character_or_thing": "Lobo",
+            "evidence_urls": [
+              "https://www.cbr.com/dceased-cosmic-anti-hero-blighted-ones-dc-comics/",
+              "https://www.cbr.com/dceased-survivors-explained-dc/"
+            ],
+            "series_issue_year": "DCeased: War of the Undead Gods #3 (2022)",
+            "summary": "Full resistance in the DCeased continuity. Lobo is described as fully impervious to the Anti-Life Virus/Equation in that timeline, and his healing factor prevents the infection from fully consuming him. This is a distinct, published survival case, though it is specific to DCeased’s corrupted-virus version of Anti-Life.",
+            "title": "Lobo resists the Anti-Life Virus",
+            "what_visibly_happens": "He brushes off the infection instead of becoming fully blighted, and the source says the virus cannot fully overcome him."
+          }
+        ],
+        "notes": "I treated the request as an exhaustive list of distinct published resistance cases supported by the supplied research context, including full immunity, partial/assisted resistance, and continuity-specific cases like DCeased’s Anti-Life Virus. I did not include pure speculation from forum comments as standalone facts. Where the retrieved context did not name an exact issue, I left the issue detail generic rather than inventing one."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://www.cbr.com/dc-superheroes-villains-control-not-corrupted-anti-life-equation/",
+          "title": "DC Comics Superheroes Who Wouldn't Be Corrupted By Darkseid's ...",
+          "snippets": [
+            "Barbara is used to having information no one else does, so keeping the Anti-Life Equation safe would be easy for her. She is proof that the Equation can't hold everyone, so she is the perfect person to have it. She would be able to resist its allure and never cave in to the despair it represents. Big Barda grew up under Darkseid's thumb.\nThe Anti-Life Equation is the cruelest force in the DC Universe. Always pursued by Darkseid, only top heroes like Superman can guard it effectively.\nShe was able to resist the indoctrination of her upbringing and learned that love can defeat anything. She was raised to serve someone for whom the rest of the multiverse was little more than chattel and proved that they were wrong. RELATED: 10 DC Comics Powers That Doomed Their Users · Big Barda's very core is anathema to the Anti-Life Equation.\nSometimes, it's through objects created by the most powerful beings in existence. Other times, the methods involved are more arcane, like the Anti-Life Equation. Coveted by Darkseid, this force allows its master to control the minds and bodies of everyone who encounters it."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/",
+          "title": "Darkseid: Why the Anti-Life Equation Is DC's Most DANGEROUS Weapon",
+          "snippets": [
+            "In the hands of the iconic Justice League villain, the Anti-Life Equation might just be the most dangerous weapon in the entire DC Universe.\nIt belonged to his father Yuga Khan before him, and Darkseid’s own son, Orion, once used it with good intentions to force every living being into happiness and contentment. This was short-lived however, as the Dog of War soon realized that a life without free will is no life at all. Another hero of the New Gods, Scott Free, Darkseid’s adopted son and the first Mister Miracle, is one of the few people who has learned the formula and resisted the temptation to use it for his own ends.\nWhile studying the ancient Martian concept called the Life Equation -- the mathematical proof that life is worth living -- Darkseid postulated that an opposite equation must also exist in 2001's Martian Manhunter #33, by John Ostrander, Eduardo Barreto and Ray Kryssing. Darkseid theorized that this Anti-Life Equation would prove that all of reality belonged to him, and he dedicated his life to finding this proof and using it to bring the universe to its knees and acknowledging him as its one true master. It is within the pages of Grant Morrison, Pascal Ferry and Freddie Williams II's Seven Soldiers: Mister Miracle series that the formula for the Equation itself is finally given.\nAfter taking a mortal form on Earth known as Boss Dark Side, Darkseid attempts to corrupt Shilo Norman, Mister Miracle, with the formula: “loneliness + alienation + fear + despair + self-worth ÷ mockery ÷ condemnation ÷ misunderstanding × guilt × shame × failure × judgment n=y where y=hope and n=folly, love=lies, life=death, self=dark side.\"\nAfter murdering his son, Orion, and taking over the mortal body of Metropolis detective Dan Turpin, Darkseid infects the planet by transmitting his Equation through the Internet, spreading his proof like a virus and corrupting the souls of nearly every living person on the planet, including its heroes and villains.",
+            "Another hero of the New Gods, Scott Free, Darkseid’s adopted son and the first Mister Miracle, is one of the few people who has learned the formula and resisted the temptation to use it for his own ends. In any reality, the Anti-Life Equation represents a grave threat to the concept of free will and the DC Universe at large.\nIn the hands of the iconic Justice League villain, the Anti-Life Equation might just be the most dangerous weapon in the entire DC Universe.\nSince the villain was created by Jack Kirby, Darkseid has been after the one thing only that will make his dark dream a reality: the Anti-Life Equation. While it might not be as tangible as something like Marvel's Infinity Gauntlet, it's still an incredibly powerful concept, both to Darkseid and the DCU as a whole.\nNow, we're going to take a closer look at the Anti-Life Equation, what it can do and why it's one of the most powerful ideas in teh DC Universe. Related: Did the Green Lantern Corps Ever Try to Take Down Darkseid?"
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis",
+          "title": "Final Crisis | DC Database | Fandom",
+          "snippets": [
+            "When the Source initiated the demise of the Fourth World and the Death of the New Gods, it did so on one mistaken assumption: that extinction would end the animosity between the New Gods of Apokolips and New Genesis. The New Gods resumed their war in heaven, a Final Crisis, \"The Day Evil Won\", is an all-out war and invasion of Earth by the forces of Darkseid.\nBuilding his position, Darkseid began using his godly power to alter reality, subtly removing the positive effects of the Fourth Worlds: as a result, Bruno Mannheim founded a cult dedicated to the evil of the Fourth World. Metron, a scientist connected to the Fourth World, fought Darkseid's actions across time and space: convincing \"Mister Miracle\", an escape artist, to take the role of the spirit of freedom; inspiring Anthro with \"fire and knowledge\".\nSuperman allied with the Secret Society under Lex Luthor and Doctor Sivana, managing to break the Anti-Life Equation's hold over Wonder Woman, who in turn bound Darkseid's corpse with the Lasso of Truth, breaking the Equation's hold over the people of Earth. Forced to miniaturize and place the people of Earth into cryogenic stasis, Superman set about building a Miracle Machine to reverse the damage done by Darkseid.\nOnce it is complete, Darkseid makes a last ditch attempt to defeat Superman and claim the Miracle Machine. However, Superman sang a note at a frequency that countered Darkseid's own vibrational frequency, shattering his essence. Superman then needed a sample of Element X to power the Miracle Machine, and planned to make a sample using Metron's Mobius Chair."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/justice-league-infinity-darkseid-anti-life-equation/",
+          "title": "Justice League Reveals What Cosmic Force Can Stop Darkseid",
+          "snippets": [
+            "As Wonder Woman travels through the DC Animated Multiverse, she finds a version of Darkseid corrupted by the most destructive force in the universe.\nThe comic book miniseries Justice League Infinity has continued the story of the classic animated series Justice League Unlimited and the DC Animated Universe. Expanding the scope to encompass the entire multiverse, Wonder Woman has found herself in a parallel universe that includes a drastically different iteration of the villainous New God Darkseid.\nDuring Grant Morrison's JLA run, Darkseid gained access to the Anti-Life Equation in an alternate timeline while the crossover event Final Crisis had Darkseid control the world through the Equation before being defeated by Superman and the Green Lantern Corps.\nAnd in Justice League Infinity #4 (by J.M. DeMatteis, James Tucker, Ethen Beavers, Nick Filardi and AW's DC Hopkins) one universe's Darkseid has fallen prey to the Equation himself. RELATED: The Justice League Just Lost Its Strongest Member and Is About to Lose Another · As reality continues to fracture around Amazo and the Justice League, Wonder Woman arrives in a universe where this world's version of Diana Prince not only caused Darkseid to declare a truce with Earth but also taught him the meaning of love as they entered an unexpected romantic relationship.\nAs Darkseid and the main DCAU's Wonder Woman confronted an imposing figure bearing the form of Hades, Diana realizes this villain wasn't the Greek god she knew from her own world, but the Anti-Life Equation given physical form, born from the subconscious and now tormenting Darkseid as the last two entities remaining in this universe."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/batman-darkseid-omega-beams-final-crisis-survival/",
+          "title": "Batman Took Darkseid's Most Powerful Attack and Survived - Here's ...",
+          "snippets": [
+            "In a feature about 'permanent' changes to characters later being reversed, see how Batman survived Darkseid's Omega Sanction in Final Crisis.\nDarkseid fell through time and space all the way back to the Seven Soldiers: Mister Miracle mini-series from a few years before Final Crisis. There it was established that Darkseid was staying alive by taking on a human host body.\nHere he used his \"Omega Sanction\" on Mister Miracle, which \"kills\" Mister Miracle, but basically it forces Mister Miracle to re-live his life over in Seven Soldiers: Mister Miracle #4 (by Morrison, Freddie Williams II and Dave McCaig) and over in some otherworldly dimension. Being the world's greatest escape artist, however, Mister Miracle \"escaped Death.\" Darkseid then fires a Radion bullet through time and kills Orion. The Justice League investigate and that's how Final Crisis kicks off.\nThis one is a bit trickier than a normal \"Never Gonna Be the Same Again,\" as this borders on the level of a \"resurrection,\" but I don't think it really counts as that because of how Batman's \"death\" in Final Crisis was handled. RELATED: Why Did Superman Free Darkseid From the Source Wall?\nI recently wrote a bit about how you really shouldn't aim your work at your dumbest readers, and Final Crisis sure wasn't that, as Grant Morrison wrote a complex story that took place over a number of interrelated titles over the course of a few years, but the basic deal with Darkseid is that there was there was supposed to be a \"War of the Heavens\" that would end the Fourth World and begin the Fifth World (this was sort of depicted in Death of the New Gods and Countdown to Final Crisis)."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dceased-cosmic-anti-hero-blighted-ones-dc-comics/",
+          "title": "DCeased: A Surprising Anti-Hero is Immune to the Superhero Zombie ...",
+          "snippets": [
+            "It turns out there's one person who is fully capable of resisting the Anti-Life Equation in DCeased, and given their history, it makes perfect sense.\nIt turns out that of every DC character, only Lobo is impervious to the Anti-Life Virus in DCeased: War of the Undead Gods #3 (by Tom Taylor, Trevor Hairsine, Andy Lanning, Rain Beredo & Saida Temofonte) -- meaning the cosmic anti-hero might have a major role to play in the conclusion of the corrupted timeline. RELATED: DCeased: Darkseid Gained the Ultimate Weapon - But His Arsenal Has a Massive Flaw\nWithin the universe of DCeased, heroes and villains of ground-level and cosmic scope have been infected alikeby the Anti-Life Virus. Even mystical, alien, and god-like beings have been shown to be capable of being infected. Revelations have even shown how the infection could spread to the greater cosmos thanks to the infections of characters like Darkseid, Supergirl, and Adam Strange.\nBut even the Anti-Life Equation can't overcome Lobo and his healing factor, which does make a certain amount of sense, given how impressive Lobo's endurance has been shown to be in the past. Given the dire situation in this version of the DC Universe, with even Brainiac coming to the remaining heroes for assistance, having Lobo around might be a game-changer. RELATED: DCeased Isn't a Response to Marvel Zombies Anymore - It's DC's Version of Ultimatum\nIt seems that Lobo's impervious healing factor makes him durable enough to even brush off an undead virus that has so far corrupted everyone from Superman to Wonder Woman to even New Gods like Darkseid and Orion. His ability to heal around any injury could be the reason he's able to bounce back so easily, and why the Anti-Life is unable to fully consume him."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Scott_Free_(New_Earth)",
+          "title": "Scott Free (New Earth) | DC Database | Fandom",
+          "snippets": [
+            "When Thaddeus Brown was murdered, Scott Free assumed the identity of Mister Miracle.[5] Barda later followed Scott, and the two used their powers, equipment, and skills in the war against Darkseid, who was still interested in recapturing both of them. Unknown to Darkseid, Scott eventually acquired the complete Anti-Life Equation, Darkseid's ultimate desire. However, his will was strong enough to resist the temptation to use it.\nIndomitable Will: Despite the personal efforts of Granny Goodness, Scott Free rejected the totalitarian values of Darkseid, long yearning for freedom from Apokolips. Additionally, he was able to resist the lure of using the Anti-Life Equation for many years.\nMister Miracle was Scott Free, the god of escape in the New Gods mythology. A Genesisian raised on Apokolips, he defected with his lover Big Barda to Earth, where he used the skills he learned in escapology both as a performance artist and in the Justice League of America. Originally, the boy...\nChanging his uniform to a darker version, he flung himself into the investigation conducted by Superman and Orion, briefly considering that Orion was responsible. Discovering the corpses of the Forever People, Scott used the Anti-Life Equation to resurrect their soulless bodies to try to determine their murderer, but they dissolved their bodies rather than tell."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Anti-Life_Equation",
+          "title": "Anti-Life Equation | DC Database | Fandom",
+          "snippets": [
+            "Originally, it was said to have existed in the mind of \"Billion-Dollar\" Bates, who took it to his death. Darkseid continued to search for it, and recently obtained the full formula. It implants the mathematical certainty that all life is hopeless and that freedo The Anti-Life Equation was a transcendental mathematical formula originally said to allow those who knew it to dominate the will of any sentient race; this is the ultimate goal of Darkseid.\nIt was on Mars where he learned that Martian philosophy was based on the \"Life Equation\"--which equals free will--he postulated that the opposite must also exist.[1] Uxas later focused his attentions on Earth when he discovered humanity possessed fragments of the opposing Equation in their subconscious and conducted experiments on humans over the centuries in an attempt to obtain the full formula.[2] The Anti-Life Equation has the power to dominate the will of any sentient race in addition to reality-altering powers that twist and distort freedom over life, death as well as all existence.\nIt derives its name from the fact that \"if someone possesses absolute control over you—you're not really alive.\"[3] Though the full version of the Equation is barely known to any one person, it supposedly existed in the mind of the human billionaire named Bates, unfortunately for Darkseid he took it with him to the grave. The Anti-Life Equation was also found in the time-displaced Sonny Sumo, according to the Forever People's Mother Box.[citation needed]\nIncreasingly unbalanced by the death of his wife, Big Barda, Scott Free found himself using the Equation more and more. Subsequently, he became determined to hunt down the killer of the New Gods to avenge her murder. He came face to face with the entity behind it all, the Source, and had willingly been killed himself. It was then revealed that the Anti-Life Equation is an entity that is the dark half of the Source, with which the Source was now finally reunited."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dc-darkseid-anti-life-equation-trivia-fan-should-know/",
+          "title": "Darkseid: 10 Things DC Fans Should Know About the Anti-Life Equation",
+          "snippets": [
+            "Throughout this powerful, villainous character's long history, Darkseid has been obsessed with his search for the coveted Anti-Life Equation. While this mysterious formula is often talked about in DC comics, there is still a lot that remains unknown about the nature of the equation.\nDC has cornered the market on all-time great antagonists, including Darkseid. Here are ten things that DC fans should know about the Anti-Life Equatio\nSome have theorized that Static's abilities interfere with the electrical impulses that move through his brain. The Anti-Life Equation seeks to piggyback on those impulses and, because of Static's abilities, fails to do so in his case. During one of Darkseid's expeditions searching for the answers to the elusive equation, he discovered one of its key ingredients.\nThis revelation shocked Darkseid all the way to his core. ... One of the key ingredients of the Anti-Life Equation is love. If manipulated properly, love can be used against people in order to rob them of their free will.\nThis information helped Darkseid get one step closer to solving the puzzle. When the idea of the Anti-Life Equation was first introduced it actually had yet to be a proven, or even theoretical, concept."
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}

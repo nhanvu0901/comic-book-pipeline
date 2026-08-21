@@ -30,6 +30,14 @@ MAX_PHASE_RETRIES = int(os.getenv("MAX_PHASE_RETRIES", "3"))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 SCOUT_EVIDENCE_MODEL = os.getenv("SCOUT_EVIDENCE_MODEL", "deepseek/deepseek-v4-flash")
+# Cheap planner LLM that fills the Stage 1 ResearchPlan's 4 knobs (see
+# stages/research_scout/planner.py + RESEARCH_PLANNER_DESIGN.md). Defaults to
+# the evidence model — no separate key/model needed unless split later.
+SCOUT_PLANNER_MODEL = os.getenv("SCOUT_PLANNER_MODEL", SCOUT_EVIDENCE_MODEL)
+# You.com Research effort for the Stage 1 scout. A/B on 2026-08-21 (same question,
+# same schema): deep returned the same item count at the same latency as standard,
+# so standard stays the default — deep only costs more.
+YOUCOM_RESEARCH_EFFORT = os.getenv("YOUCOM_RESEARCH_EFFORT", "standard")
 
 _DEFAULT_LLM_CHAIN = (
     "minimax/minimax-m2.5:free,"

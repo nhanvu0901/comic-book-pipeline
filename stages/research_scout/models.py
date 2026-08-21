@@ -19,6 +19,19 @@ class SessionState(str, Enum):
     ARCHIVED = "archived"
 
 
+class FeedbackNote(BaseModel):
+    """A Master note threaded back into a later research prompt.
+
+    ``state`` records the session state the feedback was given IN, not the
+    state it produced — the workflow already transitions the session before
+    the note is appended, so callers pass the literal review state rather
+    than reading it off the (already-advanced) session.
+    """
+
+    state: str = ""
+    text: str = ""
+
+
 class ResearchSession(BaseModel):
     id: str
     mode: ScoutMode
@@ -28,6 +41,9 @@ class ResearchSession(BaseModel):
     selected_general_candidate_id: str | None = None
     selected_specific_candidate_ids: list[str] = Field(default_factory=list)
     created_project: str | None = None
+    # Absent from session.json files written before this field existed — the
+    # default keeps those old sessions loading instead of failing validation.
+    feedback_log: list[FeedbackNote] = Field(default_factory=list)
 
 
 class Candidate(BaseModel):

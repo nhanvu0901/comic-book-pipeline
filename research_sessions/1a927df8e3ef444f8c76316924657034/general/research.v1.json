@@ -1,0 +1,109 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "evidence_urls": [
+              "https://www.cbr.com/hulk-op-feats-of-strength/",
+              "https://www.cbr.com/hulk-vs-sentry-who-wins/",
+              "https://www.reddit.com/r/Marvel/comments/1cy6idd/secret_wars_1984_4_hulk_lifts_a_mountain_of_one_w/"
+            ],
+            "rank_reason": "Best quantified raw-strength feat in the retrieved material: the page explicitly names a 150-billion-ton mountain range, and multiple sources describe Hulk physically supporting it. That is a clearer mass-lift than the other retrieved feats, which are either less directly quantified or more about striking/overpowering than lifting.",
+            "series_issue_year": "Secret Wars #4 (1984)",
+            "summary": "During the battle on Battleworld, a mountain range is dropped on the heroes, and Hulk stays behind to hold the mass up while others escape. The sources also note Reed Richards keeps him angry so he can keep supporting it.",
+            "title": "Secret Wars #4",
+            "what_visibly_happens": "A giant mountain is shown pressing down on the heroes; Hulk is visibly bracing underneath it with both arms/shoulders, supporting the crushed rock above the trapped group while the others work to escape. The page-level descriptions emphasize that he is holding the 150-billion-ton mass up rather than merely standing near it."
+          },
+          {
+            "evidence_urls": [
+              "https://marvel.fandom.com/wiki/Incredible_Hulk_Vol_2_102",
+              "https://www.reddit.com/r/mutantsandmasterminds/comments/ccq1rw/hulks_strength_is_81/",
+              "https://www.cbr.com/hulk-op-feats-of-strength/"
+            ],
+            "rank_reason": "Extremely high-scale planetary engineering feat: the retrieved source says Hulk physically moves Sakaar’s tectonic plates back together to stop the planet from exploding. This is broader in planetary scale than the single mountain feat, but the source describes it as moving plates rather than a heavier quantified lift.",
+            "series_issue_year": "Incredible Hulk Vol. 2 #102 (2007)",
+            "summary": "On Sakaar, the Red King’s weapon cracks the planet’s crust and threatens to blow the world apart. Hulk leaps into the fissure and physically moves the tectonic plates back together, temporarily saving the planet.",
+            "title": "Incredible Hulk Vol. 2 #102",
+            "what_visibly_happens": "The planet’s crust is shown split open in a huge chasm. Hulk visibly drops into the crack and pushes the separated ground masses back together with his hands/body, closing the gap enough to stabilize the planet."
+          },
+          {
+            "evidence_urls": [
+              "https://www.cbr.com/the-incredible-hulks-17-greatest-moments-of-all-time/",
+              "https://www.cbr.com/hulk-op-feats-of-strength/",
+              "https://www.reddit.com/r/Marvel/comments/1rt3wg8/hulk_cracks_onslaughts_armor_by_me/"
+            ],
+            "rank_reason": "A higher-end striking feat than ordinary enemy hits because it affects Onslaught’s armored shell and triggers a massive psionic backlash. It ranks below the mountain/planetary feats because the retrieved sources describe it as cracking armor rather than moving a larger physical mass.",
+            "series_issue_year": "Onslaught: Marvel Universe #1 (1996)",
+            "summary": "With Jean Grey suppressing Banner so only Hulk remains, Hulk rages hard enough to crack Onslaught’s armor. The resulting backlash splits Hulk and Banner into separate beings.",
+            "title": "Onslaught: Marvel Universe #1",
+            "what_visibly_happens": "Hulk is shown launching a full-force punch into Onslaught’s armored body; the armor visibly fractures and bursts, with energy exploding outward from the impact and the Hulk/Banner separation following immediately after."
+          },
+          {
+            "evidence_urls": [
+              "https://www.cbr.com/hulk-vs-sentry-who-wins/",
+              "https://www.cbr.com/hulk-op-feats-of-strength/",
+              "https://www.reddit.com/r/comicbooks/comments/t3vinp/you_dont_want_this_fight_sentry_world_war_hulk_5/"
+            ],
+            "rank_reason": "Impressive on-panel strength through combat against a cosmic-tier opponent, but still below the quantified lifting and planet-saving feats. The retrieved sources frame it as Hulk’s final fight in World War Hulk and say he wins, but they do not give a mass scale as concrete as the mountain or Sakaar feats.",
+            "series_issue_year": "World War Hulk #5 (2007)",
+            "summary": "Hulk fights the Sentry during the World War Hulk conflict and is described by the retrieved sources as winning the battle. The sources present it as one of Hulk’s major raw-physical showings against an exceptionally powerful opponent.",
+            "title": "World War Hulk #5",
+            "what_visibly_happens": "The page shows Hulk and Sentry trading massive blows in a destructive brawl. Hulk visibly overpowers the Sentry in the exchange, with the fight depicted as a brutal, earth-shaking physical clash rather than a powers-based trick."
+          }
+        ],
+        "notes": "I included only feats supported by the retrieved sources in the existing context, and I kept each candidate to one feat. I prioritized explicit on-panel physical displays over statement-only claims. The retrieved material supports these exact issue references and years; for the Onslaught entry, the title/issue/year come from the cited source text naming 'Onslaught: Marvel Universe #1' and the event year 1996."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://marvel.fandom.com/wiki/Incredible_Hulk_Vol_2_102",
+          "title": "Incredible Hulk Vol 2 102 | Marvel Database | Fandom",
+          "snippets": [
+            "Featured Characters: ⏴ Hulk ⏵ Supporting Characters: Warbound ⏴ Caiera the Oldstrong ⏵ ⏴ Miek ⏵ ⏴ Korg ⏵ ⏴ Elloe Kaifi ⏵ ⏴ Hiroim ⏵ ⏴ No-Name of Brood ⏵ Antagonists: ⏴ Red King Angmo-Asan ⏵ (Apparent death) Death's Head Guard Races and Species: Wildebots Spikes Sakaarans Shadow People Sakaaran Imperials Sakaaran Natives Amebids Drammoths Realities: Earth-616 Locations: Sakaar Crown City Items: Vehicles: One Hour Ago The Hulk and his Warbound are face-to-face with the leader of the Spikes...\nWhen the Green Skar refuses, the Red King activates a weapon that rips open the very crust beneath the Crown City, threatening to kill them all. Caiera explains that the King has cracked the very crust of Sakaar and the planet will soon explode. However, the Hulk refuses to surrender and leaps down into the yawning crack in the earth and moves the plates back together, saving the planet.\nHowever, the Hulk isn't partaking in the festivities as he has offered his body as a source of sustenance for the Spikes to feed on, thanks to his gamma-irradiated body's enhanced healing abilities. However, the constant feeding is starting to take its toll, making it only a temporary solution. Based on the Marvel Legacy renumbering infographic, this issue corresponds to Incredible Hulk #576.\nThe Hulk and his Warbound are face-to-face with the leader of the Spikes, alien creatures that consume and assimilate organic matter into their collective. Miek detects the creatures \"chemming\" that allows him to tell his allies what they are saying. The Spikes explain that they are spaceborne creatures that draw sustenance from cosmic energy given off by dying stars."
+          ]
+        },
+        {
+          "url": "https://www.reddit.com/r/comicbooks/comments/t3vinp/you_dont_want_this_fight_sentry_world_war_hulk_5/",
+          "title": "r/comicbooks on Reddit: “You don’t want this fight, Sentry.” ...",
+          "snippets": [
+            "103 votes, 17 comments. 4.1M subscribers in the comicbooks community. A reddit for fans of comic books, graphic novels, and digital comics.\nPosted by u/Cmyers1980 - 103 votes and 17 comments\nImagine if it was the hood against this hulk, or death seed sentry. Or hell… combined sentry · Sentry combined with the Void is possibly the strongest being in the universe. Just a shame they didn’t include that version in king in black despite the timeline making sense to where he should be, if knull killed that version with such ease it would’ve made his feat even bigger · Sentry wasn’t going full strength on hulk and was weakened\nDo you mean the character that not at this strength level - who literally held a planet together literally with his own hands - couldn't handle the Sentry? The Hulk has been blasted to his skeleton almost - all skin and most muscle gone - he kept going and healed to full in seconds.\nYa people don’t seem to understand this hulk is on a different level. A hulk at max strength can also break planets just as easy as Sentry; and world breaker Hulk was always at max strength"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/hulk-vs-sentry-who-wins/",
+          "title": "Hulk vs Sentry: Who Is REALLY Marvel's Strongest Avenger?",
+          "snippets": [
+            "Out of all of Marvel's heroes, the Sentry is one of the few who can rival the Hulk's strength. Robert Reynolds was a meth addict who broke into a laboratory that contained the Golden Sentry Serum. This serum gave Bob the power of a million exploding suns, essentially making him Marvel's Superman. 2001's Sentry/X-Men #1, by Paul Jenkins and Mark Texeira, saw Bob withstand the force of a nuclear warhead, with little physical damage. The Sentry has performed other incredible feats, such as holding the Cosmic Cube in 2001's Sentry/Fantastic Four #1 by Paul Jenkins and Phil Winslade, and ripping Carnage in half during 2004's New Avengers #2 by Brian Michael Bendis and David Finch.\nThe Hulk has often been considered the strongest Avenger, but the Sentry challenged the Green Goliath during one epic battle in World War Hulk.\nThe Hulk's toughest competitor might just be the Golden Avenger, the Sentry. Bruce Banner's alter ego is possibly the strongest being on the face of the Earth. The madder the Hulk gets, the stronger he gets, meaning that the Jade Giant has a limitless potential to his strength. Moreover, this means that the Hulk has an incredible amount of stamina and durability, never tiring during a fight. One classic example of the Hulk's strength came during 1984's Secret Wars #4 by Jim Shooter and Bob Layton.\nYet the Hulk never forgot about the Sentry, as the two were good friends. When the Sentry was forced to fight his old friend, the two got the chance to let loose. RELATED: Hulk and Thor's Most Brutal Fight Should Have Been Impossible · In 2007's World War Hulk #5 by Greg Pak and John Romita, Jr., the Hulk and the Sentry faced off.",
+            "The Hulk has often been considered the strongest Avenger, but the Sentry challenged the Green Goliath during one epic battle in World War Hulk.\nOne classic example of the Hulk's strength came during 1984's Secret Wars #4 by Jim Shooter and Bob Layton. In this iconic issue, the Hulk held up a mountain weighing one hundred and fifty billion tons, spanning two miles downward. The only way that Reed Richards could keep the Hulk from dropping the mountain was by insulting the Hulk, making him angrier.\nIn 2007's World War Hulk #5 by Greg Pak and John Romita, Jr., the Hulk and the Sentry faced off. The Green Scar and his Warbound arrived on Earth and attacked the Illuminati and all the heroes who defended them. Up until this point, the Sentry tried to stay out of the conflict for fear of his power.\n2001's Sentry/X-Men #1, by Paul Jenkins and Mark Texeira, saw Bob withstand the force of a nuclear warhead, with little physical damage."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/the-incredible-hulks-17-greatest-moments-of-all-time/",
+          "title": "The Incredible Hulk's 17 Greatest Moments of All-Time",
+          "snippets": [
+            "Their first meeting (in the second \"Superman/Spider-Man\" crossover) did not go nearly as well for the Hulk, as Superman just shrugged off the Hulk's best punch. In \"Onslaught: Marvel Universe\" #1 (by Scott Lobdell and Adam Kubert), the X-Men and most of the superheroes of the Marvel Universe took on Onslaught at once. The powerful being was too much for them, until the Hulk decided to alter the playing field. He had Jean Grey use her telepathic powers to silence the Bruce Banner side of his personality, leaving only the Hulk. The raging Hulk was enough to crack Onslaught's armor, allowing the heroes to stop Onslaught by absorbing his psionic energies into themselves (which seemingly killed them all).\nIn honor of Bruce Banner's green-hued alter ego, CBR commemorates 17 times the Hulk smashed his way to glory at Marvel Comics.\nThe force of cracking Onslaught's armor was so great that it actually split the Hulk into two, the Hulk and Bruce Banner. Banner sacrificed himself alongside the other heroes, while the Hulk remained (this was because the \"dead\" heroes were actually going off into their own universe for the short-lived \"Heroes Reborn\" line of comics by Jim Lee and Rob Liefeld's studios and they wanted to use the Hulk in their comics but Marvel still wanted to put out a \"Hulk\" comic).\nBut Bruce Banner hasn't been the Hulk since the Marvel Universe jumped forward eight months after the conclusion of \"Secret Wars.\" Amadeus Cho, the seventh smartest person in the Marvel U, used nanites to remove the Hulk from Banner's blood, seemingly curing Banner of his long-time curse."
+          ]
+        },
+        {
+          "url": "https://www.reddit.com/r/Marvel/comments/1cy6idd/secret_wars_1984_4_hulk_lifts_a_mountain_of_one/",
+          "title": "r/Marvel on Reddit: [Secret Wars (1984) #4] Hulk lifts a mountain ...",
+          "snippets": [
+            "1.2K votes, 133 comments. 3.7M subscribers in the Marvel community. This is a subreddit dedicated to Marvel Comics, its publications and hundreds of…\nPosted by u/Blasckk - 1,236 votes and 133 comments\nIt's already unbelievable that the Hulk is holding things up and he's the Hulk. What help is Iron Man doing in comparison with regard to holding up a mountain. ... Iron cut out the space they were in. If it wasn’t for that they would be dead. ... Iron Man is the reason why they escaped at the end. He blasted the mountain with his full power repulsors · Of course, Iron Man can only lift few thousand tons so 150 Billion mountain is too enough for him but his energy blast can rip through 150 Billion Ton mountain\nThere was nothing subtle about Reed dissing Hulk in that scene. He straight up accused him of \"self-pitying mewling,\" called him a \"brute,\" and said that was all he was good for. ... Yeah there was actually a modern comic that expanded it on it, Spidey was calling him an idiot and all that trying to enrage him. ... Slight qualification: he's keeping it partially propped up, not lifting the whole thing into the air. Still a f__kton of weight, and the number of tons is correct per the narration.\nTony bottomed out. This time he just totally surrendered to the bottle and was like \"f*** everything\" And gave the suit to Rhodey. ... He didn't lift it, he CAUGHT it. It was falling and he completely decelerated it. That's WAAAAAY more impressive than lifting it. ... Strong and humble, what a sweetheart. ... The whole series has banger covers. #10 is my personal favorite. ... Bob Layton. ... In Endgame I really thought when Hulk, Rocket, and Rhodey were trapped under the rubble he was going to go back to savage Hulk and do this kind of moment."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/hulk-op-feats-of-strength/",
+          "title": "World Breaker: The Hulk's 21 Most Ridiculous OP Feats Of Strength",
+          "snippets": [
+            "The Hulk has done some pretty insane things in his time, but these overpowered feats of strength are truly incredible.\nThe original \"Secret Wars\" from 1984 featured Marvel’s most popular heroes and villains brought to an alien world to do battle, thanks of the enigmatic and all-powerful Beyonder. In one of the series’ many awesome fights, issue four featured the Molecule Man dropping an entire mountain range on Earth’s heroes. Everyone present would have surely met their maker, if not for the Hulk catching the 150-billion-ton mass.\nFantastic time to whip up some clever science that eventually gets everyone to safety. The moment paved the way for many other feats the Hulk would demonstrate over the years. Additionally, so iconic was this display of strength, that the scene was retold in 2015's \"Secret Wars\" arc in a tribute to the original.\nUnfortunately Hulk’s love life came to an end when the ship he’d arrived in exploded, killing the Hulk’s Queen and many of his subjects. Grief-stricken, Hulk believed his former friends from Earth were responsible and swore vengeance on them. So began the \"World War Hulk\" storyline, wherein the Hulk returns to Earth, angrier than ever before, looking for revenge.\nAnyway, in The Incredible Hulk #167, M.O.D.O.K. is off musing in his laboratory that in order for him to eventually fulfill his goals of world domination or whatever, he’s going to have to beat everyone who might oppose him. Having faced the Hulk before, M.O.D.O.K. knows that their paths will likely cross again. With that in mind, he decides to take a preemptive strike. M.O.D.O.K. dons a mountainous suit of armor that’s an alloy made from adamantium and steel.",
+            "The Hulk has done some pretty insane things in his time, but these overpowered feats of strength are truly incredible.\nSo began the \"World War Hulk\" storyline, wherein the Hulk returns to Earth, angrier than ever before, looking for revenge. When he arrives, Hulk promptly defeats Black Bolt, the Avengers, the Fantastic Four, the U.S. Army, and even Doctor Strange. His final fight comes when he battles the Sentry, which he obviously wins too.\nThough the early days of Marvel definitely helped reinforce the idea, the Hulk has only seemingly gotten stronger with every comic book he’s been featured in. The only Marvel heroes who can stand on equal footing when it comes to raw power, are gods like Thor. Despite the overwhelming abilities of the God of Thunder, the Hulk has proved time and again, that if ever there’s a dire situation that requires raw physicality, he’s the guy you go to.\nIt is here where the Hulk shows off his fantastic power, as the green goliath holds up a literal mountain range to ensure he and his friends aren’t crushed. The original \"Secret Wars\" from 1984 featured Marvel’s most popular heroes and villains brought to an alien world to do battle, thanks of the enigmatic and all-powerful Beyonder.\nFantastic time to whip up some clever science that eventually gets everyone to safety. The moment paved the way for many other feats the Hulk would demonstrate over the years. Additionally, so iconic was this display of strength, that the scene was retold in 2015's \"Secret Wars\" arc in a tribute to the original."
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}

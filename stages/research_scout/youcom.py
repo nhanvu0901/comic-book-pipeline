@@ -44,10 +44,17 @@ class YouComClient:
         self.api_key = api_key if api_key is not None else os.environ.get("YDC_API_KEY", "").strip()
         self.timeout = timeout
 
-    def research(self, prompt: str, schema: dict[str, Any], profile: Mapping[str, Any] | None) -> RawCall:
+    def research(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        profile: Mapping[str, Any] | None,
+        *,
+        effort: str = "standard",
+    ) -> RawCall:
         body = {
             "input": prompt,
-            "research_effort": "standard",
+            "research_effort": effort,
             "source_control": {"include_domains": _domains(profile)},
             "output_schema": schema,
         }

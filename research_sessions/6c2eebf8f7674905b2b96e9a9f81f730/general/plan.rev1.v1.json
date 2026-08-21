@@ -1,0 +1,8 @@
+{
+  "source": "planner",
+  "unit": "one issue",
+  "cardinality": "pinpoint",
+  "ranking": "",
+  "extra_fields": [],
+  "research_prompt": "Check each of DCeased: Unkillables #1, #2, and #3 (2020) for any appearance of Deathstroke. For each issue where he appears, provide a title (e.g., 'DCeased: Unkillables #2'), a summary of his role/scene, the series/issue/year, a detailed description of what visibly happens (including page numbers if possible), and evidence URLs (e.g., previews, scans). If he does not appear in a given issue, explicitly state that. Ensure all three issues are covered exhaustively within the given range."
+}

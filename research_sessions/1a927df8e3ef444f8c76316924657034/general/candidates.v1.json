@@ -1,0 +1,56 @@
+{
+  "candidates": [
+    {
+      "evidence_urls": [
+        "https://www.cbr.com/hulk-op-feats-of-strength/",
+        "https://www.cbr.com/hulk-vs-sentry-who-wins/",
+        "https://www.reddit.com/r/Marvel/comments/1cy6idd/secret_wars_1984_4_hulk_lifts_a_mountain_of_one_w/"
+      ],
+      "rank_reason": "Best quantified raw-strength feat in the retrieved material: the page explicitly names a 150-billion-ton mountain range, and multiple sources describe Hulk physically supporting it. That is a clearer mass-lift than the other retrieved feats, which are either less directly quantified or more about striking/overpowering than lifting.",
+      "series_issue_year": "Secret Wars #4 (1984)",
+      "summary": "During the battle on Battleworld, a mountain range is dropped on the heroes, and Hulk stays behind to hold the mass up while others escape. The sources also note Reed Richards keeps him angry so he can keep supporting it.",
+      "title": "Secret Wars #4",
+      "what_visibly_happens": "A giant mountain is shown pressing down on the heroes; Hulk is visibly bracing underneath it with both arms/shoulders, supporting the crushed rock above the trapped group while the others work to escape. The page-level descriptions emphasize that he is holding the 150-billion-ton mass up rather than merely standing near it.",
+      "id": "candidate-1"
+    },
+    {
+      "evidence_urls": [
+        "https://marvel.fandom.com/wiki/Incredible_Hulk_Vol_2_102",
+        "https://www.reddit.com/r/mutantsandmasterminds/comments/ccq1rw/hulks_strength_is_81/",
+        "https://www.cbr.com/hulk-op-feats-of-strength/"
+      ],
+      "rank_reason": "Extremely high-scale planetary engineering feat: the retrieved source says Hulk physically moves Sakaar’s tectonic plates back together to stop the planet from exploding. This is broader in planetary scale than the single mountain feat, but the source describes it as moving plates rather than a heavier quantified lift.",
+      "series_issue_year": "Incredible Hulk Vol. 2 #102 (2007)",
+      "summary": "On Sakaar, the Red King’s weapon cracks the planet’s crust and threatens to blow the world apart. Hulk leaps into the fissure and physically moves the tectonic plates back together, temporarily saving the planet.",
+      "title": "Incredible Hulk Vol. 2 #102",
+      "what_visibly_happens": "The planet’s crust is shown split open in a huge chasm. Hulk visibly drops into the crack and pushes the separated ground masses back together with his hands/body, closing the gap enough to stabilize the planet.",
+      "id": "candidate-2"
+    },
+    {
+      "evidence_urls": [
+        "https://www.cbr.com/the-incredible-hulks-17-greatest-moments-of-all-time/",
+        "https://www.cbr.com/hulk-op-feats-of-strength/",
+        "https://www.reddit.com/r/Marvel/comments/1rt3wg8/hulk_cracks_onslaughts_armor_by_me/"
+      ],
+      "rank_reason": "A higher-end striking feat than ordinary enemy hits because it affects Onslaught’s armored shell and triggers a massive psionic backlash. It ranks below the mountain/planetary feats because the retrieved sources describe it as cracking armor rather than moving a larger physical mass.",
+      "series_issue_year": "Onslaught: Marvel Universe #1 (1996)",
+      "summary": "With Jean Grey suppressing Banner so only Hulk remains, Hulk rages hard enough to crack Onslaught’s armor. The resulting backlash splits Hulk and Banner into separate beings.",
+      "title": "Onslaught: Marvel Universe #1",
+      "what_visibly_happens": "Hulk is shown launching a full-force punch into Onslaught’s armored body; the armor visibly fractures and bursts, with energy exploding outward from the impact and the Hulk/Banner separation following immediately after.",
+      "id": "candidate-3"
+    },
+    {
+      "evidence_urls": [
+        "https://www.cbr.com/hulk-vs-sentry-who-wins/",
+        "https://www.cbr.com/hulk-op-feats-of-strength/",
+        "https://www.reddit.com/r/comicbooks/comments/t3vinp/you_dont_want_this_fight_sentry_world_war_hulk_5/"
+      ],
+      "rank_reason": "Impressive on-panel strength through combat against a cosmic-tier opponent, but still below the quantified lifting and planet-saving feats. The retrieved sources frame it as Hulk’s final fight in World War Hulk and say he wins, but they do not give a mass scale as concrete as the mountain or Sakaar feats.",
+      "series_issue_year": "World War Hulk #5 (2007)",
+      "summary": "Hulk fights the Sentry during the World War Hulk conflict and is described by the retrieved sources as winning the battle. The sources present it as one of Hulk’s major raw-physical showings against an exceptionally powerful opponent.",
+      "title": "World War Hulk #5",
+      "what_visibly_happens": "The page shows Hulk and Sentry trading massive blows in a destructive brawl. Hulk visibly overpowers the Sentry in the exchange, with the fight depicted as a brutal, earth-shaking physical clash rather than a powers-based trick.",
+      "id": "candidate-4"
+    }
+  ]
+}

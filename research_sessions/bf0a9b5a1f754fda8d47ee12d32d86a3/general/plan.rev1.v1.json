@@ -1,0 +1,19 @@
+{
+  "source": "planner",
+  "unit": "one character",
+  "cardinality": "exhaustive",
+  "ranking": "",
+  "extra_fields": [
+    {
+      "name": "resistance_mechanism",
+      "type": "string",
+      "description": "What specific power, item, or trait allowed the resistance"
+    },
+    {
+      "name": "resistance_event",
+      "type": "string",
+      "description": "The comic series, issue number, and approximate year of the resistance event"
+    }
+  ],
+  "research_prompt": "Identify every character across all DC comic continuities and timelines who has resisted, defied, or broken free from Darkseid's Anti-Life Equation — whether through willpower, special abilities, equipment, cosmic forces, or external intervention. Include characters who resisted the equation's control after being affected, who were immune outright, or who temporarily overcame it. Exclude mere exposure without effect or characters who were never shown in a resistance scenario. For each, specify the nature of the resistance and the exact story/series/issue where it occurred. If a character resists multiple times, list all instances."
+}

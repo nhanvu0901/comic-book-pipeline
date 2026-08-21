@@ -1,0 +1,2 @@
+{"timestamp": "2026-08-21T13:45:08.849666+00:00", "event": "session_created", "detail": {}}
+{"timestamp": "2026-08-21T13:45:39.438994+00:00", "event": "general_research_completed", "detail": {"prompt_hash": "2a283c41429e0e001abfa106e6040545d69cdbf34a004161a87c9d3b0bfa9d46", "source_api": "research", "effort": "standard"}}

@@ -1,0 +1,2 @@
+{"timestamp": "2026-08-21T15:20:52.662938+00:00", "event": "session_created", "detail": {}}
+{"timestamp": "2026-08-21T15:22:06.751258+00:00", "event": "general_research_completed", "detail": {"prompt_hash": "7af1c8fe1ad944f3efe4c480a0203f6bdb05245966e2953661df6cde45a1008c", "source_api": "research", "effort": "standard", "revision": 1, "plan_source": "planner", "plan_summary": "one character · exhaustive"}}

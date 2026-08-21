@@ -1,0 +1,182 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "character_or_thing": "Scott Free / Mister Miracle",
+            "evidence_urls": [
+              "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/",
+              "https://dc.fandom.com/wiki/Anti-Life_Equation"
+            ],
+            "series_issue_year": "Seven Soldiers: Mister Miracle #4 (2005); Final Crisis #6 (2009)",
+            "summary": "Actual, published resistance: Scott Free is repeatedly described as one of the few beings who learned the Anti-Life formula and did not succumb to using it. In Final Crisis, he is the key to defeating Anti-Life and survives its effects long enough to help break Darkseid's control. This is a direct, canonical resistance; not hypothetical.",
+            "title": "Mister Miracle resists and helps break Anti-Life control",
+            "what_visibly_happens": "He remains himself instead of becoming a willing servant, and later is revealed as the key to stopping the Anti-Life takeover and freeing others from its influence."
+          },
+          {
+            "character_or_thing": "Shilo Norman",
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_6",
+              "https://www.reddit.com/r/AskScienceFiction/comments/3hbb25/dc_how_does_the_antilife_equation_work/"
+            ],
+            "series_issue_year": "Final Crisis #6 (2009)",
+            "summary": "Shilo Norman explicitly explains that he can resist the Anti-Life Equation because the symbol painted on his face represents 'freedom from restriction.' This is an on-page, in-story resistance, not a theory.",
+            "title": "Shilo Norman resists Anti-Life with the freedom symbol",
+            "what_visibly_happens": "At Checkmate Castle he explains the symbol on his face and remains unbroken while discussing the way to counter Anti-Life, showing he has not been mentally overwritten."
+          },
+          {
+            "character_or_thing": "Barry Allen / The Flash",
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+              "https://dc.fandom.com/wiki/Anti-Life_Equation",
+              "https://www.reddit.com/r/DCcomics/comments/h0l6t9/can_the_speed_force_overwrite_the_antilife/"
+            ],
+            "series_issue_year": "Final Crisis #4 (2008)",
+            "summary": "Barry Allen resists Anti-Life at least long enough to act against it through the Speed Force. The published material and follow-up references describe him using Speed Force power to negate the equation's effects on an infected loved one, which counts as actual resistance/overwriting.",
+            "title": "The Flash counters Anti-Life through the Speed Force",
+            "what_visibly_happens": "Barry reaches Iris while she is infected, kisses her, and the Speed Force effect visibly restores her free will and breaks Darkseid's hold."
+          },
+          {
+            "character_or_thing": "Iris West Allen",
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+              "https://www.reddit.com/r/DCcomics/comments/h0l6t9/can_the_speed_force_overwrite_the_antilife/"
+            ],
+            "series_issue_year": "Final Crisis #4 (2008)",
+            "summary": "Iris is not the source of the resistance, but she is visibly freed from Anti-Life in the scene where Barry uses the Speed Force to break the control. Included here as a distinct affected/rescued subject because the page clearly shows the equation failing on her in that moment.",
+            "title": "Iris West is freed from Anti-Life",
+            "what_visibly_happens": "She is under Anti-Life control, then Barry's kiss and lightning restore her autonomy on-panel."
+          },
+          {
+            "character_or_thing": "Snapper Carr",
+            "evidence_urls": [
+              "https://leagueofcomicgeeks.com/comics/series/112477/final-crisis-resist",
+              "https://dc.fandom.com/wiki/Final_Crisis:_Resist_Vol_1_1",
+              "https://dc.fandom.com/wiki/Lucas_Carr_(New_Earth)"
+            ],
+            "series_issue_year": "Final Crisis: Resist #1 (2008)",
+            "summary": "Snapper Carr is one of the few operatives not completely taken over by the Anti-Life Equation in Final Crisis: Resist. He is not portrayed as immune in the absolute sense, but he does remain free enough to function, recruit allies, and carry out resistance activity. This is partial/temporary resistance rather than total immunity.",
+            "title": "Snapper Carr remains partially resistant and active",
+            "what_visibly_happens": "He moves through Checkmate's Antarctic base, survives encounters, and teleports with Cheetah instead of abandoning her, continuing to function while the world is under Anti-Life control."
+          },
+          {
+            "character_or_thing": "Cheetah / Barbara Minerva",
+            "evidence_urls": [
+              "https://leagueofcomicgeeks.com/comics/series/112477/final-crisis-resist",
+              "https://dc.fandom.com/wiki/Barbara_Minerva_(New_Earth)"
+            ],
+            "series_issue_year": "Final Crisis: Resist #1 (2008)",
+            "summary": "Barbara Minerva is specifically noted as remaining free of the Anti-Life Equation during Final Crisis: Resist. This is actual published resistance, though it is more 'not infected' than a demonstrated countermeasure.",
+            "title": "Cheetah remains free of Anti-Life",
+            "what_visibly_happens": "She is injured but conscious in the operating room, then joins Snapper Carr and Checkmate's resistance rather than becoming a Justifier."
+          },
+          {
+            "character_or_thing": "Lobo",
+            "evidence_urls": [
+              "https://www.cbr.com/dceased-cosmic-anti-hero-blighted-ones-dc-comics/",
+              "https://dc.fandom.com/wiki/Anti-Living"
+            ],
+            "series_issue_year": "DCeased: War of the Undead Gods #3 (2022)",
+            "summary": "In the DCeased continuity, Lobo is described as fully impervious to the Anti-Life Virus/Anti-Living corruption. This is a strong, explicit resistance case, but it is continuity-specific to DCeased rather than mainline Final Crisis Anti-Life.",
+            "title": "Lobo is impervious to the Anti-Life Virus",
+            "what_visibly_happens": "He brushes off the corruption that turns others into Blighted Ones and is explicitly identified as the one character who cannot be turned."
+          },
+          {
+            "character_or_thing": "Deathstroke",
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Anti-Living",
+              "https://www.cbr.com/dceased-villains-anti-life/"
+            ],
+            "series_issue_year": "DCeased: Unkillables #1-3 (2020)",
+            "summary": "Deathstroke only becomes infected temporarily because his healing factor purges the Anti-Life Virus from his system. This is partial/temporary resistance, not full immunity, but it still counts as an actual on-page failure of the virus to hold him.",
+            "title": "Deathstroke temporarily resists the Anti-Life Virus",
+            "what_visibly_happens": "He is infected, becomes one of the Anti-Living briefly, and then visibly recovers as his healing factor burns the infection out."
+          },
+          {
+            "character_or_thing": "The Creeper",
+            "evidence_urls": [
+              "https://www.cbr.com/dceased-villains-anti-life/",
+              "https://dc.fandom.com/wiki/Anti-Living"
+            ],
+            "series_issue_year": "DCeased: Unkillables #1-3 (2020)",
+            "summary": "The Creeper is identified as a possible immune survivor because of his healing factor, but the supplied sources only support theoretical resistance, not a clearly shown on-panel immunity in the same way as Lobo or Deathstroke. Because the request is for actual resistance, this is weaker evidence and should be treated as partial/hypothetical within the published DCeased discussion.",
+            "title": "The Creeper is a possible Anti-Life survivor",
+            "what_visibly_happens": "He is discussed as one of the healing-factor characters who might resist the virus, but the retrieved sources do not show a definitive resistance scene."
+          }
+        ],
+        "notes": "This is an exhaustive list only over the retrieved context. I separated strong canonical resistance, partial/temporary resistance, and weaker 'possible' cases. I did not include purely hypothetical picks from Reddit/CBR speculation unless the retrieved context also tied them to published scenes. The main-line Anti-Life Equation cases supported here are Scott Free/Mister Miracle, Shilo Norman, Barry Allen, Snapper Carr, and Cheetah; DCeased-specific Anti-Life Virus cases supported here are Lobo and Deathstroke. Iris West is included as a distinct on-page subject who is visibly freed, but not as an independent resister."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://dc.fandom.com/wiki/Anti-Living",
+          "title": "Anti-Living | DC Database | Fandom",
+          "snippets": [
+            "The Anti-Living are individuals infected by a corrupted version of the Anti-Life Equation, accidentally created by Darkseid in his attempt to acquire and utilize it. Neither alive nor dead, the Anti-Living are driven solely by their desire to spread more \"anti-life\" by either killing or infecting any living thing they can find.\nThe virus does not appear to be capable of infecting every single living being, with DeSaad not becoming one of the Anti-Living despite having been exposed to the tainted equation at the same time as Darkseid was.[1] It's also only able to temporarily infect Deathstroke due to his superhuman healing.[3] Lobo was unfazed by the virus, with one of the possessed noting he couldn't be turned.[7]\nHe would experiment and turn the family of his world's Animal Man into the Anti-Living, later unleashing them on Earth 0's Animal Man to feast on. Though unlike the DCeased universe these Anti-Living hungered to literally devour life rather than to simply infect or kill, their appearances for some reason resembled a bat.[2]\nSome individuals with healing powers are able to cure themselves of the infection if they're strong enough, as was the case with Deathstroke, who only becomes one of them temporarily when he's infected until his healing is able to purge it from his system and restore him to his original self.[3]"
+          ]
+        },
+        {
+          "url": "https://leagueofcomicgeeks.com/comics/series/112477/final-crisis-resist",
+          "title": "Final Crisis: Resist from DC Comics",
+          "snippets": [
+            "Browse issues from the comic book series, Final Crisis: Resist, from DC Comics. In a world overrun by Darkseid’s Anti-Life Equation and his relentless storm troopers, do you choose...\nIn a world overrun by Darkseid’s Anti-Life Equation and his relentless storm troopers, do you choose to RESIST? The world’s only hope for survival depends on one-time JLA mascot Snapper Carr, Mr. Terrific, and Checkmate. With the aid of the villainous Cheetah, Snapper must rally the various factions of Checkmate and awaken an evil from a Crisis past."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/darkseid-why-the-anti-life-equation-is-dcs-most-dangerous-weapon/",
+          "title": "Darkseid: Why the Anti-Life Equation Is DC's Most DANGEROUS Weapon",
+          "snippets": [
+            "In the hands of the iconic Justice League villain, the Anti-Life Equation might just be the most dangerous weapon in the entire DC Universe.\nThis was short-lived however, as the Dog of War soon realized that a life without free will is no life at all. Another hero of the New Gods, Scott Free, Darkseid’s adopted son and the first Mister Miracle, is one of the few people who has learned the formula and resisted the temptation to use it for his own ends.\nAfter taking a mortal form on Earth known as Boss Dark Side, Darkseid attempts to corrupt Shilo Norman, Mister Miracle, with the formula: “loneliness + alienation + fear + despair + self-worth ÷ mockery ÷ condemnation ÷ misunderstanding × guilt × shame × failure × judgment n=y where y=hope and n=folly, love=lies, life=death, self=dark side.\"\nIt is within the pages of Grant Morrison, Pascal Ferry and Freddie Williams II's Seven Soldiers: Mister Miracle series that the formula for the Equation itself is finally given.\nAlong with Final Crisis and \"Rock of Ages,\" stories like Tom Taylor and Trevor Hairsine'sDCeased miniseries show that the Equation can ravage any reality, not just the prime DC Universe. Despite his long-sought mastery of the Equation, even the dread Darkseid is still susceptible to its effects."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+          "title": "Final Crisis (2008) #4 | DC Database | Fandom",
+          "snippets": [
+            "\"Darkseid Says\": One month after the Anti-Life Equation was broadcast over every medium on Earth, the majority of humanity has fallen under the control of the Dark Gods. Ignorance reigns supreme, with only the Daily Planet left as a source of information. Final Crisis #4 is an issue of the series Final Crisis (Volume 1) with a cover date of November, 2008.\nOne month after the Anti-Life Equation was broadcast over every medium on Earth, the majority of humanity has fallen under the control of the Dark Gods. Ignorance reigns supreme, with only the Daily Planet left as a source of information. Ray Terril arrives at the Hall of Justice, bringing with him Mark Richards, the Tattooed Man. It is there that he finds one of the few remaining pockets of resistance, consisting of Green Arrow, Black Canary, Oracle, the West family, and Joan Garrick.\nBarry hurries back to his home, where his wife is infected with the Anti-Life Equation. Wally fears that there's nothing they can do for Iris, but like a fairy-tale, Barry's kiss (and a small dose of his lightning) brings her back. At the Checkmate castle, Green Lantern and Hawkgirl continue to be confronted with seemingly endless numbers of superpowered Justifiers. Alan believes they can't stop until the \"Omega Offensive\" is ready to launch. Inside the castle, the White King and his forces panic as something teleports through their defenses.\nDC Comics solicitation reads: It's one month after the Anti-Life Equation was released worldwide. Millions now toil as slaves of Darkseid, while the Justifier shock troops of Apokolips lay waste to the planet Earth and hunt down its protectors. The remaining free humans and superheroes are stationed around the world, besieged within the walls of ten very familiar 'Watchtowers', as they fight a desperate, losing battle against the triumphant forces of evil."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis:_Resist_Vol_1_1",
+          "title": "Final Crisis: Resist (2008) #1 | DC Database | Fandom",
+          "snippets": [
+            "\"Resist\": TD+0 Final Crisis: Resist #1 is a one-shot with a cover date of December, 2008. TD+0 [1] In Antarctica, Darkseid's Justifiers overrun Checkmate's bunker. White King Michael Holt (Mister Terrific), Black Queen Sasha Bordeaux, and Black King Taleb Beni Khalid take refuge in a safe room with White King's Bishop Thinker (A.I.). However, Sasha Bordeaux is exposed to the Anti-Life Equation.\nOn a quest for medical supplies, Snapper encounters an injured Cheetah in a hermetically sealed operating room. He heads inside and, after some resistance, helps Cheetah tend to her wounds. Cheetah then seduces the willing Carr, and they sleep together. However, Gorilla Grodd, wearing a Justifier Helmet breaks into the room.\nAlthough Carr has had negative effects when attempting to teleport more than just himself, he rolls the dice and, rather than abandoning her, teleports with Cheetah. Fortunately, they make it back to the Checkmate Antarctic base's safe room safely. However, Snapper's exposure to the Anti-Metagene Virus causes Snapper to lose his powers.\nSnapper responds asking her what she wants them to do, saying that it is not like they have piles of weapons lying around. This statement sparks an idea in Holt. He reveals that after the Infinite Crisis, Checkmate took a census and found that there were nearly eleven-and-a-half million people out there still carrying dormant OMAC nanotech.",
+            "\"Resist\": TD+0 Final Crisis: Resist #1 is a one-shot with a cover date of December, 2008. TD+0 [1] In Antarctica, Darkseid's Justifiers overrun Checkmate's bunker. White King Michael Holt (Mister Terrific), Black Queen Sasha Bordeaux, and Black King Taleb Beni Khalid take refuge in a safe room with White King's Bishop Thinker (A.I.). However, Sasha Bordeaux is exposed to the Anti-Life Equation.\nWhite King Michael Holt (Mister Terrific), Black Queen Sasha Bordeaux, and Black King Taleb Beni Khalid take refuge in a safe room with White King's Bishop Thinker (A.I.). However, Sasha Bordeaux is exposed to the Anti-Life Equation. Her nanotech takes over and shuts her down to avoid completely being overtaken by the Equation. ... Checkmate Pawn Snapper Carr uses his teleportation powers to join Holt, Bordeaux, who remains comatose, Khalid and Thinker in the safe room of Checkmate's Antarctic base.\nOn a quest for medical supplies, Snapper encounters an injured Cheetah in a hermetically sealed operating room. He heads inside and, after some resistance, helps Cheetah tend to her wounds. Cheetah then seduces the willing Carr, and they sleep together. However, Gorilla Grodd, wearing a Justifier Helmet breaks into the room.\nAlthough Carr has had negative effects when attempting to teleport more than just himself, he rolls the dice and, rather than abandoning her, teleports with Cheetah. Fortunately, they make it back to the Checkmate Antarctic base's safe room safely. However, Snapper's exposure to the Anti-Metagene Virus causes Snapper to lose his powers."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_6",
+          "title": "Final Crisis (2008) #6 | DC Database | Fandom",
+          "snippets": [
+            "\"How to Murder the Earth\": In the 31st Century, Brainiac 5 leads Superman to the Legion armory. Superman doesn't understand why he is still there, as he helped the Legion defeat [[Kal-El (Earth-Prime) Final Crisis #6 is an issue of the series Final Crisis (Volume 1) with a cover date of January, 2009.\nAt Checkmate Castle, Shilo Norman explains how he is able to resist the Anti-Life Equation, saying that the painted symbol on his face is a letter from the alphabet of the New Gods meaning \"freedom from restriction\". Mr. Terrific appears to be considering it, but an aide says that the shield has failed and they're preparing to initiate Black Gambit, the \"Omega Offensive\".\nOn the Watchtower, Tattooed Man looks down at Earth, realizing that he had wasted his powers. Black Canary says that he is now an honorary member of the JLA, and as such is under her authority. Suddenly, space ships carrying Justifiers appear, and Canary tells Ray to leave immediately in order to bring \"Metron's Circuit\" to Earth."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dceased-villains-anti-life/",
+          "title": "DCeased: Two DC Villains Might Be the Key to Beating the Anti-Life",
+          "snippets": [
+            "Two notable DC villains (and their specific power set) might just make them the key to stopping the Anti-Life virus in DCeased: Unkillables.\nWhile the heroes dealt with an unimaginable crisis in DCeased, a handful of villains and antiheroes made their own journeys through a world that was filled with Anti-Life infected zombies, and a few of them even set up a plan to try and turn the tide of the virus. Along the way, the issue proves that the series' subtitle, \"Unkillable,\" was meant to be taken literally. Two of Vandal Savage's recruits, Deathstroke and the Creeper, both have healing factors - which might make them the key to stopping the Anti-Life Virus.\nRELATED: DCeased Reveals Which Gotham Heroes Survived DC’s Zombie Outbreak · The issue opens with Deathstroke about to carry out a new contract. Unfortunately, it's the day that Cyborg accidentally brought the Anti-Life Virus to Earth. Transmittable through electronics and passable via bite or scratch, much of the world was transformed in an instant by the virus.\nAlong with Deathstroke, Creeper has an advanced healing factor that theoretically could make him immune to the Anti-Life Virus. Unlike Slade, it doesn't appear that he's had to test that theory yet though. But if there is a possible cure, then it's probably in one of them. RELATED: Jason Todd Finally Gets Revenge on Batman and the Joker in DCeased\nDeathstroke's blood might even still carry the disease, which could make him a silent threat. This isn't just some random zombie virus, either. It's the Anti-Life, a collective ideal of darkness and death that's fascinated Darkseid for decades. It could even speak through Wonder Woman once it infected her during the climax of the original DCeased, revealing that a cure did exist within Cyborg before it killed him."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Lucas_Carr_(New_Earth)",
+          "title": "Lucas Carr (New Earth) | DC Database | Fandom",
+          "snippets": [
+            "Snapper Carr is a seemingly average person who acted as the first sidekick to the Justice League of America, and has retained a role in the superhero community ever since. Primarily he has no special abilities, although he has at times gained the ability to teleport through a latent meta-gene.\nSnapper later works for Checkmate as one of their Pawns, in the aftermath of 52, although he has been deep undercover since the OMAC Project. He is performing surveillance on Superman, Batman and Wonder Woman. Although he is detected, Batman decides to let him continue because he tends to look favorably upon the League.[11] During Final Crisis, he is one of very few operatives not completely taken over by the Anti-Life Equation, and joins Mister Terrific's resistance.\nSnapper became an honorary member of the Justice League of America during their first adventure fighting against Starro the Conqueror where he inadvertently leads to them defeating the monster. The roster at the time included Superman, Batman, Wonder Woman, Aquaman, Green Lantern, the Flash and Martian Manhunter, with Snapper as their mascot.[1] Snapper was put in charge of maintaining their headquarters, the Secret Sanctuary in Happy Harbor.\nMemorably, after saving his life from an anti-life controlled Firehawk, Cheetah seduces him and the two have extremely heated, passionate sex, experiencing brief love while the world is consumed by hatred. Afterward, they are attacked by Gorilla Grodd and Snapper uses his power to teleport both Cheetah and himself back to Checkmate.\nTeleportation: Snapper has the ability to teleport anywhere by snapping his fingers, although this is not consistent throughout his career. He did not discover this ability until Dominator testing revealed his latent meta-gene during Invasion!, and he joined the Blasters."
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dceased-cosmic-anti-hero-blighted-ones-dc-comics/",
+          "title": "DCeased: A Surprising Anti-Hero is Immune to the Superhero Zombie ...",
+          "snippets": [
+            "It turns out there's one person who is fully capable of resisting the Anti-Life Equation in DCeased, and given their history, it makes perfect sense.\nThe heroes and villains of DCeased have been confronted with all sorts of threats since the creation of the Anti-Life Virus. So far, nothing has been able to withstand the madness brought on by the transformation into Blighted Ones, although a cure has since been identified that can at least restore them. It turns out that of every DC character, only Lobo is impervious to the Anti-Life Virus in DCeased: War of the Undead Gods #3 (by Tom Taylor, Trevor Hairsine, Andy Lanning, Rain Beredo & Saida Temofonte) -- meaning the cosmic anti-hero might have a major role to play in the conclusion of the corrupted timeline.\nWithin the universe of DCeased, heroes and villains of ground-level and cosmic scope have been infected alikeby the Anti-Life Virus. Even mystical, alien, and god-like beings have been shown to be capable of being infected. Revelations have even shown how the infection could spread to the greater cosmos thanks to the infections of characters like Darkseid, Supergirl, and Adam Strange. As the disease corrupts more and more of the universe, surprising figures like Lobo have also gotten involved, albeit solely for the sake of a payday.\nGiven the dire situation in this version of the DC Universe, with even Brainiac coming to the remaining heroes for assistance, having Lobo around might be a game-changer. RELATED: DCeased Isn't a Response to Marvel Zombies Anymore - It's DC's Version of Ultimatum\nThanks to his immense healing factor, however, he's able to bounce back from any injury almost instantaneously. He can regenerate entire limbs if they are torn off and can brush off blows from even the likes of Superman. His entire body can be restored from a single drop of blood, allowing Lobo to resurrect himself from what should be lethal blows even to Gods."
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}

@@ -1,0 +1,175 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_6",
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_5"
+            ],
+            "resistance_event": "Post-Crisis New Earth / Final Crisis",
+            "resistance_mechanism": "Willpower and a New Gods symbol interpreted as 'freedom from restriction'; later also associated with the Metron Pattern circuit that can render people immune to the Anti-Life Equation.",
+            "series_issue_year": "Final Crisis #5 (2008) and Final Crisis #6 (2009)",
+            "summary": "Shilo Norman is explicitly shown resisting the Anti-Life Equation. The sources describe this as a successful resistance/temporary immunity case: first he explains his resistance, then the story links the circuit to immunity from the Equation.",
+            "title": "Shilo Norman (Mister Miracle)",
+            "what_visibly_happens": "At Checkmate Castle, Shilo explains how he is resisting the Equation. In the later issue, survivors react to the fact that the circuit can render people immune, while Shilo remains uncaptured by the control."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_7"
+            ],
+            "resistance_event": "Final Crisis / Earth-wide broadcast of Anti-Life",
+            "resistance_mechanism": "Partial resistance through leadership, evacuation, and physical defiance before eventual capture; not immune, but shown actively resisting the invasion and Equation's spread.",
+            "series_issue_year": "Final Crisis #4 (2008) and Final Crisis #7 (2009)",
+            "summary": "Green Arrow appears in one of the last pockets of resistance after the Anti-Life Equation has been broadcast worldwide. He fights to get civilians to safety and makes a last stand, but is ultimately captured and turned into a Justifier; this is a partial, temporary resistance case rather than immunity.",
+            "title": "Oliver Queen (Green Arrow)",
+            "what_visibly_happens": "He helps lead civilians toward the teleporter, then stays behind to smash the controls so the Justifiers cannot follow. Later, he appears as one of Darkseid's controlled forces."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis",
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_7"
+            ],
+            "resistance_event": "Final Crisis / Earth-wide Anti-Life takeover",
+            "resistance_mechanism": "Freed from Darkseid's thrall through Superman's intervention and then the Lasso of Truth; this is a break-free case after prior infection.",
+            "series_issue_year": "Final Crisis #4 (2008) and Final Crisis #7 (2009)",
+            "summary": "Wonder Woman is one of the main characters explicitly shown being under the Anti-Life Equation, then being freed from it. This is a break-free case, not outright immunity.",
+            "title": "Diana Prince (Wonder Woman)",
+            "what_visibly_happens": "She is shown as controlled earlier, then Superman helps break the Equation's hold over her. After that, she binds Darkseid's corpse with the Lasso of Truth."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_7",
+              "https://dc.fandom.com/wiki/Final_Crisis"
+            ],
+            "resistance_event": "Final Crisis ending / anti-Life reversal",
+            "resistance_mechanism": "External intervention by Superman and the Lasso of Truth; the hold over Earth is broken through Wonder Woman's action after her own release.",
+            "series_issue_year": "Final Crisis #7 (2009)",
+            "summary": "This is the same resolved resistance event associated with Wonder Woman: she is freed from Anti-Life control and helps end its planetary effect. Included here because the story treats her liberation as a distinct resistance-and-break event.",
+            "title": "Wonder Woman's Anti-Life liberation event",
+            "what_visibly_happens": "The page describes Superman breaking the Anti-Life Equation's hold over Wonder Woman, who then uses the Lasso of Truth on Darkseid."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_2",
+              "https://dc.fandom.com/wiki/Slade_Wilson_(DCeased)"
+            ],
+            "resistance_event": "DCeased: Unkillables (2020)",
+            "resistance_mechanism": "Healing factor / accelerated healing prevents permanent conversion; he is bitten and later reverts to normal instead of staying infected.",
+            "series_issue_year": "DCeased: Unkillables #2 (2020) and DCeased: Unkillables #1 (2020)",
+            "summary": "Deathstroke is shown as a temporary resistance case in DCeased: he is infected/bitten but later recovers rather than becoming permanently one of the Anti-Living. The sources frame this as immunity or healing-based resistance to the corrupted Anti-Life virus.",
+            "title": "Slade Wilson (Deathstroke)",
+            "what_visibly_happens": "He survives a bite, is later placed on a table because his immunity is in question, and then reverts back to normal after Rose impales him."
+          },
+          {
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/DCeased:_Hope_at_World's_End_Vol_1_8_(Digital)",
+              "https://dc.fandom.com/wiki/Krypto_(DCeased)",
+              "https://dc.fandom.com/wiki/Bobo_T._Chimpanzee_(DCeased)"
+            ],
+            "resistance_event": "DCeased: Hope at World's End (2020)",
+            "resistance_mechanism": "Species-based immunity: animals are described as impervious to the Anti-Life Virus.",
+            "series_issue_year": "DCeased: Hope at World's End #8 (2020)",
+            "summary": "Krypto and Detective Chimp are part of the animal-immunity category in DCeased. The retrieved sources support that animals are impervious to the Anti-Life Virus, and these two are shown as surviving/operating within that rule. This is an outright immunity case rather than a temporary recovery.",
+            "title": "Krypto and Detective Chimp",
+            "what_visibly_happens": "The chapter lists them among the featured characters, and the linked character pages describe Krypto rescuing survivors while Detective Chimp continues operating in the Anti-Life outbreak."
+          }
+        ],
+        "notes": "I limited entries to characters/events explicitly supported by the retrieved URLs. I treated Final Crisis liberation events separately only when the source clearly describes a distinct break-free moment. I excluded unsupported speculative picks and characters only mentioned as hypothetical or not clearly shown resisting on-page."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_2",
+          "title": "DCeased: Unkillables (2020) #2 | DC Database | Fandom",
+          "snippets": [
+            "\"Murderers, Psychopaths and Monsters\": Three weeks have passed since Jason, Cassandra, Gordon, and Ace had settled in the orphanage. During this time, Jason has been trying to convince Gordon in getting rid of the infected caregivers and children that occupied the gym. But Gordon remains adamant...\nDCeased: Unkillables #2 is an issue of the series DCeased: Unkillables (Volume 1) with a cover date of May, 2020.\nSo to make Gordon to see through, Slade is offering the former GCPD Commissioner to lead the super-villains. Gordon is skeptical of leading people he doesn't trust. But Slade reminds him that it is no different from leading the dirty cops that worked under him (including those who were under Deathstroke's payroll).\nInside is the Creeper, who is strapped to a table and his chest surgically opened. As Slade tries to process this, Savage has Solomon Grundy punches out Slade. Savage has Slade on a table and prepares to surgically cut him open, as he wants to know how Slade and Creeper are immune to the Anti-Life virus."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+          "title": "Final Crisis (2008) #4 | DC Database | Fandom",
+          "snippets": [
+            "\"Darkseid Says\": One month after the Anti-Life Equation was broadcast over every medium on Earth, the majority of humanity has fallen under the control of the Dark Gods. Ignorance reigns supreme, with only the Daily Planet left as a source of information. Final Crisis #4 is an issue of the series Final Crisis (Volume 1) with a cover date of November, 2008.\nOne month after the Anti-Life Equation was broadcast over every medium on Earth, the majority of humanity has fallen under the control of the Dark Gods. Ignorance reigns supreme, with only the Daily Planet left as a source of information. Ray Terril arrives at the Hall of Justice, bringing with him Mark Richards, the Tattooed Man. It is there that he finds one of the few remaining pockets of resistance, consisting of Green Arrow, Black Canary, Oracle, the West family, and Joan Garrick.\nWith the Justifiers starting to storm into the Hall of Justice, Black Canary and Green Arrow lead their civilian guests as they hurry to teleport up to the safety of the JLA Satellite. Against Canary's protests, Green Arrow stays behind to smash the teleporter controls so the Justifiers can't follow. Arrow is captured and made a Justifier. Barry hurries back to his home, where his wife is infected with the Anti-Life Equation.\nDC Comics solicitation reads: It's one month after the Anti-Life Equation was released worldwide. Millions now toil as slaves of Darkseid, while the Justifier shock troops of Apokolips lay waste to the planet Earth and hunt down its protectors. The remaining free humans and superheroes are stationed around the world, besieged within the walls of ten very familiar 'Watchtowers', as they fight a desperate, losing battle against the triumphant forces of evil. While Green Arrow and Black Canary attempt to deliver the secret of humanity's last hope across America's blasted wastelands, the Outsiders brave the horrors of the Blüdhaven bunker in search of Batman."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_1",
+          "title": "DCeased: Unkillables (2020) #1 | DC Database | Fandom",
+          "snippets": [
+            "\"DCeased: Unkillables\": Deathstroke is in Kentucky and is hired to eliminate a white supremacist group that has been setting a few churches on fire. When he rings up the door bell, a skinhead suddenly jumps out of the third floor's window and trying to flee on his shattered legs. Deathstroke sho...\nDeathstroke sho ... The heroes are going to fail. They're not ruthless enough to survive. ... DCeased: Unkillables #1 is an issue of the series DCeased: Unkillables (Volume 1) with a cover date of April, 2020."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Krypto_(DCeased)",
+          "title": "Krypto (DCeased) | DC Database | Fandom",
+          "snippets": [
+            "Krypto was the loyal companion of the first Superman and his family, but was separated from them during the Anti-Life virus outbreak. Krypto was a dog from Krypton and belonged to Clark Kent, the original Superman, as well as his family. During the outbreak of the Anti-Life virus which turned people into the Anti-Living, he was separated from his owners as they focused on saving the survivors and preventing further spread of the infection.[1] He came to the rescue of Detective Chimp, Ace...\nKrypto was created by Otto Binder and Curt Swan, first appearing in Adventure Comics #210. However, the DCeased version of Krypto first appeared in DCeased: Hope at World's End #1 by Tom Taylor and Dustin Nguyen.\nDuring the outbreak of the Anti-Life virus which turned people into the Anti-Living, he was separated from his owners as they focused on saving the survivors and preventing further spread of the infection.[1] He came to the rescue of Detective Chimp, Ace, Amy and Comet in Gotham City when they were being overpowered by the Anti-Living."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_6",
+          "title": "Final Crisis (2008) #6 | DC Database | Fandom",
+          "snippets": [
+            "\"How to Murder the Earth\": In the 31st Century, Brainiac 5 leads Superman to the Legion armory. Superman doesn't understand why he is still there, as he helped the Legion defeat [[Kal-El (Earth-Prime) Final Crisis #6 is an issue of the series Final Crisis (Volume 1) with a cover date of January, 2009.\nAt Checkmate Castle, Shilo Norman explains how he is able to resist the Anti-Life Equation, saying that the painted symbol on his face is a letter from the alphabet of the New Gods meaning \"freedom from restriction\"."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis",
+          "title": "Final Crisis | DC Database | Fandom",
+          "snippets": [
+            "When the Source initiated the demise of the Fourth World and the Death of the New Gods, it did so on one mistaken assumption: that extinction would end the animosity between the New Gods of Apokolips and New Genesis. The New Gods resumed their war in heaven, a Final Crisis, \"The Day Evil Won\", is an all-out war and invasion of Earth by the forces of Darkseid.\nIt was only then that the heroes of Earth realized that something might be amiss. As their leading lights were picked off, the heroes united to fight them... but it was too late. Darkseid's followers spread the Anti-Life Equation across the world, while at the same time taking possession of Dan Turpin.\nOn an Earth overwhelmed, the last remaining superheroes worked with Checkmate to try to turn the tide against Darkseid. Although they made progress in the battle of Bludhaven, Darkseid assumed full control over the people enslaved by the Anti-Life Equation. In his dungeons, Nix Uotan remembered the name of his lost lover, Weeja Dell, restoring his monitor powers, while Metron, also a prisoner, reactivated his Mother Box.\nAs Darkseid mocked his old enemy and fired the bullet that killed Orion, Barry Allen and Wally West lead the Black Racer to Darkseid, who removed his soul from Dan Turpin. Superman allied with the Secret Society under Lex Luthor and Doctor Sivana, managing to break the Anti-Life Equation's hold over Wonder Woman, who in turn bound Darkseid's corpse with the Lasso of Truth, breaking the Equation's hold over the people of Earth."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/DCeased:_Hope_at_World's_End_Vol_1_8_(Digital)",
+          "title": "DCeased: Hope at World's End Vol 1 8 (Digital) | DC Database | Fandom",
+          "snippets": [
+            "\"Chapter Eight\": DCeased: Hope at World's End #8 is a chapter in the digital-first series DCeased: Hope at World's End (Volume 1 (Digital)) with a cover date of August, 2020. Featured Characters: Detective Chimp (Flashback only) (Narrator) Supporting Characters: Ace the Bat-Hound (Flashback only) Amy (Flashback only) Comet (Flashback only) (Single appearance) Krypto (Flashback only) Antagonists: Anti-Living (Flashback only) Other Characters: Bludhaven Orphans (Flashback only) Unkillables...\nDCeased: Hope at World's End #8 is a chapter in the digital-first series DCeased: Hope at World's End (Volume 1 (Digital)) with a cover date of August, 2020. 1 Synopsis for \"Chapter Eight\" 2 Appearing in \"Chapter Eight\" 3 See Also · 4 Links and References · Featured Characters: Detective Chimp (Flashback only) (Narrator) Supporting Characters: Ace the Bat-Hound (Flashback only) Amy (Flashback only) Comet (Flashback only) (Single appearance) Krypto (Flashback only) Antagonists: Anti-Living (Flashback only) Other Characters: Bludhaven Orphans (Flashback only) Unkillables (Statue only) Bane (Statue only) Cheetah (Statue only) The Creeper (Statue only) Deadshot (Statue only) Deathstroke (Statue only) Lady Shiva (Statue only) Solomon Grundy (Statue only) Locations: Earth 55 ·\nBobo T. Chimpanzee (DCeased)/Quotes\nBobo T. Chimpanzee (DCeased)/Appearances"
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Slade_Wilson_(DCeased)",
+          "title": "Slade Wilson (DCeased) | DC Database | Fandom",
+          "snippets": [
+            "Deathstroke (Slade Wilson) was a mercenary and assassin who eventually led a group called the Unkillables against the Anti-Living. One the day the corrupted Anti-Life Equation had begun to fester infect Earth's population, Deathstroke was hired on a mission to eliminate a white supremacist group who was reported to be setting a few churches on fire somewhere in Kentucky.\nHowever, the DCeased version of Deathstroke first appeared in DCeased: Unkillables #1 by Tom Taylor and Karl Mostert.\nIn his sacrifice and death, a statue memorial of Slade among the rest of the fallen Unkillables, formerly known as the Tree Lobsters, were built by the orphaned Bludhaven survivors themselves not long after their arrival in the Gotham Jungle, as a way to honor their noble and selfless sacrifice.[3] Accelerated Healing: In addition to allowing him to survive otherwise serious injuries, Slade's healing ability is able to prevent him from permanently becoming one of the Anti-Living. ... Deathstroke was created by Marv Wolfman and George Pérez, first appearing in New Teen Titans #2.\nThe supervillains were later brought to the attention of the infected inside the gym, in which Gordon and the supervillains cleared all of them together out of the survivors' safety. The next morning, the orphans are introduced to their new \"roommates\" and began their training as the Unkillables."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1",
+          "title": "Final Crisis (2008—2009) | DC Database | Fandom",
+          "snippets": [
+            "Final Crisis (Volume 1) was a limited series, published by DC Comics. It ran from 2008 until 2009. Final Crisis #1 Final Crisis #2 Final Crisis #3 Final Crisis #4 Final Crisis #5 Final Crisis #6 Final Crisis #7 Final Crisis Sketchbook #1 (2008) Final Crisis: Requiem #1 (2008) Final Crisis: Rage of the Red Lanterns #1 (2008) Final Crisis: Resist #1 (2008) Final Crisis: Submit #1 (2008) Final Crisis: Secret Files #1 (2009) Final Crisis (2009)ISBN: 978-1401222819 Final Crisis Companion..."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Anti-Life_Equation",
+          "title": "Anti-Life Equation | DC Database | Fandom",
+          "snippets": [
+            "Originally, it was said to have existed in the mind of \"Billion-Dollar\" Bates, who took it to his death. Darkseid continued to search for it, and recently obtained the full formula. It implants the mathematical certainty that all life is hopeless and that freedo The Anti-Life Equation was a transcendental mathematical formula originally said to allow those who knew it to dominate the will of any sentient race; this is the ultimate goal of Darkseid.\nIn Seven Soldiers: Mister Miracle (2005), by Grant Morrison, Darkseid (or Dark Side, as he now calls himself) has gained full control of the Anti-Life Equation. By speaking, he can insert the full formula into people's minds, giving them the mathematical certainty that life, hope and freedom are all pointless. Shilo Norman (the current Mister Miracle) is able to break free from this with the help of Metron.\nMister Miracle (Shilo Norman) was able to break free from this with the help of Metron, gaining immunity from the Equation in the process.\nIn the World's Funnest Elseworlds one-shot (2001), created by Evan Dorkin and a variety of artists, a conflict between Bat-Mite and Mister Mxyzptlk inadvertently destroys the DCU, (including many Pre-Crisis worlds)."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_7",
+          "title": "Final Crisis (2008) #7 | DC Database | Fandom",
+          "snippets": [
+            "\"New Heaven, New Earth\": Final Crisis #7 is an issue of the series Final Crisis (Volume 1) with a cover date of March, 2009. It was published on January 28, 2009. As Earth and the Multiverse are plunged into the Forever Pit created by Darkseid's imminent death, hypertime itself is fractured, with the story of the Final Crisis remaining splintered but barely held together by the hearts and minds of its heroes...\nRenee joins Marvel on his quest, informing Overman of the death of his cousin. Back on New Earth, Superman is almost amused by the irony of the situation: by firing the bullet to kill Orion, Darkseid insured John Stewart discovered the bullet, which would make its way into Batman's hands, and be used against him. For all intents and purposes, Darkseid committed suicide. The Female Furies, lead by Wonder Woman, arrive to avenge their master.\nFinal Crisis #7 is an issue of the series Final Crisis (Volume 1) with a cover date of March, 2009. It was published on January 28, 2009. ... As Earth and the Multiverse are plunged into the Forever Pit created by Darkseid's imminent death, hypertime itself is fractured, with the story of the Final Crisis remaining splintered but barely held together by the hearts and minds of its heroes... Across the multiverse, Captain Marvel of Earth-5 and Renee Montoya work to recruit the greatest heroes of the 52 to save existence from the entity threatening the multiverse.\nSuperman is horrified at the sight of his best friend enslaved by Darkseid, and Wonder Woman tells Superman that he is outnumbered, as Libra's army of mind-controlled superhumans arrive. However, the Secret Society are now under the control of Lex Luthor and Doctor Sivana."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Bobo_T._Chimpanzee_(DCeased)",
+          "title": "Bobo T. Chimpanzee (DCeased) | DC Database | Fandom",
+          "snippets": [
+            "Bobo T. Chimpanzee was a highly-intelligent chimpanzee and detective, hence his name - Detective Chimp. Bobo was serving the patrons in Oblivion Bar around the time the Anti-Life Equation started turning people into the Anti-Living.[1] He later left the bar for Earth sometime later and found his way to Gotham City.\nDetective Chimp was created by John Broome and Carmine Infantino, first appearing in Adventures of Rex the Wonder Dog #4. However, the DCeased version of Detective Chimp first appeared in DCeased: A Good Day to Die #1 by Tom Taylor, Laura Braga, and Darick Robertson.\nEnhanced Intellect: Bobo is advanced far beyond the level of ordinary chimpanzees and is able to act like a human. Superhuman Strength: Bobo's great strength allows him to rip arms off humans if he uses his full strength.[4] Investigation: Bobo can find and figure out things others usually can't, even without having much to go on. Constantine stated that he was the world's greatest detective.[4]\nThey were soon rescued by Krypto, who killed all the undead and took Bobo to Ivy's jungle along with others.[2] In Ivy's jungle, he became the leader of a group called the Shadowpact, which rescued survivors across the world. Five years after the outbreak, they were contacted by Swamp Thing while rescuing a group of survivors in Chicago. Swamp Thing stated that he had detected a garden in Australia that was writhing in pain and told John Constantine that he wanted him to accompany so he won't have to kill the humans there."
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}

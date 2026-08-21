@@ -44,7 +44,7 @@ def test_mode_selects_distinct_general_and_specific_templates():
     micro = PolicyBundle.load(ScoutMode.MICRO)
     qa_general = qa.render("general", user_intent="Hulk", angle="immunity", digest="none")
     micro_general = micro.render("general", user_intent="Hulk", angle="immunity", digest="none")
-    assert qa_general.version == "general_qa.v1"
+    assert qa_general.version == "general_qa.v2"
     assert micro_general.version == "general_micro.v1"
     assert qa_general.text != micro_general.text
 

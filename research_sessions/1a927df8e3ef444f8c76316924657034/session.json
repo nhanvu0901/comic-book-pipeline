@@ -1,0 +1,11 @@
+{
+  "id": "1a927df8e3ef444f8c76316924657034",
+  "mode": "qa",
+  "user_intent": "What are the best strength feats of the Hulk?",
+  "state": "general_review",
+  "revision": 1,
+  "selected_general_candidate_id": null,
+  "selected_specific_candidate_ids": [],
+  "created_project": null,
+  "feedback_log": []
+}

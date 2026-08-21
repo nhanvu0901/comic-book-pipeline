@@ -1,0 +1,11 @@
+{
+  "id": "6c2eebf8f7674905b2b96e9a9f81f730",
+  "mode": "micro",
+  "user_intent": "Find me the exact issues where Deathstroke appears in DCeased: Unkillables #1-3 (2020)",
+  "state": "general_review",
+  "revision": 1,
+  "selected_general_candidate_id": null,
+  "selected_specific_candidate_ids": [],
+  "created_project": null,
+  "feedback_log": []
+}

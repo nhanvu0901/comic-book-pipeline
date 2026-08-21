@@ -1,0 +1,14 @@
+{
+  "source": "planner",
+  "unit": "one character",
+  "cardinality": "exhaustive",
+  "ranking": "",
+  "extra_fields": [
+    {
+      "name": "means_of_resistance",
+      "type": "string",
+      "description": "how the resistance was achieved"
+    }
+  ],
+  "research_prompt": "Identify every character in DC Comics main continuity who has been depicted on-panel explicitly resisting, rejecting, or breaking free from Darkseid's Anti-Life Equation. Cover all storylines: Final Crisis, Darkseid War, Justice League Incarnate, etc. Do not limit to famous names; include any notable feat regardless of familiarity. For each character, note the specific issue and how they resisted."
+}

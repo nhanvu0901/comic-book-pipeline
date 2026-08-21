@@ -51,8 +51,11 @@ def _scout_store(root: Path | None = None):
 
 def _scout_workflow(root: Path | None = None):
     from stages.research_scout.workflow import ScoutWorkflow
+    from stages.youcom_scout import build_scouted_digest
 
-    return ScoutWorkflow(store=_scout_store(root))
+    # Without the digest the prompt renders "SCOUTED DIGEST:" empty and the scout
+    # happily re-proposes produced/banned questions (found 2026-08-21).
+    return ScoutWorkflow(store=_scout_store(root), digest=build_scouted_digest())
 
 
 def start_scout_session(mode: str, user_intent: str):
@@ -68,8 +71,20 @@ def run_scout_general(session_id: str):
     return _scout_workflow().run_general(session_id)
 
 
-def run_scout_specific(session_id: str):
-    return _scout_workflow().research_specific(session_id)
+def run_scout_specific(session_id: str, feedback: str = ""):
+    return _scout_workflow().research_specific(session_id, feedback)
+
+
+def rerun_scout_general(session_id: str, feedback: str = ""):
+    # One bridge call per user action: the UI never orchestrates a rerun + run pair
+    # itself, so both workflow calls happen on the SAME workflow instance here.
+    workflow = _scout_workflow()
+    workflow.rerun_general(session_id, feedback)
+    return workflow.run_general(session_id)
+
+
+def back_scout_general(session_id: str):
+    return _scout_workflow().back_general(session_id)
 
 
 def approve_scout_general(session_id: str, candidate_id: str):
@@ -138,6 +153,41 @@ def load_scout_session(session_id: str, root: Path | None = None):
 def load_scout_candidates(session_id: str, root: Path | None = None) -> list[dict]:
     store = _scout_store(root)
     path = store.artifact_path(session_id, "general/candidates.v1.json")
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    candidates = data.get("candidates", []) if isinstance(data, dict) else []
+    return [dict(candidate) for candidate in candidates if isinstance(candidate, dict)]
+
+
+def load_scout_audit(session_id: str, root: Path | None = None) -> list[dict]:
+    """Parse audit.jsonl into one dict per line, skipping corrupt lines silently."""
+    store = _scout_store(root)
+    path = store.artifact_path(session_id, "audit.jsonl")
+    if not path.exists():
+        return []
+    events: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            events.append(record)
+    return events
+
+
+def load_scout_candidates_rev(
+    session_id: str, revision: int, root: Path | None = None
+) -> list[dict]:
+    store = _scout_store(root)
+    path = store.artifact_path(session_id, f"general/candidates.rev{revision}.v1.json")
     if not path.exists():
         return []
     try:

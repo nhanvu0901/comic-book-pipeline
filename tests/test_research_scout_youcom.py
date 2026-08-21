@@ -73,6 +73,20 @@ def test_research_uses_standard_effort_and_keeps_full_response(monkeypatch):
     assert seen["request"].get_header("X-api-key") == "fixture-key"
 
 
+def test_research_effort_override_is_sent(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["request"] = request
+        return _Response({"output": {"sources": [], "content": {"candidates": []}}})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    YouComClient(api_key="fixture-key").research(
+        "find a moment", {"type": "object"}, None, effort="deep"
+    )
+    assert json.loads(seen["request"].data)["research_effort"] == "deep"
+
+
 def test_search_uses_compact_web_search_settings(monkeypatch):
     seen = {}
 

@@ -21,7 +21,7 @@ _ALLOWED_PLACEHOLDERS = frozenset(
 )
 _TEMPLATE_FILES = {
     "general": {
-        ScoutMode.QA: "general_qa.v1.md",
+        ScoutMode.QA: "general_qa.v2.md",
         ScoutMode.MICRO: "general_micro.v1.md",
     },
     "specific": {

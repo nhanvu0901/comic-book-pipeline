@@ -1,0 +1,85 @@
+{
+  "revision": 1,
+  "candidates": [
+    {
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_6",
+        "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_5"
+      ],
+      "resistance_event": "Post-Crisis New Earth / Final Crisis",
+      "resistance_mechanism": "Willpower and a New Gods symbol interpreted as 'freedom from restriction'; later also associated with the Metron Pattern circuit that can render people immune to the Anti-Life Equation.",
+      "series_issue_year": "Final Crisis #5 (2008) and Final Crisis #6 (2009)",
+      "summary": "Shilo Norman is explicitly shown resisting the Anti-Life Equation. The sources describe this as a successful resistance/temporary immunity case: first he explains his resistance, then the story links the circuit to immunity from the Equation.",
+      "title": "Shilo Norman (Mister Miracle)",
+      "what_visibly_happens": "At Checkmate Castle, Shilo explains how he is resisting the Equation. In the later issue, survivors react to the fact that the circuit can render people immune, while Shilo remains uncaptured by the control.",
+      "id": "candidate-1"
+    },
+    {
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+        "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_7"
+      ],
+      "resistance_event": "Final Crisis / Earth-wide broadcast of Anti-Life",
+      "resistance_mechanism": "Partial resistance through leadership, evacuation, and physical defiance before eventual capture; not immune, but shown actively resisting the invasion and Equation's spread.",
+      "series_issue_year": "Final Crisis #4 (2008) and Final Crisis #7 (2009)",
+      "summary": "Green Arrow appears in one of the last pockets of resistance after the Anti-Life Equation has been broadcast worldwide. He fights to get civilians to safety and makes a last stand, but is ultimately captured and turned into a Justifier; this is a partial, temporary resistance case rather than immunity.",
+      "title": "Oliver Queen (Green Arrow)",
+      "what_visibly_happens": "He helps lead civilians toward the teleporter, then stays behind to smash the controls so the Justifiers cannot follow. Later, he appears as one of Darkseid's controlled forces.",
+      "id": "candidate-2"
+    },
+    {
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Final_Crisis",
+        "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_4",
+        "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_7"
+      ],
+      "resistance_event": "Final Crisis / Earth-wide Anti-Life takeover",
+      "resistance_mechanism": "Freed from Darkseid's thrall through Superman's intervention and then the Lasso of Truth; this is a break-free case after prior infection.",
+      "series_issue_year": "Final Crisis #4 (2008) and Final Crisis #7 (2009)",
+      "summary": "Wonder Woman is one of the main characters explicitly shown being under the Anti-Life Equation, then being freed from it. This is a break-free case, not outright immunity.",
+      "title": "Diana Prince (Wonder Woman)",
+      "what_visibly_happens": "She is shown as controlled earlier, then Superman helps break the Equation's hold over her. After that, she binds Darkseid's corpse with the Lasso of Truth.",
+      "id": "candidate-3"
+    },
+    {
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Final_Crisis_Vol_1_7",
+        "https://dc.fandom.com/wiki/Final_Crisis"
+      ],
+      "resistance_event": "Final Crisis ending / anti-Life reversal",
+      "resistance_mechanism": "External intervention by Superman and the Lasso of Truth; the hold over Earth is broken through Wonder Woman's action after her own release.",
+      "series_issue_year": "Final Crisis #7 (2009)",
+      "summary": "This is the same resolved resistance event associated with Wonder Woman: she is freed from Anti-Life control and helps end its planetary effect. Included here because the story treats her liberation as a distinct resistance-and-break event.",
+      "title": "Wonder Woman's Anti-Life liberation event",
+      "what_visibly_happens": "The page describes Superman breaking the Anti-Life Equation's hold over Wonder Woman, who then uses the Lasso of Truth on Darkseid.",
+      "id": "candidate-4"
+    },
+    {
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_2",
+        "https://dc.fandom.com/wiki/Slade_Wilson_(DCeased)"
+      ],
+      "resistance_event": "DCeased: Unkillables (2020)",
+      "resistance_mechanism": "Healing factor / accelerated healing prevents permanent conversion; he is bitten and later reverts to normal instead of staying infected.",
+      "series_issue_year": "DCeased: Unkillables #2 (2020) and DCeased: Unkillables #1 (2020)",
+      "summary": "Deathstroke is shown as a temporary resistance case in DCeased: he is infected/bitten but later recovers rather than becoming permanently one of the Anti-Living. The sources frame this as immunity or healing-based resistance to the corrupted Anti-Life virus.",
+      "title": "Slade Wilson (Deathstroke)",
+      "what_visibly_happens": "He survives a bite, is later placed on a table because his immunity is in question, and then reverts back to normal after Rose impales him.",
+      "id": "candidate-5"
+    },
+    {
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/DCeased:_Hope_at_World's_End_Vol_1_8_(Digital)",
+        "https://dc.fandom.com/wiki/Krypto_(DCeased)",
+        "https://dc.fandom.com/wiki/Bobo_T._Chimpanzee_(DCeased)"
+      ],
+      "resistance_event": "DCeased: Hope at World's End (2020)",
+      "resistance_mechanism": "Species-based immunity: animals are described as impervious to the Anti-Life Virus.",
+      "series_issue_year": "DCeased: Hope at World's End #8 (2020)",
+      "summary": "Krypto and Detective Chimp are part of the animal-immunity category in DCeased. The retrieved sources support that animals are impervious to the Anti-Life Virus, and these two are shown as surviving/operating within that rule. This is an outright immunity case rather than a temporary recovery.",
+      "title": "Krypto and Detective Chimp",
+      "what_visibly_happens": "The chapter lists them among the featured characters, and the linked character pages describe Krypto rescuing survivors while Detective Chimp continues operating in the Anti-Life outbreak.",
+      "id": "candidate-6"
+    }
+  ]
+}

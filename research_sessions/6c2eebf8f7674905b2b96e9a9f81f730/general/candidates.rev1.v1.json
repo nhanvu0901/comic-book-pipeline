@@ -1,0 +1,47 @@
+{
+  "revision": 1,
+  "candidates": [
+    {
+      "evidence_urls": [
+        "https://www.cbr.com/unkillables-deathstroke-annihilates-white-supremacist-zombies/",
+        "https://www.cbr.com/dceased-unkillables-first-look-deathstroke-zombie/",
+        "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_1",
+        "https://leagueofcomicgeeks.com/comic/8606264/dceased-unkillables-1"
+      ],
+      "series_issue_year": "DCeased: Unkillables #1 (2020)",
+      "summary": "Deathstroke appears. He is hired in Kentucky to eliminate a white supremacist group, then continues fighting zombies; the preview says the Anti-Life virus takes hold when he checks his phone, after which he wakes up choking someone on a street.",
+      "title": "DCeased: Unkillables #1",
+      "what_visibly_happens": "Deathstroke arrives at a rural house, rings the doorbell, and men in white supremacist gear spill out. He goes inside and is shown cutting down zombies in the foyer. In the preview, he keeps slaughtering the infected, glances at his cellphone, and the techno-organic virus visibly takes hold of his body; he claws at his mask, blacks out, and then wakes up on a crowded street while choking someone. Page numbers were not provided in the retrieved sources.",
+      "id": "candidate-1"
+    },
+    {
+      "evidence_urls": [
+        "https://www.cbr.com/dc-introduces-the-anti-suicide-squad-dceased-unkillables/",
+        "https://aiptcomics.com/2020/03/13/dc-preview-dceased-unkillables-2/",
+        "https://www.cbr.com/dceased-unkillables-2/",
+        "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_2",
+        "https://leagueofcomicgeeks.com/comic/6833762/dceased-unkillables-2"
+      ],
+      "series_issue_year": "DCeased: Unkillables #2 (2020)",
+      "summary": "Deathstroke appears as part of the 'Anti-Suicide Squad' alongside villains like Vandal Savage, helping organize defenses while the survivors try to protect children from the infected.",
+      "title": "DCeased: Unkillables #2",
+      "what_visibly_happens": "The retrieved preview and summaries show Deathstroke grouped with Vandal Savage and other villains as they battle the apocalypse. He is described as helping lead the anti-villain coalition while Red Hood and Batgirl shelter in an orphanage. A Fandom summary says Slade is offering Commissioner Gordon leadership of the super-villains. The issue visibly includes the villain team confronting the outbreak, with Deathstroke among them; the retrieved snippets do not provide a tighter panel-by-panel scene breakdown or page numbers.",
+      "id": "candidate-2"
+    },
+    {
+      "evidence_urls": [
+        "https://comicbookroundup.com/comic-books/reviews/dc-comics/dceased-the-unkillables/3",
+        "https://aiptcomics.com/2020/05/20/dceased-unkillables-3-review/",
+        "https://leagueofcomicgeeks.com/comic/8024266/dceased-unkillables-3",
+        "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_3",
+        "https://www.cbr.com/dceased-unkillables-3-deathstroke-jim-gordon-best-dad-couple-ever/",
+        "https://www.cbr.com/dceased-unkillables-brutal-fatalities/"
+      ],
+      "series_issue_year": "DCeased: Unkillables #3 (2020)",
+      "summary": "Deathstroke appears with the surviving group as they flee toward Poison Ivy’s sanctuary; during the climax, an infected Wonder Woman flies straight through him and blows him apart.",
+      "title": "DCeased: Unkillables #3",
+      "what_visibly_happens": "The retrieved review summary says the titular group travels to Poison Ivy’s sanctuary. Another source says the survivors are escaping the infected horde with Deathstroke and Jim Gordon acting as father figures to the children. Most importantly, one article states that Wonder Woman flies straight through Deathstroke while he is shooting zombies, and he bursts into body parts on impact. The snippets do not include page numbers, but they clearly describe the visible kill scene.",
+      "id": "candidate-3"
+    }
+  ]
+}

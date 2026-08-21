@@ -1,0 +1,168 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "evidence_urls": [
+              "https://www.cbr.com/unkillables-deathstroke-annihilates-white-supremacist-zombies/",
+              "https://www.cbr.com/dceased-unkillables-first-look-deathstroke-zombie/",
+              "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_1",
+              "https://leagueofcomicgeeks.com/comic/8606264/dceased-unkillables-1"
+            ],
+            "series_issue_year": "DCeased: Unkillables #1 (2020)",
+            "summary": "Deathstroke appears. He is hired in Kentucky to eliminate a white supremacist group, then continues fighting zombies; the preview says the Anti-Life virus takes hold when he checks his phone, after which he wakes up choking someone on a street.",
+            "title": "DCeased: Unkillables #1",
+            "what_visibly_happens": "Deathstroke arrives at a rural house, rings the doorbell, and men in white supremacist gear spill out. He goes inside and is shown cutting down zombies in the foyer. In the preview, he keeps slaughtering the infected, glances at his cellphone, and the techno-organic virus visibly takes hold of his body; he claws at his mask, blacks out, and then wakes up on a crowded street while choking someone. Page numbers were not provided in the retrieved sources."
+          },
+          {
+            "evidence_urls": [
+              "https://www.cbr.com/dc-introduces-the-anti-suicide-squad-dceased-unkillables/",
+              "https://aiptcomics.com/2020/03/13/dc-preview-dceased-unkillables-2/",
+              "https://www.cbr.com/dceased-unkillables-2/",
+              "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_2",
+              "https://leagueofcomicgeeks.com/comic/6833762/dceased-unkillables-2"
+            ],
+            "series_issue_year": "DCeased: Unkillables #2 (2020)",
+            "summary": "Deathstroke appears as part of the 'Anti-Suicide Squad' alongside villains like Vandal Savage, helping organize defenses while the survivors try to protect children from the infected.",
+            "title": "DCeased: Unkillables #2",
+            "what_visibly_happens": "The retrieved preview and summaries show Deathstroke grouped with Vandal Savage and other villains as they battle the apocalypse. He is described as helping lead the anti-villain coalition while Red Hood and Batgirl shelter in an orphanage. A Fandom summary says Slade is offering Commissioner Gordon leadership of the super-villains. The issue visibly includes the villain team confronting the outbreak, with Deathstroke among them; the retrieved snippets do not provide a tighter panel-by-panel scene breakdown or page numbers."
+          },
+          {
+            "evidence_urls": [
+              "https://comicbookroundup.com/comic-books/reviews/dc-comics/dceased-the-unkillables/3",
+              "https://aiptcomics.com/2020/05/20/dceased-unkillables-3-review/",
+              "https://leagueofcomicgeeks.com/comic/8024266/dceased-unkillables-3",
+              "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_3",
+              "https://www.cbr.com/dceased-unkillables-3-deathstroke-jim-gordon-best-dad-couple-ever/",
+              "https://www.cbr.com/dceased-unkillables-brutal-fatalities/"
+            ],
+            "series_issue_year": "DCeased: Unkillables #3 (2020)",
+            "summary": "Deathstroke appears with the surviving group as they flee toward Poison Ivy’s sanctuary; during the climax, an infected Wonder Woman flies straight through him and blows him apart.",
+            "title": "DCeased: Unkillables #3",
+            "what_visibly_happens": "The retrieved review summary says the titular group travels to Poison Ivy’s sanctuary. Another source says the survivors are escaping the infected horde with Deathstroke and Jim Gordon acting as father figures to the children. Most importantly, one article states that Wonder Woman flies straight through Deathstroke while he is shooting zombies, and he bursts into body parts on impact. The snippets do not include page numbers, but they clearly describe the visible kill scene."
+          }
+        ],
+        "notes": "All three issues in the requested closed range appear to feature Deathstroke. No issue in the set needed a 'no appearance' statement because the retrieved sources support his presence in #1, #2, and #3. I used only retrieved URLs from the research context and did not add uncited sources or invented issue details."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://comicbookroundup.com/comic-books/reviews/dc-comics/dceased-the-unkillables/3",
+          "title": "DCeased: The Unkillables #3 Reviews (2020) at ComicBookRoundUp.com",
+          "snippets": [
+            "Compare critic reviews for DCeased: The Unkillables #3 by Tom Taylor and Karl Mostert, published by DC Comics.\nThis mini-series takes a look at the villain's perspective of the virus that is concurrent with the original DCeased story-line, and centered around Red Hood, Deathstroke and his daughter, along with a rag tag team of villains and heroes as they attempt to survive in a world ruled by zombies.\nBefore this issue hit, there was many ways in which you could have assumed they had no plans for anyone making it out of this in one piece. However, there couldn't be these other books to look forward to if there wasn't something on Earth left to save. DCeased: Unkillables #3 was a roller coaster of emotions as we truly got to see what survival looks like right now.\nBloody, satisfying, and often bloody satisfying, DCeased: Unkillables #3 is a perfect conclusion to the series. Taylor's excellent script work and Karl Mostert's gripping visuals are a double-tap of humor and horror that will leave you clamoring for more.\nDCeased: The Unkillables ends in Tom Taylor fashion. Laughs, tears, and death all rolled up into one to give the reader an emotional ride from beginning to end. It does end in a moment of hope to carry forward, and overall, I ended up glad this side series came out."
+          ]
+        },
+        {
+          "url": "https://aiptcomics.com/2020/03/13/dc-preview-dceased-unkillables-2/",
+          "title": "DC Preview: DCeased: Unkillables #2 • AIPT",
+          "snippets": [
+            "DC's worst villains battle the apocalypse out as an \"Anti-Suicide Squad.\"\nAnd elsewhere, Deathstroke, Vandal Savage, and some of DC’s worst villains battle the apocalypse out as an “Anti-Suicide Squad.” But a certain wondrous woman may not let them have it their own way! How to Draw Storm X-Men Marvel Comi... ... Writer Tom Taylor Illustrators Trevor Scott, Karl Mostert Cover Illustrator Howard Porter Release Date: March 18, 2020"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dceased-unkillables-2/",
+          "title": "PREVIEW: DCeased: Unkillables #2",
+          "snippets": [
+            "DC Comics presents a preview of DCeased: Unkillables #2 by Tom Taylor, Karl Mostert and Trevor Scott. ... With the world ending around them, Red Hood and Batgirl take shelter in the most unlikely place: an orphanage full of children! Will they be able to protect the kids from the impending hordes of the infected streaming out of Gotham City and Blüdhaven? And elsewhere, Deathstroke, Vandal Savage, and some of DC’s worst villains battle the apocalypse out as an “Anti-Suicide Squad.” But a certain wondrous woman may not let them have it their own way!"
+          ]
+        },
+        {
+          "url": "https://aiptcomics.com/2020/05/20/dceased-unkillables-3-review/",
+          "title": "'DCeased: Unkillables' #3 review • AIPT",
+          "snippets": [
+            "Bloody, satisfying, and often bloody satisfying, DCeased: Unkillables #3 is a perfect conclusion to the series. Following the titular Unkillables as they travel to Poison Ivy’s sanctuary, this issue truly puts their name to the test.\nAs with the previous issues, it is impossible to discuss one creator’s work without recognizing the rest. DCeased: Unkillables #3 is a perfect union between scripting and artwork. Although there are a ton of amazing images throughout this book, one sequence serves as an exemplar for the cohesiveness of this creative team.\nUltimately, DCeased: Unkillables #3 is a perfect conclusion for the villains’ story. It is bloody, satisfying, and often bloody satisfying. Tom Taylor’s excellent script work and Karl Mostert’s gripping visuals are a double-tap of humor and horror that will leave you clamoring for more."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_1",
+          "title": "DCeased: Unkillables Vol 1 1 | DC Database | Fandom",
+          "snippets": [
+            "\"DCeased: Unkillables\": Deathstroke is in Kentucky and is hired to eliminate a white supremacist group that has been setting a few churches on fire. When he rings up the door bell, a skinhead suddenly jumps out of the third floor's window and trying to flee on his shattered legs. Deathstroke sho...\nDeathstroke sho ... The heroes are going to fail. They're not ruthless enough to survive. ... DCeased: Unkillables #1 is an issue of the series DCeased: Unkillables (Volume 1) with a cover date of April, 2020."
+          ]
+        },
+        {
+          "url": "https://leagueofcomicgeeks.com/comics/series/145017/dceased-unkillables",
+          "title": "DCeased: Unkillables from DC Comics",
+          "snippets": [
+            "Browse issues from the comic book series, DCeased: Unkillables, from DC Comics. The blockbuster DC series returns to answer this question: What did the villains do when the heroes...\nSpinning out of the dramatic events of 2019’s smash hit, writer Tom Taylor returns to this dark world with a street-level tale of death, heroism and redemption. Led by Red Hood and Deathstroke, DC’s hardest villains and antiheroes fight with no mercy to save the only commodity left on a dying planet of the undead—life!"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dceased-unkillables-3-deathstroke-jim-gordon-best-dad-couple-ever/",
+          "title": "DCeased Casts Deathstroke and Jim Gordon as the Best Dad Couple EVER",
+          "snippets": [
+            "In DCeased: Unkillables #3, Slade Wilson and Commission Jim Gordon become a dad couple to a group of young survivors and the results are perfect.\nWARNING: The following contains spoilers for DCeased: Unkillables #3, by Tom Taylor, Karl Mostert, Trevor Scott, Neil Edwards, Rex Lokus and Saida Temofonte, available now.\nIn the original miniseries, the surviving heroes left Earth behind with a settlement of humans. However, there were still some other characters who were left to battle the infected. As we learned in DCeased: Unkillables, such was the case for Jason Todd, Cassandra Cain, Jim Gordon, Slade Wilson and a few other supervillains.\nIn DCeased: Unkillables #2, Jim Gordon's band of survivors banded with Slade Wilson's crew of supervillains. While both groups stand on opposite sides of the superhero spectrum, they had a common enemy in the infected and a common goal in keeping the children they found alive amidst this apocalypse.\nAnd in Unkillables #3, Jim and Slade's group has no choice but to make a run for it. With their new skills, the children start to fight back, but they are also protected by their two father figures."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_3",
+          "title": "DCeased: Unkillables (2020) #3 | DC Database | Fandom",
+          "snippets": [
+            "\"Blood, Bullets and Buses\": With the infected breaching the orphanage, the survivors retreat inside. Grundy attacks and decapitates the infected Bane before holding back the horde from entering the building. This allows the others to head for the school buses before Creeper saves Grundy. With th...\nDCeased: Unkillables #3 is an issue of the series DCeased: Unkillables (Volume 1) with a cover date of July, 2020."
+          ]
+        },
+        {
+          "url": "https://aiptcomics.com/2020/02/14/dc-preview-dceased-unkillables-1/",
+          "title": "DC Preview: DCeased: Unkillables #1 • AIPT",
+          "snippets": [
+            "What did the villains do when the heroes failed and the world ended?\nSpinning out of the dramatic events of 2019’s smash hit, writer Tom Taylor returns to this dark world with a street-level tale of death, heroism and redemption. Led by Red Hood and Deathstroke, DC’s hardest villains and antiheroes fight with no mercy to save the only commodity left on a dying planet of the undead-life!"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dc-introduces-anti-suicide-squad-dceased-unkillables/",
+          "title": "DC Introduces the Anti-Suicide Squad in DCeased: Unkillables",
+          "snippets": [
+            "DC Comics has released its advance solicitation information for its titles scheduled to go on sale March 2020, including DCeased: Unkillables #2 by Tom Taylor, Karl Mostert and Trevor Scott. The second issue of the sequel miniseries introduces a team of villains -- including Vandal Savage and Deathstroke -- dubbed the \"Anti-Suicide Squad.\"\nThe upcoming DCeased sequel, Unkillables, has several of the DCU's most notorious villains form an Anti-Suicide Squad.\nWritten by Tom Taylor and illustrated by Karl Mostert and Trevor Scott, DCeased: Unkillables #2 goes on sale March 18, 2020 from DC Comics.\nWill they be able to protect the kids from the impending hordes of the infected streaming out of Gotham City and Blüdhaven? And elsewhere, Deathstroke, Vandal Savage, and some of DC’s worst villains battle the apocalypse out as an “Anti-Suicide Squad.” But a certain wondrous woman may not let them have it their own way!"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/unkillables-deathstroke-annihilates-white-supremacist-zombies/",
+          "title": "Unkillables: Deathstroke Annihilates a Batch of White Supremacist ...",
+          "snippets": [
+            "DC's preview for Tom Taylor and Karl Mostert's DCeased: Unkillables #1 sees Deathstroke taking out a bunch of white supremacist zombies.\nMany of the DC Multiverse's greatest heroes died during DCeased, a non-canonical tale in which a techno-virus version of the Anti-Life equation turned its victims into zombies. Unkillables, the sequel to DCeased, will explore more of that event and follow the heroes trying to save the planet. Among those still alive is Slade Wilson/Deathstroke, who in DC's preview for Unkillables takes down a bunch of white supremacist zombies.\nIn the ensuing pages, the mercenary brutally does away with the zombies. However, towards the end of the confrontation, he looks at a phone screen, which is how the Anti-Life virus spreads. Deathstroke then seemingly undergoes the zombification process, though we know from the first look at the issue that he'll eventually snap out of that state. Although the preview for Unkillables is unlettered, the art is pretty clear that Slade is taking on zombified versions of white supremacists.\nWARNING: The following article contains spoilers for DCeased: Unkillables, by Tom Taylor, Karl Mostert, Trevor Scott, Neil Edwards, John Livesay, Rex Lokus, Saida Temofonte, on sale Feb.\nThe unlettered preview for Unkillables opens with Deathstroke arriving at a house in a seemingly rural area. He rings the doorbell and chaos ensues. Men spill out from the house decked out in white supremacist iconography -- including Confederate flags and World War I-era spiked helmets (Pickelhaube). Once Deathstroke gets inside, he finds a ton of zombies in the foyer."
+          ]
+        },
+        {
+          "url": "https://leagueofcomicgeeks.com/comic/8606264/dceased-unkillables-1",
+          "title": "DCeased: Unkillables #1 Reviews",
+          "snippets": [
+            "Led by Red Hood and Deathstroke, DC’s hardest villains and antiheroes fight with no mercy to save the only commodity left on a dying planet of the undead—life! ... DCeased: Unkillables #1 C2E2 2020 Francesco Mattina Foil Variant DCeased: Unkillables #1 Comics Elite Ryan Brown Variant DCeased: Unkillables #1 Comics Elite Ryan Brown Variant DCeased: Unkillables #1 Francesco Mattina Variant DCeased: Unkillables #1 Unknown Comics Black Blank Variant DCeased: Unkillables #1 Unknown Comics Jay Anacleto Black & White Variant DCeased: Unkillables #1 Unknown Comics Jay Anacleto Variant DCeased: Unkillables #1 Unknown Comics Jay Anacleto Virgin Variant DCeased: Unkillables #1 Yasmine Putri Horror Movie Variant\nRead reviews and discussion of DCeased: Unkillables #1 from Tom Taylor, published by DC Comics"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dceased-unkillables-brutal-fatalities/",
+          "title": "DCeased: Unkillables Just Gave Wonder Woman Her Most Brutal Fatalities",
+          "snippets": [
+            "In DCeased: Unkillables #3, a corrupted Wonder Woman delivers some gruesome finishing moves that belong in Mortal Kombat.\nWARNING: The following article contains spoilers for DCeased: Unkillables #3,by Tom Taylor, Karl Mostert, Trevor Scott, Neil Edwards, Rex Lokus and Saida Temofonte, available now.\nIn DCeased: Unkillables #3, a corrupted Wonder Woman delivers some of her most brutal fatalities ever.\nIn a scene that homages the moment when Superman burst through an infected Flash as he ran and spread the virus all over the world in the original DCeased, Wonder Woman flies straight through Deathstroke who was shooting up zombies. He bursts into body parts upon impact and the crimson Diana doesn't even bat an eye.\nRELATED: DCeased Spawns Digital First Spinoff, Hope at World’s End"
+          ]
+        },
+        {
+          "url": "https://leagueofcomicgeeks.com/comic/3031107/dceased-unkillables-tp",
+          "title": "DCeased: Unkillables TP Reviews",
+          "snippets": [
+            "Read reviews and discussion of DCeased: Unkillables TP from Tom Taylor, published by DC Comics\nDCeased: Unkillables #3 · May 2020 · Story · 40 pages · Writer · Tom Taylor · Penciller, Inker · Karl Mostert · Inker · Neil Edwards · Inker · Trevor Scott · Colorist · Rex Lokus · Letterer · Saida Temofonte · Editor · Ben Abernathy · Earth-55 · Main · Batgirl · Cassandra Cain · Main · Cheetah · Barbara Minerva · Main · Creeper · Jack Ryder · Main · Deathstroke ·\nCollects DCeased: Unkillables #1-3.\nDiscover what the villains of the DC Universe did during the events of DCeased!\nFrom the hit series DCeased comes a villain’s story about survival during the zombie apocalypse!"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/dceased-unkillables-first-look-deathstroke-zombie/",
+          "title": "DCeased: Unkillables First Look Changes One 'Fact' We Knew About ...",
+          "snippets": [
+            "DCeased: Unkillables is three oversized issues at 48 pages each, which answers the question of what the villains were up to while DC's greatest heroes failed and the world came to an end? RELATED: DC Introduces the Anti-Suicide Squad in DCeased: Unkillables · The preview features Deathstroke, who will play a significant role in the miniseries.\nDeathstroke continues the slaughter inside, but after he takes a glance down at his cellphone, the techno-organic virus takes hold of his body. The last thing we see is Deathstroke clawing at his mask, blacking out and waking up on a packed street while choking someone out. DCeased: Unkillables #1 goes on sale Feb.\nThe first look at Tom Taylor, Karl Mostert and Trevor Scott's DCeased: Unkillables #1 reveals the fate of a DC antihero.\nDC has released the first look at Tom Taylor, Karl Mostert and Trevor Scott's DCeased: Unkillables #1, a sequel to Taylor's zombie-horror miniseries, DCeased."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/DCeased:_Unkillables_Vol_1_2",
+          "title": "DCeased: Unkillables (2020) #2 - DC Database - Fandom",
+          "snippets": [
+            "\"Murderers, Psychopaths and Monsters\": Three weeks have passed since Jason, Cassandra, Gordon, and Ace had settled in the orphanage. During this time, Jason has been trying to convince Gordon in getting rid of the infected caregivers and children that occupied the gym. But Gordon remains adamant...\nDCeased: Unkillables #2 is an issue of the series DCeased: Unkillables (Volume 1) with a cover date of May, 2020.\nSo to make Gordon to see through, Slade is offering the former GCPD Commissioner to lead the super-villains. Gordon is skeptical of leading people he doesn't trust. But Slade reminds him that it is no different from leading the dirty cops that worked under him (including those who were under Deathstroke's payroll)."
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}
