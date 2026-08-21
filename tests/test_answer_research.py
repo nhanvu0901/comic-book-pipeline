@@ -1,6 +1,6 @@
 """Tests for stages/stage_1/answer_research.py (explore_answer / Q&A mode, piece #1).
 
-No network: the SDK web call and get_project_dirs are monkeypatched. See
+No network: the You.com/OpenRouter boundary and get_project_dirs are monkeypatched. See
 EXPLORE_ANSWER_DESIGN.md for the schema contract these tests pin down.
 """
 import json
@@ -44,15 +44,14 @@ def _fixture_json(items=None):
 
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
-    """Stub SDK + Comic Vine + project dirs (no network, no real writes).
+    """Stub web research + Comic Vine + project dirs (no network, no real writes).
 
     build_contexts now cross-checks each item via verify_issue (Comic Vine) and
     auto-resolves empty reader_urls via resolve_reader_url (batcave) — both would
     hit the network, so stub them here. verify_issue -> a benign 'verified'; the
     resolver isn't stubbed because every _ITEMS fixture already has a reader_url
     (so it's never called) — tests that need it stub it themselves."""
-    monkeypatch.setattr(mod, "sdk_available", lambda: True)
-    monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: _fixture_json())
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: _fixture_json())
     monkeypatch.setattr(mod, "get_project_dirs", lambda name: {"root": tmp_path})
     monkeypatch.setattr(mod, "verify_issue",
                         lambda *a, **k: {"ok": True, "note": "verified"})
@@ -60,8 +59,7 @@ def wired(monkeypatch, tmp_path):
 
 
 def _research(monkeypatch, items=None):
-    monkeypatch.setattr(mod, "sdk_available", lambda: True)
-    monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: _fixture_json(items))
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: _fixture_json(items))
     return mod.research_answer(QUESTION, log=lambda _m: None)
 
 
@@ -76,7 +74,49 @@ def test_research_orders_by_surprise_ascending(monkeypatch):
     res = _research(monkeypatch, shuffled)
     assert [i["surprise_level"] for i in res["items"]] == ["low", "medium", "high"]
     assert res["items"][-1]["entity"] == "Man-Thing"
-    assert res["source_engine"] == "claude-sdk-web"
+    assert res["source_engine"] == "youcom-web-search+openrouter-deepseek"
+
+
+def test_youcom_raw_search_is_the_only_evidence_sent_to_deepseek(monkeypatch):
+    captured = {}
+
+    class FakeYouCom:
+        def search(self, query, profile):
+            captured["query"] = query
+            return type("Raw", (), {
+                "ok": True,
+                "payload": {"results": {"web": [{"url": "https://example.test/evidence"}]}},
+                "error": None,
+            })()
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": _fixture_json()}}]}).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data)
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(mod, "YouComClient", FakeYouCom)
+    monkeypatch.setattr(mod.config, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(mod.config, "SCOUT_EVIDENCE_MODEL", "deepseek/deepseek-v4-flash")
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    result = mod.research_answer(QUESTION, hint="test issue", log=lambda _m: None)
+
+    assert len(result["items"]) == 3
+    assert captured["query"] == f"{QUESTION} test issue"
+    assert captured["body"]["model"] == "deepseek/deepseek-v4-flash"
+    content = captured["body"]["messages"][1]["content"]
+    assert "https://example.test/evidence" in content
+    assert captured["timeout"] == 180
 
 
 def test_research_fails_loud_when_too_few_items(monkeypatch):
@@ -94,7 +134,7 @@ def test_answer_context_schema_exact_and_presentation_order(wired, monkeypatch):
                              "viewer_context", "researched_at", "source_engine", "items"}
     assert a["question"] == QUESTION
     assert a["researched_at"] == "2026-07-04"
-    assert a["source_engine"] == "claude-sdk-web"
+    assert a["source_engine"] == "youcom-web-search+openrouter-deepseek"
     # ADDITIVE story-context fields present (default "" when research omitted them —
     # the _ITEMS fixture carries none, so both stay empty here).
     assert a["constant_broken"] == "" and a["viewer_context"] == ""
@@ -137,7 +177,7 @@ def test_comic_context_saga_shape(wired):
 def test_empty_reader_url_fails_loud_naming_item(wired, monkeypatch):
     items = [dict(it) for it in _ITEMS]
     items[1]["reader_url"] = ""  # Deadpool has no downloadable source
-    monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: _fixture_json(items))
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: _fixture_json(items))
     # Auto-resolve can't find it either -> the empty URL survives -> fail loud.
     monkeypatch.setattr(mod, "resolve_reader_url", lambda *a, **k: "")
     res = mod.research_answer(QUESTION, log=lambda _m: None)
@@ -150,7 +190,7 @@ def test_auto_resolve_fills_empty_reader_url(wired, monkeypatch):
     fail-loud check — so a resolvable item does NOT raise."""
     items = [dict(it) for it in _ITEMS]
     items[1]["reader_url"] = ""  # Deadpool empty, but resolvable
-    monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: _fixture_json(items))
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: _fixture_json(items))
     monkeypatch.setattr(mod, "resolve_reader_url",
                         lambda *a, **k: "https://batcave.biz/reader/999/888")
     res = mod.research_answer(QUESTION, log=lambda _m: None)
@@ -301,8 +341,7 @@ def test_story_context_fields_round_trip_when_present(monkeypatch, tmp_path):
         "viewer_context": "The Penance Stare forces a soul to feel every pain it caused.",
         "items": items,
     }) + "\n```"
-    monkeypatch.setattr(mod, "sdk_available", lambda: True)
-    monkeypatch.setattr(mod, "sdk_complete_web", lambda *a, **k: payload)
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: payload)
     monkeypatch.setattr(mod, "get_project_dirs", lambda name: {"root": tmp_path})
     monkeypatch.setattr(mod, "verify_issue", lambda *a, **k: {"ok": True, "note": "verified"})
 

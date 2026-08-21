@@ -15,11 +15,14 @@ fact -> WRONG issue is the #1 risk in the design; verification is not optional.
 """
 import json
 import re
+import socket
+import urllib.error
+import urllib.request
 from datetime import date
 from pathlib import Path
 
-from stages._claude_sdk import sdk_complete_web, sdk_available
-from stages.question_archetype import question_archetype
+import config
+from stages.research_scout.youcom import YouComClient
 from stages.stage_1.storage import save_comic_context, slugify
 from stages.stage_1.comicvine import verify_issue
 from utils.comic_scraper import discover_issues
@@ -42,10 +45,9 @@ _ITEM_FIELDS = (
 # characters in the moment; `stakes_why` = why this moment is remarkable / what it costs.
 _OPTIONAL_ITEM_FIELDS = ("relationships", "stakes_why")
 
-_ANSWER_SYSTEM = """You are a comic-feats research agent. You are given a QUESTION \
-about comics (e.g. "Who has survived Ghost Rider's Penance Stare?"). Use the \
-WebSearch and WebFetch tools to find REAL, verifiable comic moments that answer it, \
-then return them as a countdown listicle.
+_ANSWER_SYSTEM = """You are a comic-feats research analyst. You are given a QUESTION \
+about comics and RAW You.com Web Search evidence. Use only that supplied evidence to \
+find REAL, verifiable comic moments that answer it, then return them as a countdown listicle.
 
 Anti-fabrication is the whole job — a wrong comic here becomes a wrong download and \
 a wrong video downstream. Follow these rules exactly:
@@ -96,11 +98,11 @@ violate ("Nobody survives the Penance Stare"). "" if the question has no such co
 knows NOTHING must hear BEFORE the items make sense: who/what the question is about and \
 the baseline rule. This is the ground a stranger stands on to follow the whole video.
 
-- SOURCES to search and reconcile (use several): Marvel/DC Fandom \
+- Reconcile the supplied sources: Marvel/DC Fandom \
 (marvel.fandom.com, dc.fandom.com), Comic Vine (comicvine.gamespot.com), Wikipedia, \
 CBR / ScreenRant feats lists, Reddit r/comicbooks / r/whowouldwin threads for leads \
-(then CONFIRM the issue on a wiki — forum claims alone are WEAK). Open at least TWO \
-independent sources per item with WebFetch before trusting it.
+(then CONFIRM the issue on a wiki — forum claims alone are WEAK). Do not claim a source \
+or issue that is absent from the supplied evidence.
 
 - YEAR/VOLUME MATCH (critical): many characters and titles repeat across years/volumes, \
 and ambiguous names mis-resolve (a search for one issue can surface a different one). \
@@ -179,6 +181,59 @@ def _order_by_surprise(items: list[dict]) -> list[dict]:
     The prompt already asks for this order; we enforce it defensively (cheap) because
     a mis-ordered finale kills the retention payoff — see design ADDENDUM ordering rule."""
     return sorted(items, key=lambda it: _SURPRISE_RANK.get(it["surprise_level"], 1))
+
+
+def _message_content(payload: dict) -> str:
+    """Read an OpenRouter chat response without coupling research to the Claude SDK."""
+    try:
+        content = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    if isinstance(content, list):
+        return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+    return str(content or "")
+
+
+def _research_with_youcom(question: str, hint: str, max_items: int) -> str:
+    """Get raw Web Search evidence, then structure it with the fixed OpenRouter model."""
+    if not config.OPENROUTER_API_KEY:
+        raise RuntimeError("research_answer: OPENROUTER_API_KEY is not set")
+    query = " ".join(part for part in (question, hint) if part).strip()
+    raw = YouComClient().search(query, profile=None)
+    if not raw.ok:
+        raise RuntimeError(f"research_answer: You.com Web Search failed: {raw.error}")
+    user = (
+        f"QUESTION: {question}\n\n"
+        f"RESEARCH HINT (verify; do not trust blindly): {hint or 'none'}\n\n"
+        f"Return 3 to {max_items} items. STRICT JSON only, no prose around it:\n"
+        '{"answer_summary":"","constant_broken":"","viewer_context":"",'
+        '"items":[{"entity":"","how_or_why":"","source_comic":"",'
+        '"source_year":"","drawable_moment":"","verification_note":"",'
+        '"surprise_level":"low|medium|high","relationships":"","stakes_why":"",'
+        '"reader_url":""}]}\n\n'
+        f"RAW YOU.COM WEB SEARCH EVIDENCE:\n{json.dumps(raw.payload, ensure_ascii=False)}"
+    )
+    body = {
+        "model": config.SCOUT_EVIDENCE_MODEL,
+        "messages": [
+            {"role": "system", "content": _ANSWER_SYSTEM.format(max_items=max_items)},
+            {"role": "user", "content": user},
+        ],
+        "response_format": {"type": "json_object"},
+        "provider": {"require_parameters": True},
+    }
+    request = urllib.request.Request(
+        config.OPENROUTER_BASE_URL.rstrip("/") + "/chat/completions",
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"), method="POST",
+        headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+                 "Content-Type": "application/json", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            return _message_content(json.loads(response.read().decode("utf-8")))
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, socket.timeout,
+            OSError, ValueError) as exc:
+        raise RuntimeError(f"research_answer: OpenRouter DeepSeek failed: {type(exc).__name__}") from exc
 
 
 # ─── FIX C: batcave auto-resolve (no API key) ────────────────────────────────
@@ -392,10 +447,6 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
     question = (question or "").strip()
     if not question:
         raise ValueError("research_answer: empty question")
-    if not sdk_available():
-        raise RuntimeError("research_answer: Claude SDK unavailable — cannot research")
-
-    system = _ANSWER_SYSTEM.format(max_items=max_items)
     # Grounding hint (2026-07-06): abstract "Why/How <famous character> <paradox>"
     # questions give the researcher no concrete anchor — it wanders the web and runs
     # out of turns. A scout-supplied hint names the LIKELY story so the agent spends
@@ -406,44 +457,11 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
         f"if the sources disagree with the hint, follow the sources): {hint.strip()}\n\n"
         if (hint or "").strip() else ""
     )
-    # EXPLAIN (Why/How) questions research ONE story as an argument: items are the
-    # escalating stages of the answer and answer_summary must BE the causal answer
-    # (the writer speaks it as the video's final landing) — a tease there leaves the
-    # video with events but no answer. LIST questions keep the original contract.
-    if question_archetype(question) == "explain":
-        contract = (
-            f"This is a WHY/HOW question. Return 3 to {max_items} verified items that are "
-            "the ESCALATING STAGES of the answer — stages of one story, or instances from "
-            "several different comics, whichever the truth requires — ordered so the final "
-            "item is the revelation that IS the reason (not merely the last event). "
-            "answer_summary must be the actual one-sentence causal ANSWER to the question "
-            "(it becomes the video's spoken thesis — no teasing, no withholding)."
-        )
-        summary_spec = '<the one-sentence causal answer to the question>'
-    else:
-        contract = (
-            f"Return 3 to {max_items} verified items answering it, ordered by surprise "
-            "ascending (shock LAST)."
-        )
-        summary_spec = '<one sentence teasing the shock, not naming it>'
-    user = (
-        f"QUESTION: {question}\n\n"
-        f"{hint_block}"
-        f"{contract} STRICT JSON only, no prose around it:\n"
-        '{"answer_summary":"' + summary_spec + '",'
-        '"constant_broken":"<the famous rule these answers break, or empty>",'
-        '"viewer_context":"<1-2 sentences a zero-context viewer needs first>",'
-        '"items":[{"entity":"","how_or_why":"","source_comic":"","source_year":"",'
-        '"drawable_moment":"","verification_note":"","surprise_level":"low|medium|high",'
-        '"relationships":"<what the entity is to the others in this moment, or empty>",'
-        '"stakes_why":"<why this moment is remarkable, or empty>",'
-        '"reader_url":"https://batcave.biz/reader/<news_id>/<chapter_id> or empty"}]}'
-    )
     log(f"[answer-research] researching: {question!r} (<= {max_items} items"
         f"{', hinted' if hint_block else ''}) …")
-    raw = sdk_complete_web(system, user, log=log)
+    raw = _research_with_youcom(question, hint.strip(), max_items)
     if not raw:
-        raise RuntimeError("research_answer: SDK returned nothing")
+        raise RuntimeError("research_answer: You.com/OpenRouter returned nothing")
 
     data = _extract_json(raw)
     if data is None:
@@ -470,7 +488,7 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
         # ADDITIVE question-level story context (optional; "" when the model omits it).
         "constant_broken": (data.get("constant_broken") or "").strip(),
         "viewer_context": (data.get("viewer_context") or "").strip(),
-        "source_engine": "claude-sdk-web",
+        "source_engine": "youcom-web-search+openrouter-deepseek",
         "items": items,
     }
 
@@ -662,11 +680,9 @@ if __name__ == "__main__":
         + "\n```"
     )
 
-    # Run via `python -m ...` executes this file as __main__; research_answer/
-    # build_contexts look up these names in THIS namespace, so rebind the globals
-    # here directly (an `import ... as mod` would patch a second module object).
-    sdk_complete_web = lambda *a, **k: _FIXTURE           # noqa: F811,E731
-    sdk_available = lambda: True                          # noqa: F811,E731
+    # Run via `python -m ...` executes this file as __main__; rebind the web
+    # boundary here so the self-check remains network-free.
+    _research_with_youcom = lambda *a, **k: _FIXTURE      # noqa: F811,E731
     # Stub the two cross-check/resolve hooks build_contexts now calls, so this
     # self-check stays network-free: verify_issue -> "unverified", and
     # resolve_reader_url -> "" (so the fail-loud path below still trips).
@@ -675,7 +691,7 @@ if __name__ == "__main__":
 
     q = "Who has survived Ghost Rider's Penance Stare?"
     res = research_answer(q, log=lambda _m: None)
-    assert res["source_engine"] == "claude-sdk-web"
+    assert res["source_engine"] == "youcom-web-search+openrouter-deepseek"
     assert [i["surprise_level"] for i in res["items"]] == ["low", "medium", "high"], \
         "items must be surprise-ascending (shock last)"
 
