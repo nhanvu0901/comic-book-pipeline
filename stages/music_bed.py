@@ -12,20 +12,56 @@ from config import (HF_MUSIC_GUIDANCE, HF_MUSIC_HEADROOM, HF_MUSIC_SPACE, HF_MUS
 
 
 _REQUIRED_STATE = ("description", "lyrics", "global_meta", "vocals", "arrangement")
+# The tags MiniMax Music 3 was trained on (the Space's own _LYRICS_RULES). Anything else is an
+# invented tag the model has never seen, so it is rejected rather than silently rendered.
+_ALLOWED_LYRIC_TAGS = ("intro", "verse", "pre-chorus", "chorus", "post-chorus",
+                       "bridge", "instrumental", "solo", "outro")
+_TAG_LIST = " ".join(f"[{tag}]" for tag in _ALLOWED_LYRIC_TAGS)
+# A caption budget of 250-400 words plus lyrics, title and reasoning does not fit the 900 tokens
+# this call used to allow: measured 2026-08-21, deepseek-v4-flash was truncated mid-JSON at 900
+# and at 2000 (unparseable, so the model looked "empty" or "invalid"), and returned a complete
+# 3176-character object at 3000. A truncated answer costs the render its whole score, so the cap
+# is set where a full answer measurably fits.
+_BRIEF_MAX_TOKENS = 3000
+# Mirrors the Space's _CAPTION_CONTRACT / _LYRICS_RULES verbatim in intent: those labels are the
+# exact style the checkpoint was captioned with, so free-prose briefs waste the caption budget.
 _BRIEF_SYSTEM = """You are a music supervisor for a narrated comic video. Analyse the supplied
 final narration, dramatic beats, genre preference and exact final-video duration. Write the
 complete MiniMax Music 3 Studio state; do not write a generic reusable prompt.
 
-The score is instrumental and must leave room for continuous TTS narration. It must contain
-section tags in `lyrics` even though it has no singing. `global_meta` must specify coherent
-genre, tempo, key and emotional progression. `arrangement` must describe instrument entries,
-exits and the ending near the requested duration. `vocals` must explicitly forbid voices,
-singing, chanting and spoken words.
+The score is instrumental and must leave room for continuous TTS narration: sparse, with audible
+space between phrases, resolving just before the requested duration. Dense beds measure as
+inaudible under speech, so density is a bug, not a style.
+
+WHAT THE MODEL ACTUALLY READS: only `global_meta`, `vocals` and `arrangement`, joined in that
+order, form the caption — plus `lyrics`. `description` never reaches the model; it is a project
+label. Every musical instruction must therefore live in those three caption fields, which
+together should run roughly 250-400 words: concrete and musical, an energy arc and instrument
+lifecycles, never a static equipment list or decorative adjectives.
+
+The caption fields use the exact labeled style the checkpoint was trained on, one paragraph each:
+- `global_meta`: "Basic Attributes: bpm is <number>. key is <letter>, and scale is
+  <major|minor>. <Genre / Subgenre>." then "Global Emotional Progression: <how the emotion
+  evolves from the opening through the final section>." then "Application Scenarios & Imagery:
+  <two or three vivid listening scenarios>." then "Sonics & Production Profile: <soundstage,
+  frequency balance, dynamics, production character>."
+- `vocals`: open with "Instrumental, no vocals." then name the instrument or texture carrying the
+  lead melodic role, and forbid singing, chanting, whispering and spoken words.
+- `arrangement`: "Instrument Lifecycle Description (Primary/Secondary Layering): Primary: <core
+  instruments present start to finish>. Secondary: <instruments that enter, exit or intensify,
+  and in which sections>." then "Groove & Foundation Progression: <how groove and low end
+  develop, or stay absent>." then "Embellishments, Textures & Spatial FX: <textures, transitional
+  gestures, stereo and space>." State what enters, exits or changes for every section tag, and
+  describe how the piece ends.
+
+`lyrics` carry no words at all. Use ONLY these tags — """ + _TAG_LIST + """ — each ALWAYS ALONE
+on its own line, structured to fit the duration, including at least one [instrumental]. Tempo,
+instruments and dynamics never belong in `lyrics`.
 
 Return strict JSON only:
 {"genre":"<the selected genre preference, preserved verbatim>","minimax_state":{
-"mode":"studio","description":"...","instrumental":true,"title":"...",
-"lyrics":"[intro]\\n[instrumental]\\n...","global_meta":"...","vocals":"...",
+"mode":"studio","description":"<short project label, not a prompt>","instrumental":true,
+"title":"...","lyrics":"[intro]\\n[instrumental]\\n...","global_meta":"...","vocals":"...",
 "arrangement":"..."},"reasoning":"<why this score follows this narration and beat map>"}"""
 
 
@@ -62,12 +98,29 @@ def _parse_object(raw: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def _lyrics_ok(lyrics: str) -> bool:
+    """An instrumental score's lyrics are tags and nothing else.
+
+    The Space requires every tag alone on its own line, and the checkpoint only knows the tags in
+    _ALLOWED_LYRIC_TAGS. Since this pipeline only ever asks for instrumental scores, any line that
+    is not a known bare tag is a sung word or an invented section — both reject the brief.
+    """
+    lines = [line.strip() for line in lyrics.splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        match = re.fullmatch(r"\[([^\[\]]+)\]", line)
+        if match is None or match.group(1).strip().lower() not in _ALLOWED_LYRIC_TAGS:
+            return False
+    return True
+
+
 def _valid_state(value) -> dict | None:
     if not isinstance(value, dict) or value.get("instrumental") is not True:
         return None
     if any(not isinstance(value.get(key), str) or not value[key].strip() for key in _REQUIRED_STATE):
         return None
-    if "[" not in value["lyrics"] or "instrumental" not in value["lyrics"].lower():
+    if not _lyrics_ok(value["lyrics"]) or "[instrumental]" not in value["lyrics"].lower():
         return None
     if not all(word in value["vocals"].lower() for word in ("no", "vocal")):
         return None
@@ -134,7 +187,8 @@ def build_brief(project: str, duration_seconds: float, *, log=print) -> dict | N
     used_model = None
     for model in MUSIC_BRIEF_MODELS:
         try:
-            candidate = _parse_object(_call_with_deadline(client, model, _BRIEF_SYSTEM, user, 900))
+            candidate = _parse_object(
+                _call_with_deadline(client, model, _BRIEF_SYSTEM, user, _BRIEF_MAX_TOKENS))
         except Exception as exc:
             log(f"[music] {model} failed: {exc}")
             continue

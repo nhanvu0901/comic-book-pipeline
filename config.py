@@ -536,9 +536,13 @@ AUTO_GENERATE_BG_MUSIC = os.getenv("AUTO_GENERATE_BG_MUSIC", "true").lower() in 
 # MUSIC_GENRES is only the dropdown's preset list — the field is editable, so any string
 # a generator understands is valid. Per-project choice lives in projects/<slug>/music.json.
 MUSIC_GENRE = os.getenv("MUSIC_GENRE", "minimal dark cinematic")
+# "impressionist solo piano" takes the sparse finding further than the default does: a 70s test
+# render (2026-08-21) measured LRA 14.2 LU at -22.3 LUFS integrated — real silence between
+# phrases rather than a continuous bed. Its wide dynamics are the trade: under narration the
+# quietest phrases can disappear, so it is a preset to choose per project, not a default.
 _DEFAULT_MUSIC_GENRES = (
-    "minimal dark cinematic,minimal horror piano,dark ambient drone,sparse dark strings,"
-    "epic hybrid orchestral,dark trap,uk drill,dark synthwave,dark lo-fi"
+    "minimal dark cinematic,minimal horror piano,impressionist solo piano,dark ambient drone,"
+    "sparse dark strings,epic hybrid orchestral,dark trap,uk drill,dark synthwave,dark lo-fi"
 )
 MUSIC_GENRES: list[str] = [
     g.strip() for g in os.getenv("MUSIC_GENRES", _DEFAULT_MUSIC_GENRES).split(",") if g.strip()

@@ -130,6 +130,53 @@ def test_generate_bed_reuses_only_matching_brief_and_never_keeps_stale_output(tm
     assert not out.exists()
 
 
+def _state(**overrides):
+    return dict(json.loads(_payload())["minimax_state"], **overrides)
+
+
+def test_only_section_tags_the_checkpoint_knows_are_accepted():
+    """MiniMax Music 3 was captioned with a fixed tag set. An invented tag like [theme] is a
+    token the model has never seen, so the brief is rejected instead of rendered blind."""
+    assert music_bed._valid_state(_state(lyrics="[intro]\n[instrumental]\n[outro]"))
+    assert music_bed._valid_state(_state(lyrics="[theme]\n[instrumental]")) is None
+    assert music_bed._valid_state(_state(lyrics="[intro]\n[development]\n[instrumental]")) is None
+
+
+def test_words_on_a_lyric_line_are_rejected_for_an_instrumental_score():
+    """The Space needs every tag alone on its line, and this pipeline only asks for instrumental
+    scores — so any prose line is either a sung word or a misplaced musical instruction."""
+    assert music_bed._valid_state(_state(lyrics="[intro] soft piano\n[instrumental]")) is None
+    assert music_bed._valid_state(_state(lyrics="[intro]\nthe city sleeps\n[instrumental]")) is None
+    assert music_bed._valid_state(_state(lyrics="[intro]\n[verse]\n[outro]")) is None
+
+
+def test_the_labeled_caption_contract_survives_validation():
+    """The three caption fields are the whole prompt the model reads, in the Space's own labeled
+    style. Validation must not stand in the way of a brief written that way."""
+    state = _state(
+        lyrics="[intro]\n[instrumental]\n[bridge]\n[instrumental]\n[outro]",
+        global_meta=("Basic Attributes: bpm is 50. key is D-flat, and scale is major. "
+                     "Impressionist Classical Piano / Nocturne. Global Emotional Progression: "
+                     "quiet wonder resolving into calm. Application Scenarios & Imagery: a "
+                     "moonlit window. Sonics & Production Profile: close felt piano, wide "
+                     "dynamics, long pedal decay."),
+        vocals=("Instrumental, no vocals. The lead melodic role is carried by the felt-muted "
+                "grand piano. No singing, chanting, whispering or spoken words."),
+        arrangement=("Instrument Lifecycle Description (Primary/Secondary Layering): Primary: "
+                     "solo piano throughout. Secondary: none. Groove & Foundation Progression: "
+                     "no drums and no bass at any point. Embellishments, Textures & Spatial FX: "
+                     "rolled chords decaying into room tail; ends on a resolved rolled chord."),
+    )
+    assert music_bed._valid_state(state) == dict(state, mode="studio", instrumental=True)
+
+
+def test_the_brief_prompt_teaches_exactly_the_tags_validation_enforces():
+    """The tag set is stated to the LLM and enforced on its answer. If those two drift apart,
+    every brief fails validation and every render silently loses its score."""
+    for tag in music_bed._ALLOWED_LYRIC_TAGS:
+        assert f"[{tag}]" in music_bed._BRIEF_SYSTEM
+
+
 def test_invalid_minimax_payload_is_rejected_without_hardcoded_prompt(tmp_path, monkeypatch):
     monkeypatch.setattr(music_bed, "PROJECTS_ROOT", tmp_path)
     _project(tmp_path)
