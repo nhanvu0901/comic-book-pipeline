@@ -58,13 +58,40 @@ def _scout_workflow(root: Path | None = None):
     return ScoutWorkflow(store=_scout_store(root), digest=build_scouted_digest())
 
 
-def start_scout_session(mode: str, user_intent: str):
+def start_scout_session(mode: str, user_intent: str, *, skip_bank: bool = False):
+    from stages.research_scout.bank_fallback import bank_suggestions_for_mode
     from stages.research_scout.models import ScoutMode
 
+    scout_mode = ScoutMode(mode)
     intent = str(user_intent or "").strip()
+    workflow = _scout_workflow()
     if not intent:
-        raise ValueError("Research intent must not be empty")
-    return _scout_workflow().start(ScoutMode(mode), intent)
+        # Two-tier empty-intent fallback (Master 2026-08-22), replacing the old
+        # "raise ValueError" here: Tier A prefers a real, already-vetted
+        # still-open qa_question_bank.md question (zero API cost, QA only —
+        # micro has no bank file); Tier B rotates through
+        # research_policies/general_angles.v1.json when the bank has nothing
+        # usable, so a normal general-research round always has something to
+        # research instead of erroring out.
+        #
+        # skip_bank lets a caller that ALREADY showed Tier A to a human (the
+        # Stage 1 UI's own suggestion bubble) say "don't re-offer it — go
+        # straight to Tier B". Without this, a caller whose user explicitly
+        # declined every suggestion and asked for something else would always
+        # be handed suggestions[0] again — the exact "always angles[0]" bug
+        # this whole fallback was built to avoid, just relocated to Tier A.
+        suggestions = [] if skip_bank else bank_suggestions_for_mode(scout_mode)
+        intent = suggestions[0]["question"] if suggestions else workflow.next_angle(scout_mode)
+    return workflow.start(scout_mode, intent)
+
+
+def list_bank_suggestions(mode: str) -> list[dict]:
+    """Tier A candidates for the UI to show BEFORE spending any API budget —
+    see start_scout_session's fallback and stages/research_scout/bank_fallback.py."""
+    from stages.research_scout.bank_fallback import bank_suggestions_for_mode
+    from stages.research_scout.models import ScoutMode
+
+    return bank_suggestions_for_mode(ScoutMode(mode))
 
 
 def run_scout_general(session_id: str):

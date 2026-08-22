@@ -1,9 +1,12 @@
+import asyncio
+
 import flet as ft
 
 import ui  # noqa: F401 — installs the repository's Flet compatibility layer
 import ui.bridge as bridge
 import ui.screens.s1_research_scout as s1_research_scout
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
+from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
 from ui import app
 from ui.state import AppState
@@ -275,3 +278,59 @@ def test_micro_checkbox_exclusivity_keeps_one_selected(tmp_path):
     checked_after_second = [cb for cb in _checkboxes() if cb.value]
     assert len(checked_after_second) == 1
     assert checked_after_second[0].key == "select-m2"
+
+
+def _run_recorded_task(page):
+    """Actually execute the coroutine _run_busy handed to page.run_task — FakePage
+    only records it, and this test needs the real work done to inspect the result."""
+    (func,), _kwargs = page.tasks[-1]
+    asyncio.run(func())
+
+
+def test_second_empty_send_after_bank_shown_skips_tier_a_and_uses_tier_b(tmp_path, monkeypatch):
+    """The first empty Send must only SHOW the bank suggestions, spending nothing. A
+    second empty Send is the user explicitly declining every suggestion shown — it
+    must not silently re-seed suggestions[0] (the exact "always angles[0]" bug this
+    whole fallback exists to avoid, just relocated to Tier A) and must instead reach
+    Tier B (angle rotation) via start_scout_session(..., skip_bank=True)."""
+    root = tmp_path / "research_sessions"
+    s1_research_scout.RESEARCH_SESSIONS_ROOT = root
+    bridge.RESEARCH_SESSIONS_ROOT = root
+    monkeypatch.setattr("stages.research_scout.bank_fallback._REPO_ROOT", tmp_path)
+    (tmp_path / "qa_question_bank.md").write_text(
+        "| Status | Question | Answer items (comic, year) | Notes |\n"
+        "|--------|----------|----------------------------|-------|\n"
+        "| SAVE-FOR-LATER | The one open bank question? | item | note |\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "qa_question_banlist.md").write_text(
+        "| Date | Question | Reason |\n|------|----------|--------|\n", encoding="utf-8",
+    )
+
+    seeded_intents = []
+    real_start = bridge.start_scout_session
+
+    def _spy_start(mode, user_intent, **kwargs):
+        session = real_start(mode, user_intent, **kwargs)
+        seeded_intents.append(session.user_intent)
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", _spy_start)
+    monkeypatch.setattr(
+        s1_research_scout, "run_scout_general",
+        lambda session_id: bridge.load_scout_session(session_id, root=root),
+    )
+
+    page, controls = _build(tmp_path)
+    send = next(node for node in _walk(controls) if getattr(node, "key", None) == "chat-send")
+
+    send.on_click(object())  # first empty Send -> Tier A suggestions shown, nothing seeded
+    assert seeded_intents == []
+    assert "The one open bank question?" in _text_content(controls)
+
+    send.on_click(object())  # second empty Send -> explicit ask, must skip Tier A
+    _run_recorded_task(page)
+
+    angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
+    assert seeded_intents == [angles[0]]
+    assert seeded_intents[0] != "The one open bank question?"

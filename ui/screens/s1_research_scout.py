@@ -30,6 +30,7 @@ from ..bridge import (
     load_scout_candidates_rev,
     load_scout_gates,
     load_scout_session,
+    list_bank_suggestions,
     rerun_scout_general,
     run_blocking,
     run_scout_general,
@@ -174,7 +175,11 @@ def _general_collapsed_lines(session: ResearchSession, candidates: list[dict]) -
 def _input_spec(session: ResearchSession | None) -> tuple[str, bool]:
     """Return (hint_text, disabled) shared by the intent field and Send."""
     if session is None or session.state in {SessionState.ARCHIVED, SessionState.COMPLETE}:
-        return "Ask a comic question or describe one visual moment.", False
+        return (
+            "Ask a comic question, describe one visual moment, or press Send "
+            "empty for open-bank suggestions.",
+            False,
+        )
     if session.state is SessionState.GENERAL_DRAFT:
         return "Press Run general research above.", True
     if session.state is SessionState.GENERAL_REVIEW:
@@ -272,6 +277,28 @@ def _archived_bubble(detail: dict) -> ft.Control:
     return _system_bubble(f"Session archived — {reason}" if reason else "Session archived.")
 
 
+def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
+    """Tier A of the empty-intent fallback, shown for free before any research
+    round runs. Master 2026-08-22: Send-with-empty-box must not silently spend
+    API budget, so this is a dead-end by design — nothing here starts a
+    session. Typing one of these into the box (or anything else) and pressing
+    Send runs the normal flow; pressing Send empty AGAIN explicitly asks for a
+    fresh-angle research round instead (Tier B)."""
+    lines: list[ft.Control] = [
+        ft.Text(
+            "Still-open questions from qa_question_bank.md — type one into the box "
+            "and press Send, or press Send empty again to research a fresh angle.",
+            size=12, color=TEXT_MUTED,
+        ),
+    ]
+    for row in suggestions:
+        lines.append(ft.Text(
+            f"[{row.get('status', '')}] {row.get('question', '')}",
+            size=12, color=TEXT_PRIMARY, selectable=True,
+        ))
+    return _scout_bubble(ft.Column(lines, spacing=6))
+
+
 def build(
     page: ft.Page,
     state: AppState,
@@ -292,6 +319,12 @@ def build(
     )
     busy = [False]
     slug_holder: list[ft.TextField | None] = [None]
+    # Tier A suggestions currently on screen (empty-intent fallback) and whether
+    # they've already been shown once for the CURRENT no-session state — a second
+    # empty Send is read as an explicit ask to research a fresh angle instead
+    # (Tier B), rather than silently spending API budget on the first empty Send.
+    bank_suggestions_holder: list[list[dict]] = [[]]
+    bank_shown = [False]
 
     # ─── Chat transcript: rebuilt fresh from disk on every render ─────────
 
@@ -408,6 +441,8 @@ def build(
     def _render_chat() -> list[ft.Control]:
         session = session_holder[0]
         if session is None:
+            if bank_suggestions_holder[0]:
+                return [_bank_suggestions_bubble(bank_suggestions_holder[0])]
             return [_system_bubble(
                 "Pick a mode, type a comic question or describe one visual moment, "
                 "then press Send."
@@ -463,6 +498,8 @@ def build(
     def _apply_session_and_render(result) -> None:
         session_holder[0] = result
         intent_field.value = ""
+        bank_suggestions_holder[0] = []
+        bank_shown[0] = False
         _render_full()
 
     def _clear_to_new(_result=None) -> None:
@@ -470,6 +507,8 @@ def build(
         selected_specific.clear()
         session_holder[0] = None
         intent_field.value = ""
+        bank_suggestions_holder[0] = []
+        bank_shown[0] = False
         _render_full()
 
     def _finish_create_project(project_name) -> None:
@@ -512,16 +551,40 @@ def build(
         text = (intent_field.value or "").strip()
 
         if session is None or session.state in {SessionState.ARCHIVED, SessionState.COMPLETE}:
-            if not text:
-                _render_full(error="Enter a research intent first.")
-                return
             mode = mode_group.value or ScoutMode.QA.value
+            already_offered = False
+            if not text:
+                # First empty Send: show Tier A (bank) suggestions for free and stop —
+                # do NOT spend API budget without the user asking for it.
+                if not bank_shown[0]:
+                    suggestions = list_bank_suggestions(mode)
+                    if suggestions:
+                        bank_shown[0] = True
+                        bank_suggestions_holder[0] = suggestions
+                        _render_full()
+                        return
+                # Either the bank had nothing to show (empty for this mode, or
+                # nothing left after banlist filtering), or the user has ALREADY
+                # seen Tier A once and pressed Send empty again anyway — that is
+                # an explicit ask for something OTHER than the listed questions
+                # (see _bank_suggestions_bubble's own on-screen copy). Either way
+                # this must not consult Tier A again: re-reading the bank here
+                # would always hand back suggestions[0], the exact "always
+                # angles[0]" bug this fallback exists to avoid, just moved from
+                # Tier B to Tier A. skip_bank forces bridge.start_scout_session
+                # straight to Tier B (angle rotation) instead.
+                already_offered = bank_shown[0]
+                bank_shown[0] = False
+                bank_suggestions_holder[0] = []
+            else:
+                bank_shown[0] = False
+                bank_suggestions_holder[0] = []
             old = session
 
             def _work():
                 if old is not None and old.state not in {SessionState.ARCHIVED, SessionState.COMPLETE}:
                     archive_scout_session(old.id, "Started a new research session")
-                new_session = start_scout_session(mode, text)
+                new_session = start_scout_session(mode, text, skip_bank=already_offered)
                 return run_scout_general(new_session.id)
 
             state.scout_mode = mode
@@ -547,6 +610,10 @@ def build(
 
     def _mode_changed(_e) -> None:
         state.scout_mode = mode_group.value or ScoutMode.QA.value
+        # Tier A suggestions are QA-only content — stale ones from the other
+        # mode must not linger, and switching modes counts as a fresh attempt.
+        bank_shown[0] = False
+        bank_suggestions_holder[0] = []
 
     def _specific_selection_changed(candidate_id: str, checked: bool) -> None:
         if busy[0]:

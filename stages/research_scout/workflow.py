@@ -304,10 +304,44 @@ class ScoutWorkflow:
             self._policies[mode] = PolicyBundle.load(mode)
         return self._policies[mode]
 
-    @staticmethod
-    def _angle(bundle: PolicyBundle, mode: ScoutMode) -> str:
+    def next_angle(self, mode: ScoutMode) -> str:
+        """Public entry point for the Tier B empty-intent fallback (ui/bridge.py):
+        the next angle in rotation for `mode`, as plain text usable as a
+        research intent on its own. Shares _angle's rotation pointer so the
+        angle used to SEED a brand-new session and the angle folded into that
+        session's own prompt stay on the same sequence."""
+        return self._angle(self._bundle(mode), mode)
+
+    def _mode_session_count(self, mode: ScoutMode) -> int:
+        """How many sessions already exist for `mode` — the rotation pointer.
+
+        Counting sessions already on disk (instead of a separate counter file)
+        means the pointer can't drift out of sync with what's actually durable:
+        every session.start() adds exactly one, and a purged session directory
+        naturally removes one instead of leaving a stale counter behind.
+        """
+        count = 0
+        for entry in self.store.root.iterdir():
+            if not entry.is_dir() or not (entry / "session.json").exists():
+                continue
+            try:
+                session = self.store.load(entry.name)
+            except Exception:
+                continue
+            if session.mode is mode:
+                count += 1
+        return count
+
+    def _angle(self, bundle: PolicyBundle, mode: ScoutMode) -> str:
+        # Bug fixed 2026-08-22: this used to always return angles[0], so 4 of
+        # the 5 angles per mode (research_policies/general_angles.v1.json)
+        # were dead code. Rotating by the session count is deterministic (no
+        # randomness -> reproducible runs) and advances every time a NEW
+        # session for this mode is created.
         angles = bundle.general_angles.get(mode.value, [])
-        return str(angles[0]) if angles else ""
+        if not angles:
+            return ""
+        return str(angles[self._mode_session_count(mode) % len(angles)])
 
     def _selected_candidate(self, session: ResearchSession) -> dict[str, Any]:
         selected_id = session.selected_general_candidate_id
