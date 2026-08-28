@@ -23,6 +23,7 @@ from ..bridge import (
     approve_scout_specific,
     back_scout_general,
     create_scout_project,
+    discover_intent,
     format_exception,
     list_scout_sessions,
     load_scout_audit,
@@ -282,12 +283,16 @@ def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
     round runs. Master 2026-08-22: Send-with-empty-box must not silently spend
     API budget, so this is a dead-end by design — nothing here starts a
     session. Typing one of these into the box (or anything else) and pressing
-    Send runs the normal flow; pressing Send empty AGAIN explicitly asks for a
-    fresh-angle research round instead (Tier B)."""
+    Send runs the normal flow; pressing Send empty AGAIN discovers a fresh
+    question (Tier B) and drops it into the box for review — it does NOT
+    research it (Master 2026-08-28: that restores the human-review step
+    is_burned's docstring in stages/youcom_scout.py says catches synonym
+    re-skins of already-rejected bank questions)."""
     lines: list[ft.Control] = [
         ft.Text(
             "Still-open questions from qa_question_bank.md — type one into the box "
-            "and press Send, or press Send empty again to research a fresh angle.",
+            "and press Send, or press Send again on an empty box and we'll find a "
+            "new question for you to look over before it's researched.",
             size=12, color=TEXT_MUTED,
         ),
     ]
@@ -552,7 +557,6 @@ def build(
 
         if session is None or session.state in {SessionState.ARCHIVED, SessionState.COMPLETE}:
             mode = mode_group.value or ScoutMode.QA.value
-            already_offered = False
             if not text:
                 # First empty Send: show Tier A (bank) suggestions for free and stop —
                 # do NOT spend API budget without the user asking for it.
@@ -563,28 +567,40 @@ def build(
                         bank_suggestions_holder[0] = suggestions
                         _render_full()
                         return
-                # Either the bank had nothing to show (empty for this mode, or
-                # nothing left after banlist filtering), or the user has ALREADY
-                # seen Tier A once and pressed Send empty again anyway — that is
-                # an explicit ask for something OTHER than the listed questions
-                # (see _bank_suggestions_bubble's own on-screen copy). Either way
-                # this must not consult Tier A again: re-reading the bank here
-                # would always hand back suggestions[0], the exact "always
-                # angles[0]" bug this fallback exists to avoid, just moved from
-                # Tier B to Tier A. skip_bank forces bridge.start_scout_session
-                # straight to Tier B (angle rotation) instead.
-                already_offered = bank_shown[0]
+                # Second empty Send (bank_shown[0] already True), or the bank had
+                # nothing to show at all (empty for this mode, or nothing left
+                # after banlist filtering): discover a real Tier B question and
+                # PUT IT IN THE INPUT BOX for a human to read, edit, or delete —
+                # do NOT research it yet. Master 2026-08-28: a straight-through
+                # discover -> start_scout_session -> run_scout_general used to
+                # spend a SECOND research call enumerating answers to a dud lane
+                # (a synonym re-skin of an already-rejected bank question) before
+                # any human saw it — is_burned()'s own docstring in
+                # stages/youcom_scout.py says the Master-review step after
+                # discover is what is supposed to catch those. Landing the
+                # question in the box and stopping restores that review step;
+                # the human presses Send again, normally, to research it.
                 bank_shown[0] = False
                 bank_suggestions_holder[0] = []
-            else:
-                bank_shown[0] = False
-                bank_suggestions_holder[0] = []
+
+                def _fill_discovered(question: str) -> None:
+                    intent_field.value = question
+                    _render_full()
+
+                _run_busy(
+                    "Finding a question…", lambda: discover_intent(mode),
+                    on_success=_fill_discovered,
+                )
+                return
+
+            bank_shown[0] = False
+            bank_suggestions_holder[0] = []
             old = session
 
             def _work():
                 if old is not None and old.state not in {SessionState.ARCHIVED, SessionState.COMPLETE}:
                     archive_scout_session(old.id, "Started a new research session")
-                new_session = start_scout_session(mode, text, skip_bank=already_offered)
+                new_session = start_scout_session(mode, text)
                 return run_scout_general(new_session.id)
 
             state.scout_mode = mode

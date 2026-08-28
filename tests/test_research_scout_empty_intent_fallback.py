@@ -4,13 +4,39 @@ Before this, an empty research intent raised ValueError two layers up (here AND
 in the UI's own guard in ui/screens/s1_research_scout.py) — Master 2026-08-22
 wanted Stage 1 to do something useful instead. Tier A (a still-open
 qa_question_bank.md question, QA only, zero API cost) is preferred; Tier B
-(the next rotated angle) is the last resort when Tier A has nothing usable. A
-NON-empty intent must go through completely unchanged — the fallback only
-ever activates on a blank/whitespace-only box.
+(ScoutWorkflow.discover_question — spend one research call turning the next
+rotated angle into a real question, see tests/test_research_scout_discover_
+question.py for that method's own coverage) is the last resort when Tier A has
+nothing usable. A NON-empty intent must go through completely unchanged — the
+fallback only ever activates on a blank/whitespace-only box.
 """
+import pytest
+
 import ui.bridge as bridge
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
+
+
+class _NetworkTripwireYouCom:
+    """Stands in for the real YouComClient inside every test in this file.
+
+    bridge._scout_workflow() builds its ScoutWorkflow with no client override, so
+    without this stub it would construct a real stages.research_scout.workflow.
+    YouComClient() — and config.load_dotenv() means YDC_API_KEY can be a LIVE key
+    in this process. Tier B (discover_question) now spends one client.research()
+    call, so an unstubbed run here would silently hit the network. Raising forces
+    discover_question's mandatory fallback path, which returns the angle itself —
+    exactly the value every assertion below already expects."""
+
+    def research(self, *args, **kwargs):
+        raise AssertionError("test tried to reach the real You.com client")
+
+
+@pytest.fixture(autouse=True)
+def _stub_youcom_client(monkeypatch):
+    monkeypatch.setattr(
+        "stages.research_scout.workflow.YouComClient", lambda *a, **k: _NetworkTripwireYouCom()
+    )
 
 
 def _use_tmp_store(tmp_path, monkeypatch):
@@ -79,27 +105,16 @@ def test_second_empty_session_for_the_same_mode_advances_past_the_first_angle(
     assert second.user_intent == angles[1]
 
 
-def test_skip_bank_forces_tier_b_even_when_the_bank_has_open_questions(tmp_path, monkeypatch):
-    """skip_bank is how a caller that ALREADY showed Tier A to a human (the Stage 1
-    UI's suggestion bubble) says "don't hand back suggestions[0] again — the human
-    declined it, go straight to Tier B". Without this flag every skip_bank=False
-    call here would keep re-seeding the same top bank question forever."""
+def test_start_scout_session_no_longer_accepts_skip_bank(tmp_path, monkeypatch):
+    """The Stage 1 UI now discovers Tier B questions via bridge.discover_intent()
+    and lands them in the intent box for human review BEFORE any session exists
+    (Master 2026-08-28 — see ui/screens/s1_research_scout.py::_send_click and
+    bridge.discover_intent's docstring for why). That was the only caller of
+    skip_bank, so the parameter is gone; start_scout_session("qa", "") must keep
+    doing bank-then-discover for any programmatic (non-UI) caller, unchanged
+    (see the Tier A/Tier B tests above), and must reject an unknown kwarg rather
+    than silently accepting it again."""
     _use_tmp_store(tmp_path, monkeypatch)
-    bank = tmp_path / "qa_question_bank.md"
-    banlist = tmp_path / "qa_question_banlist.md"
-    bank.write_text(
-        "| Status | Question | Answer items (comic, year) | Notes |\n"
-        "|--------|----------|----------------------------|-------|\n"
-        "| SAVE-FOR-LATER | A still-open bank question? | item | note |\n",
-        encoding="utf-8",
-    )
-    banlist.write_text(
-        "| Date | Question | Reason |\n|------|----------|--------|\n", encoding="utf-8",
-    )
-    monkeypatch.setattr("stages.research_scout.bank_fallback._REPO_ROOT", tmp_path)
-    angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
-
-    session = bridge.start_scout_session("qa", "", skip_bank=True)
-    assert session.user_intent != "A still-open bank question?"
-    assert session.user_intent == angles[0]
+    with pytest.raises(TypeError):
+        bridge.start_scout_session("qa", "", skip_bank=True)
 

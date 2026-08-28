@@ -32,6 +32,10 @@ _TEMPLATE_FILES = {
         ScoutMode.QA: "evidence_gate.v1.md",
         ScoutMode.MICRO: "evidence_gate.v1.md",
     },
+    "discover": {
+        ScoutMode.QA: "discover_qa.v1.md",
+        ScoutMode.MICRO: "discover_micro.v1.md",
+    },
 }
 
 

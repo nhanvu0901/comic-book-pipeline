@@ -287,16 +287,37 @@ def _run_recorded_task(page):
     asyncio.run(func())
 
 
-def test_second_empty_send_after_bank_shown_skips_tier_a_and_uses_tier_b(tmp_path, monkeypatch):
+def test_second_empty_send_fills_the_intent_box_with_a_discovered_question_and_starts_no_session(
+    tmp_path, monkeypatch,
+):
     """The first empty Send must only SHOW the bank suggestions, spending nothing. A
-    second empty Send is the user explicitly declining every suggestion shown — it
-    must not silently re-seed suggestions[0] (the exact "always angles[0]" bug this
-    whole fallback exists to avoid, just relocated to Tier A) and must instead reach
-    Tier B (angle rotation) via start_scout_session(..., skip_bank=True)."""
+    second empty Send is the user explicitly declining every suggestion shown — Master
+    2026-08-28: it must discover a real Tier B question and drop it into the intent
+    box for a human to read/edit/delete, NOT start a session and immediately spend a
+    SECOND research call enumerating that question's answers before anyone looks at
+    it. That silent double-spend is exactly what removed the human-review step
+    is_burned()'s docstring (stages/youcom_scout.py) says catches synonym re-skins of
+    already-rejected bank questions — landing the question in the box restores it."""
     root = tmp_path / "research_sessions"
     s1_research_scout.RESEARCH_SESSIONS_ROOT = root
     bridge.RESEARCH_SESSIONS_ROOT = root
     monkeypatch.setattr("stages.research_scout.bank_fallback._REPO_ROOT", tmp_path)
+
+    class _NetworkTripwireYouCom:
+        # discover_intent() -> ScoutWorkflow.discover_question spends one
+        # client.research() call turning the angle into a real question before
+        # falling back to it. bridge._scout_workflow() builds an uninjected, real
+        # YouComClient() here, and config.load_dotenv() can put a LIVE key in this
+        # process — so without this stub the assertions below would depend on a
+        # real network call. Raising forces discover_question's mandatory
+        # fallback, which returns the angle itself: exactly what this test's
+        # angles[0] assertion expects.
+        def research(self, *args, **kwargs):
+            raise AssertionError("test tried to reach the real You.com client")
+
+    monkeypatch.setattr(
+        "stages.research_scout.workflow.YouComClient", lambda *a, **k: _NetworkTripwireYouCom()
+    )
     (tmp_path / "qa_question_bank.md").write_text(
         "| Status | Question | Answer items (comic, year) | Notes |\n"
         "|--------|----------|----------------------------|-------|\n"
@@ -307,30 +328,28 @@ def test_second_empty_send_after_bank_shown_skips_tier_a_and_uses_tier_b(tmp_pat
         "| Date | Question | Reason |\n|------|----------|--------|\n", encoding="utf-8",
     )
 
-    seeded_intents = []
-    real_start = bridge.start_scout_session
+    def _must_not_be_called(name):
+        def _fail(*_a, **_k):
+            raise AssertionError(f"{name} must not be called on a discover-only Send")
+        return _fail
 
-    def _spy_start(mode, user_intent, **kwargs):
-        session = real_start(mode, user_intent, **kwargs)
-        seeded_intents.append(session.user_intent)
-        return session
-
-    monkeypatch.setattr(s1_research_scout, "start_scout_session", _spy_start)
-    monkeypatch.setattr(
-        s1_research_scout, "run_scout_general",
-        lambda session_id: bridge.load_scout_session(session_id, root=root),
-    )
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", _must_not_be_called("start_scout_session"))
+    monkeypatch.setattr(s1_research_scout, "run_scout_general", _must_not_be_called("run_scout_general"))
 
     page, controls = _build(tmp_path)
     send = next(node for node in _walk(controls) if getattr(node, "key", None) == "chat-send")
 
     send.on_click(object())  # first empty Send -> Tier A suggestions shown, nothing seeded
-    assert seeded_intents == []
     assert "The one open bank question?" in _text_content(controls)
 
-    send.on_click(object())  # second empty Send -> explicit ask, must skip Tier A
+    send.on_click(object())  # second empty Send -> discover a question, do NOT research it
     _run_recorded_task(page)
 
     angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
-    assert seeded_intents == [angles[0]]
-    assert seeded_intents[0] != "The one open bank question?"
+    intent_field = next(
+        node for node in _walk(controls) if getattr(node, "key", None) == "scout-intent"
+    )
+    assert intent_field.value == angles[0]
+    # No session was ever created — the two monkeypatched functions above would have
+    # raised if either had been called, and no session directory was written to disk.
+    assert not root.exists() or not any(root.iterdir())

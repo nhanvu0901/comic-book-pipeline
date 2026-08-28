@@ -304,6 +304,41 @@ class ScoutWorkflow:
             self._policies[mode] = PolicyBundle.load(mode)
         return self._policies[mode]
 
+    def discover_question(self, mode: ScoutMode) -> str:
+        """Tier B of the Stage 1 empty-intent fallback (ui/bridge.py): spend ONE
+        research call turning the next rotated angle into a REAL question/moment
+        before handing it to the mode's normal machinery. general_qa.v2.md /
+        general_micro.v1.md ENUMERATE ANSWERS TO a question — a bare angle
+        ("times a famous power or rule failed") is not a question, so feeding it
+        straight in researched the wrong thing (Master 2026-08-28 bug find).
+        Never raises: an empty intent box must always be able to start a
+        session, even with You.com down, unauthenticated, or all-burned — every
+        one of those falls back to returning the angle itself, today's
+        pre-fix behavior."""
+        from stages.youcom_scout import _DISCOVER_PROPS, _MICRO_PROPS, _schema, is_burned
+
+        mode = ScoutMode(mode)
+        angle = self.next_angle(mode)
+        bundle = self._bundle(mode)
+        field, props = (
+            ("question", _DISCOVER_PROPS) if mode is ScoutMode.QA else ("moment", _MICRO_PROPS)
+        )
+        prompt = bundle.render("discover", angle=angle, digest=self.digest)
+        try:
+            raw = self.client.research(
+                prompt.text,
+                _schema(props),
+                bundle.source_profiles.get("general_research"),
+                effort=config.YOUCOM_RESEARCH_EFFORT,
+            )
+        except Exception:
+            return angle
+        for candidate in _extract_candidates(_raw_payload(raw)):
+            text = str(candidate.get(field, "")).strip()
+            if text and not is_burned(text, self.digest):
+                return text
+        return angle
+
     def next_angle(self, mode: ScoutMode) -> str:
         """Public entry point for the Tier B empty-intent fallback (ui/bridge.py):
         the next angle in rotation for `mode`, as plain text usable as a

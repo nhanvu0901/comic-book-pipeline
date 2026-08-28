@@ -58,7 +58,7 @@ def _scout_workflow(root: Path | None = None):
     return ScoutWorkflow(store=_scout_store(root), digest=build_scouted_digest())
 
 
-def start_scout_session(mode: str, user_intent: str, *, skip_bank: bool = False):
+def start_scout_session(mode: str, user_intent: str):
     from stages.research_scout.bank_fallback import bank_suggestions_for_mode
     from stages.research_scout.models import ScoutMode
 
@@ -69,20 +69,37 @@ def start_scout_session(mode: str, user_intent: str, *, skip_bank: bool = False)
         # Two-tier empty-intent fallback (Master 2026-08-22), replacing the old
         # "raise ValueError" here: Tier A prefers a real, already-vetted
         # still-open qa_question_bank.md question (zero API cost, QA only —
-        # micro has no bank file); Tier B rotates through
-        # research_policies/general_angles.v1.json when the bank has nothing
-        # usable, so a normal general-research round always has something to
-        # research instead of erroring out.
-        #
-        # skip_bank lets a caller that ALREADY showed Tier A to a human (the
-        # Stage 1 UI's own suggestion bubble) say "don't re-offer it — go
-        # straight to Tier B". Without this, a caller whose user explicitly
-        # declined every suggestion and asked for something else would always
-        # be handed suggestions[0] again — the exact "always angles[0]" bug
-        # this whole fallback was built to avoid, just relocated to Tier A.
-        suggestions = [] if skip_bank else bank_suggestions_for_mode(scout_mode)
-        intent = suggestions[0]["question"] if suggestions else workflow.next_angle(scout_mode)
+        # micro has no bank file); Tier B discovers a real question along the
+        # next angle in research_policies/general_angles.v1.json when the bank
+        # has nothing usable (Master 2026-08-28: a bare angle isn't a question,
+        # so it must be turned into one before it reaches the general-research
+        # prompt — see ScoutWorkflow.discover_question), so a normal
+        # general-research round always has something to research instead of
+        # erroring out. This stays the documented behaviour for any
+        # programmatic (non-UI) caller — the Stage 1 UI itself no longer calls
+        # this with an empty intent; see discover_intent() below for why.
+        suggestions = bank_suggestions_for_mode(scout_mode)
+        intent = suggestions[0]["question"] if suggestions else workflow.discover_question(scout_mode)
     return workflow.start(scout_mode, intent)
+
+
+def discover_intent(mode: str) -> str:
+    """Tier B on its own, WITHOUT starting a session — the human-review step
+    that stages/youcom_scout.py::is_burned's docstring deliberately relies on.
+    is_burned lets synonym re-skins of an already-REJECTED qa_question_bank.md
+    row slip through "by choice", saying "The Master-review step after
+    discover is the catch for those". A second empty Send used to pipe a
+    freshly discovered question straight into start_scout_session +
+    run_scout_general — spending a SECOND research call enumerating answers to
+    a dud lane before any human saw the question at all. This returns just the
+    discovered question/moment so the UI can drop it into the intent box for a
+    human to read, edit, or delete; pressing Send again then researches it
+    normally. Never writes to SessionStore — see
+    stages.research_scout.workflow.ScoutWorkflow.discover_question for the
+    session-free discovery itself."""
+    from stages.research_scout.models import ScoutMode
+
+    return _scout_workflow().discover_question(ScoutMode(mode))
 
 
 def list_bank_suggestions(mode: str) -> list[dict]:
