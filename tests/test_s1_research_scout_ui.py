@@ -8,27 +8,9 @@ import ui.screens.s1_research_scout as s1_research_scout
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
+from tests.ui_test_doubles import StrictFakePage as FakePage
 from ui import app
 from ui.state import AppState
-
-
-class FakePage:
-    def __init__(self):
-        self.tasks = []
-        self.views = []
-        self.dialogs = []
-
-    def run_task(self, *args, **kwargs):
-        self.tasks.append((args, kwargs))
-
-    def update(self):
-        pass
-
-    def show_dialog(self, d):
-        self.dialogs.append(d)
-
-    def pop_dialog(self, *a):
-        pass
 
 
 def _walk(control):

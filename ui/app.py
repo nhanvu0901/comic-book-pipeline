@@ -15,7 +15,14 @@ from .screens import (
     s1_identify, s1_research_scout, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video,
     s6_review, s_review_gate,
 )
-from .bridge import delete_project, describe_project, human_size, list_scout_sessions
+from .bridge import (
+    delete_project,
+    delete_scout_session,
+    describe_project,
+    format_exception,
+    human_size,
+    list_scout_sessions,
+)
 from .layout import primary_button
 from .state import (AppState, PICKER_STAGE, list_projects, load_state,
                     save_state)
@@ -97,11 +104,33 @@ def _bootstrap_state() -> AppState:
 
 def _show_project_picker(
     page: ft.Page, state: AppState, on_selected, can_cancel: bool = False,
+    error: str | None = None,
 ):
     """can_cancel=True when reached from a stage screen (goto_stage(PICKER_STAGE)) — the
     user came from somewhere and can back out. False at bootstrap, where the picker IS the
-    entry point and a Cancel button would strand the user on a blank screen."""
+    entry point and a Cancel button would strand the user on a blank screen.
+
+    error: a preformatted message (see format_exception) to render at the top of the
+    panel — set by _safe() below when a click handler raises. Flet swallows exceptions
+    raised inside event handlers, so without this a failing click looks IDENTICAL to a
+    dead button (the exact "clicking delete does nothing" symptom this exists to catch).
+    """
     projects = list_projects()
+
+    def _safe(handler):
+        """Wrap a click handler so a raised exception rebuilds the picker with the
+        exception visible instead of vanishing silently. Every on_click assigned in
+        this function goes through this."""
+        def _wrapped(*args, **kwargs):
+            try:
+                return handler(*args, **kwargs)
+            except Exception as exc:
+                page.views.clear()
+                _show_project_picker(
+                    page, state, on_selected, can_cancel=can_cancel,
+                    error=format_exception(exc),
+                )
+        return _wrapped
 
     def select(name: str):
         s = load_state(name)
@@ -148,7 +177,38 @@ def _show_project_picker(
             ], spacing=8, tight=True),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
-                primary_button("Delete", _do_delete, icon=ft.Icons.DELETE_OUTLINE),
+                primary_button("Delete", _safe(_do_delete), icon=ft.Icons.DELETE_OUTLINE),
+            ],
+        ))
+
+    def _confirm_delete_session(session) -> None:
+        """Same compact-confirm-then-hard-delete model as _confirm_delete_project and
+        as the Stage 1 Research Scout right rail's _delete_session_row — mode + intent
+        is enough context for a research session (no file inventory to show, sessions
+        are small). If the deleted session is the one currently loaded in state, clear
+        state.scout_session_id so the app never keeps addressing a session that no
+        longer exists on disk."""
+
+        def _do_delete(_e):
+            page.pop_dialog()
+            delete_scout_session(session.id)
+            if state.scout_session_id == session.id:
+                state.scout_session_id = ""
+            page.views.clear()
+            _show_project_picker(page, state, on_selected, can_cancel=can_cancel)
+
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Delete this research session?"),
+            content=ft.Column([
+                ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
+                        size=12, color=TEXT_PRIMARY),
+                ft.Text("This cannot be undone.", size=12, color=DANGER,
+                        weight=ft.FontWeight.BOLD),
+            ], spacing=8, tight=True),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                primary_button("Delete", _safe(_do_delete), icon=ft.Icons.DELETE_OUTLINE),
             ],
         ))
 
@@ -171,6 +231,18 @@ def _show_project_picker(
                 size=14, color=TEXT_PRIMARY),
         ft.Container(height=16),
     ]
+    if error:
+        rows.append(
+            ft.Container(
+                key="picker-error",
+                content=ft.Text(error, size=11, color=DANGER, selectable=True,
+                                 font_family="Menlo"),
+                padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                border=ft.border.all(1, DANGER),
+                border_radius=6,
+            )
+        )
+        rows.append(ft.Container(height=8))
     if projects:
         for name in projects:
             rows.append(
@@ -187,7 +259,7 @@ def _show_project_picker(
                             ], spacing=10),
                             expand=True,
                             ink=True,
-                            on_click=lambda _e, n=name: select(n),
+                            on_click=_safe(lambda _e, n=name: select(n)),
                         ),
                         ft.IconButton(
                             key=f"delete-project-{name}",
@@ -195,7 +267,7 @@ def _show_project_picker(
                             icon_size=18,
                             icon_color=DANGER,
                             tooltip=f"Delete {name}",
-                            on_click=lambda _e, n=name: _confirm_delete_project(n),
+                            on_click=_safe(lambda _e, n=name: _confirm_delete_project(n)),
                             style=ft.ButtonStyle(padding=ft.padding.all(0)),
                         ),
                     ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -230,17 +302,36 @@ def _show_project_picker(
         for session in scout_sessions:
             rows.append(
                 ft.Container(
-                    content=ft.Column([
-                        ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
-                                size=13, color=TEXT_PRIMARY),
-                        ft.Text(f"{session.id} · {session.state.value}",
-                                size=10, color=TEXT_MUTED),
-                    ], spacing=3),
+                    content=ft.Row([
+                        # Same structure as the project rows above: a separate ink
+                        # region for resume, SIBLING to the delete IconButton — never
+                        # nested inside it, so the tap is not swallowed by the outer
+                        # InkWell.
+                        ft.Container(
+                            key=f"resume-session-{session.id}",
+                            content=ft.Column([
+                                ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
+                                        size=13, color=TEXT_PRIMARY),
+                                ft.Text(f"{session.id} · {session.state.value}",
+                                        size=10, color=TEXT_MUTED),
+                            ], spacing=3),
+                            expand=True,
+                            ink=True,
+                            on_click=_safe(lambda _e, s=session: resume(s)),
+                        ),
+                        ft.IconButton(
+                            key=f"delete-session-{session.id}",
+                            icon=ft.Icons.DELETE_OUTLINE,
+                            icon_size=18,
+                            icon_color=DANGER,
+                            tooltip="Delete this research session",
+                            on_click=_safe(lambda _e, s=session: _confirm_delete_session(s)),
+                            style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                        ),
+                    ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.START),
                     padding=ft.padding.symmetric(horizontal=14, vertical=10),
                     border=ft.border.all(1, BORDER),
                     border_radius=6,
-                    ink=True,
-                    on_click=lambda _e, s=session: resume(s),
                 )
             )
         rows.append(ft.Container(height=8))
@@ -248,7 +339,7 @@ def _show_project_picker(
     actions: list[ft.Control] = [
         ft.ElevatedButton(
             "+ New project",
-            on_click=new_project,
+            on_click=_safe(new_project),
             bgcolor=ACCENT, color="#ffffff",
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=6),
@@ -267,7 +358,7 @@ def _show_project_picker(
             on_selected()
         label = (f"Cancel — back to {state.project_name}" if state.project_name
                   else "Cancel — back to research")
-        actions.append(ft.TextButton(label, on_click=cancel))
+        actions.append(ft.TextButton(label, on_click=_safe(cancel)))
     rows.append(ft.Row(actions, spacing=12,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
@@ -277,6 +368,14 @@ def _show_project_picker(
             route="/",
             bgcolor=BG,
             padding=0,
+            # A few projects plus several research sessions can exceed the window
+            # height, and View.scroll defaults to None (no scrollbar, the overflow is
+            # simply unreachable). View "represents a Column control" from a layout
+            # perspective (flet's own docstring) and — unlike an arbitrary nested
+            # Column — is already bounded by the real window/page height, so enabling
+            # scroll HERE (rather than on some inner Column that has no outer bound)
+            # is what actually makes it engage, at any window size.
+            scroll=ft.ScrollMode.AUTO,
             controls=[
                 ft.Container(
                     content=ft.Column(rows, spacing=8,
