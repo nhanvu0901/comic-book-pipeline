@@ -16,6 +16,7 @@ class FakePage:
     def __init__(self):
         self.tasks = []
         self.views = []
+        self.dialogs = []
 
     def run_task(self, *args, **kwargs):
         self.tasks.append((args, kwargs))
@@ -23,13 +24,20 @@ class FakePage:
     def update(self):
         pass
 
+    def show_dialog(self, d):
+        self.dialogs.append(d)
+
+    def pop_dialog(self, *a):
+        pass
+
 
 def _walk(control):
     if control is None:
         return
     yield control
-    for child in getattr(control, "controls", None) or []:
-        yield from _walk(child)
+    for attr in ("controls", "actions"):
+        for child in (getattr(control, attr, None) or []):
+            yield from _walk(child)
     content = getattr(control, "content", None)
     if isinstance(content, ft.Control):
         yield from _walk(content)
@@ -41,6 +49,16 @@ def _text_content(control):
         if isinstance(node, ft.Text):
             values.append(str(node.value or ""))
     return "\n".join(values)
+
+
+def _label(b) -> str:
+    """flet 0.85 keeps a button's caption in `content`, not `text`."""
+    c = getattr(b, "content", None)
+    return c if isinstance(c, str) else str(getattr(b, "text", "") or "")
+
+
+def _buttons(control):
+    return [c for c in _walk(control) if isinstance(c, (ft.TextButton, ft.ElevatedButton))]
 
 
 class _FakeControl:
@@ -353,3 +371,91 @@ def test_second_empty_send_fills_the_intent_box_with_a_discovered_question_and_s
     # No session was ever created — the two monkeypatched functions above would have
     # raised if either had been called, and no session directory was written to disk.
     assert not root.exists() or not any(root.iterdir())
+
+
+# ─── Delete a research session ──────────────────────────────────────────────
+# Compact confirm (mode + intent + created date is enough — sessions are small, ~272K
+# for six), then hard-delete. Master's chosen safety model: confirm then rmtree, no
+# trash, no type-the-name. No test here may delete anything real — every session lives
+# under tmp_path.
+
+def test_deleting_the_currently_loaded_session_clears_scout_session_id(tmp_path):
+    root = tmp_path / "research_sessions"
+    store = SessionStore(root)
+    session = store.create(ScoutMode.QA, "Who has beaten Superman in a fight?")
+
+    page, controls = _build(tmp_path, session)
+
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+    assert page.dialogs, "clicking the delete affordance must open a confirm dialog"
+
+    confirm = next(b for b in _buttons(page.dialogs[-1]) if _label(b) == "Delete")
+    confirm.on_click(object())
+
+    assert not store.session_dir(session.id).exists()
+    # The screen must fall back to its empty state rather than keep pointing at a
+    # session directory that no longer exists.
+    assert "No unfinished research sessions." in _text_content(controls)
+
+
+def test_deleting_the_currently_loaded_session_clears_state_scout_session_id(tmp_path):
+    root = tmp_path / "research_sessions"
+    s1_research_scout.RESEARCH_SESSIONS_ROOT = root
+    bridge.RESEARCH_SESSIONS_ROOT = root
+    store = SessionStore(root)
+    session = store.create(ScoutMode.MICRO, "Hulk moment")
+
+    page = FakePage()
+    state = AppState(scout_session_id=session.id)
+    controls = s1_research_scout.build(
+        page, state, on_go=lambda _stage: None, on_state_change=lambda: None,
+    )
+
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+    confirm = next(b for b in _buttons(page.dialogs[-1]) if _label(b) == "Delete")
+    confirm.on_click(object())
+
+    assert state.scout_session_id == ""
+
+
+def test_delete_confirm_dialog_shows_mode_intent_and_is_irreversible_warning(tmp_path):
+    root = tmp_path / "research_sessions"
+    store = SessionStore(root)
+    session = store.create(ScoutMode.QA, "Who has beaten Superman in a fight?")
+
+    page, controls = _build(tmp_path, session)
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+
+    dialog_text = _text_content(page.dialogs[-1])
+    assert "QA" in dialog_text
+    assert "Who has beaten Superman in a fight?" in dialog_text
+    assert "cannot be undone" in dialog_text.lower()
+
+
+def test_cancelling_the_session_delete_dialog_leaves_the_session_on_disk(tmp_path):
+    root = tmp_path / "research_sessions"
+    store = SessionStore(root)
+    session = store.create(ScoutMode.QA, "Who has beaten Superman in a fight?")
+
+    page, controls = _build(tmp_path, session)
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+    cancel = next(b for b in _buttons(page.dialogs[-1]) if _label(b) == "Cancel")
+    cancel.on_click(object())
+
+    assert store.session_dir(session.id).exists()

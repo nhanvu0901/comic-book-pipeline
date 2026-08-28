@@ -23,6 +23,7 @@ from ..bridge import (
     approve_scout_specific,
     back_scout_general,
     create_scout_project,
+    delete_scout_session,
     discover_intent,
     format_exception,
     list_scout_sessions,
@@ -59,6 +60,15 @@ def _session_for_ui(session_id: str) -> ResearchSession | None:
         return load_scout_session(session_id, root=RESEARCH_SESSIONS_ROOT)
     except Exception:
         return None
+
+
+def _session_created_at(session_id: str) -> str:
+    """YYYY-MM-DD from the session_created audit event, or "" if unavailable — the
+    compact "created date" the delete-confirm dialog shows alongside mode + intent."""
+    for event in load_scout_audit(session_id, root=RESEARCH_SESSIONS_ROOT):
+        if event.get("event") == "session_created":
+            return str(event.get("timestamp") or "")[:10]
+    return ""
 
 
 def _candidate_id(candidate: dict, index: int) -> str:
@@ -731,6 +741,46 @@ def build(
 
         _run_busy("Loading session…", _work, on_success=_on_resumed)
 
+    def _delete_session_row(session: ResearchSession) -> None:
+        """Compact confirm — mode + intent + created date is enough, sessions are small
+        (~272K for six) — then hard-delete. If this is the session currently loaded,
+        clear it back to the empty state instead of leaving the screen pointing at a
+        session directory that no longer exists."""
+        if busy[0]:
+            return
+
+        def _do_delete(_e):
+            page.pop_dialog()
+            delete_scout_session(session.id, root=RESEARCH_SESSIONS_ROOT)
+            if session_holder[0] is not None and session_holder[0].id == session.id:
+                selected_general[0] = ""
+                selected_specific.clear()
+                session_holder[0] = None
+                state.scout_session_id = ""
+                intent_field.value = ""
+                bank_suggestions_holder[0] = []
+                bank_shown[0] = False
+            _render_full()
+
+        created = _session_created_at(session.id)
+        detail: list[ft.Control] = [
+            ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
+                    size=12, color=TEXT_PRIMARY),
+        ]
+        if created:
+            detail.append(ft.Text(f"Created {created}", size=11, color=TEXT_MUTED))
+        detail.append(ft.Text("This cannot be undone.", size=12, color=DANGER,
+                              weight=ft.FontWeight.BOLD))
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Delete this research session?"),
+            content=ft.Column(detail, spacing=6, tight=True),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                primary_button("Delete", _do_delete, icon=ft.Icons.DELETE_OUTLINE),
+            ],
+        ))
+
     # ─── Right rail ─────────────────────────────────────────────────────
 
     def _render_resume_list() -> ft.Control:
@@ -739,18 +789,35 @@ def build(
             return ft.Text("No unfinished research sessions.", size=11, color=TEXT_MUTED)
         return ft.Column([
             ft.Container(
-                key=f"resume-session-{session.id}",
-                content=ft.Column([
-                    ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
-                            size=12, color=TEXT_PRIMARY),
-                    ft.Text(f"{session.id} · {session.state.value}",
-                            size=10, color=TEXT_MUTED),
-                ], spacing=2),
+                content=ft.Row([
+                    # Sibling ink region + delete button, not nested — an IconButton
+                    # placed INSIDE an ink=True on_click container risks the tap being
+                    # swallowed by the outer InkWell instead of reaching the button.
+                    ft.Container(
+                        key=f"resume-session-{session.id}",
+                        content=ft.Column([
+                            ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
+                                    size=12, color=TEXT_PRIMARY),
+                            ft.Text(f"{session.id} · {session.state.value}",
+                                    size=10, color=TEXT_MUTED),
+                        ], spacing=2),
+                        expand=True,
+                        ink=True,
+                        on_click=lambda _e, s=session: _resume_click(s),
+                    ),
+                    ft.IconButton(
+                        key=f"delete-session-{session.id}",
+                        icon=ft.Icons.DELETE_OUTLINE,
+                        icon_size=16,
+                        icon_color=DANGER,
+                        tooltip="Delete this research session",
+                        on_click=lambda _e, s=session: _delete_session_row(s),
+                        style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                    ),
+                ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.START),
                 padding=10,
                 border=ft.border.all(1, BORDER),
                 border_radius=6,
-                ink=True,
-                on_click=lambda _e, s=session: _resume_click(s),
             )
             for session in sessions
         ], spacing=6, scroll=ft.ScrollMode.AUTO)

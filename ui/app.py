@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import flet as ft
 
+from config import PROJECTS_ROOT
+
 from .screens import (
     s1_identify, s1_research_scout, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video,
     s6_review, s_review_gate,
 )
-from .bridge import list_scout_sessions
+from .bridge import delete_project, describe_project, human_size, list_scout_sessions
+from .layout import primary_button
 from .state import (AppState, PICKER_STAGE, list_projects, load_state,
                     save_state)
-from .theme import BG, BG_PANEL, BORDER, ACCENT, TEXT_MUTED, TEXT_PRIMARY, apply_theme
+from .theme import BG, BG_PANEL, BORDER, ACCENT, DANGER, TEXT_MUTED, TEXT_PRIMARY, apply_theme
 
 
 STAGE_BUILDERS = {
@@ -63,7 +66,8 @@ async def main(page: ft.Page):
         # resolved — so opening a comic was a one-way door for the whole session.
         if stage == PICKER_STAGE:
             save_state(state)               # never lose the current project's stage/approvals
-            _show_project_picker(page, state, render_current)
+            # Reached mid-flow (a stage screen), not at launch — so offer a way out.
+            _show_project_picker(page, state, render_current, can_cancel=True)
             return
         if stage < 1 or stage > 8:
             return
@@ -76,7 +80,9 @@ async def main(page: ft.Page):
         render_current()
 
     if not state.project_name:
-        _show_project_picker(page, state, render_current)
+        # The picker IS the entry point here — cancelling would strand the user on a
+        # blank screen, so no Cancel button at bootstrap.
+        _show_project_picker(page, state, render_current, can_cancel=False)
     else:
         render_current()
 
@@ -89,7 +95,12 @@ def _bootstrap_state() -> AppState:
     return AppState()
 
 
-def _show_project_picker(page: ft.Page, state: AppState, on_selected):
+def _show_project_picker(
+    page: ft.Page, state: AppState, on_selected, can_cancel: bool = False,
+):
+    """can_cancel=True when reached from a stage screen (goto_stage(PICKER_STAGE)) — the
+    user came from somewhere and can back out. False at bootstrap, where the picker IS the
+    entry point and a Cancel button would strand the user on a blank screen."""
     projects = list_projects()
 
     def select(name: str):
@@ -97,6 +108,49 @@ def _show_project_picker(page: ft.Page, state: AppState, on_selected):
         state.__dict__.update(s.__dict__)
         page.views.clear()
         on_selected()
+
+    def _confirm_delete_project(name: str) -> None:
+        """Show what would be destroyed, then hard-delete on confirm. Master's chosen
+        safety model for this app: a confirmation dialog, no trash folder, no
+        type-the-name — see CLAUDE.md job notes."""
+
+        def _do_delete(_e):
+            page.pop_dialog()
+            delete_project(name)
+            if state.project_name == name:
+                # The directory is gone — clear the dangling stage/approval state that
+                # pointed at it (same reset new_project() below uses for a blank start),
+                # so the app never keeps addressing a project that no longer exists.
+                state.project_name = ""
+                state.scout_session_id = ""
+                state.scout_mode = "qa"
+                state.last_prompt = ""
+                state.current_stage = 1
+                state.approved = {}
+                state.dirty = {}
+            page.views.clear()
+            _show_project_picker(page, state, on_selected, can_cancel=can_cancel)
+
+        inv = describe_project(name)
+        top_ext = sorted(inv.extension_counts.items(), key=lambda kv: -kv[1])[:4]
+        inventory_text = (
+            ", ".join(f"{count} {ext}" for ext, count in top_ext) if top_ext else "empty"
+        )
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f'Delete project "{name}"?'),
+            content=ft.Column([
+                ft.Text(str(PROJECTS_ROOT / name), size=11, color=TEXT_MUTED, selectable=True),
+                ft.Text(f"{human_size(inv.total_bytes)} · {inv.file_count} files "
+                        f"({inventory_text})", size=12, color=TEXT_PRIMARY),
+                ft.Text("This cannot be undone.", size=12, color=DANGER,
+                        weight=ft.FontWeight.BOLD),
+            ], spacing=8, tight=True),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                primary_button("Delete", _do_delete, icon=ft.Icons.DELETE_OUTLINE),
+            ],
+        ))
 
     def new_project(_e):
         # leave project empty — screen 1 will slug-create one from the prompt
@@ -122,14 +176,32 @@ def _show_project_picker(page: ft.Page, state: AppState, on_selected):
             rows.append(
                 ft.Container(
                     content=ft.Row([
-                        ft.Icon(ft.Icons.FOLDER_OPEN, color=TEXT_MUTED, size=18),
-                        ft.Text(name, size=14, color=TEXT_PRIMARY),
-                    ], spacing=10),
+                        # A separate ink region for open-project, sibling to the delete
+                        # button — an IconButton nested INSIDE an ink=True on_click
+                        # container risks the tap being swallowed by the outer InkWell.
+                        ft.Container(
+                            key=f"open-project-{name}",
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.FOLDER_OPEN, color=TEXT_MUTED, size=18),
+                                ft.Text(name, size=14, color=TEXT_PRIMARY),
+                            ], spacing=10),
+                            expand=True,
+                            ink=True,
+                            on_click=lambda _e, n=name: select(n),
+                        ),
+                        ft.IconButton(
+                            key=f"delete-project-{name}",
+                            icon=ft.Icons.DELETE_OUTLINE,
+                            icon_size=18,
+                            icon_color=DANGER,
+                            tooltip=f"Delete {name}",
+                            on_click=lambda _e, n=name: _confirm_delete_project(n),
+                            style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                        ),
+                    ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     padding=ft.padding.symmetric(horizontal=14, vertical=10),
                     border=ft.border.all(1, BORDER),
                     border_radius=6,
-                    ink=True,
-                    on_click=lambda _e, n=name: select(n),
                 )
             )
         rows.append(ft.Container(height=8))
@@ -186,13 +258,16 @@ def _show_project_picker(page: ft.Page, state: AppState, on_selected):
     ]
     # Reached from a stage screen rather than at launch → let the user back out. Without
     # this, opening the picker by mistake forces a project choice, which is the same
-    # one-way-door the picker button was added to remove.
-    if state.project_name:
+    # one-way-door the picker button was added to remove. Gated on the explicit
+    # can_cancel param (not state.project_name — a research session in progress has no
+    # project yet, but still came from somewhere and still needs a way back).
+    if can_cancel:
         def cancel(_e):
             page.views.clear()
             on_selected()
-        actions.append(ft.TextButton(f"Cancel — back to {state.project_name}",
-                                     on_click=cancel))
+        label = (f"Cancel — back to {state.project_name}" if state.project_name
+                  else "Cancel — back to research")
+        actions.append(ft.TextButton(label, on_click=cancel))
     rows.append(ft.Row(actions, spacing=12,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER))
 

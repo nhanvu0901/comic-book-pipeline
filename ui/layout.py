@@ -36,27 +36,33 @@ def stepper_nav(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
         label, color = status_for(state, stage)
         active = stage == state.current_stage
         items.append(_step_row(stage, active, label, color, on_go, state))
+    footer_children: list[ft.Control] = []
     if state.project_name:
-        items.append(
-            ft.Container(
-                content=ft.Column([
-                    ft.Text("PROJECT", size=9, color=TEXT_MUTED),
-                    ft.Text(state.project_name, size=12, color=TEXT_PRIMARY,
-                            weight=ft.FontWeight.W_500, selectable=True),
-                    # The only way back to the project list. Opening a comic used to be a
-                    # one-way door: the picker was built at launch and never again.
-                    ft.TextButton(
-                        "← All projects",
-                        icon=ft.Icons.ARROW_BACK,
-                        on_click=lambda _e: on_go(PICKER_STAGE),
-                        style=ft.ButtonStyle(padding=ft.padding.all(0)),
-                    ),
-                ], spacing=4),
-                padding=ft.padding.symmetric(horizontal=20, vertical=14),
-                margin=ft.margin.only(top=12),
-                border=ft.border.only(top=ft.BorderSide(1, BORDER)),
-            )
+        footer_children.append(ft.Text("PROJECT", size=9, color=TEXT_MUTED))
+        footer_children.append(
+            ft.Text(state.project_name, size=12, color=TEXT_PRIMARY,
+                     weight=ft.FontWeight.W_500, selectable=True)
         )
+    # The only way back to the project list. This must render UNCONDITIONALLY: Stage 1's
+    # Research Scout runs before any project exists (state.project_name == ""), so gating
+    # this button on project_name made an unfinished research session a dead end — there
+    # was no route back to the picker at all until a project got created.
+    footer_children.append(
+        ft.TextButton(
+            "← All projects",
+            icon=ft.Icons.ARROW_BACK,
+            on_click=lambda _e: on_go(PICKER_STAGE),
+            style=ft.ButtonStyle(padding=ft.padding.all(0)),
+        )
+    )
+    items.append(
+        ft.Container(
+            content=ft.Column(footer_children, spacing=4),
+            padding=ft.padding.symmetric(horizontal=20, vertical=14),
+            margin=ft.margin.only(top=12),
+            border=ft.border.only(top=ft.BorderSide(1, BORDER)),
+        )
+    )
     return ft.Container(
         content=ft.Column(items, spacing=0, expand=True),
         width=240,

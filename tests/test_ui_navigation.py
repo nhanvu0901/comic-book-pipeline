@@ -42,10 +42,18 @@ def test_sidebar_offers_a_way_back_to_the_project_list():
     assert seen == [PICKER_STAGE]
 
 
-def test_no_back_button_before_a_project_is_open():
-    """At launch the picker IS the screen — a button back to it would be a loop."""
-    nav = stepper_nav(AppState(project_name="", current_stage=1), lambda _s: None)
-    assert not [b for b in _buttons(nav) if "project" in _label(b).lower()]
+def test_back_button_renders_even_before_a_project_exists():
+    """The exact regression: Stage 1's Research Scout runs BEFORE any project exists, so
+    state.project_name is "" for the whole scouting flow. Gating the back button on
+    project_name (the old behaviour) made an unfinished research session a dead end —
+    there was no route back to the picker at all. The button must render regardless."""
+    seen: list[int] = []
+    nav = stepper_nav(AppState(project_name="", current_stage=1), seen.append)
+
+    back = [b for b in _buttons(nav) if "project" in _label(b).lower()]
+    assert back, "the picker must be reachable even with no project open yet"
+    back[0].on_click(None)
+    assert seen == [PICKER_STAGE]
 
 
 def test_picker_stage_is_outside_the_real_stage_range():

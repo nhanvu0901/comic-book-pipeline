@@ -7,8 +7,9 @@ import json
 import os
 import queue
 import re
+import shutil
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,6 +40,70 @@ def _strip_ansi(text: str) -> str:
 async def run_blocking(fn: Callable[..., Any], *args, **kwargs) -> Any:
     """Run a blocking callable in a worker thread."""
     return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+# ─── Project management (picker) ───────────────────────────────────────────
+
+@dataclass
+class ProjectInventory:
+    """What deleting a project directory would destroy: total size plus a per-extension
+    file-count breakdown. Built from ONE directory walk (describe_project below) — general
+    on purpose, so it stays correct for any project's shape instead of hardcoding a list
+    of filenames for one particular comic/mode."""
+    total_bytes: int = 0
+    file_count: int = 0
+    extension_counts: dict[str, int] = field(default_factory=dict)
+
+
+def describe_project(name: str) -> ProjectInventory:
+    """Walk PROJECTS_ROOT/name ONCE for the delete-confirm dialog: total bytes, file
+    count, and counts per file extension. A missing/non-directory path reports all
+    zeros rather than raising, so a stale picker row (project vanished on disk between
+    listing and click) still shows something sane instead of crashing the dialog."""
+    target = PROJECTS_ROOT / name
+    inv = ProjectInventory()
+    if not target.is_dir():
+        return inv
+    for p in target.rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        inv.total_bytes += size
+        inv.file_count += 1
+        ext = p.suffix.lower() or "(no ext)"
+        inv.extension_counts[ext] = inv.extension_counts.get(ext, 0) + 1
+    return inv
+
+
+def human_size(num_bytes: int) -> str:
+    """Bytes -> a short human string ("12.3 MB") for the delete-confirm dialog."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def delete_project(name: str) -> None:
+    """Permanently remove PROJECTS_ROOT/name. Refuses anything that would resolve
+    outside PROJECTS_ROOT — a bad `name` (`..` traversal, an absolute path, or an
+    embedded path separator) must never let rmtree touch something else on disk.
+    state.json lives INSIDE the project dir (ui/state.py::state_path), so deleting
+    the directory is the whole job; nothing else needs cleaning up."""
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"invalid project name: {name!r}")
+    candidate = Path(name)
+    if candidate.is_absolute() or len(candidate.parts) != 1:
+        raise ValueError(f"invalid project name: {name!r}")
+    root = PROJECTS_ROOT.resolve()
+    target = (PROJECTS_ROOT / name).resolve()
+    if target.parent != root or not target.is_dir():
+        raise ValueError(f"refusing to delete outside PROJECTS_ROOT: {name!r}")
+    shutil.rmtree(target)
 
 
 # ─── Stage 1: Research Scout bridge ────────────────────────────────────────
@@ -192,6 +257,13 @@ def list_scout_sessions(root: Path | None = None) -> list[Any]:
 
 def load_scout_session(session_id: str, root: Path | None = None):
     return _scout_store(root).load(session_id)
+
+
+def delete_scout_session(session_id: str, root: Path | None = None) -> None:
+    """Permanently remove a research-scout session directory. The traversal guard lives
+    in SessionStore.delete/session_dir (same guard load/save/write_artifact already use),
+    not duplicated here."""
+    _scout_store(root).delete(session_id)
 
 
 def load_scout_candidates(session_id: str, root: Path | None = None) -> list[dict]:

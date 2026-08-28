@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import json
 import os
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -45,6 +46,15 @@ class SessionStore:
     def load(self, session_id: str) -> ResearchSession:
         path = self.session_dir(session_id) / "session.json"
         return ResearchSession.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def delete(self, session_id: str) -> None:
+        """Permanently remove a session directory. Reuses session_dir's traversal guard
+        (single path component, must resolve inside the store root) — a bad session_id
+        must never let rmtree touch anything outside root."""
+        target = self.session_dir(session_id)
+        if not target.is_dir():
+            raise ValueError(f"session directory does not exist: {session_id!r}")
+        shutil.rmtree(target)
 
     def save(
         self,
