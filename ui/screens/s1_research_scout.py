@@ -477,9 +477,18 @@ def build(
                 trailing=trailing,
             ))
 
+        # Count what the click will actually buy, not what is ticked: a card that
+        # already holds a gate is skipped by verify_selected, so labelling this
+        # with the tick count promises verdicts it will not go and fetch.
+        # Refreshing a verdict you already have is the per-card Re-verify button.
+        pending = [
+            candidate_id for candidate_id in sorted(selected_specific)
+            if not _candidate_gate(candidate_id, gates)
+        ]
         verify_button = primary_button(
-            f"Verify selected ({len(selected_specific)})", _verify_click,
-            disabled=not selected_specific,
+            f"Verify selected ({len(pending)})",
+            lambda e, ids=pending: _verify_click(ids),
+            disabled=not pending,
             icon=ft.Icons.FACT_CHECK,
         )
         verify_button.key = "verify-selected"
@@ -934,12 +943,13 @@ def build(
 
         _run_busy(label, _work, on_success=_apply_session_and_render)
 
-    def _verify_click(_e) -> None:
+    def _verify_click(pending: list[str]) -> None:
         session = session_holder[0]
-        if not session or not selected_specific:
+        if not session or not selected_specific or not pending:
             return
-        ids = sorted(selected_specific)
-        _verify(ids, None, f"Checking evidence for {len(ids)}…")
+        # The whole selection goes in so the artifact stays one-entry-per-
+        # selection; `pending` is only what the label counted.
+        _verify(sorted(selected_specific), None, f"Checking evidence for {len(pending)}…")
 
     def _reverify_click(candidate_id: str) -> None:
         """Re-gate one card without paying for the others again. The whole

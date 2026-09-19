@@ -216,7 +216,40 @@ def test_candidate_review_renders_verdicts_checkboxes_and_the_two_buttons(tmp_pa
     verify = next(
         node for node in _walk(controls) if getattr(node, "key", None) == "verify-selected"
     )
-    assert "3" in _label(verify)
+    # All three already hold a gate, and verify_selected buys a verdict once, so
+    # there is nothing left for this button to fetch. Re-verify is per card.
+    assert "0" in _label(verify)
+    assert verify.disabled is True
+
+
+def test_the_verify_button_counts_only_the_cards_it_would_actually_gate(tmp_path):
+    """The button used to count the ticks. verify_selected skips a candidate
+    that already holds a gate, so counting ticks promised verdicts it would not
+    go and fetch — and after a re-scout that is every carried-over card."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-partial",
+        mode=ScoutMode.QA,
+        user_intent="Which heroes?",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+        {"id": "a", "title": "A"}, {"id": "b", "title": "B"}, {"id": "c", "title": "C"},
+    ]})
+    store.write_artifact(session.id, "specific/evidence_gate.v1.json", {"gates": [
+        {"candidate_id": "a", "verdict": "confirmed", "reason": "Held up.",
+         "evidence_urls": [], "reader_url": "", "flags": []},
+    ]})
+
+    _page, controls = _build(tmp_path, session)
+    verify = next(
+        node for node in _walk(controls) if getattr(node, "key", None) == "verify-selected"
+    )
+    # Three ticked, one already gated -> two to buy.
+    assert "2" in _label(verify)
+    assert verify.disabled is False
 
 
 def test_each_card_shows_its_own_verdict_and_never_a_neighbours(tmp_path):
