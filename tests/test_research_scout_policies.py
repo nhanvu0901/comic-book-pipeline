@@ -81,7 +81,7 @@ def test_specific_and_evidence_templates_accept_their_declared_values():
 def test_policy_json_assets_are_valid_and_expose_required_gates():
     bundle = PolicyBundle.load(ScoutMode.MICRO)
     assert len(bundle.source_profiles["general_research"]["domains"]) == 8
-    assert len(bundle.source_profiles["specific_web_search"]["domains"]) == 8
+    assert len(bundle.source_profiles["specific_web_search"]["domains"]) == 7
     assert bundle.source_profiles["general_research"]["domains"] is not bundle.source_profiles["specific_web_search"]["domains"]
     assert len(bundle.general_angles["qa"]) == 5
     assert len(bundle.general_angles["micro"]) == 5
@@ -131,3 +131,14 @@ def test_evidence_gate_v2_tells_the_gate_what_an_unfetchable_source_means():
     lowered = rendered.text.lower()
     assert "unverified, not contradicted" in lowered
     assert "already fetched" in lowered
+
+
+def test_reddit_scouts_but_does_not_verify():
+    """Reddit is where you learn what fans argue about, which is discovery's
+    job. For confirming an issue number and year it is not a primary source,
+    and at count=8 it crowded every other domain out of the verification
+    search — 67 of 69 hits on one real candidate. A Reddit URL a candidate
+    cites itself is still fetched, as a citation."""
+    profiles = PolicyBundle.load(ScoutMode.QA).source_profiles
+    assert "reddit.com" in profiles["general_research"]["domains"]
+    assert "reddit.com" not in profiles["specific_web_search"]["domains"]
