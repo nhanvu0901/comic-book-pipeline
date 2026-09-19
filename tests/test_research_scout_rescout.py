@@ -217,3 +217,141 @@ def test_a_carry_over_id_that_no_longer_exists_is_simply_dropped(workflow):
     workflow.run_general(session.id)
 
     assert _candidate_ids(workflow, session.id) == ["candidate-1", "r2-candidate-1"]
+
+
+# ─── 2. rescout_keeping_confirmed ───────────────────────────────────────────
+
+def _mixed_verdicts(**kwargs):
+    """One confirmed, one inconclusive, one rejected — the mix a verification
+    round most often lands on, and the whole reason this action exists."""
+    return EvidenceGate(
+        verdict={
+            "candidate-1": "confirmed",
+            "candidate-2": "inconclusive",
+            "candidate-3": "rejected",
+        }[kwargs["candidate"]["id"]],
+        reason="Checked.",
+    )
+
+
+def _verified_round_one(workflow, monkeypatch, rounds=None):
+    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", _mixed_verdicts)
+    workflow.client = _FakeYouCom(rounds=rounds or [["Alpha", "Beta", "Gamma"], ["Delta", "Echo"]])
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    workflow.verify_selected(session.id, ["candidate-1", "candidate-2", "candidate-3"])
+    return session
+
+
+def test_rescout_holds_the_confirmed_ids_and_prunes_every_other_gate(monkeypatch, workflow):
+    session = _verified_round_one(workflow, monkeypatch)
+
+    after = workflow.rescout_keeping_confirmed(session.id)
+
+    assert after.kept_candidate_ids == ["candidate-1"]
+    assert after.selected_specific_candidate_ids == ["candidate-1"]
+    assert after.revision == 2
+    assert after.state is SessionState.GENERAL_DRAFT
+    gates = _gates_on_disk(workflow, session.id)
+    assert [gate["candidate_id"] for gate in gates] == ["candidate-1"]
+    assert gates[0]["verdict"] == "confirmed"
+
+
+def test_rescout_refuses_when_nothing_was_confirmed(monkeypatch, workflow):
+    """There is nothing to keep, and the plain feedback re-run already covers
+    starting the round over — so this must say so rather than quietly becoming
+    that re-run."""
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: EvidenceGate(verdict="inconclusive", reason="Thin."),
+    )
+    workflow.client = _FakeYouCom(rounds=[["Alpha", "Beta"]])
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    workflow.verify_selected(session.id, ["candidate-1", "candidate-2"])
+
+    with pytest.raises(ValueError, match="confirmed"):
+        workflow.rescout_keeping_confirmed(session.id)
+
+    unchanged = workflow.store.load(session.id)
+    assert unchanged.revision == 1
+    assert unchanged.state is SessionState.CANDIDATE_REVIEW
+    assert [g["candidate_id"] for g in _gates_on_disk(workflow, session.id)] == [
+        "candidate-1", "candidate-2",
+    ]
+
+
+def test_rescout_is_not_allowed_before_there_is_anything_to_review(workflow):
+    from stages.research_scout.workflow import InvalidTransition
+
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+
+    with pytest.raises(InvalidTransition, match="CANDIDATE_REVIEW"):
+        workflow.rescout_keeping_confirmed(session.id)
+
+
+def test_rescout_tells_the_next_prompt_what_is_held_and_what_was_turned_down(
+    monkeypatch, workflow,
+):
+    """No prompt change: the exclusions travel as a feedback note, which
+    `_intent_with_feedback` folds into the fallback prompt and the planner reads
+    on the planner path."""
+    session = _verified_round_one(workflow, monkeypatch)
+
+    after = workflow.rescout_keeping_confirmed(session.id)
+
+    note = after.feedback_log[-1].text
+    assert "Alpha" in note
+    assert "Beta" in note and "Gamma" in note
+
+    workflow.run_general(session.id)
+    assert "Alpha" in workflow.client.seen_prompt
+    assert "Gamma" in workflow.client.seen_prompt
+
+
+def test_a_kept_candidate_is_never_gated_a_second_time(monkeypatch, workflow):
+    """The tripwire: the point of the whole feature is that the research already
+    paid for on the confirmed candidate is not bought again. Re-verifying it on
+    purpose stays possible — that is what the per-card `only` path is for."""
+    session = _verified_round_one(workflow, monkeypatch)
+    workflow.rescout_keeping_confirmed(session.id)
+    workflow.run_general(session.id)
+
+    def _tripwire(**kwargs):
+        if kwargs["candidate"]["id"] == "candidate-1":
+            raise AssertionError("the kept candidate was sent to the model a second time")
+        return EvidenceGate(verdict="confirmed", reason="Backed.")
+
+    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", _tripwire)
+    after = workflow.verify_selected(
+        session.id, ["candidate-1", "r2-candidate-1", "r2-candidate-2"]
+    )
+
+    assert after.selected_specific_candidate_ids == [
+        "candidate-1", "r2-candidate-1", "r2-candidate-2",
+    ]
+    gates = {g["candidate_id"]: g for g in _gates_on_disk(workflow, session.id)}
+    assert set(gates) == {"candidate-1", "r2-candidate-1", "r2-candidate-2"}
+    # The kept gate is the one paid for in round 1, carried over untouched.
+    assert gates["candidate-1"]["verdict"] == "confirmed"
+
+
+def test_re_verifying_a_kept_candidate_on_purpose_still_reaches_the_model(
+    monkeypatch, workflow,
+):
+    """Skipping an already-gated candidate must not take away the ability to
+    ask for a fresh verdict on it — that is the per-card Re-verify button."""
+    session = _verified_round_one(workflow, monkeypatch)
+    workflow.rescout_keeping_confirmed(session.id)
+    workflow.run_general(session.id)
+
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: EvidenceGate(verdict="rejected", reason="Changed my mind."),
+    )
+    workflow.verify_selected(
+        session.id, ["candidate-1", "r2-candidate-1"], only=["candidate-1"],
+    )
+
+    gates = {g["candidate_id"]: g for g in _gates_on_disk(workflow, session.id)}
+    assert gates["candidate-1"]["verdict"] == "rejected"

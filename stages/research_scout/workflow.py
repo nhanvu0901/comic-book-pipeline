@@ -81,6 +81,7 @@ ALLOWED = {
         "verify_selected": SessionState.CANDIDATE_REVIEW,
         "approve_selected": SessionState.PRODUCTION_GATES,
         "rerun_general": SessionState.GENERAL_DRAFT,
+        "rescout_keeping_confirmed": SessionState.GENERAL_DRAFT,
         "archive": SessionState.ARCHIVED,
     },
     SessionState.PRODUCTION_GATES: {
@@ -206,13 +207,14 @@ class ScoutWorkflow:
         """Evidence-gate the ticked candidates in parallel and key the results by id.
 
         ``candidate_ids`` is the whole current selection and becomes
-        ``session.selected_specific_candidate_ids``.  ``only`` narrows which of
-        them are actually re-gated, so a single failed card can be retried
-        without paying for the others again; gates for the rest are carried
-        over unchanged, and gates for candidates no longer selected are dropped.
-        That prune is not housekeeping: leaving a stale entry behind makes
-        ``len(gates) != len(selected_ids)``, which is precisely what makes
-        ``project_factory._gate_assignments`` give up and return all-``None``.
+        ``session.selected_specific_candidate_ids``.  Only the ones that do not
+        already hold a gate are sent to the model: a verdict is bought once,
+        which is what lets a candidate carried over from an earlier round keep
+        the research already paid for it.  ``only`` overrides that and names
+        exactly which candidates to re-gate, so a single failed — or simply
+        doubted — card can be re-checked without paying for the others again.
+        Gates for the rest are carried over unchanged, and gates for candidates
+        no longer selected are dropped (see ``_write_gates``).
 
         ``on_result(candidate_id, gate_or_exception)`` fires from a worker
         thread as each branch finishes and exists for per-card progress only —
@@ -223,7 +225,12 @@ class ScoutWorkflow:
         session = self._load_and_transition(session_id, "verify_selected")
         ids = self._clean_ids(candidate_ids)
         if only is None:
-            targets = list(ids)
+            # A candidate that already holds a gate is not bought again. That is
+            # what lets a re-scout keep the research already paid for on the
+            # confirmed candidate while the replacements around it get gated.
+            # `only` is the way to ask for a fresh verdict on one anyway.
+            held = self._existing_gates(session_id)
+            targets = [cid for cid in ids if cid not in held]
         else:
             wanted = set(self._clean_ids(only))
             targets = [cid for cid in ids if cid in wanted]
@@ -335,6 +342,52 @@ class ScoutWorkflow:
         session.state = SessionState.GENERAL_DRAFT
         detail = {"feedback": feedback} if feedback else None
         return self.store.save(session, event="general_research_rerun", detail=detail)
+
+    def rescout_keeping_confirmed(self, session_id: str) -> ResearchSession:
+        """Go looking for replacements for the candidates that did not hold up,
+        while keeping the ones that did — and the gating already paid for them.
+
+        The plain feedback re-run is the all-or-nothing version of this: it
+        starts the round over and keeps nothing. Here the confirmed candidates
+        survive with their own ids, so their gates stay valid rather than being
+        rewritten or re-bought, and the next round is prepended to them.
+        """
+        session = self._load_and_transition(session_id, "rescout_keeping_confirmed")
+        gates = self._existing_gates(session_id)
+        confirmed = [
+            candidate_id
+            for candidate_id in session.selected_specific_candidate_ids
+            if str(gates.get(candidate_id, {}).get("verdict", "")).strip().lower() == "confirmed"
+        ]
+        if not confirmed:
+            # Nothing saved yet — _load_and_transition only moved the in-memory
+            # copy — so the session stays exactly where the user left it.
+            raise ValueError(
+                "nothing is confirmed, so there is nothing to keep; "
+                "re-run the research with feedback instead"
+            )
+
+        candidates = self._candidates_by_id(session)
+        dropped = [cid for cid in gates if cid not in confirmed]
+        session.feedback_log.append(
+            FeedbackNote(
+                state=SessionState.CANDIDATE_REVIEW.value,
+                text=_rescout_note(
+                    [_candidate_label(candidates, cid) for cid in confirmed],
+                    [_candidate_label(candidates, cid) for cid in dropped],
+                ),
+            )
+        )
+        session.kept_candidate_ids = confirmed
+        session.selected_specific_candidate_ids = list(confirmed)
+        self._write_gates(session_id, confirmed)
+        session.revision += 1
+        session.state = SessionState.GENERAL_DRAFT
+        return self.store.save(
+            session,
+            event="rescout_keeping_confirmed",
+            detail={"kept": confirmed, "dropped": dropped},
+        )
 
     def _load_and_transition(self, session_id: str, action: str) -> ResearchSession:
         session = self.store.load(session_id)
@@ -585,6 +638,40 @@ class ScoutWorkflow:
             raw_search_payload=raw_search_payload,
         )
         return gate, _raw_record(raw), prompt.sha256
+
+
+def _candidate_label(candidates: Mapping[str, Any], candidate_id: str) -> str:
+    """How a candidate is named back to the model. The issue and year go along
+    with the title because that is the part the next round has to avoid."""
+    candidate = candidates.get(candidate_id) or {}
+    title = str(candidate.get("title") or candidate.get("entity") or "").strip()
+    issue = str(candidate.get("series_issue_year") or "").strip()
+    if title and issue:
+        return f"{title} ({issue})"
+    return title or issue or candidate_id
+
+
+def _rescout_note(held: Sequence[str], turned_down: Sequence[str]) -> str:
+    """The exclusions, as a feedback note rather than a prompt change.
+
+    `_intent_with_feedback` folds notes into the fallback prompt and the planner
+    is handed them on the planner path, so one note reaches both routes and no
+    policy template has to be reversioned.
+    """
+    lines = [
+        "Re-scouting this question: keep what is already confirmed and replace the rest."
+    ]
+    if held:
+        lines.append(
+            "ALREADY HELD, do not propose these again: " + "; ".join(held) + "."
+        )
+    if turned_down:
+        lines.append(
+            "ALREADY TURNED DOWN, do not propose these again: "
+            + "; ".join(turned_down)
+            + "."
+        )
+    return " ".join(lines)
 
 
 def _artifact_key(candidate_id: str) -> str:
