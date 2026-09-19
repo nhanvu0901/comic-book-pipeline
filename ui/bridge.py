@@ -149,7 +149,10 @@ def start_scout_session(mode: str, user_intent: str):
         if suggestions:
             intent = suggestions[0]["question"]
         else:
-            batch = workflow.discover_questions(scout_mode, count=1)
+            # Full batch, not count=1: it is the same single research call
+            # either way, and asking for one question while handing the prompt
+            # all five angles just makes the prompt contradict itself.
+            batch = workflow.discover_questions(scout_mode)
             field = "question" if scout_mode is ScoutMode.QA else "moment"
             intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
     return workflow.start(scout_mode, intent)
