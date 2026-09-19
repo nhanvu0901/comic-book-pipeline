@@ -170,7 +170,11 @@ def test_factory_rejects_second_create_for_a_session_with_created_project(tmp_pa
         factory.create_project_from_session(session.id, "thor-hammer")
 
 
-def test_evaluate_production_gates_returns_gate_flags(tmp_path, monkeypatch):
+def test_evaluate_production_gates_names_the_candidate_each_flag_belongs_to(
+    tmp_path, monkeypatch
+):
+    """A flat list of flags could not say WHICH of five candidates failed, so the
+    error it produced was unactionable. The result is keyed by candidate now."""
     _wire_roots(tmp_path, monkeypatch)
     candidate = _candidate("micro")
     session = _session(
@@ -180,6 +184,119 @@ def test_evaluate_production_gates_returns_gate_flags(tmp_path, monkeypatch):
         [_gate("micro", flags=[GateFlag.NO_VISUAL_EVENT.value])],
     )
 
-    flags = factory.evaluate_production_gates(session)
+    assert factory.evaluate_production_gates(session) == {
+        "micro": [GateFlag.NO_VISUAL_EVENT],
+    }
 
-    assert GateFlag.NO_VISUAL_EVENT in flags
+
+def test_a_clean_session_reports_no_flags_at_all(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _candidate("micro")
+    session = _session(tmp_path, ScoutMode.MICRO, [candidate], [_gate("micro")])
+
+    assert factory.evaluate_production_gates(session) == {}
+
+
+# ─── Blocking rules: what a human may wave through, and what they may not ───
+
+def test_an_inconclusive_verdict_blocks_but_can_be_overridden(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    gates = [_gate("a", verdict="inconclusive"), _gate("b"), _gate("c")]
+    session = _session(tmp_path, ScoutMode.QA, candidates, gates)
+    monkeypatch.setattr(
+        factory.answer_research, "build_contexts", lambda *a, **k: (tmp_path, tmp_path)
+    )
+
+    with pytest.raises(ValueError, match="verdict inconclusive"):
+        factory.create_project_from_session(session.id, "hulk-question")
+
+    assert factory.create_project_from_session(
+        session.id, "hulk-question", override=True
+    ) == "hulk-question"
+
+
+def test_a_model_emitted_flag_blocks_but_can_be_overridden(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    gates = [_gate("a", flags=["panel_is_a_flashback"]), _gate("b"), _gate("c")]
+    session = _session(tmp_path, ScoutMode.QA, candidates, gates)
+    monkeypatch.setattr(
+        factory.answer_research, "build_contexts", lambda *a, **k: (tmp_path, tmp_path)
+    )
+
+    with pytest.raises(ValueError, match="panel_is_a_flashback"):
+        factory.create_project_from_session(session.id, "hulk-question")
+
+    assert factory.create_project_from_session(
+        session.id, "hulk-question", override=True
+    ) == "hulk-question"
+
+
+def test_a_missing_gate_is_a_defect_and_override_cannot_wave_it_through(tmp_path, monkeypatch):
+    """A gate that cannot be assigned is a broken artifact, not a judgement call —
+    there is nothing for a human to have an opinion about."""
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    session = _session(tmp_path, ScoutMode.QA, candidates, [_gate("a"), _gate("b")])
+
+    with pytest.raises(ValueError, match="malformed"):
+        factory.create_project_from_session(session.id, "hulk-question", override=True)
+
+
+def test_a_duplicate_selection_is_a_defect_and_override_cannot_wave_it_through(
+    tmp_path, monkeypatch
+):
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    session = _session(tmp_path, ScoutMode.QA, candidates, [_gate(c["id"]) for c in candidates])
+    store = SessionStore(tmp_path / "research-sessions")
+    session.selected_specific_candidate_ids = ["a", "a", "b"]
+    store.save(session)
+
+    with pytest.raises(ValueError, match="duplicate"):
+        factory.create_project_from_session(session.id, "hulk-question", override=True)
+
+
+def test_an_override_is_recorded_in_the_audit_with_each_candidates_reason(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    gates = [_gate("a", verdict="inconclusive"), _gate("b"), _gate("c")]
+    session = _session(tmp_path, ScoutMode.QA, candidates, gates)
+    monkeypatch.setattr(
+        factory.answer_research, "build_contexts", lambda *a, **k: (tmp_path, tmp_path)
+    )
+
+    factory.create_project_from_session(session.id, "hulk-question", override=True)
+
+    store = SessionStore(tmp_path / "research-sessions")
+    audit = [
+        json.loads(line)
+        for line in (store.session_dir(session.id) / "audit.jsonl").read_text().splitlines()
+    ]
+    overridden = [event for event in audit if event["event"] == "gates_overridden"]
+    assert len(overridden) == 1
+    assert "a" in overridden[0]["detail"]["candidates"]
+    assert "inconclusive" in json.dumps(overridden[0]["detail"]["candidates"]["a"])
+
+
+def test_the_failure_message_names_the_candidate_its_issue_and_the_gates_reason(
+    tmp_path, monkeypatch
+):
+    """`production gates failed: malformed_output` told a user nothing about which
+    of five candidates to look at. Spec section 7's shape does."""
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    bad = _gate("b", verdict="inconclusive")
+    bad["reason"] = "cited URLs not present in raw evidence"
+    session = _session(tmp_path, ScoutMode.QA, candidates, [_gate("a"), bad, _gate("c")])
+
+    with pytest.raises(ValueError) as caught:
+        factory.create_project_from_session(session.id, "hulk-question")
+
+    message = str(caught.value)
+    assert "b (Thor #2 (2024))" in message
+    assert "verdict inconclusive" in message
+    assert "cited URLs not present in raw evidence" in message
+    # The two healthy candidates have nothing to say and must not be listed.
+    assert "\na (" not in message and "\nc (" not in message

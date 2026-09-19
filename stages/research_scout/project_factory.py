@@ -26,49 +26,125 @@ class _GateArtifact:
     is_collection: bool
 
 
-def evaluate_production_gates(session: ResearchSession) -> list[GateFlag]:
-    """Return deterministic production flags for the selected session items.
+# A defect in the artifact, not an opinion about the research: there is nothing
+# here for a human to overrule, so override cannot reach these.
+_NOT_OVERRIDABLE = frozenset({GateFlag.DUPLICATE, GateFlag.MALFORMED_OUTPUT})
 
-    Evidence-gate artifacts have existed in both single-gate and collection
-    shapes while the scout UI was being built.  The loader accepts those shapes
-    but always evaluates the selected candidates in session order.
+
+@dataclass(frozen=True)
+class _CandidateVerdict:
+    """One selected candidate's gate outcome, with enough context to say why."""
+
+    candidate_id: str
+    label: str
+    flags: list[GateFlag]
+    verdict: str
+    reason: str
+    model_flags: list[str]
+
+
+def evaluate_production_gates(session: ResearchSession) -> dict[str, list[GateFlag]]:
+    """Return production flags per selected candidate, keyed by candidate id.
+
+    Keyed rather than flat so a failure can name which of five candidates went
+    wrong; candidates with nothing to report are absent entirely.
     """
 
+    return {
+        report.candidate_id: report.flags
+        for report in _evaluate(session)
+        if report.flags
+    }
+
+
+def _evaluate(session: ResearchSession) -> list[_CandidateVerdict]:
     if not isinstance(session, ResearchSession):
         raise TypeError("session must be a ResearchSession")
     _validate_selection_count(session)
 
     store = SessionStore(config.RESEARCH_SESSIONS_ROOT)
     candidates = _candidate_by_id(store, session.id)
-    gate_artifact = _load_gates(store, session.id)
-    assignments = _gate_assignments(session, gate_artifact)
+    assignments = _gate_assignments(session, _load_gates(store, session.id))
     selected_ids = session.selected_specific_candidate_ids
-    flags: list[GateFlag] = []
 
-    if len(selected_ids) != len(set(selected_ids)):
-        flags.append(GateFlag.DUPLICATE)
-
+    reports: list[_CandidateVerdict] = []
     for index, candidate_id in enumerate(selected_ids):
         candidate = candidates.get(candidate_id)
         gate = assignments[index]
+        flags: list[GateFlag] = []
+        if selected_ids.count(candidate_id) > 1:
+            flags.append(GateFlag.DUPLICATE)
+
         if candidate is None or gate is None:
             flags.append(GateFlag.MALFORMED_OUTPUT)
+            reports.append(_CandidateVerdict(
+                candidate_id=candidate_id,
+                label=_label(candidate_id, candidate),
+                flags=_unique_flags(flags),
+                verdict="",
+                reason="",
+                model_flags=[],
+            ))
             continue
 
-        if not _is_confirmed(gate):
-            flags.append(GateFlag.MALFORMED_OUTPUT)
-        flags.extend(_gate_flags(gate.get("flags", [])))
+        verdict = str(gate.get("verdict", "")).strip().lower()
+        if verdict != "confirmed":
+            flags.append(GateFlag.VERDICT_NOT_CONFIRMED)
+        known, model_flags = _gate_flags(gate.get("flags", []))
+        flags.extend(known)
 
         if not _has_exact_issue_and_year(candidate):
             flags.append(GateFlag.EXACT_ISSUE_REQUIRED)
         if session.mode is ScoutMode.MICRO and not _has_visual_event(candidate):
             flags.append(GateFlag.NO_VISUAL_EVENT)
 
-    return _unique_flags(flags)
+        reports.append(_CandidateVerdict(
+            candidate_id=candidate_id,
+            label=_label(candidate_id, candidate),
+            flags=_unique_flags(flags),
+            verdict=verdict,
+            reason=str(gate.get("reason", "") or ""),
+            model_flags=model_flags,
+        ))
+    return reports
 
 
-def create_project_from_session(session_id: str, project_slug: str) -> str:
-    """Materialise one confirmed research session and mark it created last."""
+def _label(candidate_id: str, candidate: Mapping[str, Any] | None) -> str:
+    if candidate is None:
+        return candidate_id
+    detail = _first_text(candidate, "series_issue_year", "title", "entity")
+    return f"{candidate_id} ({detail})" if detail else candidate_id
+
+
+def _describe(report: _CandidateVerdict) -> str:
+    """One candidate's problems, in the shape spec section 7 asks for."""
+    headlines: list[str] = []
+    for flag in report.flags:
+        if flag is GateFlag.VERDICT_NOT_CONFIRMED:
+            headlines.append(f"verdict {report.verdict or 'missing'}")
+        elif flag is GateFlag.MODEL_FLAG:
+            headlines.extend(report.model_flags)
+        elif flag is GateFlag.MALFORMED_OUTPUT:
+            headlines.append(f"{flag.value} (gate missing or unassignable)")
+        else:
+            headlines.append(flag.value)
+    lines = [f"{report.label}: {', '.join(headlines)}"]
+    if report.reason:
+        lines.append(f'  - "{report.reason}"')
+    return "\n".join(lines)
+
+
+def create_project_from_session(
+    session_id: str, project_slug: str, *, override: bool = False
+) -> str:
+    """Materialise one confirmed research session and mark it created last.
+
+    ``override`` waves through the soft gates — an unconfirmed verdict, a model
+    flag, a missing issue number — after the user has explicitly confirmed
+    them, and is recorded in the audit. It can never wave through a duplicate
+    selection or a gate that could not be assigned: those are defects in the
+    artifact rather than judgements about the research.
+    """
 
     store = SessionStore(config.RESEARCH_SESSIONS_ROOT)
     session = store.load(session_id)
@@ -82,10 +158,18 @@ def create_project_from_session(session_id: str, project_slug: str) -> str:
         raise ValueError("project_slug must be a non-empty string")
 
     _validate_selection_count(session)
-    flags = evaluate_production_gates(session)
-    if flags:
-        rendered = ", ".join(flag.value for flag in flags)
-        raise ValueError(f"production gates failed: {rendered}")
+    reports = [report for report in _evaluate(session) if report.flags]
+    blocking = [r for r in reports if _NOT_OVERRIDABLE.intersection(r.flags)]
+    if blocking:
+        raise ValueError(
+            "production gates failed:\n" + "\n".join(_describe(r) for r in blocking)
+        )
+    if reports and not override:
+        raise ValueError(
+            "production gates failed:\n"
+            + "\n".join(_describe(r) for r in reports)
+            + "\n(override to create the project anyway)"
+        )
 
     candidates = _candidate_by_id(store, session.id)
     gate_artifact = _load_gates(store, session.id)
@@ -104,6 +188,15 @@ def create_project_from_session(session_id: str, project_slug: str) -> str:
         candidate, gate = selected[0]
         _create_micro_project(candidate, gate, project_slug)
 
+    if reports:
+        store.append_audit(
+            session.id,
+            "gates_overridden",
+            detail={
+                "project": project_slug,
+                "candidates": {r.candidate_id: _describe(r) for r in reports},
+            },
+        )
     session.created_project = project_slug
     store.save(session, event="project_created", detail={"project": project_slug})
     return project_slug
@@ -208,14 +301,17 @@ def _gate_candidate_id(gate: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _is_confirmed(gate: Mapping[str, Any]) -> bool:
-    return str(gate.get("verdict", "")).strip().lower() == "confirmed"
+def _gate_flags(raw_flags: Any) -> tuple[list[GateFlag], list[str]]:
+    """Split a gate's flags into ones this code knows and ones only the model does.
 
-
-def _gate_flags(raw_flags: Any) -> list[GateFlag]:
+    An unrecognised flag string used to become MALFORMED_OUTPUT, which now means
+    "unoverridable defect" — laundering a model's opinion into one would make a
+    judgement call impossible to wave through.
+    """
     if not isinstance(raw_flags, list):
-        return [GateFlag.MALFORMED_OUTPUT]
+        return [GateFlag.MALFORMED_OUTPUT], []
     flags: list[GateFlag] = []
+    model_flags: list[str] = []
     for raw_flag in raw_flags:
         if isinstance(raw_flag, GateFlag):
             flags.append(raw_flag)
@@ -223,8 +319,9 @@ def _gate_flags(raw_flags: Any) -> list[GateFlag]:
         try:
             flags.append(GateFlag(str(raw_flag)))
         except ValueError:
-            flags.append(GateFlag.MALFORMED_OUTPUT)
-    return flags
+            model_flags.append(str(raw_flag))
+            flags.append(GateFlag.MODEL_FLAG)
+    return flags, model_flags
 
 
 def _unique_flags(flags: list[GateFlag]) -> list[GateFlag]:
