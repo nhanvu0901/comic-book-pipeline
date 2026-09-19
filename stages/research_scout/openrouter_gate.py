@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 from collections.abc import Mapping
 from typing import Any
@@ -30,6 +31,14 @@ _EVIDENCE_SCHEMA = {
 }
 _VALID_VERDICTS = frozenset(_EVIDENCE_SCHEMA["properties"]["verdict"]["enum"])
 _REQUIRED_GATE_FIELDS = frozenset(_EVIDENCE_SCHEMA["required"])
+# The only thing Stage 2 can actually download from: two numeric ids under
+# batcave's reader. The schema types reader_url as a string and nothing
+# downstream checks more than emptiness, so an observed run put a sentence of
+# prose here and it sailed through as a URL — suppressing
+# answer_research.resolve_reader_url()'s deterministic lookup and leaving the
+# item with nothing to fetch. Anything that is not a reader URL is worth less
+# than "" here, because "" is what lets the lookup run.
+_READER_URL = re.compile(r"https://batcave\.biz/reader/\d+/\d+/?\Z")
 
 
 def review(
@@ -191,6 +200,11 @@ def _parse_gate(content: Any) -> EvidenceGate | None:
     ):
         return None
     try:
-        return EvidenceGate.model_validate(parsed)
+        return EvidenceGate.model_validate({**parsed, "reader_url": _reader_url(parsed["reader_url"])})
     except (TypeError, ValueError):
         return None
+
+
+def _reader_url(value: Any) -> str:
+    text = value.strip() if isinstance(value, str) else ""
+    return text if _READER_URL.fullmatch(text) else ""
