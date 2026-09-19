@@ -180,8 +180,19 @@ def run_scout_general(session_id: str):
     return _scout_workflow().run_general(session_id)
 
 
-def run_scout_specific(session_id: str, feedback: str = ""):
-    return _scout_workflow().research_specific(session_id, feedback)
+def verify_scout_selection(
+    session_id: str,
+    candidate_ids: list[str] | tuple[str, ...],
+    *,
+    only: list[str] | tuple[str, ...] | None = None,
+    on_result=None,
+):
+    """Evidence-gate the ticked candidates. `only` narrows which of them are
+    actually re-gated, so a single failed card can be retried on its own without
+    paying for the four that already came back."""
+    return _scout_workflow().verify_selected(
+        session_id, candidate_ids, only=only, on_result=on_result
+    )
 
 
 def rerun_scout_general(session_id: str, feedback: str = ""):
@@ -192,20 +203,12 @@ def rerun_scout_general(session_id: str, feedback: str = ""):
     return workflow.run_general(session_id)
 
 
-def back_scout_general(session_id: str):
-    return _scout_workflow().back_general(session_id)
+def back_scout_candidates(session_id: str):
+    return _scout_workflow().back_to_candidates(session_id)
 
 
-def approve_scout_general(session_id: str, candidate_id: str):
-    return _scout_workflow().approve_general(session_id, candidate_id)
-
-
-def approve_scout_specific(
-    session_id: str,
-    candidate_ids: list[str] | tuple[str, ...],
-    feedback: str = "",
-):
-    return _scout_workflow().decide_specific(session_id, candidate_ids, feedback=feedback)
+def approve_scout_selection(session_id: str):
+    return _scout_workflow().approve_selected(session_id)
 
 
 def archive_scout_session(session_id: str, reason: str = "Research restarted"):
@@ -231,10 +234,10 @@ def archive_scout_session(session_id: str, reason: str = "Research restarted"):
         )
 
 
-def create_scout_project(session_id: str, project_slug: str) -> str:
+def create_scout_project(session_id: str, project_slug: str, *, override: bool = False) -> str:
     from stages.research_scout.project_factory import create_project_from_session
 
-    return create_project_from_session(session_id, project_slug)
+    return create_project_from_session(session_id, project_slug, override=override)
 
 
 def list_scout_sessions(root: Path | None = None) -> list[Any]:

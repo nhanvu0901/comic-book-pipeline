@@ -74,13 +74,13 @@ def test_stage_one_routes_to_research_scout():
     assert app.STAGE_BUILDERS[1] is s1_research_scout.build
 
 
-def test_specific_approve_is_disabled_for_qa_with_two_selected_items(tmp_path):
+def test_approve_is_disabled_for_qa_with_two_selected_items(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = ResearchSession(
         id="qa-session",
         mode=ScoutMode.QA,
         user_intent="Hulk questions",
-        state=SessionState.SPECIFIC_REVIEW,
+        state=SessionState.CANDIDATE_REVIEW,
         selected_specific_candidate_ids=["a", "b"],
     )
     store.save(session)
@@ -92,7 +92,7 @@ def test_specific_approve_is_disabled_for_qa_with_two_selected_items(tmp_path):
     _page, controls = _build(tmp_path, session)
     approve = next(
         node for node in _walk(controls)
-        if getattr(node, "key", None) == "approve-specific"
+        if getattr(node, "key", None) == "approve-selected"
     )
     assert approve.disabled is True
 
@@ -111,7 +111,7 @@ def test_full_history_transcript_shows_feedback_and_superseded_round(tmp_path):
         id="qa-session-history",
         mode=ScoutMode.QA,
         user_intent="Who has beaten Superman in a fight?",
-        state=SessionState.GENERAL_REVIEW,
+        state=SessionState.CANDIDATE_REVIEW,
         revision=2,
     )
     store.save(session)
@@ -153,22 +153,25 @@ def test_full_history_transcript_shows_feedback_and_superseded_round(tmp_path):
     assert "Round 1" in text
     assert "Round Two Alpha" in text
     assert "Round Two Beta" in text
-    assert any(isinstance(n, ft.RadioGroup) for n in _walk(controls))
-    assert any(
+    # One selection, so one list of checkboxes — not a radio round followed by an
+    # identical checkbox round over the very same candidates.
+    assert [cb.key for cb in _walk(controls) if isinstance(cb, ft.Checkbox)] == [
+        "select-r2a", "select-r2b",
+    ]
+    assert not any(
         isinstance(n, ft.ElevatedButton)
         and getattr(n, "content", None) == "Approve & find evidence →"
         for n in _walk(controls)
     )
 
 
-def test_specific_review_renders_verdict_checkboxes_and_back_button(tmp_path):
+def test_candidate_review_renders_verdicts_checkboxes_and_the_two_buttons(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = ResearchSession(
         id="qa-session-specific",
         mode=ScoutMode.QA,
         user_intent="Who has beaten Superman in a fight?",
-        state=SessionState.SPECIFIC_REVIEW,
-        selected_general_candidate_id="a",
+        state=SessionState.CANDIDATE_REVIEW,
         selected_specific_candidate_ids=["a", "b", "c"],
     )
     store.save(session)
@@ -177,10 +180,9 @@ def test_specific_review_renders_verdict_checkboxes_and_back_button(tmp_path):
         session.id, "general_research_completed",
         detail={"revision": 1, "prompt_hash": "x", "source_api": "research", "effort": "standard"},
     )
-    store.append_audit(session.id, "general_candidate_approved", detail={"candidate_id": "a"})
     store.append_audit(
-        session.id, "specific_research_completed",
-        detail={"model": "m", "prompt_hash": "z", "verdict": "confirmed"},
+        session.id, "candidates_verified",
+        detail={"model": "m", "candidate_ids": ["a", "b", "c"]},
     )
     store.write_artifact(
         session.id, "general/candidates.v1.json",
@@ -190,8 +192,14 @@ def test_specific_review_renders_verdict_checkboxes_and_back_button(tmp_path):
     )
     store.write_artifact(
         session.id, "specific/evidence_gate.v1.json",
-        {"verdict": "confirmed", "reason": "Backed by two sources.", "evidence_urls": [],
-         "reader_url": None, "flags": []},
+        {"gates": [
+            {"candidate_id": "a", "verdict": "confirmed", "reason": "Backed by two sources.",
+             "evidence_urls": [], "reader_url": "", "flags": []},
+            {"candidate_id": "b", "verdict": "confirmed", "reason": "Also backed.",
+             "evidence_urls": [], "reader_url": "", "flags": []},
+            {"candidate_id": "c", "verdict": "confirmed", "reason": "Backed too.",
+             "evidence_urls": [], "reader_url": "", "flags": []},
+        ]},
     )
 
     _page, controls = _build(tmp_path, session)
@@ -202,11 +210,149 @@ def test_specific_review_renders_verdict_checkboxes_and_back_button(tmp_path):
     checkboxes = [n for n in _walk(controls) if isinstance(n, ft.Checkbox)]
     assert len(checkboxes) == 3
     approve = next(
-        node for node in _walk(controls) if getattr(node, "key", None) == "approve-specific"
+        node for node in _walk(controls) if getattr(node, "key", None) == "approve-selected"
     )
     assert approve.disabled is False
+    verify = next(
+        node for node in _walk(controls) if getattr(node, "key", None) == "verify-selected"
+    )
+    assert "3" in _label(verify)
+
+
+def test_each_card_shows_its_own_verdict_and_never_a_neighbours(tmp_path):
+    """_candidate_gate used to end in `return gates[0] if len(gates) == 1 else {}`.
+    With one gate on disk — which is all the old writer ever wrote — every one of
+    ten cards displayed that single candidate's verdict as if it were its own."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-verdicts",
+        mode=ScoutMode.QA,
+        user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a"],
+    )
+    store.save(session)
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}]},
+    )
+    store.write_artifact(
+        session.id, "specific/evidence_gate.v1.json",
+        {"gates": [{"candidate_id": "a", "verdict": "confirmed",
+                    "reason": "Only A was ever gated.", "evidence_urls": [],
+                    "reader_url": "", "flags": []}]},
+    )
+
+    _page, controls = _build(tmp_path, session)
+
+    cards = {
+        node.key: _text_content(node)
+        for node in _walk(controls)
+        if str(getattr(node, "key", "")).startswith("candidate-card-")
+    }
+    assert "CONFIRMED" in cards["candidate-card-a"]
+    assert "Only A was ever gated." in cards["candidate-card-a"]
+    assert "CONFIRMED" not in cards["candidate-card-b"]
+    assert "Only A was ever gated." not in cards["candidate-card-b"]
+
+
+def test_an_unconfirmed_verdict_offers_an_override_before_approving(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-override",
+        mode=ScoutMode.QA,
+        user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": c, "title": c.upper()} for c in "abc"]},
+    )
+    store.write_artifact(
+        session.id, "specific/evidence_gate.v1.json",
+        {"gates": [
+            {"candidate_id": "a", "verdict": "inconclusive", "reason": "Thin.",
+             "evidence_urls": [], "reader_url": "", "flags": []},
+            {"candidate_id": "b", "verdict": "confirmed", "reason": "Fine.",
+             "evidence_urls": [], "reader_url": "", "flags": []},
+            {"candidate_id": "c", "verdict": "confirmed", "reason": "Fine.",
+             "evidence_urls": [], "reader_url": "", "flags": []},
+        ]},
+    )
+
+    _page, controls = _build(tmp_path, session)
+
     assert any(
-        isinstance(n, ft.OutlinedButton) and getattr(n, "content", None) == "← Back to general"
+        getattr(node, "key", None) == "override-gates" for node in _walk(controls)
+    ), "an unconfirmed verdict must offer an explicit override"
+
+
+def test_all_confirmed_means_no_override_checkbox_is_shown(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-no-override",
+        mode=ScoutMode.QA,
+        user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": c, "title": c.upper()} for c in "abc"]},
+    )
+    store.write_artifact(
+        session.id, "specific/evidence_gate.v1.json",
+        {"gates": [
+            {"candidate_id": c, "verdict": "confirmed", "reason": "Fine.",
+             "evidence_urls": [], "reader_url": "", "flags": []} for c in "abc"
+        ]},
+    )
+
+    _page, controls = _build(tmp_path, session)
+
+    assert not any(getattr(node, "key", None) == "override-gates" for node in _walk(controls))
+
+
+def test_a_failed_card_offers_a_re_verify_of_just_that_candidate(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-reverify",
+        mode=ScoutMode.QA,
+        user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": c, "title": c.upper()} for c in "abc"]},
+    )
+    _page, controls = _build(tmp_path, session)
+
+    assert {
+        node.key for node in _walk(controls)
+        if str(getattr(node, "key", "")).startswith("reverify-")
+    } == {"reverify-a", "reverify-b", "reverify-c"}
+
+
+def test_production_gates_offers_a_way_back_to_the_candidates(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-back",
+        mode=ScoutMode.QA,
+        user_intent="Hulk questions",
+        state=SessionState.PRODUCTION_GATES,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+
+    _page, controls = _build(tmp_path, session)
+
+    assert any(
+        isinstance(n, ft.OutlinedButton) and getattr(n, "content", None) == "← Back to candidates"
         for n in _walk(controls)
     )
 
@@ -254,7 +400,7 @@ def test_micro_checkbox_exclusivity_keeps_one_selected(tmp_path):
         id="micro-session-exclusive",
         mode=ScoutMode.MICRO,
         user_intent="Hulk breaks a bridge",
-        state=SessionState.SPECIFIC_REVIEW,
+        state=SessionState.CANDIDATE_REVIEW,
     )
     store.save(session)
     store.write_artifact(

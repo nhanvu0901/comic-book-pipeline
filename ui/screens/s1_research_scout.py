@@ -2,10 +2,15 @@
 
 Redesigned as a chat: every research round, approval, feedback and verdict is a
 chat bubble rebuilt from durable disk state (session.json + audit.jsonl +
-artifacts). The only in-memory state kept across renders is UI-only selection
-(which candidate is radio'd / checked) and the busy flag — never a parallel
-log of chat messages. Typing feedback re-runs the current phase with that
-feedback threaded into the research prompt (see workflow._intent_with_feedback).
+artifacts). The only in-memory state kept across renders is UI-only state —
+which candidates are ticked, which are mid-verify, whether the user has
+consented to override the verdicts — and the busy flag; never a parallel log of
+chat messages. Typing feedback re-runs general research with that feedback
+threaded into the prompt (see workflow._intent_with_feedback).
+
+There is ONE candidate list, reviewed once. It used to be asked twice over the
+identical candidates: a radio round deciding who got evidence-gated, then a
+checkbox round deciding who became the project, with the radio pick discarded.
 """
 from __future__ import annotations
 
@@ -19,9 +24,8 @@ from stages.stage_1.storage import slugify
 
 from ..bridge import (
     archive_scout_session,
-    approve_scout_general,
-    approve_scout_specific,
-    back_scout_general,
+    approve_scout_selection,
+    back_scout_candidates,
     create_scout_project,
     delete_scout_session,
     discover_intent,
@@ -36,8 +40,8 @@ from ..bridge import (
     rerun_scout_general,
     run_blocking,
     run_scout_general,
-    run_scout_specific,
     start_scout_session,
+    verify_scout_selection,
 )
 from ..layout import primary_button, secondary_button, three_col
 from ..state import AppState, save_state
@@ -77,10 +81,36 @@ def _candidate_id(candidate: dict, index: int) -> str:
 
 
 def _candidate_gate(candidate_id: str, gates: list[dict]) -> dict:
+    """The gate for THIS candidate, or nothing.
+
+    This used to end in `return gates[0] if len(gates) == 1 else {}`, and the
+    only artifact production code ever wrote held exactly one gate — so all ten
+    cards proudly displayed one candidate's verdict as if it were their own.
+    An unverified candidate has no verdict, and saying so is the honest answer.
+    """
     for gate in gates:
         if str(gate.get("candidate_id") or gate.get("id") or "") == candidate_id:
             return gate
-    return gates[0] if len(gates) == 1 else {}
+    return {}
+
+
+def _verdict_badge(gate: dict) -> ft.Control:
+    """The card's own verdict line: NOT VERIFIED until this candidate was gated."""
+    verdict = str(gate.get("verdict") or "").strip()
+    if not verdict:
+        return ft.Text("NOT VERIFIED", size=11, color=TEXT_MUTED, weight=ft.FontWeight.BOLD)
+    color = SUCCESS if verdict == "confirmed" else (WARN if verdict == "inconclusive" else DANGER)
+    return ft.Text(f"{verdict.upper()}", size=11, color=color, weight=ft.FontWeight.BOLD)
+
+
+def _needs_override(selected: set[str], gates: list[dict]) -> bool:
+    """True when approving would need an explicit override: any ticked candidate
+    whose gate is missing or came back as anything but confirmed."""
+    return any(
+        str(_candidate_gate(candidate_id, gates).get("verdict") or "").strip().lower()
+        != "confirmed"
+        for candidate_id in selected
+    )
 
 
 def _candidate_card(
@@ -89,6 +119,7 @@ def _candidate_card(
     *,
     gate: dict,
     selection: ft.Control,
+    trailing: list[ft.Control] | None = None,
 ) -> ft.Control:
     candidate_id = _candidate_id(candidate, index)
     title = str(candidate.get("title") or candidate.get("entity") or candidate_id)
@@ -107,15 +138,21 @@ def _candidate_card(
     flags = [str(flag) for flag in (candidate.get("flags") or [])]
     flags.extend(str(flag) for flag in (gate.get("flags") or []))
     details: list[ft.Control] = [
-        ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+        ft.Row([
+            ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, expand=True),
+            _verdict_badge(gate),
+        ], spacing=8),
         ft.Text(summary, size=12, color=TEXT_MUTED, selectable=True),
     ]
+    if gate.get("reason"):
+        details.append(ft.Text(str(gate["reason"]), size=11, color=TEXT_MUTED, selectable=True))
     if candidate.get("series_issue_year"):
         details.append(ft.Text(str(candidate["series_issue_year"]), size=11, color=TEXT_PRIMARY))
     for url in urls:
         details.append(ft.Text(f"Source: {url}", size=10, color=ACCENT, selectable=True))
     if flags:
         details.append(ft.Text(f"Flags: {', '.join(flags)}", size=10, color=WARN, selectable=True))
+    details.extend(trailing or [])
     return ft.Container(
         key=f"candidate-card-{candidate_id}",
         content=ft.Row([selection, ft.Column(details, spacing=4, expand=True)], spacing=10),
@@ -153,29 +190,13 @@ def _current_general_round_index(completed_events: list[dict], session: Research
     return matches[-1] if matches else len(completed_events) - 1
 
 
-def _gate_content(gates: list[dict]) -> list[ft.Control]:
-    gate = gates[0] if gates else {}
-    verdict = str(gate.get("verdict") or "inconclusive")
-    reason = str(gate.get("reason") or "")
-    flags = [str(flag) for flag in (gate.get("flags") or [])]
-    color = SUCCESS if verdict == "confirmed" else (WARN if verdict == "inconclusive" else DANGER)
-    content: list[ft.Control] = [
-        ft.Text(f"Verdict: {verdict.upper()}", size=13, color=color, weight=ft.FontWeight.BOLD),
-    ]
-    if reason:
-        content.append(ft.Text(reason, size=12, color=TEXT_MUTED, selectable=True))
-    if flags:
-        content.append(ft.Text(f"Flags: {', '.join(flags)}", size=11, color=WARN))
-    return content
-
-
 def _general_collapsed_lines(session: ResearchSession, candidates: list[dict]) -> ft.Control:
-    approved_id = session.selected_general_candidate_id
+    selected = set(session.selected_specific_candidate_ids)
     lines: list[ft.Control] = []
     for index, candidate in enumerate(candidates):
         candidate_id = _candidate_id(candidate, index)
         title = str(candidate.get("title") or candidate.get("entity") or candidate_id)
-        approved = candidate_id == approved_id
+        approved = candidate_id in selected
         prefix = "✓ " if approved else "• "
         lines.append(ft.Text(f"{prefix}{title}", size=12, color=SUCCESS if approved else TEXT_MUTED))
     if not lines:
@@ -193,10 +214,8 @@ def _input_spec(session: ResearchSession | None) -> tuple[str, bool]:
         )
     if session.state is SessionState.GENERAL_DRAFT:
         return "Press Run general research above.", True
-    if session.state is SessionState.GENERAL_REVIEW:
+    if session.state is SessionState.CANDIDATE_REVIEW:
         return "Type feedback and press Send to re-run research…", False
-    if session.state is SessionState.SPECIFIC_REVIEW:
-        return "Type feedback to redo the evidence search…", False
     if session.state is SessionState.PRODUCTION_GATES:
         return "Create the project or archive.", True
     return "", True
@@ -265,22 +284,32 @@ def _rerun_bubble(detail: dict) -> ft.Control:
     return _user_bubble(ft.Text(text, size=13, color=TEXT_PRIMARY, selectable=True))
 
 
-def _general_approved_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
-    title = _resolve_title(str(detail.get("candidate_id") or ""), candidates)
-    return _user_bubble(ft.Text(f"Approved: {title}", size=13, color=TEXT_PRIMARY))
-
-
-def _specific_decided_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
+def _selection_approved_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
     ids = [str(candidate_id) for candidate_id in (detail.get("candidate_ids") or [])]
     titles = [_resolve_title(candidate_id, candidates) for candidate_id in ids]
-    lines: list[ft.Control] = [
-        ft.Text(f"Selected: {', '.join(titles) if titles else '(none)'}",
-                size=13, color=TEXT_PRIMARY),
-    ]
-    feedback = str(detail.get("feedback") or "").strip()
-    if feedback:
-        lines.append(ft.Text(f"Feedback: {feedback}", size=12, color=TEXT_MUTED))
-    return _user_bubble(ft.Column(lines, spacing=4))
+    return _user_bubble(ft.Text(
+        f"Approved: {', '.join(titles) if titles else '(none)'}", size=13, color=TEXT_PRIMARY,
+    ))
+
+
+def _verified_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
+    """One line per gated candidate — the verdict, or why the branch never
+    produced one. A failure marks only its own candidate."""
+    verdicts = detail.get("verdicts") or {}
+    failed = detail.get("failed") or {}
+    lines: list[ft.Control] = []
+    for candidate_id in (detail.get("candidate_ids") or []):
+        title = _resolve_title(str(candidate_id), candidates)
+        if candidate_id in failed:
+            lines.append(ft.Text(f"{title}: could not verify — {failed[candidate_id]}",
+                                 size=12, color=DANGER, selectable=True))
+        elif candidate_id in verdicts:
+            verdict = str(verdicts[candidate_id])
+            color = SUCCESS if verdict == "confirmed" else WARN
+            lines.append(ft.Text(f"{title}: {verdict.upper()}", size=12, color=color))
+    if not lines:
+        lines.append(ft.Text("Nothing was re-verified.", size=12, color=TEXT_MUTED))
+    return _scout_bubble(ft.Column(lines, spacing=4))
 
 
 def _archived_bubble(detail: dict) -> ft.Control:
@@ -326,14 +355,17 @@ def build(
         state.scout_mode = session_holder[0].mode.value
         if not state.last_prompt:
             state.last_prompt = session_holder[0].user_intent
-    selected_general: list[str] = [
-        session_holder[0].selected_general_candidate_id or "" if session_holder[0] else ""
-    ]
     selected_specific: set[str] = set(
         session_holder[0].selected_specific_candidate_ids if session_holder[0] else []
     )
     busy = [False]
     slug_holder: list[ft.TextField | None] = [None]
+    # Override is DECIDED here but APPLIED at creation time (project_factory), so
+    # the tick has to survive the hop from candidate review to production gates.
+    override_holder = [False]
+    # Per-card progress from verify_selected's worker threads. Display only —
+    # on_result must never write to the store.
+    verifying: set[str] = set()
     # Tier A suggestions currently on screen (empty-intent fallback) and whether
     # they've already been shown once for the CURRENT no-session state — a second
     # empty Send is read as an explicit ask to research a fresh angle instead
@@ -343,31 +375,69 @@ def build(
 
     # ─── Chat transcript: rebuilt fresh from disk on every render ─────────
 
-    def _general_review_content(candidates: list[dict], gates: list[dict]) -> ft.Control:
+    def _candidate_review_content(
+        session: ResearchSession, candidates: list[dict], gates: list[dict],
+    ) -> ft.Control:
+        """The one candidate list. Tick, verify, approve.
+
+        There used to be two of these over the identical list: a radio round
+        that chose who got evidence-gated, then a checkbox round that chose who
+        became the project — and the radio pick was thrown away.
+        """
         cards: list[ft.Control] = []
         for index, candidate in enumerate(candidates):
             candidate_id = _candidate_id(candidate, index)
-            radio = ft.Radio(value=candidate_id, label="Approve this candidate")
+            selection = ft.Checkbox(
+                key=f"select-{candidate_id}",
+                label="Select",
+                value=candidate_id in selected_specific,
+                on_change=lambda e, cid=candidate_id: _selection_changed(
+                    cid, bool(e.control.value)
+                ),
+            )
+            trailing: list[ft.Control] = []
+            if candidate_id in verifying:
+                trailing.append(ft.Row([
+                    ft.ProgressRing(width=12, height=12, stroke_width=2),
+                    ft.Text("Verifying…", size=11, color=TEXT_MUTED),
+                ], spacing=6))
+            else:
+                reverify = secondary_button(
+                    "Re-verify", lambda _e, cid=candidate_id: _reverify_click(cid),
+                    disabled=candidate_id not in selected_specific,
+                )
+                reverify.key = f"reverify-{candidate_id}"
+                trailing.append(reverify)
             cards.append(_candidate_card(
-                candidate, index, gate=_candidate_gate(candidate_id, gates), selection=radio,
+                candidate, index,
+                gate=_candidate_gate(candidate_id, gates),
+                selection=selection,
+                trailing=trailing,
             ))
 
-        def _radio_changed(event):
-            if busy[0]:
-                return
-            selected_general[0] = event.control.value
-            _render_full()
-
-        group = ft.RadioGroup(
-            value=selected_general[0] or None,
-            content=ft.Column(cards, spacing=8),
-            on_change=_radio_changed,
+        verify_button = primary_button(
+            f"Verify selected ({len(selected_specific)})", _verify_click,
+            disabled=not selected_specific,
+            icon=ft.Icons.FACT_CHECK,
         )
+        verify_button.key = "verify-selected"
         approve_button = primary_button(
-            "Approve & find evidence →", _approve_general_click,
-            disabled=not selected_general[0],
+            "Approve & name project", _approve_selection_click,
+            disabled=not _selection_count_valid(session.mode, selected_specific),
+            icon=ft.Icons.CHECK,
         )
-        return ft.Column([group, approve_button], spacing=10)
+        approve_button.key = "approve-selected"
+
+        controls: list[ft.Control] = [*cards, verify_button]
+        if _needs_override(selected_specific, gates):
+            controls.append(ft.Checkbox(
+                key="override-gates",
+                label="I have read the verdicts above and want to continue anyway",
+                value=override_holder[0],
+                on_change=_override_changed,
+            ))
+        controls.append(approve_button)
+        return ft.Column(controls, spacing=8)
 
     def _general_completed_bubble(
         event: dict, idx: int, is_current: bool, session: ResearchSession,
@@ -386,8 +456,8 @@ def build(
             summary = f"Round {label_rev} — {count_text} (superseded)"
             return _scout_bubble(ft.Text(summary, size=12, color=TEXT_MUTED))
         content = (
-            _general_review_content(candidates, gates)
-            if session.state is SessionState.GENERAL_REVIEW
+            _candidate_review_content(session, candidates, gates)
+            if session.state is SessionState.CANDIDATE_REVIEW
             else _general_collapsed_lines(session, candidates)
         )
         plan_summary = detail.get("plan_summary")
@@ -397,35 +467,6 @@ def build(
             ft.Text(f"Plan: {plan_summary}", size=10, color=TEXT_MUTED),
             content,
         ], spacing=6))
-
-    def _specific_review_content(
-        session: ResearchSession, candidates: list[dict], gates: list[dict],
-    ) -> ft.Control:
-        cards: list[ft.Control] = []
-        for index, candidate in enumerate(candidates):
-            candidate_id = _candidate_id(candidate, index)
-            selection = ft.Checkbox(
-                key=f"select-{candidate_id}",
-                label="Select",
-                value=candidate_id in selected_specific,
-                on_change=lambda e, cid=candidate_id: _specific_selection_changed(
-                    cid, bool(e.control.value)
-                ),
-            )
-            cards.append(_candidate_card(
-                candidate, index, gate=_candidate_gate(candidate_id, gates), selection=selection,
-            ))
-        approve_button = primary_button(
-            "Approve selected →", _approve_specific_click,
-            disabled=not _selection_count_valid(session.mode, selected_specific),
-            icon=ft.Icons.CHECK,
-        )
-        approve_button.key = "approve-specific"
-        back_button = secondary_button("← Back to general", _back_general_click)
-        return ft.Column([
-            *cards,
-            ft.Row([approve_button, back_button], spacing=10),
-        ], spacing=8)
 
     def _production_gates_bubble(session: ResearchSession) -> ft.Control:
         slug_field = ft.TextField(
@@ -440,9 +481,15 @@ def build(
         create_button = primary_button(
             "Create project", _create_project_click, icon=ft.Icons.CREATE_NEW_FOLDER,
         )
+        back_button = secondary_button("← Back to candidates", _back_to_candidates_click)
+        headline = (
+            "Selection locked in — overriding the verdicts above."
+            if override_holder[0]
+            else "Selection locked in."
+        )
         return _scout_bubble(ft.Column([
-            ft.Text("Production gates passed.", size=13, color=TEXT_PRIMARY),
-            ft.Row([slug_field, create_button], spacing=10),
+            ft.Text(headline, size=13, color=TEXT_PRIMARY),
+            ft.Row([slug_field, create_button, back_button], spacing=10),
         ], spacing=8))
 
     def _run_general_bubble() -> ft.Control:
@@ -485,22 +532,24 @@ def build(
                 ))
             elif name == "general_research_rerun":
                 bubbles.append(_rerun_bubble(detail))
-            elif name == "general_candidate_approved":
-                bubbles.append(_general_approved_bubble(detail, candidates))
-            elif name == "specific_research_completed":
-                bubbles.append(_scout_bubble(ft.Column(_gate_content(gates), spacing=6)))
-            elif name == "specific_candidates_decided":
-                bubbles.append(_specific_decided_bubble(detail, candidates))
+            elif name == "candidates_verified":
+                bubbles.append(_verified_bubble(detail, candidates))
+            elif name == "selection_approved":
+                bubbles.append(_selection_approved_bubble(detail, candidates))
             elif name == "session_archived":
                 bubbles.append(_archived_bubble(detail))
-            # unknown events (returned_to_general_review, project_created, ...): skip silently
+            # unknown events (returned_to_candidate_review, project_created, ...): skip silently
 
         # State-driven appends happen regardless of audit content — this keeps the
-        # approve-specific control reachable even for a session seeded directly onto
-        # disk without a matching audit trail (a hand-built SPECIFIC_REVIEW fixture,
-        # for example), matching the non-negotiable state-based contract for that key.
-        if session.state is SessionState.SPECIFIC_REVIEW:
-            bubbles.append(_scout_bubble(_specific_review_content(session, candidates, gates)))
+        # review controls reachable even for a session seeded directly onto disk with
+        # no matching audit trail (a hand-built CANDIDATE_REVIEW fixture, say),
+        # matching the state-based contract those keys carry.
+        if session.state is SessionState.CANDIDATE_REVIEW and not any(
+            event.get("event") == "general_research_completed" for event in audit
+        ):
+            bubbles.append(_scout_bubble(
+                _candidate_review_content(session, candidates, gates)
+            ))
         if session.state is SessionState.PRODUCTION_GATES:
             bubbles.append(_production_gates_bubble(session))
         if session.state is SessionState.GENERAL_DRAFT:
@@ -518,8 +567,9 @@ def build(
         _render_full()
 
     def _clear_to_new(_result=None) -> None:
-        selected_general[0] = ""
         selected_specific.clear()
+        verifying.clear()
+        override_holder[0] = False
         session_holder[0] = None
         intent_field.value = ""
         bank_suggestions_holder[0] = []
@@ -618,18 +668,13 @@ def build(
             _run_busy("Researching… ~30s", _work)
             return
 
-        if session.state is SessionState.GENERAL_REVIEW:
+        if session.state is SessionState.CANDIDATE_REVIEW:
             if not text:
-                _render_full(error="Type feedback before sending, or approve a candidate above.")
+                _render_full(
+                    error="Type feedback before sending, or verify the candidates above."
+                )
                 return
             _run_busy("Researching… ~30s", lambda: rerun_scout_general(session.id, text))
-            return
-
-        if session.state is SessionState.SPECIFIC_REVIEW:
-            if not text:
-                _render_full(error="Type feedback before sending.")
-                return
-            _run_busy("Checking evidence…", lambda: run_scout_specific(session.id, text))
             return
 
         # GENERAL_DRAFT / PRODUCTION_GATES: Send stays disabled; defensive no-op.
@@ -641,7 +686,7 @@ def build(
         bank_shown[0] = False
         bank_suggestions_holder[0] = []
 
-    def _specific_selection_changed(candidate_id: str, checked: bool) -> None:
+    def _selection_changed(candidate_id: str, checked: bool) -> None:
         if busy[0]:
             return
         session = session_holder[0]
@@ -653,32 +698,60 @@ def build(
             selected_specific.add(candidate_id)
         else:
             selected_specific.discard(candidate_id)
+        # A tick that no longer needs overriding must not keep a stale consent.
+        gates = load_scout_gates(session.id, root=RESEARCH_SESSIONS_ROOT) if session else []
+        if not _needs_override(selected_specific, gates):
+            override_holder[0] = False
         _render_full()
 
-    def _approve_general_click(_e) -> None:
+    def _override_changed(event) -> None:
+        override_holder[0] = bool(event.control.value)
+        _render_full()
+
+    def _verify(candidate_ids: list[str], only: list[str] | None, label: str) -> None:
         session = session_holder[0]
-        candidate_id = selected_general[0]
-        if not session or not candidate_id:
+        if not session or not candidate_ids:
             return
+        verifying.clear()
+        verifying.update(candidate_ids if only is None else only)
 
         def _work():
-            approved = approve_scout_general(session.id, candidate_id)
-            return run_scout_specific(approved.id)
+            # on_result fires from verify_selected's worker threads. It is for
+            # per-card progress only and must not touch the store; the artifact
+            # is written once by the workflow after every branch settles.
+            return verify_scout_selection(session.id, candidate_ids, only=only)
 
-        _run_busy("Checking evidence…", _work)
+        def _done(result) -> None:
+            verifying.clear()
+            _apply_session_and_render(result)
 
-    def _approve_specific_click(_e) -> None:
+        _run_busy(label, _work, on_success=_done)
+
+    def _verify_click(_e) -> None:
+        session = session_holder[0]
+        if not session or not selected_specific:
+            return
+        ids = sorted(selected_specific)
+        _verify(ids, None, f"Checking evidence for {len(ids)}…")
+
+    def _reverify_click(candidate_id: str) -> None:
+        """Re-gate one card without paying for the others again. The whole
+        selection still goes in, so the artifact stays one-entry-per-selection."""
+        if candidate_id not in selected_specific:
+            return
+        _verify(sorted(selected_specific), [candidate_id], "Re-checking evidence…")
+
+    def _approve_selection_click(_e) -> None:
         session = session_holder[0]
         if not session or not _selection_count_valid(session.mode, selected_specific):
             return
-        ids = sorted(selected_specific)
-        _run_busy("Saving selection…", lambda: approve_scout_specific(session.id, ids, ""))
+        _run_busy("Locking the selection in…", lambda: approve_scout_selection(session.id))
 
-    def _back_general_click(_e) -> None:
+    def _back_to_candidates_click(_e) -> None:
         session = session_holder[0]
         if not session:
             return
-        _run_busy("Returning to general review…", lambda: back_scout_general(session.id))
+        _run_busy("Returning to the candidates…", lambda: back_scout_candidates(session.id))
 
     def _create_project_click(_e) -> None:
         session = session_holder[0]
@@ -693,7 +766,9 @@ def build(
             return
         _run_busy(
             "Creating project…",
-            lambda: create_scout_project(session.id, project_slug),
+            lambda: create_scout_project(
+                session.id, project_slug, override=override_holder[0]
+            ),
             on_success=_finish_create_project,
         )
 
@@ -734,9 +809,10 @@ def build(
             state.scout_session_id = loaded.id
             state.scout_mode = loaded.mode.value
             state.last_prompt = loaded.user_intent
-            selected_general[0] = loaded.selected_general_candidate_id or ""
             selected_specific.clear()
             selected_specific.update(loaded.selected_specific_candidate_ids)
+            verifying.clear()
+            override_holder[0] = False
             _apply_session_and_render(loaded)
 
         _run_busy("Loading session…", _work, on_success=_on_resumed)
@@ -753,8 +829,9 @@ def build(
             page.pop_dialog()
             delete_scout_session(session.id, root=RESEARCH_SESSIONS_ROOT)
             if session_holder[0] is not None and session_holder[0].id == session.id:
-                selected_general[0] = ""
                 selected_specific.clear()
+                verifying.clear()
+                override_holder[0] = False
                 session_holder[0] = None
                 state.scout_session_id = ""
                 intent_field.value = ""
