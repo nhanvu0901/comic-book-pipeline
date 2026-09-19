@@ -56,6 +56,10 @@ RESEARCH_SESSIONS_ROOT = RESEARCH_SESSIONS_ROOT
 
 _BUBBLE_WIDTH = 640
 
+# How many questions one Tier B research call is asked for — one per angle in
+# research_policies/general_angles.v1.json.
+_DISCOVER_BATCH = 5
+
 
 def _session_for_ui(session_id: str) -> ResearchSession | None:
     if not session_id:
@@ -328,16 +332,17 @@ def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
     round runs. Master 2026-08-22: Send-with-empty-box must not silently spend
     API budget, so this is a dead-end by design — nothing here starts a
     session. Typing one of these into the box (or anything else) and pressing
-    Send runs the normal flow; pressing Send empty AGAIN discovers a fresh
-    question (Tier B) and drops it into the box for review — it does NOT
-    research it (Master 2026-08-28: that restores the human-review step
-    is_burned's docstring in stages/youcom_scout.py says catches synonym
-    re-skins of already-rejected bank questions)."""
+    Send runs the normal flow; pressing Send empty AGAIN spends one research
+    call on a batch of fresh questions (Tier B) and offers them as a choice —
+    it does NOT research any of them (Master 2026-08-28: that keeps the
+    human-review step is_burned's docstring in stages/youcom_scout.py says
+    catches synonym re-skins of already-rejected bank questions)."""
     lines: list[ft.Control] = [
         ft.Text(
             "Still-open questions from qa_question_bank.md — type one into the box "
             "and press Send, or press Send again on an empty box and we'll find a "
-            "new question for you to look over before it's researched.",
+            "batch of new questions for you to choose from before anything is "
+            "researched.",
             size=12, color=TEXT_MUTED,
         ),
     ]
@@ -378,6 +383,22 @@ def build(
     # (Tier B), rather than silently spending API budget on the first empty Send.
     bank_suggestions_holder: list[list[dict]] = [[]]
     bank_shown = [False]
+    # Tier B: the batch of discovered questions currently offered in the chat,
+    # which one is ticked, every question offered so far (the re-roll's
+    # `exclude`, so a new batch can't repeat one the user already turned down),
+    # and the one-line note a re-roll that found nothing new leaves behind.
+    discovered_holder: list[list[dict]] = [[]]
+    discovered_pick = [""]
+    discovered_offered: list[str] = []
+    discovered_note = [""]
+
+    def _forget_suggestions() -> None:
+        bank_shown[0] = False
+        bank_suggestions_holder[0] = []
+        discovered_holder[0] = []
+        discovered_pick[0] = ""
+        discovered_offered.clear()
+        discovered_note[0] = ""
 
     # ─── Chat transcript: rebuilt fresh from disk on every render ─────────
 
@@ -506,9 +527,57 @@ def build(
             button,
         ], spacing=8))
 
+    def _discovered_questions_bubble() -> ft.Control:
+        """Tier B's batch, single-select, with a re-roll.
+
+        Ticking one only FILLS THE INPUT BOX — it must never start research.
+        Master 2026-08-28: discover -> start_scout_session -> run_scout_general
+        in one go spent a second research call enumerating answers to a dud
+        lane before any human read the question, and is_burned()'s own
+        docstring (stages/youcom_scout.py) says the review step after discover
+        is what catches synonym re-skins of already-rejected bank questions.
+        The bubble stays on screen after a pick so the user can change it.
+        """
+        choices: list[ft.Control] = []
+        for index, entry in enumerate(discovered_holder[0]):
+            angle = str(entry.get("angle") or "").strip()
+            choices.append(ft.Row([
+                ft.Radio(value=str(index)),
+                ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED) if angle else ft.Container(),
+                ft.Text(_discovered_text(entry), size=12, color=TEXT_PRIMARY,
+                        selectable=True, expand=True),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        lines: list[ft.Control] = [
+            ft.Text("Chọn một câu để nghiên cứu, hoặc tìm mẻ khác:",
+                    size=12, color=TEXT_MUTED),
+            ft.RadioGroup(
+                key="discovered-questions",
+                value=discovered_pick[0] or None,
+                content=ft.Column(choices, spacing=2),
+                on_change=_discovered_pick_changed,
+            ),
+        ]
+        if discovered_note[0]:
+            lines.append(ft.Text(discovered_note[0], size=11, color=WARN))
+        reroll = secondary_button(
+            f"Không ưng câu nào — tìm {_DISCOVER_BATCH} câu khác", _reroll_click
+        )
+        reroll.key = "discovered-reroll"
+        lines.append(ft.Row([
+            reroll,
+            ft.Text("tốn 1 research call", size=10, color=TEXT_MUTED),
+        ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        lines.append(ft.Text(
+            "Câu đã chọn rơi vào ô nhập — sửa lại nếu muốn, rồi bấm Send để nghiên cứu.",
+            size=11, color=TEXT_MUTED,
+        ))
+        return _scout_bubble(ft.Column(lines, spacing=8))
+
     def _render_chat() -> list[ft.Control]:
         session = session_holder[0]
         if session is None:
+            if discovered_holder[0]:
+                return [_discovered_questions_bubble()]
             if bank_suggestions_holder[0]:
                 return [_bank_suggestions_bubble(bank_suggestions_holder[0])]
             return [_system_bubble(
@@ -568,8 +637,7 @@ def build(
     def _apply_session_and_render(result) -> None:
         session_holder[0] = result
         intent_field.value = ""
-        bank_suggestions_holder[0] = []
-        bank_shown[0] = False
+        _forget_suggestions()
         _render_full()
 
     def _clear_to_new(_result=None) -> None:
@@ -578,8 +646,7 @@ def build(
         override_holder[0] = False
         session_holder[0] = None
         intent_field.value = ""
-        bank_suggestions_holder[0] = []
-        bank_shown[0] = False
+        _forget_suggestions()
         _render_full()
 
     def _finish_create_project(project_name) -> None:
@@ -615,6 +682,71 @@ def build(
 
         page.run_task(_execute)
 
+    def _discovered_pick_changed(event) -> None:
+        """Tick a discovered question -> it lands in the input box, full stop.
+
+        Deliberately NOT a research trigger. See _discovered_questions_bubble
+        and the long comment in _send_click: the human reading (and optionally
+        editing) the question before Send IS the review step that catches the
+        synonym re-skins is_burned() lets through on purpose.
+        """
+        if busy[0]:
+            return
+        raw = str(getattr(event.control, "value", "") or "")
+        try:
+            entry = discovered_holder[0][int(raw)]
+        except (TypeError, ValueError, IndexError):
+            return
+        discovered_pick[0] = raw
+        intent_field.value = _discovered_text(entry)
+        _render_full()
+
+    def _show_discovered(batch) -> None:
+        entries = [entry for entry in (batch or []) if _discovered_text(entry)]
+        already = {text.casefold() for text in discovered_offered}
+        fresh = [
+            entry for entry in entries
+            if _discovered_text(entry).casefold() not in already
+        ]
+        if discovered_holder[0]:
+            # A re-roll. Never blank the list: nothing new — or nothing at all
+            # but Tier B's angle fallback, which is what a dead You.com yields —
+            # leaves the batch already on screen exactly where it is.
+            if not fresh or all(entry.get("fallback") for entry in fresh):
+                discovered_note[0] = (
+                    "Không tìm được câu nào mới — vẫn giữ mẻ câu ở trên."
+                )
+                _render_full()
+                return
+        elif not fresh:
+            fresh = entries
+        if not fresh:
+            _render_full(error="Không tìm được câu nào — hãy tự gõ câu hỏi vào ô nhập.")
+            return
+        bank_shown[0] = False
+        bank_suggestions_holder[0] = []
+        discovered_note[0] = ""
+        discovered_pick[0] = ""
+        discovered_holder[0] = fresh
+        discovered_offered.extend(_discovered_text(entry) for entry in fresh)
+        _render_full()
+
+    def _discover_batch(mode: str) -> None:
+        """One research call, whether it is the first batch or a re-roll. The
+        questions already offered go along as `exclude` so the model is not paid
+        to hand back a batch the user has just turned down."""
+        excluded = list(discovered_offered)
+        _run_busy(
+            f"Đang tìm {_DISCOVER_BATCH} câu…",
+            lambda: discover_questions(mode, count=_DISCOVER_BATCH, exclude=excluded),
+            on_success=_show_discovered,
+        )
+
+    def _reroll_click(_e) -> None:
+        if busy[0]:
+            return
+        _discover_batch(mode_group.value or ScoutMode.QA.value)
+
     def _send_click(_e) -> None:
         if busy[0]:
             return
@@ -624,6 +756,14 @@ def build(
         if session is None or session.state in {SessionState.ARCHIVED, SessionState.COMPLETE}:
             mode = mode_group.value or ScoutMode.QA.value
             if not text:
+                # A Tier B batch is already on screen: Send-on-empty is neither a
+                # re-roll (that button says what it costs) nor a reason to put the
+                # bank bubble back behind it — say what to do and spend nothing.
+                if discovered_holder[0]:
+                    _render_full(
+                        error="Chọn một câu ở trên, hoặc bấm nút tìm mẻ khác."
+                    )
+                    return
                 # First empty Send: show Tier A (bank) suggestions for free and stop —
                 # do NOT spend API budget without the user asking for it.
                 if not bank_shown[0]:
@@ -635,32 +775,21 @@ def build(
                         return
                 # Second empty Send (bank_shown[0] already True), or the bank had
                 # nothing to show at all (empty for this mode, or nothing left
-                # after banlist filtering): discover a real Tier B question and
-                # PUT IT IN THE INPUT BOX for a human to read, edit, or delete —
-                # do NOT research it yet. Master 2026-08-28: a straight-through
-                # discover -> start_scout_session -> run_scout_general used to
-                # spend a SECOND research call enumerating answers to a dud lane
-                # (a synonym re-skin of an already-rejected bank question) before
+                # after banlist filtering): spend ONE research call on a Tier B
+                # batch and OFFER IT AS A CHOICE — do NOT research any of it
+                # yet. Master 2026-08-28: a straight-through discover ->
+                # start_scout_session -> run_scout_general used to spend a
+                # SECOND research call enumerating answers to a dud lane (a
+                # synonym re-skin of an already-rejected bank question) before
                 # any human saw it — is_burned()'s own docstring in
                 # stages/youcom_scout.py says the Master-review step after
-                # discover is what is supposed to catch those. Landing the
-                # question in the box and stopping restores that review step;
-                # the human presses Send again, normally, to research it.
-                bank_shown[0] = False
-                bank_suggestions_holder[0] = []
-
-                def _fill_discovered(batch: list[dict]) -> None:
-                    intent_field.value = _discovered_text(batch[0]) if batch else ""
-                    _render_full()
-
-                _run_busy(
-                    "Finding a question…", lambda: discover_questions(mode),
-                    on_success=_fill_discovered,
-                )
+                # discover is what is supposed to catch those. Picking one only
+                # lands it in the input box; the human reads it, edits it if
+                # they want, and presses Send again to research it.
+                _discover_batch(mode)
                 return
 
-            bank_shown[0] = False
-            bank_suggestions_holder[0] = []
+            _forget_suggestions()
             old = session
 
             def _work():
@@ -687,10 +816,10 @@ def build(
 
     def _mode_changed(_e) -> None:
         state.scout_mode = mode_group.value or ScoutMode.QA.value
-        # Tier A suggestions are QA-only content — stale ones from the other
-        # mode must not linger, and switching modes counts as a fresh attempt.
-        bank_shown[0] = False
-        bank_suggestions_holder[0] = []
+        # Tier A suggestions are QA-only content and a Tier B batch is either
+        # questions or moments, never both — stale ones from the other mode must
+        # not linger, and switching modes counts as a fresh attempt.
+        _forget_suggestions()
 
     def _selection_changed(candidate_id: str, checked: bool) -> None:
         if busy[0]:
@@ -856,8 +985,7 @@ def build(
                 session_holder[0] = None
                 state.scout_session_id = ""
                 intent_field.value = ""
-                bank_suggestions_holder[0] = []
-                bank_shown[0] = False
+                _forget_suggestions()
             _render_full()
 
         created = _session_created_at(session.id)

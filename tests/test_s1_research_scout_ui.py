@@ -433,37 +433,44 @@ def _run_recorded_task(page):
     asyncio.run(func())
 
 
-def test_second_empty_send_fills_the_intent_box_with_a_discovered_question_and_starts_no_session(
-    tmp_path, monkeypatch,
-):
-    """The first empty Send must only SHOW the bank suggestions, spending nothing. A
-    second empty Send is the user explicitly declining every suggestion shown — Master
-    2026-08-28: it must discover a real Tier B question and drop it into the intent
-    box for a human to read/edit/delete, NOT start a session and immediately spend a
-    SECOND research call enumerating that question's answers before anyone looks at
-    it. That silent double-spend is exactly what removed the human-review step
-    is_burned()'s docstring (stages/youcom_scout.py) says catches synonym re-skins of
-    already-rejected bank questions — landing the question in the box restores it."""
+# ─── Tier B: a batch of discovered questions to choose from ─────────────────
+# The first empty Send only SHOWS the free bank suggestions. A second empty Send is
+# the user explicitly declining every one of them, and buys ONE research call — which
+# now comes back with a whole batch of questions to pick from plus a re-roll, instead
+# of a single take-it-or-leave-it question.
+#
+# Picking one must NEVER start research. Master 2026-08-28: a straight-through
+# discover -> start_scout_session -> run_scout_general spent a SECOND research call
+# enumerating answers to a dud lane (a synonym re-skin of an already-rejected bank
+# question) before any human saw it — is_burned()'s own docstring in
+# stages/youcom_scout.py says the Master-review step after discover is what is
+# supposed to catch those. Landing the question in the box and stopping is that
+# review step; the human presses Send again, normally, to research it.
+
+_ANGLES = ["times a famous power or rule failed", "who broke a famously unbreakable rule"]
+
+
+def _batch(*questions):
+    return [
+        {"question": q, "angle": _ANGLES[i % len(_ANGLES)]}
+        for i, q in enumerate(questions)
+    ]
+
+
+def _must_not_be_called(name):
+    def _fail(*_a, **_k):
+        raise AssertionError(f"{name} must not be called on a discover-only Send")
+    return _fail
+
+
+def _discover_env(tmp_path, monkeypatch, *, batches):
+    """A Stage 1 screen whose Tier A bank has one row and whose Tier B discovery
+    is scripted. Returns (page, controls, calls) — `calls` records every
+    discover_questions() call so a test can assert the re-roll's `exclude`."""
     root = tmp_path / "research_sessions"
     s1_research_scout.RESEARCH_SESSIONS_ROOT = root
     bridge.RESEARCH_SESSIONS_ROOT = root
     monkeypatch.setattr("stages.research_scout.bank_fallback._REPO_ROOT", tmp_path)
-
-    class _NetworkTripwireYouCom:
-        # discover_intent() -> ScoutWorkflow.discover_question spends one
-        # client.research() call turning the angle into a real question before
-        # falling back to it. bridge._scout_workflow() builds an uninjected, real
-        # YouComClient() here, and config.load_dotenv() can put a LIVE key in this
-        # process — so without this stub the assertions below would depend on a
-        # real network call. Raising forces discover_question's mandatory
-        # fallback, which returns the angle itself: exactly what this test's
-        # angles[0] assertion expects.
-        def research(self, *args, **kwargs):
-            raise AssertionError("test tried to reach the real You.com client")
-
-    monkeypatch.setattr(
-        "stages.research_scout.workflow.YouComClient", lambda *a, **k: _NetworkTripwireYouCom()
-    )
     (tmp_path / "qa_question_bank.md").write_text(
         "| Status | Question | Answer items (comic, year) | Notes |\n"
         "|--------|----------|----------------------------|-------|\n"
@@ -474,30 +481,197 @@ def test_second_empty_send_fills_the_intent_box_with_a_discovered_question_and_s
         "| Date | Question | Reason |\n|------|----------|--------|\n", encoding="utf-8",
     )
 
-    def _must_not_be_called(name):
-        def _fail(*_a, **_k):
-            raise AssertionError(f"{name} must not be called on a discover-only Send")
-        return _fail
+    calls = []
+    queued = list(batches)
 
-    monkeypatch.setattr(s1_research_scout, "start_scout_session", _must_not_be_called("start_scout_session"))
-    monkeypatch.setattr(s1_research_scout, "run_scout_general", _must_not_be_called("run_scout_general"))
+    def _fake_discover(mode, *, count=5, exclude=()):
+        calls.append({"mode": mode, "count": count, "exclude": list(exclude)})
+        return queued.pop(0) if queued else []
 
+    monkeypatch.setattr(s1_research_scout, "discover_questions", _fake_discover)
+    monkeypatch.setattr(
+        s1_research_scout, "start_scout_session", _must_not_be_called("start_scout_session")
+    )
+    monkeypatch.setattr(
+        s1_research_scout, "run_scout_general", _must_not_be_called("run_scout_general")
+    )
     page, controls = _build(tmp_path)
-    send = next(node for node in _walk(controls) if getattr(node, "key", None) == "chat-send")
+    return page, controls, calls
 
-    send.on_click(object())  # first empty Send -> Tier A suggestions shown, nothing seeded
-    assert "The one open bank question?" in _text_content(controls)
 
-    send.on_click(object())  # second empty Send -> discover a question, do NOT research it
-    _run_recorded_task(page)
-
-    angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
-    intent_field = next(
+def _intent_field(controls):
+    return next(
         node for node in _walk(controls) if getattr(node, "key", None) == "scout-intent"
     )
-    assert intent_field.value == angles[0]
-    # No session was ever created — the two monkeypatched functions above would have
-    # raised if either had been called, and no session directory was written to disk.
+
+
+def _send(controls):
+    return next(node for node in _walk(controls) if getattr(node, "key", None) == "chat-send")
+
+
+def _by_key(controls, key):
+    return next(node for node in _walk(controls) if getattr(node, "key", None) == key)
+
+
+def _discover_twice(page, controls):
+    """First empty Send (free bank suggestions), then the second one that buys
+    the batch, with the recorded coroutine actually executed."""
+    send = _send(controls)
+    send.on_click(object())
+    send.on_click(object())
+    _run_recorded_task(page)
+
+
+def test_second_empty_send_offers_a_batch_of_questions_and_starts_no_session(
+    tmp_path, monkeypatch,
+):
+    root = tmp_path / "research_sessions"
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?",
+                        "Who walked off a planet-buster?")],
+    )
+
+    send = _send(controls)
+    send.on_click(object())  # first empty Send -> Tier A suggestions, spends nothing
+    assert "The one open bank question?" in _text_content(controls)
+    assert calls == []
+
+    send.on_click(object())  # second empty Send -> ONE research call, a whole batch
+    _run_recorded_task(page)
+
+    shown = _text_content(controls)
+    for question in ("Who has lifted Mjolnir?", "Whose healing factor failed?",
+                     "Who walked off a planet-buster?"):
+        assert question in shown
+    assert _ANGLES[0] in shown  # every choice is labelled with the angle it came from
+    assert len(calls) == 1
+    # Nothing is chosen for the user, and nothing is researched.
+    assert _intent_field(controls).value == ""
+    assert not root.exists() or not any(root.iterdir())
+
+
+def test_picking_a_question_fills_the_box_and_leaves_the_batch_on_screen(
+    tmp_path, monkeypatch,
+):
+    """Selecting must only land the question in the input box — the human-review
+    step. The bubble stays put so the user can change their mind."""
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?")],
+    )
+    _discover_twice(page, controls)
+
+    _by_key(controls, "discovered-questions").on_change(_FakeEvent("1"))
+
+    assert _intent_field(controls).value == "Whose healing factor failed?"
+    still_shown = _text_content(controls)
+    assert "Who has lifted Mjolnir?" in still_shown
+    assert "Whose healing factor failed?" in still_shown
+    # start_scout_session / run_scout_general are tripwires in _discover_env:
+    # either one firing here is the regression this whole flow exists to prevent.
+
+
+def test_rerolling_costs_one_call_and_excludes_every_question_already_offered(
+    tmp_path, monkeypatch,
+):
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[
+            _batch("Who has lifted Mjolnir?", "Whose healing factor failed?"),
+            _batch("Who survived a Phoenix hit?"),
+        ],
+    )
+    _discover_twice(page, controls)
+
+    _by_key(controls, "discovered-reroll").on_click(object())
+    _run_recorded_task(page)
+
+    assert len(calls) == 2  # exactly one more research call, same as before
+    assert calls[1]["exclude"] == ["Who has lifted Mjolnir?", "Whose healing factor failed?"]
+    shown = _text_content(controls)
+    assert "Who survived a Phoenix hit?" in shown
+    assert "Who has lifted Mjolnir?" not in shown
+
+
+def test_a_reroll_that_finds_nothing_new_keeps_the_previous_batch(tmp_path, monkeypatch):
+    """Never blank the list: a re-roll that comes back with nothing the user has
+    not already turned down (or, You.com down, with only the raw angle) leaves
+    the batch exactly where it was and says so in one line."""
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[
+            _batch("Who has lifted Mjolnir?", "Whose healing factor failed?"),
+            [{"question": "times a famous power or rule failed",
+              "angle": "times a famous power or rule failed", "fallback": True}],
+        ],
+    )
+    _discover_twice(page, controls)
+
+    _by_key(controls, "discovered-reroll").on_click(object())
+    _run_recorded_task(page)
+
+    shown = _text_content(controls)
+    assert "Who has lifted Mjolnir?" in shown
+    assert "Whose healing factor failed?" in shown
+    assert "Không tìm được câu nào mới" in shown
+
+
+def test_an_empty_send_with_a_batch_on_screen_spends_nothing_and_says_what_to_do(
+    tmp_path, monkeypatch,
+):
+    """With a batch already offered, Send-on-empty must not quietly re-show the
+    bank bubble behind it (a dead click) and must not quietly buy another
+    research call either — re-rolling is the button's job, and it says what it
+    costs."""
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?")],
+    )
+    _discover_twice(page, controls)
+
+    _send(controls).on_click(object())
+
+    assert len(calls) == 1  # no second research call
+    shown = _text_content(controls)
+    assert "Who has lifted Mjolnir?" in shown  # the batch is still the visible bubble
+    assert "Chọn một câu ở trên" in shown
+
+
+def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(
+    tmp_path, monkeypatch,
+):
+    """End-to-end through the real bridge with the network cut: Tier B's
+    never-raises fallback (the rotated angle) still has to reach the chat, which
+    is the pre-batch behaviour this must not lose."""
+    root = tmp_path / "research_sessions"
+    s1_research_scout.RESEARCH_SESSIONS_ROOT = root
+    bridge.RESEARCH_SESSIONS_ROOT = root
+    monkeypatch.setattr("stages.research_scout.bank_fallback._REPO_ROOT", tmp_path)
+
+    class _NetworkTripwireYouCom:
+        # bridge._scout_workflow() builds an uninjected, real YouComClient(), and
+        # config.load_dotenv() can put a LIVE key in this process — so without this
+        # stub the assertion below would depend on a real network call. Raising
+        # forces discover_questions' mandatory fallback, which returns the angle.
+        def research(self, *args, **kwargs):
+            raise AssertionError("test tried to reach the real You.com client")
+
+    monkeypatch.setattr(
+        "stages.research_scout.workflow.YouComClient", lambda *a, **k: _NetworkTripwireYouCom()
+    )
+    monkeypatch.setattr(
+        s1_research_scout, "start_scout_session", _must_not_be_called("start_scout_session")
+    )
+    monkeypatch.setattr(
+        s1_research_scout, "run_scout_general", _must_not_be_called("run_scout_general")
+    )
+
+    page, controls = _build(tmp_path)
+    _discover_twice(page, controls)
+
+    angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
+    assert angles[0] in _text_content(controls)
     assert not root.exists() or not any(root.iterdir())
 
 
