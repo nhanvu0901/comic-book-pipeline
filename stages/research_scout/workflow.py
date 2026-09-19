@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
@@ -70,20 +72,26 @@ def general_output_schema() -> dict[str, Any]:
     }
 
 
+# One review step, not two. Verifying is a self-transition rather than a state
+# of its own: nothing about "currently gating" is written to disk, so a crash
+# mid-verify leaves a session sitting in CANDIDATE_REVIEW instead of stranded.
 ALLOWED = {
-    SessionState.GENERAL_DRAFT: {"run_general": SessionState.GENERAL_REVIEW},
-    SessionState.GENERAL_REVIEW: {
-        "approve_general": SessionState.SPECIFIC_REVIEW,
+    SessionState.GENERAL_DRAFT: {"run_general": SessionState.CANDIDATE_REVIEW},
+    SessionState.CANDIDATE_REVIEW: {
+        "verify_selected": SessionState.CANDIDATE_REVIEW,
+        "approve_selected": SessionState.PRODUCTION_GATES,
         "rerun_general": SessionState.GENERAL_DRAFT,
         "archive": SessionState.ARCHIVED,
     },
-    SessionState.SPECIFIC_REVIEW: {
-        "research_specific": SessionState.SPECIFIC_REVIEW,
-        "approve_specific": SessionState.PRODUCTION_GATES,
-        "back_general": SessionState.GENERAL_REVIEW,
-        "archive": SessionState.ARCHIVED,
+    SessionState.PRODUCTION_GATES: {
+        "back_to_candidates": SessionState.CANDIDATE_REVIEW,
     },
 }
+
+# Gating is IO-bound HTTP (one You.com search + one OpenRouter call each), so
+# threads are enough and verify_selected stays synchronous for bridge.run_blocking.
+_MAX_GATE_WORKERS = 5
+_UNSAFE_ARTIFACT_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class InvalidTransition(ValueError):
@@ -163,7 +171,7 @@ class ScoutWorkflow:
             f"general/plan.rev{session.revision}.v1.json",
             plan_record,
         )
-        session.state = SessionState.GENERAL_REVIEW
+        session.state = SessionState.CANDIDATE_REVIEW
         detail: dict[str, Any] = {
             "prompt_hash": prompt_hash,
             "source_api": getattr(raw, "api", "research"),
@@ -177,82 +185,125 @@ class ScoutWorkflow:
             )
         return self.store.save(session, event="general_research_completed", detail=detail)
 
-    def approve_general(self, session_id: str, candidate_id: str) -> ResearchSession:
-        session = self._load_and_transition(session_id, "approve_general")
-        if not isinstance(candidate_id, str) or not candidate_id.strip():
-            raise ValueError("candidate_id must be a non-empty string")
-        session.selected_general_candidate_id = candidate_id
-        session.state = SessionState.SPECIFIC_REVIEW
-        return self.store.save(
-            session,
-            event="general_candidate_approved",
-            detail={"candidate_id": candidate_id},
-        )
-
-    def research_specific(self, session_id: str, feedback: str = "") -> ResearchSession:
-        session = self._load_and_transition(session_id, "research_specific")
-        if feedback:
-            # Append BEFORE rendering so this round's own feedback is already folded
-            # into _intent_with_feedback(session) below, not just future rounds'.
-            session.feedback_log.append(
-                FeedbackNote(state=SessionState.SPECIFIC_REVIEW.value, text=feedback)
-            )
-        bundle = self._bundle(session.mode)
-        candidate = self._selected_candidate(session)
-        query = json.dumps(candidate, ensure_ascii=False) if candidate else session.user_intent
-        raw = self.client.search(query, bundle.source_profiles.get("specific_web_search"))
-        raw_search_payload = _raw_payload(raw)
-        prompt = bundle.render(
-            "evidence_gate",
-            user_intent=_intent_with_feedback(session),
-            angle=self._angle(bundle, session.mode),
-            digest=self.digest,
-            candidate=json.dumps(candidate, ensure_ascii=False),
-            raw_evidence=json.dumps(raw_search_payload, ensure_ascii=False),
-        )
-        gate = openrouter_gate.review(
-            model=config.SCOUT_EVIDENCE_MODEL,
-            prompt=prompt.text,
-            candidate=candidate,
-            raw_search_payload=raw_search_payload,
-        )
-        self.store.write_artifact(session.id, "specific/search.v1.json", _raw_record(raw))
-        self.store.write_artifact(
-            session.id,
-            "specific/evidence_gate.v1.json",
-            gate.model_dump(mode="json"),
-        )
-        session.state = SessionState.SPECIFIC_REVIEW
-        detail = {
-            "model": config.SCOUT_EVIDENCE_MODEL,
-            "prompt_hash": prompt.sha256,
-            "verdict": gate.verdict,
-        }
-        if feedback:
-            detail["feedback"] = feedback
-        return self.store.save(session, event="specific_research_completed", detail=detail)
-
-    def decide_specific(
+    def verify_selected(
         self,
         session_id: str,
         candidate_ids: Sequence[str],
-        feedback: str = "",
+        *,
+        only: Sequence[str] | None = None,
+        on_result: Callable[[str, Any], None] | None = None,
     ) -> ResearchSession:
-        session = self._load_and_transition(session_id, "approve_specific")
-        ids = [candidate_id for candidate_id in candidate_ids if isinstance(candidate_id, str)]
-        if len(set(ids)) != len(ids):
-            raise ValueError("candidate_ids must not contain duplicates")
+        """Evidence-gate the ticked candidates in parallel and key the results by id.
+
+        ``candidate_ids`` is the whole current selection and becomes
+        ``session.selected_specific_candidate_ids``.  ``only`` narrows which of
+        them are actually re-gated, so a single failed card can be retried
+        without paying for the others again; gates for the rest are carried
+        over unchanged, and gates for candidates no longer selected are dropped.
+        That prune is not housekeeping: leaving a stale entry behind makes
+        ``len(gates) != len(selected_ids)``, which is precisely what makes
+        ``project_factory._gate_assignments`` give up and return all-``None``.
+
+        ``on_result(candidate_id, gate_or_exception)`` fires from a worker
+        thread as each branch finishes and exists for per-card progress only —
+        it must not write anything.  The artifact is written once, here, on the
+        calling thread, after every branch has settled, so a crash mid-verify
+        leaves the previous artifact whole rather than half-replaced.
+        """
+        session = self._load_and_transition(session_id, "verify_selected")
+        ids = self._clean_ids(candidate_ids)
+        targets = ids if only is None else [cid for cid in ids if cid in set(self._clean_ids(only))]
+
+        bundle = self._bundle(session.mode)
+        # Both of these walk the store, so resolve them before any worker starts.
+        angle = self._angle(bundle, session.mode)
+        candidates = self._candidates_by_id(session)
+        intent = _intent_with_feedback(session)
+
+        gates: dict[str, Any] = {}
+        searches: dict[str, dict[str, Any]] = {}
+        prompt_hashes: dict[str, str] = {}
+        failures: dict[str, Exception] = {}
+        if targets:
+            with ThreadPoolExecutor(max_workers=min(_MAX_GATE_WORKERS, len(targets))) as pool:
+                futures = {
+                    pool.submit(
+                        self._gate_one,
+                        bundle,
+                        angle,
+                        intent,
+                        candidates.get(candidate_id, {"id": candidate_id, "summary": intent}),
+                    ): candidate_id
+                    for candidate_id in targets
+                }
+                for future in as_completed(futures):
+                    candidate_id = futures[future]
+                    try:
+                        gate, raw_record, prompt_hash = future.result()
+                    except Exception as exc:  # one branch failing must not abort the rest
+                        failures[candidate_id] = exc
+                        outcome: Any = exc
+                    else:
+                        gates[candidate_id] = gate
+                        searches[candidate_id] = raw_record
+                        prompt_hashes[candidate_id] = prompt_hash
+                        outcome = gate
+                    if on_result is not None:
+                        on_result(candidate_id, outcome)
+
+        for candidate_id, raw_record in searches.items():
+            self.store.write_artifact(
+                session.id, f"specific/search.{_artifact_key(candidate_id)}.v1.json", raw_record
+            )
+
+        previous = self._existing_gates(session.id)
+        merged: list[dict[str, Any]] = []
+        for candidate_id in ids:
+            if candidate_id in gates:
+                # candidate_id goes on LAST: the model is never trusted to echo
+                # back the id of the candidate it was handed.
+                merged.append(
+                    {**gates[candidate_id].model_dump(mode="json"), "candidate_id": candidate_id}
+                )
+            elif candidate_id in previous:
+                merged.append(previous[candidate_id])
+        self.store.write_artifact(
+            session.id, "specific/evidence_gate.v1.json", {"gates": merged}
+        )
+
+        session.selected_specific_candidate_ids = ids
+        session.state = SessionState.CANDIDATE_REVIEW
+        return self.store.save(
+            session,
+            event="candidates_verified",
+            detail={
+                "model": config.SCOUT_EVIDENCE_MODEL,
+                "prompt_hashes": prompt_hashes,
+                "candidate_ids": ids,
+                "verified": sorted(gates),
+                "verdicts": {cid: gate.verdict for cid, gate in gates.items()},
+                "failed": {cid: str(exc) for cid, exc in failures.items()},
+            },
+        )
+
+    def approve_selected(self, session_id: str) -> ResearchSession:
+        """Lock the verified selection in. Overriding a soft gate is a decision
+        made at project-creation time, not here — see project_factory."""
+        session = self._load_and_transition(session_id, "approve_selected")
+        ids = session.selected_specific_candidate_ids
         if session.mode is ScoutMode.QA and not 3 <= len(ids) <= 5:
             raise ValueError("QA requires 3 to 5 selected candidates")
         if session.mode is ScoutMode.MICRO and len(ids) != 1:
             raise ValueError("MICRO requires exactly 1 selected candidate")
-        session.selected_specific_candidate_ids = ids
         session.state = SessionState.PRODUCTION_GATES
         return self.store.save(
-            session,
-            event="specific_candidates_decided",
-            detail={"candidate_ids": ids, "feedback": feedback},
+            session, event="selection_approved", detail={"candidate_ids": list(ids)}
         )
+
+    def back_to_candidates(self, session_id: str) -> ResearchSession:
+        session = self._load_and_transition(session_id, "back_to_candidates")
+        session.state = SessionState.CANDIDATE_REVIEW
+        return self.store.save(session, event="returned_to_candidate_review")
 
     def archive(self, session_id: str, reason: str) -> ResearchSession:
         session = self._load_and_transition(session_id, "archive")
@@ -264,20 +315,15 @@ class ScoutWorkflow:
     def rerun_general(self, session_id: str, feedback: str = "") -> ResearchSession:
         session = self._load_and_transition(session_id, "rerun_general")
         if feedback:
-            # Literal GENERAL_REVIEW, not session.state: _load_and_transition already
-            # advanced session.state to GENERAL_DRAFT above.
+            # Literal CANDIDATE_REVIEW, not session.state: _load_and_transition
+            # already advanced session.state to GENERAL_DRAFT above.
             session.feedback_log.append(
-                FeedbackNote(state=SessionState.GENERAL_REVIEW.value, text=feedback)
+                FeedbackNote(state=SessionState.CANDIDATE_REVIEW.value, text=feedback)
             )
         session.revision += 1
         session.state = SessionState.GENERAL_DRAFT
         detail = {"feedback": feedback} if feedback else None
         return self.store.save(session, event="general_research_rerun", detail=detail)
-
-    def back_general(self, session_id: str) -> ResearchSession:
-        session = self._load_and_transition(session_id, "back_general")
-        session.state = SessionState.GENERAL_REVIEW
-        return self.store.save(session, event="returned_to_general_review")
 
     def _load_and_transition(self, session_id: str, action: str) -> ResearchSession:
         session = self.store.load(session_id)
@@ -378,18 +424,79 @@ class ScoutWorkflow:
             return ""
         return str(angles[self._mode_session_count(mode) % len(angles)])
 
-    def _selected_candidate(self, session: ResearchSession) -> dict[str, Any]:
-        selected_id = session.selected_general_candidate_id
-        if not selected_id:
-            return {"id": "", "summary": session.user_intent}
+    @staticmethod
+    def _clean_ids(candidate_ids: Sequence[str]) -> list[str]:
+        ids = [cid.strip() for cid in candidate_ids if isinstance(cid, str) and cid.strip()]
+        if len(ids) != len(list(candidate_ids)):
+            raise ValueError("candidate ids must be non-empty strings")
+        if len(set(ids)) != len(ids):
+            raise ValueError("candidate ids must not contain duplicates")
+        return ids
+
+    def _candidates_by_id(self, session: ResearchSession) -> dict[str, dict[str, Any]]:
         path = self.store.artifact_path(session.id, "general/candidates.v1.json")
         if not path.exists():
-            return {"id": selected_id, "summary": session.user_intent}
+            return {}
         data = json.loads(path.read_text(encoding="utf-8"))
-        for candidate in data.get("candidates", []):
-            if isinstance(candidate, Mapping) and candidate.get("id") == selected_id:
-                return dict(candidate)
-        return {"id": selected_id, "summary": session.user_intent}
+        return {
+            str(candidate["id"]): dict(candidate)
+            for candidate in data.get("candidates", [])
+            if isinstance(candidate, Mapping) and candidate.get("id")
+        }
+
+    def _existing_gates(self, session_id: str) -> dict[str, dict[str, Any]]:
+        """Already-written gates, keyed by candidate id, for the merge."""
+        path = self.store.artifact_path(session_id, "specific/evidence_gate.v1.json")
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            return {}
+        raw = data.get("gates") if isinstance(data, Mapping) else data
+        if not isinstance(raw, list):
+            return {}
+        return {
+            str(gate["candidate_id"]): dict(gate)
+            for gate in raw
+            if isinstance(gate, Mapping) and gate.get("candidate_id")
+        }
+
+    def _gate_one(
+        self,
+        bundle: PolicyBundle,
+        angle: str,
+        intent: str,
+        candidate: dict[str, Any],
+    ) -> tuple[Any, dict[str, Any], str]:
+        """One candidate's search + evidence gate. Runs on a worker thread and
+        touches no session state — the caller owns every write."""
+        raw = self.client.search(
+            json.dumps(candidate, ensure_ascii=False),
+            bundle.source_profiles.get("specific_web_search"),
+        )
+        raw_search_payload = _raw_payload(raw)
+        prompt = bundle.render(
+            "evidence_gate",
+            user_intent=intent,
+            angle=angle,
+            digest=self.digest,
+            candidate=json.dumps(candidate, ensure_ascii=False),
+            raw_evidence=json.dumps(raw_search_payload, ensure_ascii=False),
+        )
+        gate = openrouter_gate.review(
+            model=config.SCOUT_EVIDENCE_MODEL,
+            prompt=prompt.text,
+            candidate=candidate,
+            raw_search_payload=raw_search_payload,
+        )
+        return gate, _raw_record(raw), prompt.sha256
+
+
+def _artifact_key(candidate_id: str) -> str:
+    """A candidate id is model-supplied text, so keep it to characters that are
+    safe in a filename before it becomes one."""
+    return _UNSAFE_ARTIFACT_CHARS.sub("_", candidate_id) or "candidate"
 
 
 def _raw_payload(raw: Any) -> Any:
