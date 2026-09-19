@@ -300,3 +300,21 @@ def test_the_failure_message_names_the_candidate_its_issue_and_the_gates_reason(
     assert "cited URLs not present in raw evidence" in message
     # The two healthy candidates have nothing to say and must not be listed.
     assert "\na (" not in message and "\nc (" not in message
+
+
+def test_a_legacy_bare_gate_object_still_works_for_micro(tmp_path, monkeypatch):
+    """Micro only ever selects one candidate, so the pre-collection artifact shape
+    is unambiguous for it and sessions written before the collapse must still be
+    able to finish rather than be stranded one click from a project."""
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _candidate("micro", mode=ScoutMode.MICRO)
+    session = _session(tmp_path, ScoutMode.MICRO, [candidate], [_gate("micro")])
+    store = SessionStore(tmp_path / "research-sessions")
+    store.write_artifact(
+        session.id,
+        "specific/evidence_gate.v1.json",
+        {"verdict": "confirmed", "reason": "Backed.", "evidence_urls": [],
+         "reader_url": None, "flags": []},
+    )
+
+    assert factory.create_project_from_session(session.id, "thor-hammer") == "thor-hammer"

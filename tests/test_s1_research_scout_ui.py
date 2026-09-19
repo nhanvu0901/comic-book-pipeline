@@ -587,3 +587,103 @@ def test_cancelling_the_session_delete_dialog_leaves_the_session_on_disk(tmp_pat
     cancel.on_click(object())
 
     assert store.session_dir(session.id).exists()
+
+
+# ─── Per-card verification progress ─────────────────────────────────────────
+
+def _review_session(tmp_path, ids=("a", "b", "c")):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-progress",
+        mode=ScoutMode.QA,
+        user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=list(ids),
+    )
+    store.save(session)
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": c, "title": c.upper()} for c in ids]},
+    )
+    return session
+
+
+def _click(controls, key):
+    next(n for n in _walk(controls) if getattr(n, "key", None) == key).on_click(object())
+
+
+def test_verifying_shows_a_spinner_on_each_card_still_in_flight(tmp_path, monkeypatch):
+    session = _review_session(tmp_path)
+    captured = {}
+
+    def fake_verify(session_id, candidate_ids, *, only=None, on_result=None):
+        captured["on_result"] = on_result
+        raise AssertionError("not run in this test")
+
+    monkeypatch.setattr(s1_research_scout, "verify_scout_selection", fake_verify)
+    _page, controls = _build(tmp_path, session)
+
+    _click(controls, "verify-selected")
+
+    rings = [n for n in _walk(controls) if isinstance(n, ft.ProgressRing)]
+    assert rings, "a verify in flight must show progress on the cards"
+
+
+def test_a_card_that_lands_stops_spinning_before_the_others_do(tmp_path, monkeypatch):
+    """on_result fires per candidate from a worker thread. It is what makes the
+    progress per-CARD rather than one spinner for the whole batch."""
+    session = _review_session(tmp_path)
+    holder = {}
+
+    def fake_verify(session_id, candidate_ids, *, only=None, on_result=None):
+        holder["on_result"] = on_result
+        on_result("a", object())
+        return SessionStore(tmp_path / "research_sessions").load(session_id)
+
+    monkeypatch.setattr(s1_research_scout, "verify_scout_selection", fake_verify)
+    page, controls = _build(tmp_path, session)
+
+    _click(controls, "verify-selected")
+    _run_recorded_task(page)
+
+    assert holder["on_result"] is not None, "the UI must pass on_result through"
+    assert not [n for n in _walk(controls) if isinstance(n, ft.ProgressRing)]
+
+
+def test_a_verify_that_raises_does_not_leave_the_cards_spinning_forever(tmp_path, monkeypatch):
+    session = _review_session(tmp_path)
+
+    def exploding_verify(session_id, candidate_ids, *, only=None, on_result=None):
+        raise RuntimeError("You.com is down")
+
+    monkeypatch.setattr(s1_research_scout, "verify_scout_selection", exploding_verify)
+    page, controls = _build(tmp_path, session)
+
+    _click(controls, "verify-selected")
+    _run_recorded_task(page)
+
+    assert not [n for n in _walk(controls) if isinstance(n, ft.ProgressRing)], (
+        "a failed verify must clear its progress, not strand the cards"
+    )
+    assert "You.com is down" in _text_content(controls)
+
+
+def test_re_verifying_one_card_sends_the_whole_selection_but_regates_only_that_one(
+    tmp_path, monkeypatch
+):
+    """The artifact must stay one-entry-per-selected-candidate, so the full tick
+    set goes in; `only` is what keeps the other four from being paid for again."""
+    session = _review_session(tmp_path)
+    calls = []
+
+    def fake_verify(session_id, candidate_ids, *, only=None, on_result=None):
+        calls.append((list(candidate_ids), list(only) if only is not None else None))
+        return SessionStore(tmp_path / "research_sessions").load(session_id)
+
+    monkeypatch.setattr(s1_research_scout, "verify_scout_selection", fake_verify)
+    page, controls = _build(tmp_path, session)
+
+    _click(controls, "reverify-b")
+    _run_recorded_task(page)
+
+    assert calls == [(["a", "b", "c"], ["b"])]

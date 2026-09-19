@@ -715,17 +715,32 @@ def build(
         verifying.clear()
         verifying.update(candidate_ids if only is None else only)
 
+        async def _redraw() -> None:
+            _apply_render()
+            page.update()
+
+        def _landed(candidate_id, _outcome) -> None:
+            """Fires from one of verify_selected's worker threads as that branch
+            finishes. Display only — it drops the card's spinner and asks the page
+            to redraw, and deliberately writes nothing: the gate artifact is the
+            workflow's to write, once, after every branch has settled."""
+            verifying.discard(candidate_id)
+            try:
+                page.run_task(_redraw)
+            except Exception:
+                pass
+
         def _work():
-            # on_result fires from verify_selected's worker threads. It is for
-            # per-card progress only and must not touch the store; the artifact
-            # is written once by the workflow after every branch settles.
-            return verify_scout_selection(session.id, candidate_ids, only=only)
+            try:
+                return verify_scout_selection(
+                    session.id, candidate_ids, only=only, on_result=_landed,
+                )
+            finally:
+                # Whichever way it ends — including an exception _run_busy will
+                # turn into an error bubble — no card may be left spinning.
+                verifying.clear()
 
-        def _done(result) -> None:
-            verifying.clear()
-            _apply_session_and_render(result)
-
-        _run_busy(label, _work, on_success=_done)
+        _run_busy(label, _work, on_success=_apply_session_and_render)
 
     def _verify_click(_e) -> None:
         session = session_holder[0]
