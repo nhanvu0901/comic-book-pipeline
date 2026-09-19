@@ -614,7 +614,7 @@ def test_a_reroll_that_finds_nothing_new_keeps_the_previous_batch(tmp_path, monk
     shown = _text_content(controls)
     assert "Who has lifted Mjolnir?" in shown
     assert "Whose healing factor failed?" in shown
-    assert "Không tìm được câu nào mới" in shown
+    assert "Nothing new came back" in shown
 
 
 def test_an_empty_send_with_a_batch_on_screen_spends_nothing_and_says_what_to_do(
@@ -635,7 +635,7 @@ def test_an_empty_send_with_a_batch_on_screen_spends_nothing_and_says_what_to_do
     assert len(calls) == 1  # no second research call
     shown = _text_content(controls)
     assert "Who has lifted Mjolnir?" in shown  # the batch is still the visible bubble
-    assert "Chọn một câu ở trên" in shown
+    assert "Pick one of the questions above" in shown
 
 
 def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(

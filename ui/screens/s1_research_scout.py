@@ -548,7 +548,7 @@ def build(
                         selectable=True, expand=True),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         lines: list[ft.Control] = [
-            ft.Text("Chọn một câu để nghiên cứu, hoặc tìm mẻ khác:",
+            ft.Text("Pick one to research, or look for a different batch:",
                     size=12, color=TEXT_MUTED),
             ft.RadioGroup(
                 key="discovered-questions",
@@ -560,15 +560,15 @@ def build(
         if discovered_note[0]:
             lines.append(ft.Text(discovered_note[0], size=11, color=WARN))
         reroll = secondary_button(
-            f"Không ưng câu nào — tìm {_DISCOVER_BATCH} câu khác", _reroll_click
+            f"None of these — find {_DISCOVER_BATCH} more", _reroll_click
         )
         reroll.key = "discovered-reroll"
         lines.append(ft.Row([
             reroll,
-            ft.Text("tốn 1 research call", size=10, color=TEXT_MUTED),
+            ft.Text("costs one research call", size=10, color=TEXT_MUTED),
         ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         lines.append(ft.Text(
-            "Câu đã chọn rơi vào ô nhập — sửa lại nếu muốn, rồi bấm Send để nghiên cứu.",
+            "The one you pick lands in the box — edit it if you like, then press Send to research it.",
             size=11, color=TEXT_MUTED,
         ))
         return _scout_bubble(ft.Column(lines, spacing=8))
@@ -714,14 +714,14 @@ def build(
             # leaves the batch already on screen exactly where it is.
             if not fresh or all(entry.get("fallback") for entry in fresh):
                 discovered_note[0] = (
-                    "Không tìm được câu nào mới — vẫn giữ mẻ câu ở trên."
+                    "Nothing new came back — keeping the batch above."
                 )
                 _render_full()
                 return
         elif not fresh:
             fresh = entries
         if not fresh:
-            _render_full(error="Không tìm được câu nào — hãy tự gõ câu hỏi vào ô nhập.")
+            _render_full(error="No question came back — type one into the box yourself.")
             return
         bank_shown[0] = False
         bank_suggestions_holder[0] = []
@@ -737,7 +737,7 @@ def build(
         to hand back a batch the user has just turned down."""
         excluded = list(discovered_offered)
         _run_busy(
-            f"Đang tìm {_DISCOVER_BATCH} câu…",
+            f"Finding {_DISCOVER_BATCH} questions…",
             lambda: discover_questions(mode, count=_DISCOVER_BATCH, exclude=excluded),
             on_success=_show_discovered,
         )
@@ -761,7 +761,7 @@ def build(
                 # bank bubble back behind it — say what to do and spend nothing.
                 if discovered_holder[0]:
                     _render_full(
-                        error="Chọn một câu ở trên, hoặc bấm nút tìm mẻ khác."
+                        error="Pick one of the questions above, or ask for a different batch."
                     )
                     return
                 # First empty Send: show Tier A (bank) suggestions for free and stop —
