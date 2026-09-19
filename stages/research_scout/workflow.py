@@ -151,7 +151,7 @@ class ScoutWorkflow:
             effort=config.YOUCOM_RESEARCH_EFFORT,
         )
         payload = _raw_payload(raw)
-        candidates = _extract_candidates(payload)
+        candidates = _extract_candidates(payload, prefix=_revision_prefix(session.revision))
         self.store.write_artifact(session.id, "general/research.v1.json", _raw_record(raw))
         self.store.write_artifact(
             session.id,
@@ -570,22 +570,42 @@ def _raw_record(raw: Any) -> dict[str, Any]:
     }
 
 
-def _extract_candidates(payload: Any) -> list[dict[str, Any]]:
+def _revision_prefix(revision: int) -> str:
+    """The id namespace one general-research round writes under.
+
+    Round 1 keeps the bare ``candidate-N`` ids every session already on disk
+    uses, so nothing has to be rewritten. Every later round gets its own
+    prefix: an id must name a comic, not a list position, or a gate written
+    for ``candidate-1`` in round 1 gets displayed against whatever lands at
+    position 1 in round 2.
+    """
+    return "" if revision <= 1 else f"r{revision}-"
+
+
+def _extract_candidates(payload: Any, *, prefix: str = "") -> list[dict[str, Any]]:
+    """Parse a research payload into candidates, giving each one an id.
+
+    ``prefix`` namespaces the generated ids and belongs to the caller, not to
+    the parser: only the general-research round has a revision to namespace
+    by. ``discover_questions`` parses its Tier B batch through here too, and
+    that batch is keyed by its ``question``/``moment`` text rather than by id,
+    so it stays on the bare default.
+    """
     if isinstance(payload, Mapping):
         for key in ("candidates", "output", "content"):
             value = payload.get(key)
-            extracted = _extract_candidates(value)
+            extracted = _extract_candidates(value, prefix=prefix)
             if extracted:
                 return extracted
         return []
     if isinstance(payload, list):
         candidates = [dict(item) for item in payload if isinstance(item, Mapping)]
         for index, candidate in enumerate(candidates, start=1):
-            candidate.setdefault("id", f"candidate-{index}")
+            candidate.setdefault("id", f"{prefix}candidate-{index}")
         return candidates
     if isinstance(payload, str):
         try:
-            return _extract_candidates(json.loads(payload))
+            return _extract_candidates(json.loads(payload), prefix=prefix)
         except (TypeError, ValueError):
             return []
     return []
