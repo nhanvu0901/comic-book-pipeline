@@ -355,3 +355,51 @@ def test_re_verifying_a_kept_candidate_on_purpose_still_reaches_the_model(
 
     gates = {g["candidate_id"]: g for g in _gates_on_disk(workflow, session.id)}
     assert gates["candidate-1"]["verdict"] == "rejected"
+
+
+# ─── Sessions written before any of this ────────────────────────────────────
+
+def _sessions_on_disk():
+    """The real research_sessions/ directory — sessions written long before
+    revision-namespaced ids existed, carrying bare `candidate-N` ids and, in the
+    oldest ones, no feedback_log or kept_candidate_ids key at all. Read-only."""
+    import config
+
+    root = config.RESEARCH_SESSIONS_ROOT
+    if not root.is_dir():
+        return []
+    return [d for d in sorted(root.iterdir()) if (d / "session.json").is_file()]
+
+
+def test_the_sessions_already_on_disk_still_load_and_their_ids_still_resolve():
+    directories = _sessions_on_disk()
+    if not directories:
+        pytest.skip("no real research sessions on this machine")
+
+    store = SessionStore(directories[0].parent)
+    # A client is never reached: _candidates_by_id only walks the store.
+    reader = ScoutWorkflow(store=store, client=object(), planner=lambda *a, **k: None)
+
+    checked = 0
+    for directory in directories:
+        session = store.load(directory.name)
+        # The new field is absent from every one of these files.
+        assert session.kept_candidate_ids == []
+
+        artifact = directory / "general" / "candidates.v1.json"
+        if not artifact.is_file():
+            continue
+        on_disk = [
+            candidate["id"]
+            for candidate in json.loads(artifact.read_text(encoding="utf-8"))["candidates"]
+        ]
+        if not on_disk:
+            continue
+        assert on_disk[0] == "candidate-1", "these predate the revision namespace"
+        # The lookup verify_selected and the gate machinery use has to keep
+        # resolving them: a bare candidate-N is still a first-round id.
+        resolved = reader._candidates_by_id(session)
+        assert set(on_disk) <= set(resolved)
+        checked += 1
+
+    assert checked, "no candidate artifact was actually exercised"
