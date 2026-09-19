@@ -221,6 +221,17 @@ def rerun_scout_general(session_id: str, feedback: str = ""):
     return workflow.run_general(session_id)
 
 
+def rescout_keeping_confirmed(session_id: str):
+    """Replace the candidates that did not hold up, keep the ones that did.
+
+    One bridge call per user action, like rerun_scout_general: the re-scout and
+    the research round it implies happen on the SAME workflow instance here, so
+    the UI never has to orchestrate the pair itself."""
+    workflow = _scout_workflow()
+    workflow.rescout_keeping_confirmed(session_id)
+    return workflow.run_general(session_id)
+
+
 def back_scout_candidates(session_id: str):
     return _scout_workflow().back_to_candidates(session_id)
 

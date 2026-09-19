@@ -861,3 +861,200 @@ def test_re_verifying_one_card_sends_the_whole_selection_but_regates_only_that_o
     _run_recorded_task(page)
 
     assert calls == [(["a", "b", "c"], ["b"])]
+
+
+# ─── Re-scout, keeping what is already confirmed ────────────────────────────
+# A verification round usually lands one confirmed and two that are not. This
+# button goes looking for replacements for the two while keeping the one — and
+# the gating already paid for it. It is hidden when there is nothing to keep,
+# because the plain feedback re-run already covers starting the round over.
+
+def _reviewed_session(tmp_path, *, session_id, candidates, gates, selected):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id=session_id,
+        mode=ScoutMode.QA,
+        user_intent="Who has beaten Superman in a fight?",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=list(selected),
+    )
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": candidates})
+    store.write_artifact(session.id, "specific/evidence_gate.v1.json", {"gates": gates})
+    return session
+
+
+def _gate(candidate_id, verdict):
+    return {"candidate_id": candidate_id, "verdict": verdict, "reason": f"{verdict}.",
+            "evidence_urls": [], "reader_url": "", "flags": []}
+
+
+def test_a_mixed_verification_offers_to_rescout_and_says_what_it_costs(tmp_path):
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-rescout-offer",
+        candidates=[{"id": c, "title": c.upper()} for c in "abc"],
+        gates=[_gate("a", "confirmed"), _gate("b", "inconclusive"), _gate("c", "rejected")],
+        selected=["a", "b", "c"],
+    )
+    _page, controls = _build(tmp_path, session)
+
+    button = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == "rescout-keep-confirmed"
+    )
+    assert "Re-scout, keep confirmed (1)" == _label(button)
+    assert "costs one research call" in _text_content(controls)
+
+
+def test_nothing_confirmed_means_nothing_to_keep_and_no_button(tmp_path):
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-rescout-hidden",
+        candidates=[{"id": c, "title": c.upper()} for c in "ab"],
+        gates=[_gate("a", "inconclusive"), _gate("b", "rejected")],
+        selected=["a", "b"],
+    )
+    _page, controls = _build(tmp_path, session)
+
+    assert not any(
+        getattr(node, "key", None) == "rescout-keep-confirmed" for node in _walk(controls)
+    )
+
+
+def test_an_unverified_round_offers_no_rescout(tmp_path):
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-rescout-unverified",
+        candidates=[{"id": c, "title": c.upper()} for c in "ab"],
+        gates=[],
+        selected=[],
+    )
+    _page, controls = _build(tmp_path, session)
+
+    assert not any(
+        getattr(node, "key", None) == "rescout-keep-confirmed" for node in _walk(controls)
+    )
+
+
+def test_clicking_rescout_asks_the_bridge_for_exactly_that_session(tmp_path, monkeypatch):
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-rescout-click",
+        candidates=[{"id": c, "title": c.upper()} for c in "abc"],
+        gates=[_gate("a", "confirmed"), _gate("b", "inconclusive"), _gate("c", "rejected")],
+        selected=["a", "b", "c"],
+    )
+    calls = []
+
+    def _fake_rescout(session_id):
+        calls.append(session_id)
+        return ResearchSession(
+            id=session_id,
+            mode=ScoutMode.QA,
+            user_intent=session.user_intent,
+            state=SessionState.CANDIDATE_REVIEW,
+            revision=2,
+            selected_specific_candidate_ids=["a"],
+        )
+
+    monkeypatch.setattr(s1_research_scout, "rescout_keeping_confirmed", _fake_rescout)
+    page, controls = _build(tmp_path, session)
+
+    _by_key(controls, "rescout-keep-confirmed").on_click(object())
+    _run_recorded_task(page)
+
+    assert calls == [session.id]
+
+
+def test_the_screen_stops_claiming_a_selection_the_session_no_longer_holds(
+    tmp_path, monkeypatch,
+):
+    """After a re-scout the selection is just the kept candidate. Leaving the
+    three ticks from the old round in the screen's own state would keep Approve
+    enabled over candidates that no longer exist."""
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-rescout-resync",
+        candidates=[{"id": c, "title": c.upper()} for c in "abc"],
+        gates=[_gate("a", "confirmed"), _gate("b", "inconclusive"), _gate("c", "rejected")],
+        selected=["a", "b", "c"],
+    )
+    store = SessionStore(tmp_path / "research_sessions")
+
+    def _fake_rescout(session_id):
+        store.write_artifact(
+            session_id, "general/candidates.v1.json",
+            {"candidates": [{"id": "a", "title": "A"},
+                            {"id": "r2-candidate-1", "title": "Fresh One"},
+                            {"id": "r2-candidate-2", "title": "Fresh Two"}]},
+        )
+        after = ResearchSession(
+            id=session_id, mode=ScoutMode.QA, user_intent=session.user_intent,
+            state=SessionState.CANDIDATE_REVIEW, revision=2,
+            selected_specific_candidate_ids=["a"],
+        )
+        return store.save(after)
+
+    monkeypatch.setattr(s1_research_scout, "rescout_keeping_confirmed", _fake_rescout)
+    page, controls = _build(tmp_path, session)
+
+    _by_key(controls, "rescout-keep-confirmed").on_click(object())
+    _run_recorded_task(page)
+
+    ticked = [cb.key for cb in _walk(controls) if isinstance(cb, ft.Checkbox) and cb.value]
+    assert ticked == ["select-a"]
+    assert _by_key(controls, "approve-selected").disabled is True
+
+
+def test_a_candidate_with_no_id_cannot_borrow_another_rounds_verdict(tmp_path):
+    """The screen's fallback id used to be `candidate-{index}` — the very shape
+    the workflow issues — so an id-less candidate sitting next to one carried
+    over from round 1 could be handed that round's confirmed gate."""
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-rescout-noid",
+        candidates=[
+            {"id": "candidate-1", "title": "Kept From Round One"},
+            {"title": "No Id At All"},
+        ],
+        gates=[_gate("candidate-1", "confirmed")],
+        selected=["candidate-1"],
+    )
+    _page, controls = _build(tmp_path, session)
+
+    cards = {
+        node.key: _text_content(node)
+        for node in _walk(controls)
+        if str(getattr(node, "key", "")).startswith("candidate-card-")
+    }
+    kept = cards.pop("candidate-card-candidate-1")
+    assert "CONFIRMED" in kept
+    (other,) = cards.values()
+    assert "No Id At All" in other
+    assert "CONFIRMED" not in other
+
+
+def test_the_transcript_records_the_rescout_rather_than_skipping_it(tmp_path):
+    """Every round, approval and verdict is a bubble rebuilt from disk. A
+    re-scout spends a research call and changes the selection, so a transcript
+    that stays silent about it is not the record it claims to be."""
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-rescout-transcript",
+        candidates=[{"id": "a", "title": "A"}],
+        gates=[_gate("a", "confirmed")],
+        selected=["a"],
+    )
+    store = SessionStore(tmp_path / "research_sessions")
+    store.append_audit(session.id, "session_created")
+    store.append_audit(
+        session.id, "rescout_keeping_confirmed",
+        detail={"kept": ["a"], "dropped": ["b", "c"]},
+    )
+
+    _page, controls = _build(tmp_path, session)
+    text = _text_content(controls)
+
+    assert "keeping 1 confirmed" in text
+    assert "replacing 2" in text

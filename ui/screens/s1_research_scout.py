@@ -38,6 +38,7 @@ from ..bridge import (
     load_scout_session,
     list_bank_suggestions,
     rerun_scout_general,
+    rescout_keeping_confirmed,
     run_blocking,
     run_scout_general,
     start_scout_session,
@@ -79,9 +80,19 @@ def _session_created_at(session_id: str) -> str:
     return ""
 
 
+# Every id the workflow issues is `candidate-{n}` or `r{revision}-candidate-{n}`,
+# so a stand-in for a candidate that carries none of its own must not be spelled
+# that way. It used to be `candidate-{index}` — which, once one list can hold
+# candidates from two rounds, is an id that already belongs to a real comic:
+# the card would then be handed that comic's verdict.
+_NO_ID_PREFIX = "unidentified-candidate-"
+
+
 def _candidate_id(candidate: dict, index: int) -> str:
     value = candidate.get("id")
-    return str(value).strip() if value is not None and str(value).strip() else f"candidate-{index}"
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    return f"{_NO_ID_PREFIX}{index}"
 
 
 def _candidate_gate(candidate_id: str, gates: list[dict]) -> dict:
@@ -105,6 +116,21 @@ def _verdict_badge(gate: dict) -> ft.Control:
         return ft.Text("NOT VERIFIED", size=11, color=TEXT_MUTED, weight=ft.FontWeight.BOLD)
     color = SUCCESS if verdict == "confirmed" else (WARN if verdict == "inconclusive" else DANGER)
     return ft.Text(f"{verdict.upper()}", size=11, color=color, weight=ft.FontWeight.BOLD)
+
+
+def _confirmed_selected(session: ResearchSession, gates: list[dict]) -> list[str]:
+    """The candidates a re-scout would hold on to.
+
+    Read off the session's persisted selection, not the live ticks, because
+    that is the list `rescout_keeping_confirmed` itself reads — so the count on
+    the button is the count the action delivers.
+    """
+    return [
+        candidate_id
+        for candidate_id in session.selected_specific_candidate_ids
+        if str(_candidate_gate(candidate_id, gates).get("verdict") or "").strip().lower()
+        == "confirmed"
+    ]
 
 
 def _needs_override(selected: set[str], gates: list[dict]) -> bool:
@@ -288,6 +314,15 @@ def _rerun_bubble(detail: dict) -> ft.Control:
     return _user_bubble(ft.Text(text, size=13, color=TEXT_PRIMARY, selectable=True))
 
 
+def _rescout_bubble(detail: dict) -> ft.Control:
+    kept = len(detail.get("kept") or [])
+    dropped = len(detail.get("dropped") or [])
+    return _user_bubble(ft.Text(
+        f"Re-scout — keeping {kept} confirmed, replacing {dropped}.",
+        size=13, color=TEXT_PRIMARY,
+    ))
+
+
 def _selection_approved_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
     ids = [str(candidate_id) for candidate_id in (detail.get("candidate_ids") or [])]
     titles = [_resolve_title(candidate_id, candidates) for candidate_id in ids]
@@ -456,6 +491,18 @@ def build(
         approve_button.key = "approve-selected"
 
         controls: list[ft.Control] = [*cards, verify_button]
+        kept = _confirmed_selected(session, gates)
+        if kept:
+            # Hidden until something is confirmed: with nothing to keep there is
+            # nothing this does that the plain feedback re-run does not already.
+            rescout = secondary_button(
+                f"Re-scout, keep confirmed ({len(kept)})", _rescout_click,
+            )
+            rescout.key = "rescout-keep-confirmed"
+            controls.append(ft.Row([
+                rescout,
+                ft.Text("costs one research call", size=10, color=TEXT_MUTED),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         if _needs_override(selected_specific, gates):
             controls.append(ft.Checkbox(
                 key="override-gates",
@@ -607,6 +654,8 @@ def build(
                 ))
             elif name == "general_research_rerun":
                 bubbles.append(_rerun_bubble(detail))
+            elif name == "rescout_keeping_confirmed":
+                bubbles.append(_rescout_bubble(detail))
             elif name == "candidates_verified":
                 bubbles.append(_verified_bubble(detail, candidates))
             elif name == "selection_approved":
@@ -636,6 +685,14 @@ def build(
 
     def _apply_session_and_render(result) -> None:
         session_holder[0] = result
+        # The session on disk owns the selection. A re-scout or a feedback
+        # re-run narrows it — to the kept candidates, or to nothing — and ticks
+        # left over from the round just replaced would keep Approve enabled over
+        # candidates that are no longer on screen.
+        ids = getattr(result, "selected_specific_candidate_ids", None)
+        if ids is not None:
+            selected_specific.clear()
+            selected_specific.update(ids)
         intent_field.value = ""
         _forget_suggestions()
         _render_full()
@@ -890,6 +947,14 @@ def build(
         if candidate_id not in selected_specific:
             return
         _verify(sorted(selected_specific), [candidate_id], "Re-checking evidence…")
+
+    def _rescout_click(_e) -> None:
+        session = session_holder[0]
+        if not session:
+            return
+        _run_busy(
+            "Researching… ~30s", lambda: rescout_keeping_confirmed(session.id),
+        )
 
     def _approve_selection_click(_e) -> None:
         session = session_holder[0]
