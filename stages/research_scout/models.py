@@ -51,6 +51,12 @@ class ResearchSession(BaseModel):
     # Absent from session.json files written before this field existed — the
     # default keeps those old sessions loading instead of failing validation.
     feedback_log: list[FeedbackNote] = Field(default_factory=list)
+    # Candidates the next general-research round must carry forward rather than
+    # replace, with the ids (and therefore the gates) they already have. Set by
+    # rescout_keeping_confirmed and spent — and cleared — by the run_general
+    # that follows it, so it is never read twice. Also absent from older
+    # session.json files; same default, same reason.
+    kept_candidate_ids: list[str] = Field(default_factory=list)
 
     @field_validator("state", mode="before")
     @classmethod

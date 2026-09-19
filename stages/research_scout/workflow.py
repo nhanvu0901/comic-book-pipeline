@@ -152,6 +152,16 @@ class ScoutWorkflow:
         )
         payload = _raw_payload(raw)
         candidates = _extract_candidates(payload, prefix=_revision_prefix(session.revision))
+        # Candidates held over from the previous round go in FRONT, under the ids
+        # their already-paid-for gates are keyed by. Read before the write below,
+        # which is what overwrites the list they come from. An id that no longer
+        # resolves is dropped rather than raising: a truncated or hand-edited
+        # artifact must not be able to take the whole round down.
+        if session.kept_candidate_ids:
+            previous = self._candidates_by_id(session)
+            kept = [previous[cid] for cid in session.kept_candidate_ids if cid in previous]
+            candidates = kept + candidates
+            session.kept_candidate_ids = []
         self.store.write_artifact(session.id, "general/research.v1.json", _raw_record(raw))
         self.store.write_artifact(
             session.id,

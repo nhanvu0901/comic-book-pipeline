@@ -141,3 +141,79 @@ def test_a_plain_rerun_drops_the_selection_and_the_gates(monkeypatch, workflow):
 
     assert reran.selected_specific_candidate_ids == []
     assert _gates_on_disk(workflow, session.id) == []
+
+
+# ─── 3. run_general honours the carry-over ──────────────────────────────────
+
+def _hand_off_to_a_new_round(workflow, session_id, kept_ids):
+    """Put a session where `rescout_keeping_confirmed` would leave it, without
+    depending on that action — this is run_general's half of the contract."""
+    session = workflow.store.load(session_id)
+    session.kept_candidate_ids = list(kept_ids)
+    session.selected_specific_candidate_ids = list(kept_ids)
+    session.revision += 1
+    session.state = SessionState.GENERAL_DRAFT
+    return workflow.store.save(session)
+
+
+def test_a_carried_over_candidate_keeps_its_id_and_leads_the_new_round(workflow):
+    """Rewriting the kept candidate's id into the new namespace would orphan the
+    gate that was already paid for, so it keeps the id its gate is keyed by and
+    is simply prepended to the round that replaces the rest."""
+    workflow.client = _FakeYouCom(rounds=[["Alpha", "Beta"], ["Delta", "Echo"]])
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    _hand_off_to_a_new_round(workflow, session.id, ["candidate-1"])
+
+    workflow.run_general(session.id)
+
+    path = workflow.store.artifact_path(session.id, "general/candidates.v1.json")
+    candidates = json.loads(path.read_text(encoding="utf-8"))["candidates"]
+    assert [c["id"] for c in candidates] == [
+        "candidate-1", "r2-candidate-1", "r2-candidate-2",
+    ]
+    # The kept entry is the round-1 candidate itself, not a same-id stand-in.
+    assert candidates[0]["title"] == "Alpha"
+    assert candidates[1]["title"] == "Delta"
+
+
+def test_the_carry_over_is_spent_once_and_not_again_next_round(workflow):
+    workflow.client = _FakeYouCom(rounds=[["Alpha", "Beta"], ["Delta"], ["Golf"]])
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    _hand_off_to_a_new_round(workflow, session.id, ["candidate-1"])
+    after = workflow.run_general(session.id)
+
+    assert after.kept_candidate_ids == []
+
+    workflow.rerun_general(session.id)
+    workflow.run_general(session.id)
+
+    assert _candidate_ids(workflow, session.id) == ["r3-candidate-1"]
+
+
+def test_the_revision_archive_records_the_merged_list_the_user_saw(workflow):
+    """`candidates.rev{N}.v1.json` is what the chat replays for a superseded
+    round, so it has to hold the list that was actually on screen — the kept
+    candidate included, not just the fresh half."""
+    workflow.client = _FakeYouCom(rounds=[["Alpha", "Beta"], ["Delta"]])
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    _hand_off_to_a_new_round(workflow, session.id, ["candidate-2"])
+    workflow.run_general(session.id)
+
+    assert _candidate_ids(
+        workflow, session.id, "general/candidates.rev2.v1.json"
+    ) == ["candidate-2", "r2-candidate-1"]
+
+
+def test_a_carry_over_id_that_no_longer_exists_is_simply_dropped(workflow):
+    """A hand-edited or truncated artifact must not take the round down with it."""
+    workflow.client = _FakeYouCom(rounds=[["Alpha"], ["Delta"]])
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    _hand_off_to_a_new_round(workflow, session.id, ["candidate-1", "ghost-99"])
+
+    workflow.run_general(session.id)
+
+    assert _candidate_ids(workflow, session.id) == ["candidate-1", "r2-candidate-1"]
