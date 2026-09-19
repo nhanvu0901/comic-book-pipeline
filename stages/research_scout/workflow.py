@@ -212,7 +212,11 @@ class ScoutWorkflow:
         """
         session = self._load_and_transition(session_id, "verify_selected")
         ids = self._clean_ids(candidate_ids)
-        targets = ids if only is None else [cid for cid in ids if cid in set(self._clean_ids(only))]
+        if only is None:
+            targets = list(ids)
+        else:
+            wanted = set(self._clean_ids(only))
+            targets = [cid for cid in ids if cid in wanted]
 
         bundle = self._bundle(session.mode)
         # Both of these walk the store, so resolve them before any worker starts.
@@ -249,7 +253,12 @@ class ScoutWorkflow:
                         prompt_hashes[candidate_id] = prompt_hash
                         outcome = gate
                     if on_result is not None:
-                        on_result(candidate_id, outcome)
+                        try:
+                            on_result(candidate_id, outcome)
+                        except Exception:
+                            # A display hook owned by the caller. Research that
+                            # has already been paid for must not be lost to it.
+                            pass
 
         for candidate_id, raw_record in searches.items():
             self.store.write_artifact(
@@ -426,8 +435,11 @@ class ScoutWorkflow:
 
     @staticmethod
     def _clean_ids(candidate_ids: Sequence[str]) -> list[str]:
-        ids = [cid.strip() for cid in candidate_ids if isinstance(cid, str) and cid.strip()]
-        if len(ids) != len(list(candidate_ids)):
+        # Materialise once: a generator would come back empty on a second pass
+        # and read as "every id was blank".
+        given = list(candidate_ids)
+        ids = [cid.strip() for cid in given if isinstance(cid, str) and cid.strip()]
+        if len(ids) != len(given):
             raise ValueError("candidate ids must be non-empty strings")
         if len(set(ids)) != len(ids):
             raise ValueError("candidate ids must not contain duplicates")

@@ -637,3 +637,32 @@ def test_verify_selected_rejects_duplicate_ids(mock_workflow):
 
     with pytest.raises(ValueError, match="duplicate"):
         mock_workflow.verify_selected(session.id, ["a", "a", "b"])
+
+
+def test_a_raising_progress_callback_cannot_lose_the_gates(monkeypatch, mock_workflow):
+    """on_result is a display hook owned by the UI. If it throws, the research
+    that was already paid for must still reach disk — losing five gated
+    candidates to a broken progress bar would be absurd."""
+    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", _confirmed)
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(session.id)
+
+    def _explode(_cid, _outcome):
+        raise RuntimeError("the progress bar is broken")
+
+    mock_workflow.verify_selected(session.id, ["a", "b", "c"], on_result=_explode)
+
+    assert [g["candidate_id"] for g in _gates_on_disk(mock_workflow, session.id)["gates"]] == [
+        "a", "b", "c",
+    ]
+
+
+def test_candidate_ids_may_be_any_sequence(mock_workflow):
+    """_clean_ids used to walk its argument twice, so a one-shot iterable came
+    back empty on the second pass and was rejected as malformed."""
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(session.id)
+
+    mock_workflow.verify_selected(session.id, (c for c in ["a", "b"]), only=[])
+
+    assert mock_workflow.store.load(session.id).selected_specific_candidate_ids == ["a", "b"]
