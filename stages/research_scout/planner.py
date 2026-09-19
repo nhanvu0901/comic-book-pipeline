@@ -150,15 +150,26 @@ _INVARIANT_RULES = (
     "in the summary."
 )
 
+# How many candidates a general research round is asked for. A target, not a
+# cap: the Research API rejects minItems/maxItems (probed 2026-08-21, see
+# compile_schema), so the only lever is the prompt. Raised from 10 to 20 on
+# 2026-09-19 — a round that comes back with five leaves nothing to fall back on
+# when verification rejects three of them.
+CANDIDATE_TARGET = 20
+
 _CARDINALITY_BLOCKS: dict[str, str] = {
     "exhaustive": (
         "Sweep EVERY retrieved source. Full, partial, assisted, and temporary "
-        "cases all count — state the difference in the summary. If the "
-        "sources support 10 candidates, return 10."
+        f"cases all count — state the difference in the summary. Return AT "
+        f"LEAST {CANDIDATE_TARGET} candidates: do not stop at the famous "
+        "answers, and do not stop early because the obvious ones are covered. "
+        f"If the sources genuinely support fewer than {CANDIDATE_TARGET}, "
+        "return every one you found and say so in notes."
     ),
     "options": (
         "Candidates are alternatives for the Master to choose from — propose "
-        "distinct options and favor variety over volume."
+        f"at least {CANDIDATE_TARGET} distinct options, favoring variety: no "
+        "two should be near-duplicates of each other."
     ),
     "pinpoint": (
         "The set is closed and named in the task — cover exactly that range, "

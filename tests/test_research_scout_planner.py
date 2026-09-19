@@ -138,7 +138,7 @@ def test_assemble_prompt_contains_unit_sentence_and_digest_at_end():
 
 @pytest.mark.parametrize("cardinality,expected_snippet", [
     ("exhaustive", "Sweep EVERY retrieved source"),
-    ("options", "propose distinct options"),
+    ("options", "distinct options"),
     ("pinpoint", "The set is closed and named in the task"),
 ])
 def test_assemble_prompt_cardinality_block(cardinality, expected_snippet):
@@ -288,3 +288,39 @@ def test_repair_prompt_names_the_rule_that_was_broken(monkeypatch):
     assert len(requests) == 2
     repair_text = requests[1]["messages"][1]["content"]
     assert "'summary' is reserved" in repair_text
+
+
+# ─── how many candidates a round is asked for ───────────────────────────────
+
+
+def test_both_research_routes_ask_for_the_same_number_of_candidates():
+    """The Research API rejects minItems/maxItems (compile_schema's docstring,
+    probed 2026-08-21), so the prompt is the only lever on how many candidates
+    a round comes back with. Planner path and fallback path must pull it from
+    one place, or raising the target silently only moves one of them."""
+    from stages.research_scout.models import ScoutMode
+    from stages.research_scout.policies import PolicyBundle
+
+    target = str(planner.CANDIDATE_TARGET)
+
+    planner_text = assemble_prompt(_plan(cardinality="exhaustive"), digest="none")
+    assert f"AT LEAST {target}" in planner_text
+
+    for mode in (ScoutMode.QA, ScoutMode.MICRO):
+        fallback = PolicyBundle.load(mode).render(
+            "general",
+            user_intent="Which heroes?",
+            angle="power failure",
+            count=target,
+            digest="none",
+        )
+        assert target in fallback.text, mode
+
+
+def test_the_options_cardinality_asks_for_volume_too():
+    """'Favor variety over volume' used to be the whole instruction, so an
+    options round could answer with three and be within its brief — leaving
+    nothing to fall back on once verification rejects one."""
+    text = assemble_prompt(_plan(cardinality="options"), digest="none")
+    assert str(planner.CANDIDATE_TARGET) in text
+    assert "variety" in text

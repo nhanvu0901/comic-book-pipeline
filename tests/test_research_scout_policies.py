@@ -12,6 +12,7 @@ def test_general_micro_template_is_external_and_records_hash():
         "general",
         user_intent="new Hulk moment",
         angle="power failure",
+        count="20",
         digest="none",
     )
     assert "new Hulk moment" in rendered.text
@@ -42,8 +43,12 @@ def test_render_rejects_unknown_template_and_extra_values():
 def test_mode_selects_distinct_general_and_specific_templates():
     qa = PolicyBundle.load(ScoutMode.QA)
     micro = PolicyBundle.load(ScoutMode.MICRO)
-    qa_general = qa.render("general", user_intent="Hulk", angle="immunity", digest="none")
-    micro_general = micro.render("general", user_intent="Hulk", angle="immunity", digest="none")
+    qa_general = qa.render(
+        "general", user_intent="Hulk", angle="immunity", count="20", digest="none",
+    )
+    micro_general = micro.render(
+        "general", user_intent="Hulk", angle="immunity", count="20", digest="none",
+    )
     assert qa_general.version == "general_qa.v2"
     assert micro_general.version == "general_micro.v1"
     assert qa_general.text != micro_general.text

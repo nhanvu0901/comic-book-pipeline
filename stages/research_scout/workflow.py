@@ -133,6 +133,9 @@ class ScoutWorkflow:
                 "general",
                 user_intent=_intent_with_feedback(session),
                 angle=self._angle(bundle, session.mode),
+                # Same target the planner path states in its cardinality block,
+                # so both routes ask a round for the same number of candidates.
+                count=str(planner_module.CANDIDATE_TARGET),
                 digest=self.digest,
             )
             prompt_text, prompt_hash = prompt.text, prompt.sha256
