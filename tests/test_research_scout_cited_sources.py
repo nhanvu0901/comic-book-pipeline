@@ -7,6 +7,7 @@ a failure that comes back as DATA. A gate worker that dies takes the whole
 candidate's verdict with it.
 """
 
+import json
 import threading
 import urllib.error
 
@@ -178,3 +179,54 @@ def test_fetch_cited_sources_of_an_uncited_candidate_is_empty(monkeypatch):
         lambda *a, **k: pytest.fail("nothing to fetch, so nothing may be opened"),
     )
     assert cs.fetch_cited_sources({"title": "no citations"}) == []
+
+
+# ─── How the two kinds of evidence are labelled for the gate ────────────────
+
+_SEARCH = {"results": {"web": [{"url": "https://reddit.com/r/comics/1"}]}}
+
+
+def test_raw_evidence_separates_what_we_read_from_what_we_searched():
+    evidence = cs.build_raw_evidence(
+        [
+            cs.FetchedSource(url="https://cbr.com/a", text="Shuri's scan shows necrosis."),
+            cs.FetchedSource(url="https://cbr.com/b", error="timeout"),
+        ],
+        _SEARCH,
+    )
+
+    assert "CITED SOURCES (fetched from the candidate's own citations)" in evidence
+    assert "SEARCH RESULTS" in evidence
+    assert evidence.index("CITED SOURCES") < evidence.index("SEARCH RESULTS")
+    assert json.dumps(_SEARCH, ensure_ascii=False) in evidence
+
+
+def test_a_fetched_source_is_labelled_with_its_url_and_length():
+    evidence = cs.build_raw_evidence(
+        [cs.FetchedSource(url="https://cbr.com/a", text="x" * 5800)], _SEARCH
+    )
+    assert "[1] https://cbr.com/a — fetched, 5,800 chars" in evidence
+    assert "x" * 5800 in evidence
+
+
+def test_a_source_we_could_not_read_says_so_and_carries_no_text():
+    evidence = cs.build_raw_evidence(
+        [
+            cs.FetchedSource(url="https://cbr.com/a", text="read this"),
+            cs.FetchedSource(url="https://cbr.com/b", error="timeout"),
+        ],
+        _SEARCH,
+    )
+
+    assert "[2] https://cbr.com/b — COULD NOT FETCH (timeout)" in evidence
+    # The distinction is the point of the change: a page we never opened must
+    # not read as a page that failed to support the claim.
+    assert "COULD NOT FETCH" not in evidence.split("[2]")[0]
+
+
+def test_a_candidate_that_cited_nothing_says_that_too():
+    evidence = cs.build_raw_evidence([], _SEARCH)
+    assert "CITED SOURCES" in evidence
+    assert "cited no URLs" in evidence
+    assert "COULD NOT FETCH" not in evidence
+    assert json.dumps(_SEARCH, ensure_ascii=False) in evidence

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import json
 import socket
 from typing import Any
 import urllib.error
@@ -36,6 +37,10 @@ FETCH_TIMEOUT = 10
 MAX_SOURCE_CHARS = 6000
 
 _CITATION_FIELDS = ("evidence_urls", "source_urls")
+_CITED_HEADING = "CITED SOURCES (fetched from the candidate's own citations)"
+_SEARCH_HEADING = "SEARCH RESULTS"
+_NO_CITATIONS = "(this candidate cited no URLs)"
+_FETCH_FAILED = "COULD NOT FETCH"
 
 
 @dataclass(frozen=True)
@@ -125,3 +130,28 @@ def _reason(exc: BaseException) -> str:
             return "timeout"
         return "URLError"
     return type(exc).__name__
+
+
+def build_raw_evidence(sources: list[FetchedSource], search_payload: Any) -> str:
+    """The gate's RAW EVIDENCE block: what we read, then what we searched.
+
+    Two labelled sections rather than one blob, because "we fetched the page
+    and it does not support this" and "we never managed to open the page" are
+    different findings. Collapsed into one they both come back `inconclusive`,
+    which is the state session f56a9bc0 got stuck in.
+    """
+
+    lines = [_CITED_HEADING]
+    if not sources:
+        lines.append(f"  {_NO_CITATIONS}")
+    for position, source in enumerate(sources, start=1):
+        if source.ok:
+            lines.append(f"  [{position}] {source.url} — fetched, {len(source.text):,} chars")
+            lines.extend(f"      {line}" for line in source.text.splitlines())
+        else:
+            reason = source.error or "unknown reason"
+            lines.append(f"  [{position}] {source.url} — {_FETCH_FAILED} ({reason})")
+    lines.append("")
+    lines.append(_SEARCH_HEADING)
+    lines.append(f"  {json.dumps(search_payload, ensure_ascii=False)}")
+    return "\n".join(lines)

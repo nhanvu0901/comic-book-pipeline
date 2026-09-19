@@ -73,7 +73,7 @@ def test_specific_and_evidence_templates_accept_their_declared_values():
         raw_evidence="source excerpt",
     )
     assert specific.version == "specific_qa.v1"
-    assert evidence.version == "evidence_gate.v1"
+    assert evidence.version == "evidence_gate.v2"
     assert "candidate-1" in specific.text
     assert "source excerpt" in evidence.text
 
@@ -100,3 +100,34 @@ def test_policy_bundle_does_not_mutate_loaded_json_assets():
     second = PolicyBundle.load(ScoutMode.QA)
     assert second.gates["qa_min_items"] == 3
     assert json.loads(json.dumps(second.gates)) == second.gates
+
+
+def test_evidence_gate_v2_keeps_v1s_placeholder_set():
+    """Both fetched-source sections go inside the existing raw_evidence value,
+    so _ALLOWED_PLACEHOLDERS needs no change and nothing that renders the gate
+    has to learn a new keyword."""
+    from stages.research_scout.policies import _PROMPTS_ROOT, _placeholders
+
+    v1 = _placeholders((_PROMPTS_ROOT / "evidence_gate.v1.md").read_text(encoding="utf-8"))
+    v2 = _placeholders((_PROMPTS_ROOT / "evidence_gate.v2.md").read_text(encoding="utf-8"))
+    assert v2 == v1 == {"user_intent", "angle", "digest", "candidate", "raw_evidence"}
+
+
+def test_evidence_gate_v2_tells_the_gate_what_an_unfetchable_source_means():
+    """A cited URL nobody could open is unverified, not contradicted. Letting
+    that produce `rejected` is the defect this version exists to close."""
+    bundle = PolicyBundle.load(ScoutMode.MICRO)
+    rendered = bundle.render(
+        "evidence_gate",
+        user_intent="Hulk",
+        angle="immunity",
+        digest="none",
+        candidate="candidate-1",
+        raw_evidence="source excerpt",
+    )
+    assert "COULD NOT FETCH" in rendered.text
+    assert "CITED SOURCES" in rendered.text
+    assert "SEARCH RESULTS" in rendered.text
+    lowered = rendered.text.lower()
+    assert "unverified, not contradicted" in lowered
+    assert "already fetched" in lowered

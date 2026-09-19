@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 import config
 
+from . import cited_sources
 from . import openrouter_gate
 from . import planner as planner_module
 from .models import FeedbackNote, ResearchSession, ScoutMode, SessionState
@@ -632,13 +633,16 @@ class ScoutWorkflow:
             bundle.source_profiles.get("specific_web_search"),
         )
         raw_search_payload = _raw_payload(raw)
+        # Sequentially, inside this one worker: verify_selected already runs the
+        # candidates in parallel and a pool nested here would multiply out.
+        fetched = cited_sources.fetch_cited_sources(candidate)
         prompt = bundle.render(
             "evidence_gate",
             user_intent=intent,
             angle=angle,
             digest=self.digest,
             candidate=json.dumps(candidate, ensure_ascii=False),
-            raw_evidence=json.dumps(raw_search_payload, ensure_ascii=False),
+            raw_evidence=cited_sources.build_raw_evidence(fetched, raw_search_payload),
         )
         gate = openrouter_gate.review(
             model=config.SCOUT_EVIDENCE_MODEL,

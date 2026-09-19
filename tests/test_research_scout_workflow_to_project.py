@@ -9,6 +9,7 @@ import json
 import pytest
 
 import stages.research_scout.project_factory as factory
+from stages.research_scout import cited_sources
 from stages.research_scout.models import EvidenceGate, ScoutMode
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.workflow import ScoutWorkflow
@@ -50,6 +51,17 @@ class _FakeYouCom:
             "error": None,
         })()
 
+@pytest.fixture(autouse=True)
+def _no_reader_network(monkeypatch):
+    """Gating now fetches the URLs a candidate cited. Nothing here is about that
+    retrieval, and no test may open a socket — so the reader call is closed off
+    and every citation comes back COULD NOT FETCH."""
+    monkeypatch.setattr(
+        cited_sources.urllib.request,
+        "urlopen",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network in tests")),
+    )
+    yield
 
 @pytest.fixture
 def wired(tmp_path, monkeypatch):

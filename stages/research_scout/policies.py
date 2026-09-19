@@ -41,8 +41,12 @@ _TEMPLATE_FILES = {
         ScoutMode.MICRO: "specific_micro.v1.md",
     },
     "evidence_gate": {
-        ScoutMode.QA: "evidence_gate.v1.md",
-        ScoutMode.MICRO: "evidence_gate.v1.md",
+        # v2: the candidate's own citations are fetched and quoted inline, so
+        # the gate is told which sources it actually holds and that one it
+        # could not open is unverified rather than contradicted. Same
+        # placeholder set as v1 — both new sections live inside raw_evidence.
+        ScoutMode.QA: "evidence_gate.v2.md",
+        ScoutMode.MICRO: "evidence_gate.v2.md",
     },
     "discover": {
         ScoutMode.QA: "discover_qa.v2.md",
