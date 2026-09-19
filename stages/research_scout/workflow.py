@@ -628,7 +628,7 @@ class ScoutWorkflow:
         """One candidate's search + evidence gate. Runs on a worker thread and
         touches no session state — the caller owns every write."""
         raw = self.client.search(
-            json.dumps(candidate, ensure_ascii=False),
+            candidate_search_query(candidate),
             bundle.source_profiles.get("specific_web_search"),
         )
         raw_search_payload = _raw_payload(raw)
@@ -647,6 +647,61 @@ class ScoutWorkflow:
             raw_search_payload=raw_search_payload,
         )
         return gate, _raw_record(raw), prompt.sha256
+
+
+# What the verification search is built from, in the order the words are worth
+# keeping. compact_search_query throws away everything past the 45th word, so
+# the fields that IDENTIFY the comic go first and the prose goes last —
+# `json.dumps(candidate)` used to be the whole query and the truncation landed
+# mid-brace, leaving the API a bag of punctuation to match on.
+_QUERY_FIELDS = (
+    "series_issue_year",
+    "character_or_thing",
+    "title",
+    "what_visibly_happens",
+    "summary",
+)
+# Structural JSON punctuation and quoting. Apostrophes stay: "Deadpool's" is a
+# word, `{"summary":` is not.
+_QUERY_NOISE = re.compile(r'[{}\[\]"\\<>|`\u201c\u201d]+')
+_QUERY_URL = re.compile(r"\bhttps?://\S+", re.IGNORECASE)
+
+
+def candidate_search_query(candidate: Any) -> str:
+    """The words to search for one candidate with — never a serialised dump.
+
+    The search API is matching text, so it is handed text: series, issue, year,
+    the character and what visibly happens, in that order. URLs are dropped —
+    the candidate's own citations are fetched directly (see
+    ``cited_sources``) rather than searched for as strings.
+    """
+
+    data = candidate if isinstance(candidate, Mapping) else {}
+    parts: list[str] = []
+    seen: set[str] = set()
+    for key in _QUERY_FIELDS:
+        text = _plain_words(data.get(key))
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        parts.append(text)
+    if parts:
+        return " ".join(parts)
+    # A candidate shaped like nothing we know still deserves a real query.
+    for value in data.values():
+        text = _plain_words(value)
+        if text and text.lower() not in seen:
+            seen.add(text.lower())
+            parts.append(text)
+    return " ".join(parts)
+
+
+def _plain_words(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = _QUERY_URL.sub(" ", value)
+    text = _QUERY_NOISE.sub(" ", text)
+    return " ".join(text.split())
 
 
 def _candidate_label(candidates: Mapping[str, Any], candidate_id: str) -> str:
