@@ -4,11 +4,11 @@ Before this, an empty research intent raised ValueError two layers up (here AND
 in the UI's own guard in ui/screens/s1_research_scout.py) — Master 2026-08-22
 wanted Stage 1 to do something useful instead. Tier A (a still-open
 qa_question_bank.md question, QA only, zero API cost) is preferred; Tier B
-(ScoutWorkflow.discover_question — spend one research call turning the next
-rotated angle into a real question, see tests/test_research_scout_discover_
-question.py for that method's own coverage) is the last resort when Tier A has
-nothing usable. A NON-empty intent must go through completely unchanged — the
-fallback only ever activates on a blank/whitespace-only box.
+(ScoutWorkflow.discover_questions — spend one research call turning the angles
+into real questions, see tests/test_research_scout_discover_questions.py for
+that method's own coverage) is the last resort when Tier A has nothing usable.
+A NON-empty intent must go through completely unchanged — the fallback only
+ever activates on a blank/whitespace-only box.
 """
 import pytest
 
@@ -23,9 +23,9 @@ class _NetworkTripwireYouCom:
     bridge._scout_workflow() builds its ScoutWorkflow with no client override, so
     without this stub it would construct a real stages.research_scout.workflow.
     YouComClient() — and config.load_dotenv() means YDC_API_KEY can be a LIVE key
-    in this process. Tier B (discover_question) now spends one client.research()
+    in this process. Tier B (discover_questions) now spends one client.research()
     call, so an unstubbed run here would silently hit the network. Raising forces
-    discover_question's mandatory fallback path, which returns the angle itself —
+    discover_questions' mandatory fallback path, which returns the angle itself —
     exactly the value every assertion below already expects."""
 
     def research(self, *args, **kwargs):
@@ -106,10 +106,10 @@ def test_second_empty_session_for_the_same_mode_advances_past_the_first_angle(
 
 
 def test_start_scout_session_no_longer_accepts_skip_bank(tmp_path, monkeypatch):
-    """The Stage 1 UI now discovers Tier B questions via bridge.discover_intent()
-    and lands them in the intent box for human review BEFORE any session exists
+    """The Stage 1 UI now discovers Tier B questions via bridge.discover_questions()
+    and offers them for human review BEFORE any session exists
     (Master 2026-08-28 — see ui/screens/s1_research_scout.py::_send_click and
-    bridge.discover_intent's docstring for why). That was the only caller of
+    bridge.discover_questions' docstring for why). That was the only caller of
     skip_bank, so the parameter is gone; start_scout_session("qa", "") must keep
     doing bank-then-discover for any programmatic (non-UI) caller, unchanged
     (see the Tier A/Tier B tests above), and must reject an unknown kwarg rather

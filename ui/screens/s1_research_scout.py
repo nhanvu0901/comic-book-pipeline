@@ -28,7 +28,7 @@ from ..bridge import (
     back_scout_candidates,
     create_scout_project,
     delete_scout_session,
-    discover_intent,
+    discover_questions,
     format_exception,
     list_scout_sessions,
     load_scout_audit,
@@ -315,6 +315,12 @@ def _verified_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
 def _archived_bubble(detail: dict) -> ft.Control:
     reason = str(detail.get("reason") or "")
     return _system_bubble(f"Session archived — {reason}" if reason else "Session archived.")
+
+
+def _discovered_text(entry: dict) -> str:
+    """The one human-readable line of a Tier B entry, whichever mode produced
+    it — QA discovers a `question`, Micro discovers a `moment`."""
+    return str(entry.get("question") or entry.get("moment") or "").strip()
 
 
 def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
@@ -643,12 +649,12 @@ def build(
                 bank_shown[0] = False
                 bank_suggestions_holder[0] = []
 
-                def _fill_discovered(question: str) -> None:
-                    intent_field.value = question
+                def _fill_discovered(batch: list[dict]) -> None:
+                    intent_field.value = _discovered_text(batch[0]) if batch else ""
                     _render_full()
 
                 _run_busy(
-                    "Finding a question…", lambda: discover_intent(mode),
+                    "Finding a question…", lambda: discover_questions(mode),
                     on_success=_fill_discovered,
                 )
                 return

@@ -17,7 +17,19 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PROMPTS_ROOT = _REPO_ROOT / "research_prompts"
 _POLICIES_ROOT = _REPO_ROOT / "research_policies"
 _ALLOWED_PLACEHOLDERS = frozenset(
-    {"user_intent", "angle", "digest", "candidate", "raw_evidence"}
+    {
+        "user_intent",
+        "angle",
+        # discover_*.v2.md asks for one question per angle in a single call, so
+        # it renders the WHOLE angle list plus how many to come back with —
+        # "angle" (singular, the rotated one) stays for every other template.
+        "angles",
+        "count",
+        "exclude",
+        "digest",
+        "candidate",
+        "raw_evidence",
+    }
 )
 _TEMPLATE_FILES = {
     "general": {
@@ -33,8 +45,8 @@ _TEMPLATE_FILES = {
         ScoutMode.MICRO: "evidence_gate.v1.md",
     },
     "discover": {
-        ScoutMode.QA: "discover_qa.v1.md",
-        ScoutMode.MICRO: "discover_micro.v1.md",
+        ScoutMode.QA: "discover_qa.v2.md",
+        ScoutMode.MICRO: "discover_micro.v2.md",
     },
 }
 

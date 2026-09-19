@@ -359,17 +359,33 @@ class ScoutWorkflow:
             self._policies[mode] = PolicyBundle.load(mode)
         return self._policies[mode]
 
-    def discover_question(self, mode: ScoutMode) -> str:
+    def discover_questions(
+        self, mode: ScoutMode, *, count: int = 5, exclude: Sequence[str] = ()
+    ) -> list[dict[str, Any]]:
         """Tier B of the Stage 1 empty-intent fallback (ui/bridge.py): spend ONE
-        research call turning the next rotated angle into a REAL question/moment
-        before handing it to the mode's normal machinery. general_qa.v2.md /
+        research call turning angles into REAL questions/moments before handing
+        anything to the mode's normal machinery. general_qa.v2.md /
         general_micro.v1.md ENUMERATE ANSWERS TO a question — a bare angle
         ("times a famous power or rule failed") is not a question, so feeding it
         straight in researched the wrong thing (Master 2026-08-28 bug find).
+
+        Returns up to ``count`` is_burned-filtered entries, each carrying the
+        mode's text field (``question`` for QA, ``moment`` for Micro) and the
+        ``angle`` it came from, so the chat can offer a labelled CHOICE with a
+        re-roll instead of one take-it-or-leave-it question. This used to return
+        the first survivor and throw the rest of the batch away, which is why
+        one research call only ever bought one question.
+
+        ``exclude`` is the questions already offered in this session: they go
+        into the prompt's EXCLUDE section AND into the burn filter, so a re-roll
+        cannot hand back the batch the user just turned down.
+
         Never raises: an empty intent box must always be able to start a
         session, even with You.com down, unauthenticated, or all-burned — every
-        one of those falls back to returning the angle itself, today's
-        pre-fix behavior."""
+        one of those falls back to a single entry holding the rotated angle
+        itself (today's pre-fix behavior), flagged ``fallback`` so a caller can
+        tell "here is a batch" from "we came back with nothing".
+        """
         from stages.youcom_scout import _DISCOVER_PROPS, _MICRO_PROPS, _schema, is_burned
 
         mode = ScoutMode(mode)
@@ -378,21 +394,50 @@ class ScoutWorkflow:
         field, props = (
             ("question", _DISCOVER_PROPS) if mode is ScoutMode.QA else ("moment", _MICRO_PROPS)
         )
-        prompt = bundle.render("discover", angle=angle, digest=self.digest)
+        angles = [str(a) for a in bundle.general_angles.get(mode.value, [])] or [angle]
+        fallback = [{field: angle, "angle": angle, "fallback": True}]
+
+        excluded = [str(item).strip() for item in exclude if str(item).strip()]
+        prompt = bundle.render(
+            "discover",
+            angles="\n".join(f"- {a}" for a in angles),
+            count=str(count),
+            exclude="\n".join(f"- {item}" for item in excluded) or "- (nothing yet)",
+            digest=self.digest,
+        )
         try:
             raw = self.client.research(
                 prompt.text,
-                _schema(props),
+                # The model labels each candidate with the angle it worked, so the
+                # chat can show an angle chip without guessing from list position.
+                _schema({**props, "angle": {"type": "string"}}),
                 bundle.source_profiles.get("general_research"),
                 effort=config.YOUCOM_RESEARCH_EFFORT,
             )
         except Exception:
-            return angle
-        for candidate in _extract_candidates(_raw_payload(raw)):
+            return fallback
+
+        # One digest for both jobs: the produced/banned lanes we always avoid,
+        # plus whatever this session has already shown. is_burned's loose token
+        # overlap is what stops a re-roll returning the same lane re-worded.
+        burn_digest = "\n".join(
+            [line for line in [self.digest] if line]
+            + [f"- {item}" for item in excluded]
+        )
+        picked: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for index, candidate in enumerate(_extract_candidates(_raw_payload(raw))):
             text = str(candidate.get(field, "")).strip()
-            if text and not is_burned(text, self.digest):
-                return text
-        return angle
+            if not text or text.casefold() in seen:
+                continue
+            if is_burned(text, burn_digest):
+                continue
+            seen.add(text.casefold())
+            labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
+            picked.append({**candidate, field: text, "angle": labelled})
+            if len(picked) >= count:
+                break
+        return picked or fallback
 
     def next_angle(self, mode: ScoutMode) -> str:
         """Public entry point for the Tier B empty-intent fallback (ui/bridge.py):

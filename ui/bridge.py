@@ -138,17 +138,26 @@ def start_scout_session(mode: str, user_intent: str):
         # next angle in research_policies/general_angles.v1.json when the bank
         # has nothing usable (Master 2026-08-28: a bare angle isn't a question,
         # so it must be turned into one before it reaches the general-research
-        # prompt — see ScoutWorkflow.discover_question), so a normal
+        # prompt — see ScoutWorkflow.discover_questions), so a normal
         # general-research round always has something to research instead of
         # erroring out. This stays the documented behaviour for any
         # programmatic (non-UI) caller — the Stage 1 UI itself no longer calls
-        # this with an empty intent; see discover_intent() below for why.
+        # this with an empty intent; see discover_questions() below for why.
+        # The batch's first entry is this caller's single question; the UI is
+        # the only place that gets to show the rest as a choice.
         suggestions = bank_suggestions_for_mode(scout_mode)
-        intent = suggestions[0]["question"] if suggestions else workflow.discover_question(scout_mode)
+        if suggestions:
+            intent = suggestions[0]["question"]
+        else:
+            batch = workflow.discover_questions(scout_mode, count=1)
+            field = "question" if scout_mode is ScoutMode.QA else "moment"
+            intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
     return workflow.start(scout_mode, intent)
 
 
-def discover_intent(mode: str) -> str:
+def discover_questions(
+    mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = ()
+) -> list[dict]:
     """Tier B on its own, WITHOUT starting a session — the human-review step
     that stages/youcom_scout.py::is_burned's docstring deliberately relies on.
     is_burned lets synonym re-skins of an already-REJECTED qa_question_bank.md
@@ -156,15 +165,21 @@ def discover_intent(mode: str) -> str:
     discover is the catch for those". A second empty Send used to pipe a
     freshly discovered question straight into start_scout_session +
     run_scout_general — spending a SECOND research call enumerating answers to
-    a dud lane before any human saw the question at all. This returns just the
-    discovered question/moment so the UI can drop it into the intent box for a
-    human to read, edit, or delete; pressing Send again then researches it
-    normally. Never writes to SessionStore — see
-    stages.research_scout.workflow.ScoutWorkflow.discover_question for the
+    a dud lane before any human saw the question at all. This returns the
+    discovered questions/moments so the UI can offer them as a CHOICE; picking
+    one only drops it in the intent box for a human to read, edit, or delete,
+    and pressing Send then researches it normally.
+
+    `exclude` is every question already offered in this chat, so a re-roll
+    costs one research call and comes back with a different batch. Never
+    writes to SessionStore — see
+    stages.research_scout.workflow.ScoutWorkflow.discover_questions for the
     session-free discovery itself."""
     from stages.research_scout.models import ScoutMode
 
-    return _scout_workflow().discover_question(ScoutMode(mode))
+    return _scout_workflow().discover_questions(
+        ScoutMode(mode), count=count, exclude=tuple(exclude)
+    )
 
 
 def list_bank_suggestions(mode: str) -> list[dict]:
