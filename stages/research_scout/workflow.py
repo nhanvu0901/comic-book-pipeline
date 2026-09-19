@@ -265,20 +265,7 @@ class ScoutWorkflow:
                 session.id, f"specific/search.{_artifact_key(candidate_id)}.v1.json", raw_record
             )
 
-        previous = self._existing_gates(session.id)
-        merged: list[dict[str, Any]] = []
-        for candidate_id in ids:
-            if candidate_id in gates:
-                # candidate_id goes on LAST: the model is never trusted to echo
-                # back the id of the candidate it was handed.
-                merged.append(
-                    {**gates[candidate_id].model_dump(mode="json"), "candidate_id": candidate_id}
-                )
-            elif candidate_id in previous:
-                merged.append(previous[candidate_id])
-        self.store.write_artifact(
-            session.id, "specific/evidence_gate.v1.json", {"gates": merged}
-        )
+        self._write_gates(session.id, ids, fresh=gates)
 
         session.selected_specific_candidate_ids = ids
         session.state = SessionState.CANDIDATE_REVIEW
@@ -329,6 +316,11 @@ class ScoutWorkflow:
             session.feedback_log.append(
                 FeedbackNote(state=SessionState.CANDIDATE_REVIEW.value, text=feedback)
             )
+        # A plain re-run starts the round over and keeps nothing. Leaving the
+        # selection and the gate artifact behind is what made a confirmed
+        # verdict from round 1 reappear against round 2's candidates.
+        session.selected_specific_candidate_ids = []
+        self._write_gates(session.id, [])
         session.revision += 1
         session.state = SessionState.GENERAL_DRAFT
         detail = {"feedback": feedback} if feedback else None
@@ -500,6 +492,41 @@ class ScoutWorkflow:
             for candidate in data.get("candidates", [])
             if isinstance(candidate, Mapping) and candidate.get("id")
         }
+
+    def _write_gates(
+        self,
+        session_id: str,
+        keep_ids: Sequence[str],
+        *,
+        fresh: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Rewrite the gate artifact as exactly one entry per id in ``keep_ids``.
+
+        A freshly produced gate wins; otherwise the one already on disk is
+        carried over unchanged, so re-gating one failed card does not cost the
+        others again. An id with neither is simply absent — and so is every id
+        NOT in ``keep_ids``. That prune is not housekeeping: a stale entry makes
+        ``len(gates) != len(selected_ids)``, which is exactly what makes
+        ``project_factory._gate_assignments`` give up and return all-``None``.
+        Every path that narrows what a session holds — a deselection, a
+        re-scout, a plain re-run that keeps nothing — prunes through here, so
+        there is one pruner rather than one per caller.
+        """
+        previous = self._existing_gates(session_id)
+        produced = fresh or {}
+        merged: list[dict[str, Any]] = []
+        for candidate_id in keep_ids:
+            if candidate_id in produced:
+                # candidate_id goes on LAST: the model is never trusted to echo
+                # back the id of the candidate it was handed.
+                merged.append(
+                    {**produced[candidate_id].model_dump(mode="json"), "candidate_id": candidate_id}
+                )
+            elif candidate_id in previous:
+                merged.append(previous[candidate_id])
+        self.store.write_artifact(
+            session_id, "specific/evidence_gate.v1.json", {"gates": merged}
+        )
 
     def _existing_gates(self, session_id: str) -> dict[str, dict[str, Any]]:
         """Already-written gates, keyed by candidate id, for the merge."""

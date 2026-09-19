@@ -108,3 +108,36 @@ def test_the_tier_b_discover_batch_stays_out_of_the_revision_namespace(workflow)
     batch = workflow.discover_questions(ScoutMode.QA, count=2)
 
     assert [entry["id"] for entry in batch] == ["candidate-1", "candidate-2"]
+
+
+# ─── 5. The live defect: a plain re-run must let go of the old round ────────
+
+def _gates_on_disk(workflow, session_id):
+    path = workflow.store.artifact_path(session_id, "specific/evidence_gate.v1.json")
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))["gates"]
+
+
+def test_a_plain_rerun_drops_the_selection_and_the_gates(monkeypatch, workflow):
+    """`rerun_general` bumped the revision and returned to GENERAL_DRAFT while
+    leaving `selected_specific_candidate_ids` and `specific/evidence_gate.v1.json`
+    untouched, so a confirmed gate from round 1 reattached itself to round 2.
+
+    Namespaced ids alone would only downgrade that from a wrong reference to a
+    dangling one. Letting go is what makes it correct: a plain re-run keeps
+    nothing, which is precisely what distinguishes it from the new action.
+    """
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: EvidenceGate(verdict="confirmed", reason="Backed."),
+    )
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    workflow.verify_selected(session.id, ["candidate-1", "candidate-2", "candidate-3"])
+    assert _gates_on_disk(workflow, session.id)
+
+    reran = workflow.rerun_general(session.id, "different villains please")
+
+    assert reran.selected_specific_candidate_ids == []
+    assert _gates_on_disk(workflow, session.id) == []
