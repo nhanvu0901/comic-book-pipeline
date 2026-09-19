@@ -403,3 +403,16 @@ def test_the_sessions_already_on_disk_still_load_and_their_ids_still_resolve():
         checked += 1
 
     assert checked, "no candidate artifact was actually exercised"
+
+
+def test_a_rerun_with_nothing_to_prune_writes_no_empty_gate_artifact(workflow):
+    """An empty `gates` list on disk reads as "we gated and found nothing". A
+    session that never verified anything has not, so it must not say so."""
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+
+    workflow.rerun_general(session.id, "try again")
+
+    assert not workflow.store.artifact_path(
+        session.id, "specific/evidence_gate.v1.json"
+    ).exists()

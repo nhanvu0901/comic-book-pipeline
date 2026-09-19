@@ -575,8 +575,14 @@ class ScoutWorkflow:
         re-scout, a plain re-run that keeps nothing — prunes through here, so
         there is one pruner rather than one per caller.
         """
-        previous = self._existing_gates(session_id)
+        path = self.store.artifact_path(session_id, "specific/evidence_gate.v1.json")
         produced = fresh or {}
+        if not keep_ids and not produced and not path.exists():
+            # Nothing was ever gated and nothing is being kept. An empty `gates`
+            # list reads as "we gated and found nothing", which is a different
+            # claim from "we never gated" — so say neither.
+            return
+        previous = self._existing_gates(session_id)
         merged: list[dict[str, Any]] = []
         for candidate_id in keep_ids:
             if candidate_id in produced:
