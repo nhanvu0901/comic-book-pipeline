@@ -304,15 +304,37 @@ class ScoutWorkflow:
             },
         )
 
-    def approve_selected(self, session_id: str) -> ResearchSession:
-        """Lock the verified selection in. Overriding a soft gate is a decision
-        made at project-creation time, not here — see project_factory."""
+    def approve_selected(
+        self, session_id: str, candidate_ids: Sequence[str] | None = None,
+    ) -> ResearchSession:
+        """Lock the selection in. Overriding a soft gate is a decision made at
+        project-creation time, not here — see project_factory.
+
+        ``candidate_ids`` is the selection as it stands in front of the user.
+        Ticking a box changes nothing on disk — only ``verify_selected`` writes
+        the list — so approving without it locks in whatever the last verify
+        happened to leave behind. Un-ticking two cards before approving kept
+        them; ticking three without verifying first approved nothing at all and
+        told the user to select three when they had.
+
+        Omitting it keeps the old read-from-disk behaviour for callers that
+        have not re-ticked anything.
+        """
         session = self._load_and_transition(session_id, "approve_selected")
-        ids = session.selected_specific_candidate_ids
+        ids = (
+            self._clean_ids(candidate_ids)
+            if candidate_ids is not None
+            else list(session.selected_specific_candidate_ids)
+        )
         if session.mode is ScoutMode.QA and not 3 <= len(ids) <= 5:
             raise ScoutUserError("QA requires 3 to 5 selected candidates")
         if session.mode is ScoutMode.MICRO and len(ids) != 1:
             raise ScoutUserError("MICRO requires exactly 1 selected candidate")
+        session.selected_specific_candidate_ids = ids
+        # A card un-ticked before approval must not leave its gate behind: a
+        # stale entry makes len(gates) != len(selected) and _gate_assignments
+        # gives up. Carried-over gates are reused, never re-bought.
+        self._write_gates(session_id, ids)
         session.state = SessionState.PRODUCTION_GATES
         return self.store.save(
             session, event="selection_approved", detail={"candidate_ids": list(ids)}
@@ -582,7 +604,7 @@ class ScoutWorkflow:
         """
         path = self.store.artifact_path(session_id, "specific/evidence_gate.v1.json")
         produced = fresh or {}
-        if not keep_ids and not produced and not path.exists():
+        if not produced and not path.exists():
             # Nothing was ever gated and nothing is being kept. An empty `gates`
             # list reads as "we gated and found nothing", which is a different
             # claim from "we never gated" — so say neither.

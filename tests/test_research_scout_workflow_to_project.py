@@ -155,6 +155,39 @@ def test_a_deselection_after_verifying_does_not_strand_the_factory(monkeypatch, 
     assert factory.evaluate_production_gates(approved) == {}
 
 
+def test_approve_uses_the_current_three_qa_selections_without_regating(monkeypatch, wired):
+    """The UI can un-tick two already-gated cards before approving.
+
+    Approval must persist those three current ids and drop the two keyed gates
+    that no longer belong to the project.  It must not pay to gate the three
+    retained cards a second time.
+    """
+    workflow, _built = wired
+    review_calls = []
+
+    def confirmed(**kwargs):
+        review_calls.append(kwargs["candidate"]["id"])
+        return _confirmed_gate()
+
+    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", confirmed)
+    session = workflow.start(ScoutMode.QA, "Which heroes did this?")
+    workflow.run_general(session.id)
+    all_ids = [f"candidate-{i}" for i in range(1, 6)]
+    selected = all_ids[:3]
+    workflow.verify_selected(session.id, all_ids)
+
+    approved = workflow.approve_selected(session.id, selected)
+
+    assert approved.selected_specific_candidate_ids == selected
+    assert approved.state.value == "production_gates"
+    gates = json.loads(
+        workflow.store.artifact_path(session.id, "specific/evidence_gate.v1.json").read_text()
+    )
+    assert [gate["candidate_id"] for gate in gates["gates"]] == selected
+    assert review_calls == all_ids
+    assert factory.evaluate_production_gates(approved) == {}
+
+
 def test_a_micro_session_the_workflow_produced_creates_a_project(monkeypatch, wired, tmp_path):
     workflow, _built = wired
     monkeypatch.setattr(

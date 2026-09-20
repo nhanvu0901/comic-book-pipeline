@@ -997,7 +997,12 @@ def build(
         session = session_holder[0]
         if not session or not _selection_count_valid(session.mode, selected_specific):
             return
-        _run_busy("Locking the selection in…", lambda: approve_scout_selection(session.id))
+        # The ticks own the approval, not whatever the last verify left on disk.
+        ids = sorted(selected_specific)
+        _run_busy(
+            "Locking the selection in…",
+            lambda: approve_scout_selection(session.id, ids),
+        )
 
     def _back_to_candidates_click(_e) -> None:
         session = session_holder[0]

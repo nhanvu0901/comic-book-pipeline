@@ -236,8 +236,8 @@ def back_scout_candidates(session_id: str):
     return _scout_workflow().back_to_candidates(session_id)
 
 
-def approve_scout_selection(session_id: str):
-    return _scout_workflow().approve_selected(session_id)
+def approve_scout_selection(session_id: str, candidate_ids=None):
+    return _scout_workflow().approve_selected(session_id, candidate_ids)
 
 
 def archive_scout_session(session_id: str, reason: str = "Research restarted"):

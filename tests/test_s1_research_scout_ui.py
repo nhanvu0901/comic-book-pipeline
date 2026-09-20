@@ -97,6 +97,39 @@ def test_approve_is_disabled_for_qa_with_two_selected_items(tmp_path):
     assert approve.disabled is True
 
 
+def test_approve_passes_the_three_current_ui_selections_to_the_workflow(tmp_path, monkeypatch):
+    """The current checkbox ticks, rather than stale disk state, own approval."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-current-selection", mode=ScoutMode.QA, user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+    )
+    store.save(session)
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": candidate_id, "title": candidate_id.upper()}
+                        for candidate_id in ("a", "b", "c")]},
+    )
+    captured = {}
+
+    def approve(session_id, candidate_ids=None):
+        captured["session_id"] = session_id
+        captured["candidate_ids"] = candidate_ids
+        updated = store.load(session_id)
+        updated.selected_specific_candidate_ids = list(candidate_ids or [])
+        updated.state = SessionState.PRODUCTION_GATES
+        return store.save(updated)
+
+    monkeypatch.setattr(s1_research_scout, "approve_scout_selection", approve)
+    page, controls = _build(tmp_path, session)
+    for candidate_id in ("a", "b", "c"):
+        _by_key(controls, f"select-{candidate_id}").on_change(_FakeEvent(True))
+    _by_key(controls, "approve-selected").on_click(object())
+    _run_recorded_task(page)
+
+    assert captured == {"session_id": session.id, "candidate_ids": ["a", "b", "c"]}
+
+
 def test_resume_lists_unfinished_session_without_creating_project(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = store.create(ScoutMode.MICRO, "Hulk")
