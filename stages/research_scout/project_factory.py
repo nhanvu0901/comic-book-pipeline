@@ -16,6 +16,7 @@ from stages.stage_1 import answer_research
 from stages.stage_1.storage import save_comic_context
 
 from .evidence import GateFlag
+from .errors import ScoutUserError
 from .models import ResearchSession, ScoutMode, SessionState
 from .storage import SessionStore
 
@@ -43,7 +44,9 @@ class _CandidateVerdict:
     model_flags: list[str]
 
 
-def evaluate_production_gates(session: ResearchSession) -> dict[str, list[GateFlag]]:
+def evaluate_production_gates(
+    session: ResearchSession, *, root: Path | None = None,
+) -> dict[str, list[GateFlag]]:
     """Return production flags per selected candidate, keyed by candidate id.
 
     Keyed rather than flat so a failure can name which of five candidates went
@@ -52,17 +55,38 @@ def evaluate_production_gates(session: ResearchSession) -> dict[str, list[GateFl
 
     return {
         report.candidate_id: report.flags
-        for report in _evaluate(session)
+        for report in _evaluate(session, root=root)
         if report.flags
     }
 
 
-def _evaluate(session: ResearchSession) -> list[_CandidateVerdict]:
+def can_override_production_gates(
+    session: ResearchSession, *, root: Path | None = None,
+) -> bool:
+    """Whether this session has only human-overridable production failures.
+
+    Reuse the factory's production evaluator so the UI cannot offer consent for
+    an artifact defect that project creation will always refuse.  A malformed or
+    missing artifact has no trustworthy verdict to override, so it stays hidden.
+    """
+    try:
+        flags_by_candidate = evaluate_production_gates(session, root=root)
+    except ScoutUserError:
+        return False
+    return bool(flags_by_candidate) and all(
+        not _NOT_OVERRIDABLE.intersection(flags)
+        for flags in flags_by_candidate.values()
+    )
+
+
+def _evaluate(
+    session: ResearchSession, *, root: Path | None = None,
+) -> list[_CandidateVerdict]:
     if not isinstance(session, ResearchSession):
         raise TypeError("session must be a ResearchSession")
     _validate_selection_count(session)
 
-    store = SessionStore(config.RESEARCH_SESSIONS_ROOT)
+    store = SessionStore(root if root is not None else config.RESEARCH_SESSIONS_ROOT)
     candidates = _candidate_by_id(store, session.id)
     assignments = _gate_assignments(session, _load_gates(store, session.id))
     selected_ids = session.selected_specific_candidate_ids
@@ -149,23 +173,23 @@ def create_project_from_session(
     store = SessionStore(config.RESEARCH_SESSIONS_ROOT)
     session = store.load(session_id)
     if session.created_project:
-        raise ValueError(
+        raise ScoutUserError(
             f"session {session.id!r} already created project {session.created_project!r}"
         )
     if session.state is not SessionState.PRODUCTION_GATES:
-        raise ValueError("session must be in PRODUCTION_GATES before project creation")
+        raise ScoutUserError("session must be in PRODUCTION_GATES before project creation")
     if not isinstance(project_slug, str) or not project_slug.strip():
-        raise ValueError("project_slug must be a non-empty string")
+        raise ScoutUserError("project_slug must be a non-empty string")
 
     _validate_selection_count(session)
     reports = [report for report in _evaluate(session) if report.flags]
     blocking = [r for r in reports if _NOT_OVERRIDABLE.intersection(r.flags)]
     if blocking:
-        raise ValueError(
+        raise ScoutUserError(
             "production gates failed:\n" + "\n".join(_describe(r) for r in blocking)
         )
     if reports and not override:
-        raise ValueError(
+        raise ScoutUserError(
             "production gates failed:\n"
             + "\n".join(_describe(r) for r in reports)
             + "\n(override to create the project anyway)"
@@ -205,9 +229,9 @@ def create_project_from_session(
 def _validate_selection_count(session: ResearchSession) -> None:
     count = len(session.selected_specific_candidate_ids)
     if session.mode is ScoutMode.QA and not 3 <= count <= 5:
-        raise ValueError("QA requires three to five selected candidates")
+        raise ScoutUserError("QA requires three to five selected candidates")
     if session.mode is ScoutMode.MICRO and count != 1:
-        raise ValueError("MICRO requires exactly one selected candidate")
+        raise ScoutUserError("MICRO requires exactly one selected candidate")
 
 
 def _candidate_by_id(store: SessionStore, session_id: str) -> dict[str, dict[str, Any]]:
@@ -250,9 +274,9 @@ def _read_artifact(store: SessionStore, session_id: str, name: str) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise ValueError(f"missing research artifact: {name}") from exc
+        raise ScoutUserError(f"missing research artifact: {name}") from exc
     except json.JSONDecodeError as exc:
-        raise ValueError(f"malformed research artifact: {name}") from exc
+        raise ScoutUserError(f"malformed research artifact: {name}") from exc
 
 
 def _gate_assignments(

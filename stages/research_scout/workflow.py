@@ -15,6 +15,7 @@ import config
 from . import cited_sources
 from . import openrouter_gate
 from . import planner as planner_module
+from .errors import ScoutUserError
 from .models import FeedbackNote, ResearchSession, ScoutMode, SessionState
 from .planner import ResearchPlan
 from .policies import PolicyBundle
@@ -96,7 +97,7 @@ _MAX_GATE_WORKERS = 5
 _UNSAFE_ARTIFACT_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-class InvalidTransition(ValueError):
+class InvalidTransition(ScoutUserError):
     """Raised when a workflow action is not allowed from the current state."""
 
 
@@ -309,9 +310,9 @@ class ScoutWorkflow:
         session = self._load_and_transition(session_id, "approve_selected")
         ids = session.selected_specific_candidate_ids
         if session.mode is ScoutMode.QA and not 3 <= len(ids) <= 5:
-            raise ValueError("QA requires 3 to 5 selected candidates")
+            raise ScoutUserError("QA requires 3 to 5 selected candidates")
         if session.mode is ScoutMode.MICRO and len(ids) != 1:
-            raise ValueError("MICRO requires exactly 1 selected candidate")
+            raise ScoutUserError("MICRO requires exactly 1 selected candidate")
         session.state = SessionState.PRODUCTION_GATES
         return self.store.save(
             session, event="selection_approved", detail={"candidate_ids": list(ids)}
@@ -325,7 +326,7 @@ class ScoutWorkflow:
     def archive(self, session_id: str, reason: str) -> ResearchSession:
         session = self._load_and_transition(session_id, "archive")
         if not isinstance(reason, str) or not reason.strip():
-            raise ValueError("archive reason must be a non-empty string")
+            raise ScoutUserError("archive reason must be a non-empty string")
         session.state = SessionState.ARCHIVED
         return self.store.save(session, event="session_archived", detail={"reason": reason})
 
@@ -366,7 +367,7 @@ class ScoutWorkflow:
         if not confirmed:
             # Nothing saved yet — _load_and_transition only moved the in-memory
             # copy — so the session stays exactly where the user left it.
-            raise ValueError(
+            raise ScoutUserError(
                 "nothing is confirmed, so there is nothing to keep; "
                 "re-run the research with feedback instead"
             )
@@ -544,9 +545,9 @@ class ScoutWorkflow:
         given = list(candidate_ids)
         ids = [cid.strip() for cid in given if isinstance(cid, str) and cid.strip()]
         if len(ids) != len(given):
-            raise ValueError("candidate ids must be non-empty strings")
+            raise ScoutUserError("candidate ids must be non-empty strings")
         if len(set(ids)) != len(ids):
-            raise ValueError("candidate ids must not contain duplicates")
+            raise ScoutUserError("candidate ids must not contain duplicates")
         return ids
 
     def _candidates_by_id(self, session: ResearchSession) -> dict[str, dict[str, Any]]:

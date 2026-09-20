@@ -19,6 +19,7 @@ from typing import Callable
 import flet as ft
 
 from config import RESEARCH_SESSIONS_ROOT
+from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.stage_1.storage import slugify
 
@@ -282,8 +283,11 @@ def _scout_bubble(content: ft.Control) -> ft.Control:
 
 def _system_bubble(text: str, *, danger: bool = False) -> ft.Control:
     return ft.Row([
-        ft.Text(text, size=11, color=DANGER if danger else TEXT_MUTED,
-                text_align=ft.TextAlign.CENTER),
+        ft.Container(
+            content=ft.Text(text, size=11, color=DANGER if danger else TEXT_MUTED,
+                            text_align=ft.TextAlign.LEFT),
+            width=_BUBBLE_WIDTH,
+        ),
     ], alignment=ft.MainAxisAlignment.CENTER)
 
 
@@ -406,6 +410,8 @@ def build(
     )
     busy = [False]
     slug_holder: list[ft.TextField | None] = [None]
+    slug_session_id = [""]
+    slug_value = [""]
     # Override is DECIDED here but APPLIED at creation time (project_factory), so
     # the tick has to survive the hop from candidate review to production gates.
     override_holder = [False]
@@ -426,6 +432,11 @@ def build(
     discovered_pick = [""]
     discovered_offered: list[str] = []
     discovered_note = [""]
+
+    def _reset_production_form() -> None:
+        slug_holder[0] = None
+        slug_session_id[0] = ""
+        slug_value[0] = ""
 
     def _forget_suggestions() -> None:
         bank_shown[0] = False
@@ -552,9 +563,14 @@ def build(
         ], spacing=6))
 
     def _production_gates_bubble(session: ResearchSession) -> ft.Control:
+        if slug_session_id[0] != session.id:
+            slug_session_id[0] = session.id
+            slug_value[0] = slugify(session.user_intent or "untitled_research")
+        elif slug_holder[0] is not None:
+            slug_value[0] = str(slug_holder[0].value or "")
         slug_field = ft.TextField(
             key="project-slug",
-            value=slugify(session.user_intent or "untitled_research"),
+            value=slug_value[0],
             label="Project name",
             width=230,
             border_color=BORDER,
@@ -570,10 +586,18 @@ def build(
             if override_holder[0]
             else "Selection locked in."
         )
-        return _scout_bubble(ft.Column([
+        controls: list[ft.Control] = [
             ft.Text(headline, size=13, color=TEXT_PRIMARY),
-            ft.Row([slug_field, create_button, back_button], spacing=10),
-        ], spacing=8))
+        ]
+        if can_override_production_gates(session, root=RESEARCH_SESSIONS_ROOT):
+            controls.append(ft.Checkbox(
+                key="override-gates",
+                label="I have read the verdicts above and want to continue anyway",
+                value=override_holder[0],
+                on_change=_override_changed,
+            ))
+        controls.append(ft.Row([slug_field, create_button, back_button], spacing=10))
+        return _scout_bubble(ft.Column(controls, spacing=8))
 
     def _run_general_bubble() -> ft.Control:
         button = primary_button("Run general research", _run_general_click, icon=ft.Icons.SEARCH)
@@ -710,6 +734,7 @@ def build(
         selected_specific.clear()
         verifying.clear()
         override_holder[0] = False
+        _reset_production_form()
         session_holder[0] = None
         intent_field.value = ""
         _forget_suggestions()
@@ -906,6 +931,8 @@ def build(
         _render_full()
 
     def _override_changed(event) -> None:
+        if busy[0]:
+            return
         override_holder[0] = bool(event.control.value)
         _render_full()
 
@@ -983,6 +1010,7 @@ def build(
         if not session:
             return
         slug_field = slug_holder[0]
+        slug_value[0] = str(slug_field.value or "") if slug_field else ""
         project_slug = (slug_field.value if slug_field else "").strip() or slugify(
             session.user_intent or ""
         )
@@ -1038,6 +1066,8 @@ def build(
             selected_specific.update(loaded.selected_specific_candidate_ids)
             verifying.clear()
             override_holder[0] = False
+            if slug_session_id[0] != loaded.id:
+                _reset_production_form()
             _apply_session_and_render(loaded)
 
         _run_busy("Loading session…", _work, on_success=_on_resumed)
@@ -1057,6 +1087,7 @@ def build(
                 selected_specific.clear()
                 verifying.clear()
                 override_holder[0] = False
+                _reset_production_form()
                 session_holder[0] = None
                 state.scout_session_id = ""
                 intent_field.value = ""
