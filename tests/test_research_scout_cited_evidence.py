@@ -10,11 +10,11 @@ import json
 
 import pytest
 
+import config
 from stages.research_scout import cited_sources
 from stages.research_scout.models import EvidenceGate, ScoutMode
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.workflow import ScoutWorkflow
-from stages.research_scout.youcom import compact_search_query
 
 
 _CANDIDATE = {
@@ -36,14 +36,42 @@ _CANDIDATE = {
 
 
 class _FakeYouCom:
-    """Records every verification query; returns one fixed search payload."""
+    """Both rounds are research calls now, so they are told apart by schema:
+    only the verification round asks for a `verdict` per item."""
 
     def __init__(self, candidates=None):
         self.candidates = candidates if candidates is not None else [dict(_CANDIDATE)]
-        self.queries: list[str] = []
-        self.search_response = {"results": {"web": [{"url": "https://example.test/a"}]}}
+        self.verify_prompts: list[str] = []
+        self.verify_efforts: list[str] = []
+        self.verify_response = {
+            "candidates": [{
+                "verdict": "CONFIRMED",
+                "verbatim_sentence": "Shuri's scan shows necrotic cells multiplying.",
+                "source_url": "https://example.test/a",
+                "second_source_url": "",
+                "volume_and_year": "Black Panther vs. Deadpool (2018)",
+                "comic_or_adaptation": "comic",
+                "single_issue_or_multi": "single",
+                "subject_main_in_issue": "main",
+                "reprint_check": "not a reprint",
+                "issue_year_matches_sources": "yes",
+            }],
+            "notes": "",
+        }
+
+    @staticmethod
+    def _is_verification(schema):
+        props = schema["properties"]["candidates"]["items"]["properties"]
+        return "verdict" in props
 
     def research(self, prompt, schema, profile, *, effort="standard"):
+        if self._is_verification(schema):
+            self.verify_prompts.append(prompt)
+            self.verify_efforts.append(effort)
+            self.seen_profile = profile
+            return type("RawCall", (), {
+                "api": "research", "payload": self.verify_response, "error": None,
+            })()
         payload = {
             "output": {
                 "content": {"candidates": self.candidates},
@@ -55,13 +83,6 @@ class _FakeYouCom:
             }
         }
         return type("RawCall", (), {"api": "research", "payload": payload, "error": None})()
-
-    def search(self, query, profile):
-        self.queries.append(query)
-        self.seen_profile = profile
-        return type(
-            "RawCall", (), {"api": "search", "payload": self.search_response, "error": None}
-        )()
 
 
 @pytest.fixture(autouse=True)
@@ -101,49 +122,31 @@ def _gate(monkeypatch, workflow, mode=ScoutMode.MICRO, intent="Deadpool healing 
     return seen
 
 
-# ─── 1. The query is words, not a JSON dump ─────────────────────────────────
+# ─── 1. The verification round asks about one candidate ─────────────────────
 
-def test_verification_query_is_plain_words_not_a_json_dump(monkeypatch, workflow):
+def test_the_verification_round_sends_the_candidate_not_a_keyword_query(monkeypatch, workflow):
+    """This used to be a keyword search truncated at 45 words, so the fields
+    that identify the comic had to be crammed in first or the API got a bag of
+    punctuation. A research round takes the whole candidate in a prompt."""
     _gate(monkeypatch, workflow)
-    query = workflow.client.queries[0]
+    prompt = workflow.client.verify_prompts[0]
 
-    assert "{" not in query and "}" not in query
-    assert '"' not in query
-    assert "evidence_urls" not in query
-    assert "https://" not in query
+    assert "Black Panther vs. Deadpool" in prompt
+    assert "#2" in prompt
+    assert "2018" in prompt
+    # One candidate, one verdict — never a second enumeration round. Both modes
+    # open the same way; the fixture happens to run Micro.
+    assert "Verify ONE proposed" in prompt
+    assert "NOT CONFIRMED" in prompt
 
 
-def test_verification_query_carries_the_series_issue_and_year(monkeypatch, workflow):
+def test_the_verification_round_runs_deep(monkeypatch, workflow):
+    """Confirming one item is the phase that earns the expensive pass — a
+    standard sweep is what returned forum chatter for a claim about an issue."""
     _gate(monkeypatch, workflow)
-    query = workflow.client.queries[0]
 
-    assert "Black Panther vs. Deadpool" in query
-    assert "#2" in query
-    assert "2018" in query
-    assert "Deadpool" in query
-
-
-def test_the_identifying_detail_survives_the_45_word_truncation(monkeypatch, tmp_path):
-    """compact_search_query keeps the first 45 words. Anything long in front of
-    the issue number is the whole defect, so the issue number goes first."""
-    long_candidate = dict(
-        _CANDIDATE,
-        summary="filler " * 200,
-        what_visibly_happens="padding " * 200,
-        title="a very long title " * 20,
-    )
-    flow = ScoutWorkflow(
-        store=SessionStore(tmp_path),
-        client=_FakeYouCom([long_candidate]),
-        planner=lambda *a, **k: None,
-    )
-    _gate(monkeypatch, flow)
-
-    sent = compact_search_query(flow.client.queries[0])
-    assert "Black Panther vs. Deadpool #2 (2018)" in sent
-    assert "Deadpool" in sent
-    assert len(sent.split()) <= 45
-    assert len(sent) <= 360
+    assert workflow.client.verify_efforts == [config.YOUCOM_VERIFY_EFFORT]
+    assert config.YOUCOM_VERIFY_EFFORT == "deep"
 
 
 # ─── 2. The cited sources reach the gate ────────────────────────────────────
@@ -184,7 +187,7 @@ def test_the_text_of_a_cited_page_reaches_the_gate_labelled_with_its_url(
     assert "The dying factor is named in issue 2." in prompt
 
 
-def test_the_search_payload_is_still_there_under_its_own_heading(monkeypatch, workflow):
+def test_the_verification_payload_is_there_under_its_own_heading(monkeypatch, workflow):
     _stub_fetcher(monkeypatch, {
         u: "Shuri's scan shows necrotic cells multiplying. page text"
         for u in _CANDIDATE["evidence_urls"]
@@ -192,13 +195,13 @@ def test_the_search_payload_is_still_there_under_its_own_heading(monkeypatch, wo
     seen = _gate(monkeypatch, workflow)
 
     prompt = seen["prompt"]
-    payload = json.dumps(workflow.client.search_response, ensure_ascii=False)
+    payload = json.dumps(workflow.client.verify_response, ensure_ascii=False)
     assert payload in prompt
-    # The payload sits under SEARCH RESULTS, after the fetched citations — not
-    # in one undifferentiated blob the way v1 handed it over.
-    assert prompt.index("[1] ") < prompt.index("SEARCH RESULTS\n  " + payload)
+    # It sits under VERIFICATION RESEARCH, after the fetched citations — not in
+    # one undifferentiated blob, and not mislabelled as a plain web search.
+    assert prompt.index("[1] ") < prompt.index("VERIFICATION RESEARCH\n  " + payload)
     # openrouter_gate still gets the payload itself, untouched.
-    assert seen["raw_search_payload"] == workflow.client.search_response
+    assert seen["raw_search_payload"] == workflow.client.verify_response
 
 
 def test_a_source_we_could_not_open_is_recorded_not_raised(monkeypatch, workflow):
@@ -257,7 +260,7 @@ def test_at_most_three_cited_urls_are_fetched_for_one_candidate(monkeypatch, tmp
     assert asked == ["https://cbr.com/0", "https://cbr.com/1", "https://cbr.com/2"]
 
 
-def test_legacy_candidate_without_citations_keeps_the_search_only_gate_path(
+def test_legacy_candidate_without_citations_keeps_the_research_only_gate_path(
     monkeypatch, tmp_path
 ):
     flow = ScoutWorkflow(
@@ -278,7 +281,7 @@ def test_legacy_candidate_without_citations_keeps_the_search_only_gate_path(
     flow._gate_one(flow._bundle(ScoutMode.MICRO), "", "", {"title": "legacy"})
 
     assert "cited no URLs" in seen["prompt"]
-    assert json.dumps(flow.client.search_response, ensure_ascii=False) in seen["prompt"]
+    assert json.dumps(flow.client.verify_response, ensure_ascii=False) in seen["prompt"]
 
 
 def test_new_bound_citation_with_unmatched_quote_is_inconclusive_without_model_call(

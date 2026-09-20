@@ -3,6 +3,7 @@ import urllib.error
 
 import pytest
 
+import config
 from stages.research_scout import cited_sources
 from stages.research_scout.models import EvidenceGate, ScoutMode, SessionState
 from stages.research_scout.planner import PlanField, ResearchPlan
@@ -35,16 +36,25 @@ class _FakeYouCom:
                 ],
             }
         }
-        self.search_response = {"results": {"web": [{"url": "https://example.test/a"}]}}
+        self.verify_response = {
+            "candidates": [{"verdict": "CONFIRMED", "verbatim_sentence": "Evidence sentence."}],
+            "notes": "",
+        }
+        self.verify_effort = None
 
     def research(self, prompt, schema, profile, *, effort="standard"):
+        # Both rounds are research calls; only verification asks for a verdict
+        # per item, and it must not clobber what the general round recorded.
+        if "verdict" in schema["properties"]["candidates"]["items"]["properties"]:
+            self.verify_effort = effort
+            self.verify_prompt = prompt
+            return type("RawCall", (), {
+                "api": "research", "payload": self.verify_response, "error": None,
+            })()
         self.seen_schema = schema
         self.seen_effort = effort
         self.seen_prompt = prompt
         return type("RawCall", (), {"api": "research", "payload": self.general_response, "error": None})()
-
-    def search(self, query, profile):
-        return type("RawCall", (), {"api": "search", "payload": self.search_response, "error": None})()
 
 @pytest.fixture(autouse=True)
 def _no_reader_network(monkeypatch):
@@ -254,7 +264,7 @@ def test_qa_rejects_two_selected_items(monkeypatch, mock_workflow):
         mock_workflow.approve_selected(session.id)
 
 
-def test_evidence_gate_is_called_with_raw_search_only(monkeypatch, mock_workflow):
+def test_evidence_gate_is_called_with_the_verification_payload_only(monkeypatch, mock_workflow):
     seen = {}
 
     def fake_review(**kwargs):
@@ -264,9 +274,12 @@ def test_evidence_gate_is_called_with_raw_search_only(monkeypatch, mock_workflow
     monkeypatch.setattr("stages.research_scout.openrouter_gate.review", fake_review)
     session = _verified_micro(mock_workflow)
 
-    assert seen["model"] == "deepseek/deepseek-v4-flash"
-    assert seen["raw_search_payload"] == mock_workflow.client.search_response
-    assert "general_response" not in seen["raw_search_payload"]
+    assert seen["model"] == config.SCOUT_EVIDENCE_MODEL
+    # The gate is handed the verification round's own payload — never the
+    # general enumeration response it would otherwise have judged against.
+    assert seen["raw_search_payload"] == mock_workflow.client.verify_response
+    assert seen["raw_search_payload"] != mock_workflow.client.general_response
+    assert mock_workflow.client.verify_effort == config.YOUCOM_VERIFY_EFFORT
     assert session.state is SessionState.CANDIDATE_REVIEW
 
 

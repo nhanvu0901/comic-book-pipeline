@@ -55,6 +55,45 @@ _GENERAL_ITEM_PROPS: dict[str, Any] = {
 }
 
 
+# What one candidate's verification round must come back with. Shaped after the
+# CONFIRM phase stages/youcom_scout.py documents: a verbatim sentence and the URL
+# it sits on, plus the traps that quietly invalidate a comic citation — an
+# adaptation standing in for the comic, an arc spanning issues, a cameo passing
+# as the subject, a reprint magazine masquerading as the original issue.
+_VERIFY_ITEM_PROPS: dict[str, Any] = {
+    "verdict": {"type": "string"},
+    "verbatim_sentence": {"type": "string"},
+    "source_url": {"type": "string"},
+    "second_source_url": {"type": "string"},
+    "volume_and_year": {"type": "string"},
+    "comic_or_adaptation": {"type": "string"},
+    "single_issue_or_multi": {"type": "string"},
+    "subject_main_in_issue": {"type": "string"},
+    "reprint_check": {"type": "string"},
+    "issue_year_matches_sources": {"type": "string"},
+}
+
+
+def verify_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": _VERIFY_ITEM_PROPS,
+                    "required": list(_VERIFY_ITEM_PROPS),
+                },
+            },
+            "notes": {"type": "string"},
+        },
+        "required": ["candidates", "notes"],
+    }
+
+
 def general_output_schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -153,7 +192,7 @@ class ScoutWorkflow:
             prompt_text,
             schema,
             bundle.source_profiles.get("general_research"),
-            effort=config.YOUCOM_RESEARCH_EFFORT,
+            effort=config.YOUCOM_GENERAL_EFFORT,
         )
         payload = _raw_payload(raw)
         candidates = _extract_candidates(payload, prefix=_revision_prefix(session.revision))
@@ -524,7 +563,7 @@ class ScoutWorkflow:
                 # chat can show an angle chip without guessing from list position.
                 _schema({**props, "angle": {"type": "string"}}),
                 bundle.source_profiles.get("general_research"),
-                effort=config.YOUCOM_RESEARCH_EFFORT,
+                effort=config.YOUCOM_DISCOVER_EFFORT,
             )
         except Exception:
             return fallback
@@ -679,11 +718,31 @@ class ScoutWorkflow:
         intent: str,
         candidate: dict[str, Any],
     ) -> tuple[Any, dict[str, Any], str]:
-        """One candidate's search + evidence gate. Runs on a worker thread and
-        touches no session state — the caller owns every write."""
-        raw = self.client.search(
-            candidate_search_query(candidate),
+        """One candidate's verification round + evidence gate. Runs on a worker
+        thread and touches no session state — the caller owns every write.
+
+        This asks the Research API to go and check one candidate rather than
+        running a keyword search over it. A search returned eight results ranked
+        for the query, which for a claim about a specific issue meant forum
+        chatter; a deep verification round reads the sources and reports what it
+        found, including when the issue and year do not match them.
+
+        The verdict it returns is evidence for the gate, not the decision — the
+        gate also holds the candidate's own fetched citations and does the quote
+        matching.
+        """
+        verify_prompt = bundle.render(
+            "specific",
+            user_intent=intent,
+            angle=angle,
+            digest=self.digest,
+            candidate=json.dumps(candidate, ensure_ascii=False),
+        )
+        raw = self.client.research(
+            verify_prompt.text,
+            verify_output_schema(),
             bundle.source_profiles.get("specific_web_search"),
+            effort=config.YOUCOM_VERIFY_EFFORT,
         )
         raw_search_payload = _raw_payload(raw)
         # Sequentially, inside this one worker: verify_selected already runs the
@@ -742,61 +801,6 @@ class ScoutWorkflow:
             raw_search_payload=raw_search_payload,
         )
         return gate, _raw_record(raw), prompt.sha256
-
-
-# What the verification search is built from, in the order the words are worth
-# keeping. compact_search_query throws away everything past the 45th word, so
-# the fields that IDENTIFY the comic go first and the prose goes last —
-# `json.dumps(candidate)` used to be the whole query and the truncation landed
-# mid-brace, leaving the API a bag of punctuation to match on.
-_QUERY_FIELDS = (
-    "series_issue_year",
-    "character_or_thing",
-    "title",
-    "what_visibly_happens",
-    "summary",
-)
-# Structural JSON punctuation and quoting. Apostrophes stay: "Deadpool's" is a
-# word, `{"summary":` is not.
-_QUERY_NOISE = re.compile(r'[{}\[\]"\\<>|`\u201c\u201d]+')
-_QUERY_URL = re.compile(r"\bhttps?://\S+", re.IGNORECASE)
-
-
-def candidate_search_query(candidate: Any) -> str:
-    """The words to search for one candidate with — never a serialised dump.
-
-    The search API is matching text, so it is handed text: series, issue, year,
-    the character and what visibly happens, in that order. URLs are dropped —
-    the candidate's own citations are fetched directly (see
-    ``cited_sources``) rather than searched for as strings.
-    """
-
-    data = candidate if isinstance(candidate, Mapping) else {}
-    parts: list[str] = []
-    seen: set[str] = set()
-    for key in _QUERY_FIELDS:
-        text = _plain_words(data.get(key))
-        if not text or text.lower() in seen:
-            continue
-        seen.add(text.lower())
-        parts.append(text)
-    if parts:
-        return " ".join(parts)
-    # A candidate shaped like nothing we know still deserves a real query.
-    for value in data.values():
-        text = _plain_words(value)
-        if text and text.lower() not in seen:
-            seen.add(text.lower())
-            parts.append(text)
-    return " ".join(parts)
-
-
-def _plain_words(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    text = _QUERY_URL.sub(" ", value)
-    text = _QUERY_NOISE.sub(" ", text)
-    return " ".join(text.split())
 
 
 def _candidate_label(candidates: Mapping[str, Any], candidate_id: str) -> str:

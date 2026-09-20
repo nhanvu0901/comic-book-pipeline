@@ -280,7 +280,7 @@ def test_fetch_cited_sources_of_an_uncited_candidate_is_empty(monkeypatch):
 _SEARCH = {"results": {"web": [{"url": "https://reddit.com/r/comics/1"}]}}
 
 
-def test_raw_evidence_separates_what_we_read_from_what_we_searched():
+def test_raw_evidence_separates_what_we_read_from_what_we_checked():
     evidence = cs.build_raw_evidence(
         [
             cs.FetchedSource(url="https://cbr.com/a", text="Shuri's scan shows necrosis."),
@@ -290,8 +290,8 @@ def test_raw_evidence_separates_what_we_read_from_what_we_searched():
     )
 
     assert "CITED SOURCES (fetched from the candidate's own citations)" in evidence
-    assert "SEARCH RESULTS" in evidence
-    assert evidence.index("CITED SOURCES") < evidence.index("SEARCH RESULTS")
+    assert "VERIFICATION RESEARCH" in evidence
+    assert evidence.index("CITED SOURCES") < evidence.index("VERIFICATION RESEARCH")
     assert json.dumps(_SEARCH, ensure_ascii=False) in evidence
 
 

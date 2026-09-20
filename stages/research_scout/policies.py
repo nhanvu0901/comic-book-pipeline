@@ -37,8 +37,11 @@ _TEMPLATE_FILES = {
         ScoutMode.MICRO: "general_micro.v1.md",
     },
     "specific": {
-        ScoutMode.QA: "specific_qa.v1.md",
-        ScoutMode.MICRO: "specific_micro.v1.md",
+        # v2 asks the Research API to go and verify one candidate, so it takes
+        # no raw_evidence: v1 was a post-hoc validator of evidence already in
+        # hand, and nothing ever called it.
+        ScoutMode.QA: "specific_qa.v2.md",
+        ScoutMode.MICRO: "specific_micro.v2.md",
     },
     "evidence_gate": {
         # v2: the candidate's own citations are fetched and quoted inline, so

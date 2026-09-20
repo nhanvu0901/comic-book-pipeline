@@ -40,7 +40,7 @@ MAX_SOURCE_CHARS = 6000
 
 _CITATION_FIELDS = ("evidence_urls", "source_urls")
 _CITED_HEADING = "CITED SOURCES (fetched from the candidate's own citations)"
-_SEARCH_HEADING = "SEARCH RESULTS"
+_SEARCH_HEADING = "VERIFICATION RESEARCH"
 _NO_CITATIONS = "(this candidate cited no URLs)"
 _FETCH_FAILED = "COULD NOT FETCH"
 _TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
@@ -256,7 +256,7 @@ def _reason(exc: BaseException) -> str:
 
 
 def build_raw_evidence(sources: list[FetchedSource], search_payload: Any) -> str:
-    """The gate's RAW EVIDENCE block: what we read, then what we searched.
+    """The gate's RAW EVIDENCE block: what we read, then what we went and checked.
 
     Two labelled sections rather than one blob, because "we fetched the page
     and it does not support this" and "we never managed to open the page" are

@@ -17,8 +17,14 @@ The raw evidence comes in two labelled sections.
 
 CITED SOURCES holds the pages this candidate cited, already fetched for you and
 quoted inline. You do not have to look them up, and you must not call a cited
-URL unverifiable merely because it is missing from SEARCH RESULTS — those are a
-separate, independent web search, not a list of what the citations say.
+URL unverifiable merely because it is missing from VERIFICATION RESEARCH — that
+is a separate, independent round that went looking for this exact claim, not a
+list of what the citations say.
+
+VERIFICATION RESEARCH may carry a verdict of its own. Treat it as one more piece
+of evidence, not as the decision: it did not hold the fetched citations you do,
+and the quote matching is yours. Where it reports the issue number or year not
+matching its sources, say so in your reason.
 
 Weigh them like this:
 

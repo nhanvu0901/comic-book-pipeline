@@ -38,6 +38,13 @@ SCOUT_PLANNER_MODEL = os.getenv("SCOUT_PLANNER_MODEL", SCOUT_EVIDENCE_MODEL)
 # same schema): deep returned the same item count at the same latency as standard,
 # so standard stays the default — deep only costs more.
 YOUCOM_RESEARCH_EFFORT = os.getenv("YOUCOM_RESEARCH_EFFORT", "standard")
+# One effort per phase, mirroring the three stages/youcom_scout.py documents:
+# discovery is a cheap broad sweep for a question, while enumerating answers and
+# confirming one item each deserve the deep pass. A single knob made the cheap
+# phase as expensive as the others or the expensive ones as shallow.
+YOUCOM_DISCOVER_EFFORT = os.getenv("YOUCOM_DISCOVER_EFFORT", YOUCOM_RESEARCH_EFFORT)
+YOUCOM_GENERAL_EFFORT = os.getenv("YOUCOM_GENERAL_EFFORT", "deep")
+YOUCOM_VERIFY_EFFORT = os.getenv("YOUCOM_VERIFY_EFFORT", "deep")
 
 _DEFAULT_LLM_CHAIN = (
     "minimax/minimax-m2.5:free,"

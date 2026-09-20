@@ -56,13 +56,14 @@ def test_mode_selects_distinct_general_and_specific_templates():
 
 def test_specific_and_evidence_templates_accept_their_declared_values():
     bundle = PolicyBundle.load(ScoutMode.QA)
+    # specific v2 is a research request, not a validator of evidence already in
+    # hand, so it takes no raw_evidence.
     specific = bundle.render(
         "specific",
         user_intent="Hulk",
         angle="immunity",
         digest="none",
         candidate="candidate-1",
-        raw_evidence="source excerpt",
     )
     evidence = bundle.render(
         "evidence_gate",
@@ -72,7 +73,7 @@ def test_specific_and_evidence_templates_accept_their_declared_values():
         candidate="candidate-1",
         raw_evidence="source excerpt",
     )
-    assert specific.version == "specific_qa.v1"
+    assert specific.version == "specific_qa.v2"
     assert evidence.version == "evidence_gate.v2"
     assert "candidate-1" in specific.text
     assert "source excerpt" in evidence.text
@@ -127,7 +128,7 @@ def test_evidence_gate_v2_tells_the_gate_what_an_unfetchable_source_means():
     )
     assert "COULD NOT FETCH" in rendered.text
     assert "CITED SOURCES" in rendered.text
-    assert "SEARCH RESULTS" in rendered.text
+    assert "VERIFICATION RESEARCH" in rendered.text
     lowered = rendered.text.lower()
     assert "unverified, not contradicted" in lowered
     assert "already fetched" in lowered
