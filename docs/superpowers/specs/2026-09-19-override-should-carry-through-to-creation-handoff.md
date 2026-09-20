@@ -8,6 +8,9 @@ Do not fix them; report if the count moves.
 
 Written for whoever picks this up. No prior context assumed.
 
+**Read section 7 first if you only read one.** It is the cause the rest of
+this document is downstream of.
+
 ---
 
 ## 1. What the user asked for
@@ -129,7 +132,92 @@ handful of sessions on the current code and count. If `inconclusive` really domi
 the reasons will say why — and the fix probably belongs in the gate prompt or the evidence
 it is fed, not in a switch that skips the check.
 
-## 7. The decision to make
+## 7. The root cause underneath all of it: citations are not bound to claims
+
+This sits before everything above. It explains the rejected verdicts, and it explains why
+`resolve_reader_url` had nothing to find.
+
+The general research round for that session returned **13 candidates built from 5 distinct
+URLs**:
+
+| times cited | URL |
+|---|---|
+| 5 | `marvel.fandom.com/wiki/Wade_Wilson_(Earth-616)` — the generic character page |
+| 4 | `cbr.com/deadpools-healing-factor-redefined/` |
+| 4 | `cbr.com/deadpool-just-revealed-what-his-healing-factors-other-weakness/` |
+| 2 | `marvel.fandom.com/wiki/Deadpool_Vol_3_3` |
+| 2 | `cbr.com/black-panther-deadpool-solve-death/` |
+
+Read per candidate it is worse:
+
+```
+candidate-4  Deadpool: Invisible Touch #4 (2021)  ┐
+candidate-5  Deadpool: Invisible Touch #4 (2021)  │  four separate "answers",
+candidate-6  Deadpool: Invisible Touch #4 (2021)  │  one shared article
+candidate-7  Deadpool: Invisible Touch #4 (2021)  ┘
+
+candidate-2  Black Panther vs. Deadpool #2 (2018) ┐  identical citation pair,
+candidate-3  Black Panther vs. Deadpool #1 (2018) ┘  two different issues claimed
+```
+
+So the search is not returning bad information. The research step found roughly three real
+articles and spread them across thirteen candidates, inventing a distinct claim for each
+and attaching whichever URL was to hand. The gate's two rejections were it catching exactly
+that:
+
+- *"the cited CBR article covers Deadpool: Invisible Touch #4, not that issue"* — the claim
+  and the citation are about different comics.
+- *"describes Deadpool losing his healing factor … the opposite of the claim"* — the
+  citation is real and says the reverse of what it was cited for.
+
+**This is also why section 4's lookups failed.** `resolve_reader_url` was sent hunting for
+`Black Panther vs. Deadpool #1` on behalf of a candidate whose actual source never mentions
+that issue. No resolver can find a reader URL for a comic the evidence does not discuss.
+
+### A change made on this branch probably made it worse
+
+`planner.CANDIDATE_TARGET` was raised from 10 to 20 earlier the same day (`ee80055`,
+13:54), with what was meant as an escape hatch:
+
+> If the sources genuinely support fewer than 20, return every one you found and say so in
+> notes.
+
+The model did not take it. Faced with a floor of twenty and about three usable sources, it
+padded — which is the cheaper way to satisfy the instruction than admitting a shortfall.
+That session's directory has since been deleted, so the timestamp cannot be confirmed; the
+sequence of events makes it very likely it ran under the raised target.
+
+The structural hole predates the change, though. Nothing in the schema or the prompt binds
+a URL to the specific claim it is supposed to support. `evidence_urls` is a flat list on
+the candidate, so one article can be cited for any number of unrelated assertions and
+nothing objects.
+
+### Three fixes, in order of how much they buy
+
+**(a) Bind each citation to its claim.** Require the candidate to say which URL supports
+its issue and year, with **a verbatim sentence quoted from that source**. A model cannot
+quote a sentence that is not in the article it just read. This closes the hole rather than
+narrowing it.
+
+**(b) Refuse one source backing many candidates.** Four candidates citing a single CBR
+article is padding, and it is detectable **in code** — no model judgement needed. Reject or
+merge at parse time.
+
+**(c) Stop demanding a candidate count.** Let the number follow the sources. Replace
+`Return AT LEAST 20 candidates` with a target on **distinct sources**, and have the model
+report how many it actually found. A source count is checkable; a candidate count invites
+padding.
+
+The target introduced at `ee80055` should come down, or be re-pointed at distinct sources
+rather than candidates.
+
+### Warning about the order of work
+
+Doing (a) or (b) before (c) will make the candidate count **drop sharply** — possibly below
+the three QA requires. That is not a new breakage. It is the first honest look at how many
+answers the sources actually support. The current prompt hides that number by padding it.
+
+## 8. The decision to make
 
 The user wants override to carry through and the missing detail to be gathered
 automatically. There are three distinct ways to read that, and they are not equivalent.
@@ -156,7 +244,7 @@ usually succeeds, and when it does not, let a deliberate override carry through 
 stop. That reading should be confirmed before implementation — (b) alone would hide the
 resolver problem instead of fixing it.
 
-## 8. Reproducing
+## 9. Reproducing
 
 The failure is already on disk and costs no API calls to re-examine:
 
@@ -174,11 +262,11 @@ from stages.stage_1.answer_research import resolve_reader_url
 resolve_reader_url("Deadpool Vol. 3 #3 (2008)", "2008", "Deadpool")
 ```
 
-## 9. Tests worth writing
+## 10. Tests worth writing
 
 - `_parse_source_comic` strips `Vol. N` from the series name and keeps the year hint.
 - `resolve_reader_url` returns a URL for a volume-notated `source_comic`.
-- Whatever route section 7 takes: an override that reaches `build_contexts` is covered by a
+- Whatever route section 8 takes: an override that reaches `build_contexts` is covered by a
   test that asserts what lands in `answer_context.json`, not just that no exception was
   raised.
 - If empty `reader_url` becomes permissible, one test per downstream consumer proving it
@@ -188,7 +276,7 @@ No network in tests — stub the batcave search. Note that nothing in this repo 
 forbids a socket in a test, and two test files were silently making real calls earlier on
 this branch; it was caught from a jump in run time, not a red test.
 
-## 10. Still open on this branch, unrelated to the above
+## 11. Still open on this branch, unrelated to the above
 
 - No global socket guard in `conftest.py`.
 - Fetched cited pages are not written to the session artifact, so a verdict that turned on
