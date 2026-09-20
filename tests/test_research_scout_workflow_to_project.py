@@ -184,7 +184,9 @@ def test_approve_uses_the_current_three_qa_selections_without_regating(monkeypat
         workflow.store.artifact_path(session.id, "specific/evidence_gate.v1.json").read_text()
     )
     assert [gate["candidate_id"] for gate in gates["gates"]] == selected
-    assert review_calls == all_ids
+    # verify_selected gates in parallel, so completion order is not the caller's
+    # order. What matters is that each candidate was bought exactly once.
+    assert sorted(review_calls) == all_ids
     assert factory.evaluate_production_gates(approved) == {}
 
 

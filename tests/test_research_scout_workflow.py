@@ -625,7 +625,11 @@ def test_approve_selected_locks_the_selection_and_takes_no_override(monkeypatch,
 
     assert approved.state is SessionState.PRODUCTION_GATES
     assert approved.selected_specific_candidate_ids == ["a", "b", "c"]
-    assert list(inspect.signature(mock_workflow.approve_selected).parameters) == ["session_id"]
+    # No override parameter: overruling a soft gate is decided at creation time.
+    # It does take the selection being approved — the ticks, not stale disk state.
+    params = list(inspect.signature(mock_workflow.approve_selected).parameters)
+    assert "override" not in params
+    assert params == ["session_id", "candidate_ids"]
 
 
 def test_back_to_candidates_returns_from_production_gates(monkeypatch, mock_workflow):
