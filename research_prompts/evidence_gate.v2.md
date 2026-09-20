@@ -22,6 +22,10 @@ separate, independent web search, not a list of what the citations say.
 
 Weigh them like this:
 
+- New candidates carry `claim_citation`, one URL and one verbatim quote bound
+  to their exact claim. Treat that bound source as the primary evidence. The
+  workflow has already checked the quote against retrieved text; still decide
+  whether it supports the issue/year and visible event it is attached to.
 - A cited source whose fetched text supports the claim IS support. Name it in
   evidence_urls.
 - A cited source marked COULD NOT FETCH is UNVERIFIED, not contradicted. It is

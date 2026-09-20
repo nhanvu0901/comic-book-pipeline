@@ -16,11 +16,23 @@ class _FakeYouCom:
             "output": {
                 "content": {
                     "candidates": [
-                        {"id": "a", "title": "A Hulk moment", "summary": "A visible event."},
-                        {"id": "b", "title": "B Hulk moment"},
-                        {"id": "c", "title": "C Hulk moment"},
+                        {
+                            "id": candidate_id,
+                            "title": f"{candidate_id.upper()} Hulk moment",
+                            "summary": "A visible event.",
+                            "claim_citation": {
+                                "url": f"https://source.test/{candidate_id}",
+                                "quote": "Evidence sentence.",
+                            },
+                            "evidence_urls": [f"https://source.test/{candidate_id}"],
+                        }
+                        for candidate_id in ("a", "b", "c")
                     ]
-                }
+                },
+                "sources": [
+                    {"url": f"https://source.test/{candidate_id}"}
+                    for candidate_id in ("a", "b", "c")
+                ],
             }
         }
         self.search_response = {"results": {"web": [{"url": "https://example.test/a"}]}}
@@ -40,9 +52,9 @@ def _no_reader_network(monkeypatch):
     retrieval, and no test may open a socket — so the reader call is closed off
     and every citation comes back COULD NOT FETCH."""
     monkeypatch.setattr(
-        cited_sources.urllib.request,
-        "urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network in tests")),
+        cited_sources,
+        "fetch_source",
+        lambda url, **kwargs: cited_sources.FetchedSource(url=url, text="Evidence sentence."),
     )
     yield
 
@@ -102,6 +114,124 @@ def test_run_general_sends_strict_schema_and_configured_effort(mock_workflow):
     # minItems/maxItems are rejected by the Research API (warning, 2026-08-21).
     assert "minItems" not in json.dumps(schema)
     assert mock_workflow.client.seen_effort in ("standard", "deep")
+
+
+def test_new_general_schema_requires_a_bound_claim_citation(mock_workflow):
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(session.id)
+
+    item = mock_workflow.client.seen_schema["properties"]["candidates"]["items"]
+    citation = item["properties"]["claim_citation"]
+    assert citation["required"] == ["url", "quote"]
+    assert "claim_citation" in item["required"]
+
+
+def test_new_general_round_drops_missing_bound_citation_and_records_reason(mock_workflow):
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [
+                {"title": title} for title in ("A", "B", "C")
+            ]},
+            "sources": [{"url": "https://source.test/a"}],
+        }
+    }
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(session.id)
+
+    candidates = json.loads(
+        mock_workflow.store.artifact_path(
+            session.id, "general/candidates.v1.json"
+        ).read_text(encoding="utf-8")
+    )["candidates"]
+    validation = json.loads(
+        mock_workflow.store.artifact_path(
+            session.id, "general/candidate_validation.rev1.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert candidates == []
+    assert validation["rejected"] == [
+        {"candidate_id": "candidate-1", "reason": "missing_claim_citation"},
+        {"candidate_id": "candidate-2", "reason": "missing_claim_citation"},
+        {"candidate_id": "candidate-3", "reason": "missing_claim_citation"},
+    ]
+
+
+def test_new_general_round_rejects_only_an_exact_canonical_source_quote_duplicate(mock_workflow):
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [
+                {
+                    "title": "First",
+                    "claim_citation": {
+                        "url": "https://source.test/page?utm_source=scout",
+                        "quote": "First supported sentence.",
+                    },
+                },
+                {
+                    "title": "Padded copy",
+                    "claim_citation": {
+                        "url": "https://source.test/page#same-page",
+                        "quote": "First supported sentence.",
+                    },
+                },
+                {
+                    "title": "Different supported claim",
+                    "claim_citation": {
+                        "url": "https://source.test/page",
+                        "quote": "A different supported sentence.",
+                    },
+                },
+            ]},
+            "sources": [{"url": "https://source.test/page"}],
+        }
+    }
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(session.id)
+
+    data = json.loads(
+        mock_workflow.store.artifact_path(
+            session.id, "general/candidates.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    validation = json.loads(
+        mock_workflow.store.artifact_path(
+            session.id, "general/candidate_validation.rev1.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert [candidate["title"] for candidate in data["candidates"]] == [
+        "First", "Different supported claim",
+    ]
+    assert validation["rejected"] == [
+        {"candidate_id": "candidate-2", "reason": "duplicate_claim_citation"},
+    ]
+
+
+def test_new_general_round_rejects_a_bound_url_absent_from_returned_sources(mock_workflow):
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [{
+                "title": "Invented source",
+                "claim_citation": {
+                    "url": "https://source.test/not-returned",
+                    "quote": "A made-up attribution.",
+                },
+            }]},
+            "sources": [{"url": "https://source.test/returned"}],
+        }
+    }
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(session.id)
+
+    validation = json.loads(
+        mock_workflow.store.artifact_path(
+            session.id, "general/candidate_validation.rev1.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert validation["rejected"] == [
+        {"candidate_id": "candidate-1", "reason": "claim_citation_url_not_returned"},
+    ]
 
 
 def test_candidates_must_exist_before_they_can_be_verified(mock_workflow):

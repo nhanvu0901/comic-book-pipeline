@@ -269,6 +269,20 @@ def create_scout_project(session_id: str, project_slug: str, *, override: bool =
     return create_project_from_session(session_id, project_slug, override=override)
 
 
+def get_scout_missing_readers(project_name: str) -> list[dict]:
+    from stages.stage_1.answer_research import get_missing_reader_urls
+
+    return get_missing_reader_urls(project_name)
+
+
+def repair_scout_readers(
+    project_name: str, reader_urls: dict[int, str] | None = None, log: Callable[[str], None] = print,
+) -> list[dict]:
+    from stages.stage_1.answer_research import repair_reader_urls
+
+    return repair_reader_urls(project_name, reader_urls, log=log)
+
+
 def list_scout_sessions(root: Path | None = None) -> list[Any]:
     """Return unfinished sessions, including sessions with no project yet."""
     from stages.research_scout.models import SessionState
@@ -463,6 +477,22 @@ def run_stage_1(
 # ─── Stage 2: Download ─────────────────────────────────────────────────────
 
 def run_stage_download(project_name: str, log: Callable[[str], None]) -> list[dict]:
+    from config import get_project_dirs
+    ctx_path = get_project_dirs(project_name)["root"] / "comic_context.json"
+    ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+    if ctx.get("plot_source") == "answer_research":
+        # A user may have hand-filled answer_context.json from the recovery
+        # instructions. Sync its authoritative ordered URLs into comic_context
+        # before Stage 2 so later rank-based Stage 3/review readers see the same list.
+        missing = repair_scout_readers(project_name, log=log)
+        if missing:
+            ranks = ", ".join(str(item["rank"]) for item in missing)
+            raise ValueError(f"Q&A reader URLs unresolved for rank(s): {ranks}; repair them before download")
+        from stages.stage_1.answer_research import ordered_reader_urls
+        from stages.stage_2.download import load_manifest
+        from stages.stage_2.url_mode import download_readers_only
+        download_readers_only(project_name, ordered_reader_urls(project_name), progress=log)
+        return load_manifest(project_name)
     from stages.stage_2.download import download_comic
     return download_comic(project_name, progress=log)
 

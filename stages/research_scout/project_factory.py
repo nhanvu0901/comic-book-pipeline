@@ -73,9 +73,24 @@ def can_override_production_gates(
         flags_by_candidate = evaluate_production_gates(session, root=root)
     except ScoutUserError:
         return False
-    return bool(flags_by_candidate) and all(
-        not _NOT_OVERRIDABLE.intersection(flags)
-        for flags in flags_by_candidate.values()
+    if flags_by_candidate:
+        return all(
+            not _NOT_OVERRIDABLE.intersection(flags)
+            for flags in flags_by_candidate.values()
+        )
+    if session.mode is not ScoutMode.QA:
+        return False
+    store = SessionStore(root if root is not None else config.RESEARCH_SESSIONS_ROOT)
+    candidates = _candidate_by_id(store, session.id)
+    assignments = _gate_assignments(session, _load_gates(store, session.id))
+    from stages.stage_1.answer_research import is_batcave_reader_url
+
+    return any(
+        not is_batcave_reader_url(
+            _first_text(assignments[index] or {}, "reader_url")
+            or _first_text(candidates[candidate_id], "reader_url")
+        )
+        for index, candidate_id in enumerate(session.selected_specific_candidate_ids)
     )
 
 
@@ -203,22 +218,25 @@ def create_project_from_session(
         for index, candidate_id in enumerate(session.selected_specific_candidate_ids)
     ]
 
+    unresolved_reader_urls: list[dict] = []
     if session.mode is ScoutMode.QA:
         research = _qa_research(session, selected)
-        # Do not catch ValueError: answer_research deliberately fails loud when
-        # any item cannot be downloaded because its reader URL is empty.
-        answer_research.build_contexts(session.user_intent, research, project_slug)
+        answer_research.build_contexts(
+            session.user_intent, research, project_slug, allow_missing_reader_urls=override
+        )
+        unresolved_reader_urls = answer_research.get_missing_reader_urls(project_slug)
     else:
         candidate, gate = selected[0]
         _create_micro_project(candidate, gate, project_slug)
 
-    if reports:
+    if reports or (override and session.mode is ScoutMode.QA and unresolved_reader_urls):
         store.append_audit(
             session.id,
             "gates_overridden",
             detail={
                 "project": project_slug,
                 "candidates": {r.candidate_id: _describe(r) for r in reports},
+                "unresolved_reader_urls": unresolved_reader_urls,
             },
         )
     session.created_project = project_slug

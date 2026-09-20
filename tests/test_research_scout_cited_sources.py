@@ -67,6 +67,100 @@ def test_a_candidate_that_cited_nothing_asks_for_nothing():
     assert cs.cited_urls("not a mapping at all") == []
 
 
+def test_bound_claim_citation_is_fetched_before_supplementary_urls():
+    candidate = {
+        "claim_citation": {
+            "url": "https://cbr.com/the-claim",
+            "quote": "The exact published sentence.",
+        },
+        "evidence_urls": ["https://cbr.com/secondary"],
+    }
+
+    assert cs.cited_urls(candidate) == [
+        "https://cbr.com/the-claim",
+        "https://cbr.com/secondary",
+    ]
+
+
+def test_quote_match_normalizes_whitespace_and_typographic_quotes():
+    citation = cs.claim_citation({
+        "claim_citation": {
+            "url": "https://cbr.com/the-claim",
+            "quote": "Shuri’s  scan\nshows  necrotic cells.",
+        }
+    })
+    source = cs.FetchedSource(
+        url="https://cbr.com/the-claim",
+        text="Intro. Shuri's scan shows necrotic cells. Outro.",
+    )
+
+    assert citation is not None
+    assert cs.quote_matches_source(citation, source)
+
+
+def test_quote_match_requires_the_bound_url_and_the_actual_quote():
+    citation = cs.claim_citation({
+        "claim_citation": {
+            "url": "https://cbr.com/the-claim",
+            "quote": "A sentence the source never says.",
+        }
+    })
+    wrong_url = cs.FetchedSource(
+        url="https://cbr.com/other",
+        text="A sentence the source never says.",
+    )
+    silent_source = cs.FetchedSource(
+        url="https://cbr.com/the-claim",
+        text="A different sentence.",
+    )
+
+    assert citation is not None
+    assert not cs.quote_matches_source(citation, wrong_url)
+    assert not cs.quote_matches_source(citation, silent_source)
+
+
+def test_quote_match_compares_visible_markdown_text_not_link_markup():
+    citation = cs.claim_citation({
+        "claim_citation": {
+            "url": "https://cbr.com/the-claim",
+            "quote": "Thor defeats Loki in Thor #1 (2024).",
+        }
+    })
+    source = cs.FetchedSource(
+        url="https://cbr.com/the-claim",
+        text=(
+            "**Thor** defeats [Loki](https://example.test/issue_(2024)) in "
+            "[Thor #1](https://example.test/thor/1) (2024)."
+        ),
+    )
+    fabricated = cs.ClaimCitation(
+        url="https://cbr.com/the-claim",
+        quote="example.test/issue (2024)",
+    )
+
+    assert citation is not None
+    assert cs.quote_matches_source(citation, source)
+    assert not cs.quote_matches_source(fabricated, source)
+
+
+def test_citation_fingerprint_ignores_tracking_and_quote_presentation():
+    first = cs.claim_citation({
+        "claim_citation": {
+            "url": "HTTPS://CBR.COM/the-claim/?utm_source=scout#section",
+            "quote": "Shuri’s scan  shows necrotic cells.",
+        }
+    })
+    second = cs.claim_citation({
+        "claim_citation": {
+            "url": "https://cbr.com/the-claim",
+            "quote": "Shuri's scan shows necrotic cells.",
+        }
+    })
+
+    assert first is not None and second is not None
+    assert cs.citation_fingerprint(first) == cs.citation_fingerprint(second)
+
+
 # ─── The fetch itself ───────────────────────────────────────────────────────
 
 def test_fetch_goes_through_the_jina_reader_with_a_ten_second_timeout(monkeypatch):

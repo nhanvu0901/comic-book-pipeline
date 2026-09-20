@@ -12,13 +12,16 @@ Rules:
   never collapse the list down to the single strongest answer.
 - Sweep EVERY retrieved source and include EVERY distinct item any source
   supports. Full, partial, assisted, and temporary cases all count — state the
-  difference in the summary. Return AT LEAST {count} candidates: do not stop at
-  the famous answers, and do not stop early because the obvious ones are
-  covered. If the sources genuinely support fewer than {count}, return every one
-  you found and say so in notes.
+  difference in the summary. Seek coverage from about {count} distinct source pages
+  when the research supports it, but there is no candidate minimum: return only
+  genuinely supported entries and never pad the list. State the actual
+  distinct-source and candidate counts in notes.
 - Each candidate needs: the exact series + issue number + year when a source
   names them (do not invent missing issue details), what VISIBLY happens on the
-  page, a concise summary, and the source URLs you actually used.
+  page, a concise summary, the source URLs you actually used, and
+  `claim_citation`: {{"url": "...", "quote": "..."}}. The quote must be a
+  verbatim sentence from that retrieved URL that supports this candidate's exact
+  issue/year and visible claim.
 - Real published events only. Widely-debated hypothetical picks ("could resist",
   "would win") go LAST and must say "hypothetical" in the summary.
 

@@ -131,7 +131,8 @@ def test_answer_context_schema_exact_and_presentation_order(wired, monkeypatch):
     a = json.loads(a_path.read_text())
 
     assert set(a.keys()) == {"question", "answer_summary", "constant_broken",
-                             "viewer_context", "researched_at", "source_engine", "items"}
+                             "viewer_context", "researched_at", "source_engine", "items",
+                             "unresolved_reader_urls"}
     assert a["question"] == QUESTION
     assert a["researched_at"] == "2026-07-04"
     assert a["source_engine"] == "youcom-web-search+openrouter-deepseek"
@@ -146,7 +147,7 @@ def test_answer_context_schema_exact_and_presentation_order(wired, monkeypatch):
                                   "source_year", "reader_url", "drawable_moment",
                                   "verification_note", "surprise_level",
                                   "relationships", "stakes_why",
-                                  "verified", "verify_note"}
+                                  "verified", "verify_note", "reader_url_status"}
         assert it["verified"] is True and it["verify_note"] == "verified"
         # additive fields default to "" for the (old-shape) fixture items
         assert it["relationships"] == "" and it["stakes_why"] == ""
@@ -183,6 +184,52 @@ def test_empty_reader_url_fails_loud_naming_item(wired, monkeypatch):
     res = mod.research_answer(QUESTION, log=lambda _m: None)
     with pytest.raises(ValueError, match="Deadpool"):
         mod.build_contexts(QUESTION, res, "gr_penance", log=lambda _m: None)
+
+
+def test_override_writes_ordered_contexts_and_marks_missing_reader_urls(wired, monkeypatch):
+    items = [dict(it) for it in _ITEMS]
+    items[1]["reader_url"] = ""
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: _fixture_json(items))
+    monkeypatch.setattr(mod, "resolve_reader_url", lambda *a, **k: "")
+    res = mod.research_answer(QUESTION, log=lambda _m: None)
+
+    answer_path, comic_path = mod.build_contexts(
+        QUESTION, res, "gr_penance", allow_missing_reader_urls=True, log=lambda _m: None
+    )
+
+    answer = json.loads(answer_path.read_text())
+    comic = json.loads(comic_path.read_text())
+    assert [item["rank"] for item in answer["items"]] == [1, 2, 3]
+    assert [item["reader_url_status"] for item in answer["items"]] == [
+        "ready", "missing_reader_url", "ready",
+    ]
+    assert answer["unresolved_reader_urls"] == [{
+        "rank": 2, "entity": "Deadpool", "source_comic": '"Deadpool" #33', "reader_url": "",
+    }]
+    assert comic["reader_urls"] == [item["reader_url"] for item in items]
+    assert comic["unresolved_reader_urls"] == answer["unresolved_reader_urls"]
+
+
+def test_repair_reader_urls_updates_only_missing_ordered_rank(wired, monkeypatch):
+    items = [dict(it) for it in _ITEMS]
+    items[1]["reader_url"] = ""
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: _fixture_json(items))
+    monkeypatch.setattr(mod, "resolve_reader_url", lambda *a, **k: "")
+    res = mod.research_answer(QUESTION, log=lambda _m: None)
+    mod.build_contexts(QUESTION, res, "gr_penance", allow_missing_reader_urls=True, log=lambda _m: None)
+
+    remaining = mod.repair_reader_urls(
+        "gr_penance", {2: "https://batcave.biz/reader/999/888"}, log=lambda _m: None
+    )
+
+    assert remaining == []
+    answer = json.loads((wired / "answer_context.json").read_text())
+    comic = json.loads((wired / "comic_context.json").read_text())
+    assert [item["reader_url"] for item in answer["items"]] == [
+        _ITEMS[0]["reader_url"], "https://batcave.biz/reader/999/888", _ITEMS[2]["reader_url"],
+    ]
+    assert comic["reader_urls"] == [item["reader_url"] for item in answer["items"]]
+    assert not answer["unresolved_reader_urls"] and not comic["unresolved_reader_urls"]
 
 
 def test_auto_resolve_fills_empty_reader_url(wired, monkeypatch):
@@ -243,6 +290,24 @@ def test_resolve_reader_url_oneshot_takes_single_chapter(monkeypatch):
         {"number": 1.0, "url": "https://batcave.biz/reader/500/777"}])
     url = mod.resolve_reader_url("Some One-Shot (2020)", "2020", log=lambda _m: None)
     assert url == "https://batcave.biz/reader/500/777"
+
+
+def test_resolve_reader_url_uses_series_without_volume_notation(monkeypatch):
+    captured = {}
+
+    def fake_search(query, *, log=print):
+        captured["query"] = query
+        return [("3", "deadpool-2008", "https://batcave.biz/3-deadpool-2008.html")]
+
+    monkeypatch.setattr(mod, "_batcave_search", fake_search)
+    monkeypatch.setattr(mod, "discover_issues", lambda url, headless=None: [
+        {"number": 3.0, "title": "Deadpool (2008) #3",
+         "url": "https://batcave.biz/reader/3/300"},
+    ])
+
+    assert mod.resolve_reader_url("Deadpool Vol. 3 #3 (2008)", "2008",
+                                  log=lambda _m: None) == "https://batcave.biz/reader/3/300"
+    assert captured["query"] == "Deadpool"
 
 
 def test_resolve_reader_url_no_series_match_returns_empty(monkeypatch):
@@ -313,6 +378,15 @@ def test_parse_source_comic_shapes():
     assert mod._parse_source_comic('"Ghost Rider" (1990) #12') == ("Ghost Rider", "1990", "12")
     assert mod._parse_source_comic('"Deadpool" #33') == ("Deadpool", "", "33")
     assert mod._parse_source_comic('Marvel Comics Presents (1988)') == ("Marvel Comics Presents", "1988", "")
+
+
+@pytest.mark.parametrize(("source_comic", "expected"), [
+    ("Deadpool Vol. 3 #3 (2008)", ("Deadpool", "2008", "3")),
+    ("Deadpool Volume 3 #3 (2008)", ("Deadpool", "2008", "3")),
+    ("Deadpool vOl. 3 #3 (2008)", ("Deadpool", "2008", "3")),
+])
+def test_parse_source_comic_strips_trailing_volume_notation(source_comic, expected):
+    assert mod._parse_source_comic(source_comic) == expected
 
 
 def test_pick_series_ignores_generic_tokens():

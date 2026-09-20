@@ -21,10 +21,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+import re
 import socket
 from typing import Any
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 
 READER_PREFIX = "https://r.jina.ai/"
@@ -41,6 +43,22 @@ _CITED_HEADING = "CITED SOURCES (fetched from the candidate's own citations)"
 _SEARCH_HEADING = "SEARCH RESULTS"
 _NO_CITATIONS = "(this candidate cited no URLs)"
 _FETCH_FAILED = "COULD NOT FETCH"
+_TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
+_INLINE_LINK = re.compile(r"\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)")
+_RAW_URL = re.compile(r"https?://\S+", re.IGNORECASE)
+
+# Kept here rather than duplicated in the two strict research schemas.  The
+# Research API requires every object property to be declared and required, so
+# callers take a copy before embedding it in their larger schema.
+CLAIM_CITATION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "url": {"type": "string"},
+        "quote": {"type": "string"},
+    },
+    "required": ["url", "quote"],
+}
 
 
 @dataclass(frozen=True)
@@ -56,6 +74,104 @@ class FetchedSource:
         return not self.error and bool(self.text)
 
 
+@dataclass(frozen=True)
+class ClaimCitation:
+    """The one source sentence a new candidate binds to its own claim."""
+
+    url: str
+    quote: str
+
+
+def claim_citation(candidate: Any) -> ClaimCitation | None:
+    """Read a well-formed source-bound claim citation, or return ``None``.
+
+    ``None`` deliberately also represents legacy candidate artifacts written
+    before source binding existed.  New `run_general` artifacts are screened
+    separately; this reader must stay permissive so an old paid-for session can
+    still be reviewed with its original evidence path.
+    """
+
+    if not isinstance(candidate, Mapping):
+        return None
+    value = candidate.get("claim_citation")
+    if not isinstance(value, Mapping):
+        return None
+    url = value.get("url")
+    quote = value.get("quote")
+    if not isinstance(url, str) or not isinstance(quote, str):
+        return None
+    url = url.strip()
+    quote = quote.strip()
+    if (
+        not url.lower().startswith(("http://", "https://"))
+        or not canonical_url(url)
+        or not quote
+    ):
+        return None
+    return ClaimCitation(url=url, quote=quote)
+
+
+def canonical_url(url: str) -> str:
+    """Compare web sources by page identity, ignoring display-only tracking."""
+
+    try:
+        parts = urlsplit(url.strip())
+    except (TypeError, ValueError):
+        return ""
+    host = parts.netloc.casefold()
+    if not host:
+        return ""
+    path = parts.path.rstrip("/") or "/"
+    kept_query = sorted(
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.casefold().startswith("utm_")
+        and key.casefold() not in _TRACKING_QUERY_KEYS
+    )
+    query = urlencode(kept_query, doseq=True)
+    return f"{host}{path}" + (f"?{query}" if query else "")
+
+
+def normalize_quote(text: str) -> str:
+    """Make harmless page-formatting differences irrelevant to a quote match."""
+
+    translation = str.maketrans({
+        "\u2018": "'", "\u2019": "'", "\u201b": "'",
+        "\u201c": '"', "\u201d": '"', "\u201f": '"', "\u00a0": " ",
+    })
+    return " ".join(str(text).translate(translation).casefold().split())
+
+
+def _visible_markdown_text(text: str) -> str:
+    """Drop Markdown transport syntax before comparing human-visible quotes."""
+
+    visible = str(text)
+    # One nesting level covers normal Jina URLs containing a parenthesised year.
+    # Iterate in case a page wraps a link label in another link-like construct.
+    while True:
+        replaced = _INLINE_LINK.sub(r"\1", visible)
+        if replaced == visible:
+            break
+        visible = replaced
+    visible = _RAW_URL.sub("", visible)
+    return visible.replace("**", "").replace("__", "").replace("~~", "").replace("`", "")
+
+
+def citation_fingerprint(citation: ClaimCitation) -> tuple[str, str]:
+    """Stable exact source+quote identity used to reject padded duplicates."""
+
+    return canonical_url(citation.url), normalize_quote(citation.quote)
+
+
+def quote_matches_source(citation: ClaimCitation, source: FetchedSource) -> bool:
+    """Whether the fetched bound page actually contains the claimed sentence."""
+
+    if not source.ok or canonical_url(citation.url) != canonical_url(source.url):
+        return False
+    quote = normalize_quote(_visible_markdown_text(citation.quote))
+    return bool(quote) and quote in normalize_quote(_visible_markdown_text(source.text))
+
+
 def cited_urls(candidate: Any) -> list[str]:
     """The http(s) URLs a candidate cites, in order, deduped, capped."""
 
@@ -63,6 +179,10 @@ def cited_urls(candidate: Any) -> list[str]:
         return []
     urls: list[str] = []
     seen: set[str] = set()
+    bound = claim_citation(candidate)
+    if bound is not None:
+        urls.append(bound.url)
+        seen.add(canonical_url(bound.url))
     for field in _CITATION_FIELDS:
         value = candidate.get(field)
         if isinstance(value, str):
@@ -73,9 +193,12 @@ def cited_urls(candidate: Any) -> list[str]:
             if not isinstance(item, str):
                 continue
             url = item.strip()
-            if not url.lower().startswith(("http://", "https://")) or url in seen:
+            if not url.lower().startswith(("http://", "https://")):
                 continue
-            seen.add(url)
+            canonical = canonical_url(url)
+            if not canonical or canonical in seen:
+                continue
+            seen.add(canonical)
             urls.append(url)
             if len(urls) >= MAX_CITED_URLS:
                 return urls

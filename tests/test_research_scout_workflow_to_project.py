@@ -30,10 +30,15 @@ class _FakeYouCom:
                             "series_issue_year": f"Thor #{i} (2024)",
                             "what_visibly_happens": f"Hero {i} visibly does the thing.",
                             "evidence_urls": [f"https://source.test/{i}"],
+                            "claim_citation": {
+                                "url": f"https://source.test/{i}",
+                                "quote": "Evidence sentence.",
+                            },
                         }
                         for i in range(1, 6)
                     ]
-                }
+                },
+                "sources": [{"url": f"https://source.test/{i}"} for i in range(1, 6)],
             }
         }
         self.searches = []
@@ -57,9 +62,9 @@ def _no_reader_network(monkeypatch):
     retrieval, and no test may open a socket — so the reader call is closed off
     and every citation comes back COULD NOT FETCH."""
     monkeypatch.setattr(
-        cited_sources.urllib.request,
-        "urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network in tests")),
+        cited_sources,
+        "fetch_source",
+        lambda url, **kwargs: cited_sources.FetchedSource(url=url, text="Evidence sentence."),
     )
     yield
 

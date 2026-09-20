@@ -11,6 +11,7 @@ from typing import Callable
 
 import flet as ft
 
+from .. import bridge
 from ..bridge import (asset_src, 
     format_exception, load_raw_pages, run_blocking,
     run_stage_download, run_stage_download_from_url, run_stage_download_saga,
@@ -22,6 +23,20 @@ from ..theme import (
     TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
 from utils.clear_stage import clear_stage_2
+
+
+def get_scout_missing_readers(project_name: str) -> list[dict]:
+    """Bridge wrapper kept local so this screen owns only its presentation."""
+
+    return bridge.get_scout_missing_readers(project_name)
+
+
+def repair_scout_readers(
+    project_name: str, reader_urls: dict[int, str] | None = None, log=print,
+) -> list[dict]:
+    """Persist supplied reader URLs and retry deterministic resolution."""
+
+    return bridge.repair_scout_readers(project_name, reader_urls, log)
 
 
 def build(
@@ -37,6 +52,14 @@ def build(
     status_text = ft.Text("", color=TEXT_MUTED, size=12)
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     summary_text = ft.Text("", size=12, color=TEXT_MUTED)
+    missing_readers: list[list[dict]] = [[]]
+    # An inspection failure is not a missing item. Stuffing it into the rows as
+    # a rank-0 entry drew a text field for an item that does not exist and
+    # invited a URL to be filed against it.
+    reader_error: list[str] = [""]
+    reader_fields: dict[int, ft.TextField] = {}
+    repair_busy = [False]
+    missing_panel = ft.Column(spacing=8)
 
     def render_grid(manifest: list[dict]):
         if not manifest:
@@ -86,11 +109,86 @@ def build(
         if existing:
             render_grid(existing)
 
+    download_button = primary_button(
+        "Download (from Stage 1)", lambda _e: None, icon=ft.Icons.DOWNLOAD,
+    )
+    download_button.key = "stage1-download"
+    repair_button = primary_button(
+        "Save URLs & retry resolution", lambda _e: None, icon=ft.Icons.REFRESH,
+    )
+    repair_button.key = "repair-reader-urls"
+
+    def _refresh_missing_panel(*, update: bool = False) -> None:
+        rows = missing_readers[0]
+        controls: list[ft.Control] = []
+        # Drop cached fields for ranks that are no longer missing, so a rank
+        # repaired in an earlier round cannot be resubmitted from a stale box.
+        for rank in [r for r in reader_fields if r not in {int(row.get("rank", 0)) for row in rows}]:
+            reader_fields.pop(rank, None)
+        if reader_error[0]:
+            controls.extend([
+                ft.Text("Could not inspect selected issues", size=12, color=DANGER,
+                        weight=ft.FontWeight.BOLD),
+                ft.Text(reader_error[0], size=11, color=TEXT_MUTED, selectable=True),
+            ])
+        if rows:
+            controls.extend([
+                ft.Text("Reader URL needed", size=12, color=WARN,
+                        weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "These selected Q&A issues cannot be downloaded yet. Paste a "
+                    "batcave reader URL where you have one, then retry resolution.",
+                    size=11, color=TEXT_MUTED,
+                ),
+            ])
+            for row in rows:
+                rank = int(row.get("rank", 0))
+                entity = str(row.get("entity") or "Unknown item")
+                source_comic = str(row.get("source_comic") or "Unknown comic")
+                field = reader_fields.get(rank)
+                if field is None:
+                    field = ft.TextField(
+                        key=f"missing-reader-{rank}",
+                        label=f"#{rank} — {entity} — {source_comic}",
+                        value=str(row.get("reader_url") or ""),
+                        hint_text="https://batcave.biz/reader/123/456",
+                        border_color=BORDER,
+                        focused_border_color=ACCENT,
+                        text_size=11,
+                    )
+                    reader_fields[rank] = field
+                controls.append(field)
+            controls.append(repair_button)
+        missing_panel.controls = controls
+        blocked = bool(rows) or bool(reader_error[0]) or repair_busy[0]
+        download_button.disabled = blocked
+        repair_button.disabled = not rows or repair_busy[0]
+        if update:
+            page.update()
+
+    if state.project_name:
+        try:
+            missing_readers[0] = list(get_scout_missing_readers(state.project_name))
+        except Exception as exc:
+            reader_error[0] = str(exc)
+            missing_readers[0] = []
+    _refresh_missing_panel()
+
     async def _execute():
         if not state.project_name:
             status_text.value = "No project loaded — go back to Stage 1."
             status_text.color = DANGER
             page.update()
+            return
+        # Re-read the persisted Q&A context at click time. The visible list can
+        # be stale after another repair action, but a download must never run on
+        # unresolved items or silently renumber/drop them.
+        remaining = list(get_scout_missing_readers(state.project_name))
+        if remaining:
+            missing_readers[0] = remaining
+            status_text.value = "Repair the missing reader URLs before downloading."
+            status_text.color = WARN
+            _refresh_missing_panel(update=True)
             return
         running.visible = True
         status_text.value = "Downloading comic pages…"
@@ -121,6 +219,53 @@ def build(
 
     def run_click(_e):
         page.run_task(_execute)
+
+    async def _repair_missing_readers():
+        if repair_busy[0] or not state.project_name or not missing_readers[0]:
+            return
+        repair_busy[0] = True
+        status_text.value = "Saving reader URLs and resolving remaining issues…"
+        status_text.color = WARN
+        _refresh_missing_panel(update=True)
+        # Walk the rows still missing, not the field cache: a rank repaired in
+        # an earlier round keeps its box until the next refresh, and resending
+        # it would overwrite an item that is already resolved.
+        supplied: dict[int, str] = {}
+        for row in missing_readers[0]:
+            rank = int(row.get("rank", 0))
+            field = reader_fields.get(rank)
+            value = str(field.value or "").strip() if field is not None else ""
+            if value:
+                supplied[rank] = value
+        try:
+            remaining = await run_blocking(
+                repair_scout_readers, state.project_name, supplied or None, push_log,
+            )
+        except ValueError as exc:
+            status_text.value = str(exc)
+            status_text.color = DANGER
+        except Exception as exc:
+            status_text.value = "Repair failed — see log."
+            status_text.color = DANGER
+            push_log(format_exception(exc))
+        else:
+            missing_readers[0] = list(remaining)
+            if missing_readers[0]:
+                status_text.value = f"{len(missing_readers[0])} reader URL(s) still need repair."
+                status_text.color = WARN
+            else:
+                status_text.value = "Reader URLs ready — download can continue."
+                status_text.color = SUCCESS
+        finally:
+            repair_busy[0] = False
+            _refresh_missing_panel(update=True)
+
+    def repair_click(_e):
+        if not repair_busy[0]:
+            page.run_task(_repair_missing_readers)
+
+    download_button.on_click = run_click
+    repair_button.on_click = repair_click
 
     # ─── URL-direct mode (skip Stage 1) ─────────────────────────────────────
     url_field = ft.TextField(
@@ -271,7 +416,8 @@ def build(
             size=12, color=TEXT_MUTED,
         ),
         ft.Container(height=16),
-        primary_button("Download (from Stage 1)", run_click, icon=ft.Icons.DOWNLOAD),
+        missing_panel,
+        download_button,
         ft.Container(height=8),
         secondary_button("Clear downloads", _do_clear, icon=ft.Icons.DELETE_OUTLINE),
 
@@ -298,7 +444,8 @@ def build(
 
         ft.Container(height=14),
         primary_button("Continue to Stage 3 →", approve_and_go,
-                       disabled=not state.is_approved(2)),
+                       disabled=not state.is_approved(2) or bool(missing_readers[0])
+                                or bool(reader_error[0])),
     ], spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
 
     return three_col(

@@ -28,6 +28,10 @@ _CANDIDATE = {
         "https://www.cbr.com/black-panther-deadpool-solve-death/",
         "https://www.cbr.com/deadpools-healing-factor-redefined/",
     ],
+    "claim_citation": {
+        "url": "https://www.cbr.com/black-panther-deadpool-solve-death/",
+        "quote": "Shuri's scan shows necrotic cells multiplying.",
+    },
 }
 
 
@@ -40,7 +44,16 @@ class _FakeYouCom:
         self.search_response = {"results": {"web": [{"url": "https://example.test/a"}]}}
 
     def research(self, prompt, schema, profile, *, effort="standard"):
-        payload = {"output": {"content": {"candidates": self.candidates}}}
+        payload = {
+            "output": {
+                "content": {"candidates": self.candidates},
+                "sources": [
+                    {"url": url}
+                    for candidate in self.candidates
+                    for url in candidate.get("evidence_urls", [])
+                ],
+            }
+        }
         return type("RawCall", (), {"api": "research", "payload": payload, "error": None})()
 
     def search(self, query, profile):
@@ -172,7 +185,10 @@ def test_the_text_of_a_cited_page_reaches_the_gate_labelled_with_its_url(
 
 
 def test_the_search_payload_is_still_there_under_its_own_heading(monkeypatch, workflow):
-    _stub_fetcher(monkeypatch, {u: "page text" for u in _CANDIDATE["evidence_urls"]})
+    _stub_fetcher(monkeypatch, {
+        u: "Shuri's scan shows necrotic cells multiplying. page text"
+        for u in _CANDIDATE["evidence_urls"]
+    })
     seen = _gate(monkeypatch, workflow)
 
     prompt = seen["prompt"]
@@ -191,7 +207,7 @@ def test_a_source_we_could_not_open_is_recorded_not_raised(monkeypatch, workflow
     is exactly the defect."""
     _stub_fetcher(
         monkeypatch,
-        {_CANDIDATE["evidence_urls"][0]: "Shuri's scan shows necrotic cells."},
+        {_CANDIDATE["evidence_urls"][0]: "Shuri's scan shows necrotic cells multiplying."},
     )
     seen = _gate(monkeypatch, workflow)
 
@@ -201,58 +217,52 @@ def test_a_source_we_could_not_open_is_recorded_not_raised(monkeypatch, workflow
     assert "COULD NOT FETCH" not in prompt.split("[1] ")[1].split("[2] ")[0]
 
 
-def test_every_fetch_failing_still_leaves_the_candidate_with_a_verdict(
+def test_new_bound_citation_that_cannot_be_fetched_is_inconclusive_without_model_call(
     monkeypatch, workflow
 ):
-    """The reader proxy being down must cost a candidate its citations, not its
-    verdict: verify_selected reads a raised exception as "this branch failed"."""
+    _stub_fetcher(monkeypatch, {})
     monkeypatch.setattr(
-        cited_sources.urllib.request,
-        "urlopen",
-        lambda request, timeout=None: (_ for _ in ()).throw(
-            RuntimeError("the reader proxy fell over")
-        ),
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: pytest.fail("an unfetched bound source must not reach the model"),
     )
-    seen = {}
-
-    def _review(**kwargs):
-        seen.update(kwargs)
-        return EvidenceGate(verdict="confirmed", reason="ok")
-
-    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", _review)
     session = workflow.start(ScoutMode.MICRO, "Deadpool healing factor")
     workflow.run_general(session.id)
     workflow.verify_selected(session.id, ["candidate-1"])
 
-    assert seen["prompt"].count("— COULD NOT FETCH (") == 2
     written = json.loads(
         workflow.store.artifact_path(
             session.id, "specific/evidence_gate.v1.json"
         ).read_text(encoding="utf-8")
     )
-    assert [gate["verdict"] for gate in written["gates"]] == ["confirmed"]
+    assert [gate["verdict"] for gate in written["gates"]] == ["inconclusive"]
+    assert "could not be retrieved" in written["gates"][0]["reason"]
 
 
 def test_at_most_three_cited_urls_are_fetched_for_one_candidate(monkeypatch, tmp_path):
-    greedy = dict(_CANDIDATE, evidence_urls=[f"https://cbr.com/{i}" for i in range(9)])
+    greedy = dict(
+        _CANDIDATE,
+        evidence_urls=[f"https://cbr.com/{i}" for i in range(9)],
+        claim_citation={"url": "https://cbr.com/0", "quote": "Bound quote."},
+    )
     flow = ScoutWorkflow(
         store=SessionStore(tmp_path),
         client=_FakeYouCom([greedy]),
         planner=lambda *a, **k: None,
     )
-    asked = _stub_fetcher(monkeypatch, {f"https://cbr.com/{i}": "text" for i in range(9)})
+    asked = _stub_fetcher(monkeypatch, {
+        f"https://cbr.com/{i}": "Bound quote." for i in range(9)
+    })
     _gate(monkeypatch, flow)
 
     assert asked == ["https://cbr.com/0", "https://cbr.com/1", "https://cbr.com/2"]
 
 
-def test_a_candidate_with_no_citations_still_gates_on_the_search_alone(
+def test_legacy_candidate_without_citations_keeps_the_search_only_gate_path(
     monkeypatch, tmp_path
 ):
-    uncited = {k: v for k, v in _CANDIDATE.items() if k != "evidence_urls"}
     flow = ScoutWorkflow(
         store=SessionStore(tmp_path),
-        client=_FakeYouCom([uncited]),
+        client=_FakeYouCom(),
         planner=lambda *a, **k: None,
     )
     monkeypatch.setattr(
@@ -260,7 +270,70 @@ def test_a_candidate_with_no_citations_still_gates_on_the_search_alone(
         "fetch_source",
         lambda url, **kw: pytest.fail("nothing was cited, so nothing may be fetched"),
     )
-    seen = _gate(monkeypatch, flow)
+    seen = {}
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: seen.update(kwargs) or EvidenceGate(verdict="confirmed"),
+    )
+    flow._gate_one(flow._bundle(ScoutMode.MICRO), "", "", {"title": "legacy"})
 
     assert "cited no URLs" in seen["prompt"]
     assert json.dumps(flow.client.search_response, ensure_ascii=False) in seen["prompt"]
+
+
+def test_new_bound_citation_with_unmatched_quote_is_inconclusive_without_model_call(
+    monkeypatch, tmp_path
+):
+    candidate = dict(_CANDIDATE, claim_citation={
+        "url": _CANDIDATE["evidence_urls"][0],
+        "quote": "This sentence is fabricated.",
+    })
+    flow = ScoutWorkflow(
+        store=SessionStore(tmp_path),
+        client=_FakeYouCom([candidate]),
+        planner=lambda *a, **k: None,
+    )
+    _stub_fetcher(monkeypatch, {candidate["claim_citation"]["url"]: "A real fetched page."})
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: pytest.fail("an unmatched quote must not reach the model"),
+    )
+
+    session = flow.start(ScoutMode.MICRO, "Deadpool healing factor")
+    flow.run_general(session.id)
+    flow.verify_selected(session.id, ["candidate-1"])
+
+    gates = json.loads(
+        flow.store.artifact_path(session.id, "specific/evidence_gate.v1.json").read_text()
+    )["gates"]
+    assert gates[0]["verdict"] == "inconclusive"
+    assert "does not occur" in gates[0]["reason"]
+
+
+def test_matched_bound_quote_still_reaches_the_model_and_preserves_rejection(
+    monkeypatch, tmp_path
+):
+    flow = ScoutWorkflow(
+        store=SessionStore(tmp_path),
+        client=_FakeYouCom(),
+        planner=lambda *a, **k: None,
+    )
+    _stub_fetcher(monkeypatch, {
+        _CANDIDATE["claim_citation"]["url"]: (
+            "Shuri's scan shows necrotic cells multiplying."
+        ),
+    })
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: EvidenceGate(verdict="rejected", reason="The issue is wrong."),
+    )
+
+    session = flow.start(ScoutMode.MICRO, "Deadpool healing factor")
+    flow.run_general(session.id)
+    flow.verify_selected(session.id, ["candidate-1"])
+
+    gate = json.loads(
+        flow.store.artifact_path(session.id, "specific/evidence_gate.v1.json").read_text()
+    )["gates"][0]
+    assert gate["verdict"] == "rejected"
+    assert gate["reason"] == "The issue is wrong."

@@ -95,6 +95,20 @@ def test_download_readers_only_rejects_non_reader_url(tmp_path, monkeypatch):
             "gr_penance", ["https://batcave.biz/123-some-series.html"], progress=lambda m: None)
 
 
+def test_download_readers_only_rejects_a_blank_rank_without_scraping(tmp_path, monkeypatch):
+    monkeypatch.setattr(um, "_ensure_project_root", lambda name: tmp_path, raising=False)
+    monkeypatch.setattr(
+        um, "scrape_issue_pages", lambda *a, **k: pytest.fail("a partial Q&A list must not scrape")
+    )
+
+    with pytest.raises(ValueError, match="rank 2"):
+        um.download_readers_only(
+            "gr_penance",
+            ["https://batcave.biz/reader/111/222", "", "https://batcave.biz/reader/555/666"],
+            progress=lambda m: None,
+        )
+
+
 # ── (c) answer_pipeline CLI: arg parsing + --stop-after short-circuits ─────────
 
 

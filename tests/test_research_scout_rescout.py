@@ -40,20 +40,30 @@ class _FakeYouCom:
     def research(self, prompt, schema, profile, *, effort="standard"):
         self.seen_prompt = prompt
         self.research_calls += 1
-        candidates = [
-            {
+        candidates = []
+        for title in self._titles():
+            url = f"https://example.test/{title.casefold().replace(' ', '-')}"
+            candidates.append({
                 "title": title,
                 "summary": f"{title} visibly happens.",
                 "series_issue_year": f"{title} #1 (2001)",
                 "what_visibly_happens": f"{title} lands a punch.",
-                "evidence_urls": [f"https://example.test/{title.lower()}"],
+                "evidence_urls": [url],
+                "claim_citation": {
+                    "url": url,
+                    "quote": f"{title} source sentence.",
+                },
                 # Tier B reads this field; the general round ignores it. One fake
                 # serves both callers of _extract_candidates.
                 "question": f"What did {title} do?",
+            })
+        payload = {
+            "output": {
+                "content": {"candidates": candidates},
+                "sources": [{"url": candidate["claim_citation"]["url"]}
+                            for candidate in candidates],
             }
-            for title in self._titles()
-        ]
-        payload = {"output": {"content": {"candidates": candidates}}}
+        }
         return type("RawCall", (), {"api": "research", "payload": payload, "error": None})()
 
     def search(self, query, profile):
@@ -63,13 +73,19 @@ class _FakeYouCom:
 
 @pytest.fixture(autouse=True)
 def _no_reader_network(monkeypatch):
-    """Gating now fetches the URLs a candidate cited. Nothing here is about that
-    retrieval, and no test may open a socket — so the reader call is closed off
-    and every citation comes back COULD NOT FETCH."""
+    """Return the exact bound quote without opening a socket.
+
+    These are fresh general-research candidates, so a positive gate must pass
+    the same quote-presence check production applies before it calls the model.
+    """
+    def _fetch(url, **kwargs):
+        title = url.rsplit("/", 1)[-1].replace("-", " ").title()
+        return cited_sources.FetchedSource(url=url, text=f"{title} source sentence.")
+
     monkeypatch.setattr(
-        cited_sources.urllib.request,
-        "urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network in tests")),
+        cited_sources,
+        "fetch_source",
+        _fetch,
     )
     yield
 
@@ -415,6 +431,38 @@ def test_the_sessions_already_on_disk_still_load_and_their_ids_still_resolve():
         checked += 1
 
     assert checked, "no candidate artifact was actually exercised"
+
+
+def test_a_directly_seeded_legacy_candidate_keeps_its_original_gate_path(monkeypatch, workflow):
+    """Old paid-for artifacts predate claim_citation and must remain reviewable.
+
+    This seeds the old artifact shape directly rather than pretending a new
+    general-research response may omit the new required binding.
+    """
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    session.state = SessionState.CANDIDATE_REVIEW
+    workflow.store.save(session)
+    workflow.store.write_artifact(
+        session.id,
+        "general/candidates.v1.json",
+        {"candidates": [{
+            "id": "candidate-1",
+            "title": "Legacy Alpha",
+            "summary": "Legacy Alpha visibly happens.",
+            "series_issue_year": "Legacy Alpha #1 (2001)",
+            "what_visibly_happens": "Legacy Alpha lands a punch.",
+            "evidence_urls": ["https://example.test/legacy-alpha"],
+        }]},
+    )
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: EvidenceGate(verdict="confirmed", reason="Legacy evidence."),
+    )
+
+    verified = workflow.verify_selected(session.id, ["candidate-1"])
+
+    assert verified.selected_specific_candidate_ids == ["candidate-1"]
+    assert _gates_on_disk(workflow, session.id)[0]["verdict"] == "confirmed"
 
 
 def test_a_rerun_with_nothing_to_prune_writes_no_empty_gate_artifact(workflow):

@@ -120,9 +120,22 @@ def _load_reader_urls(project_name: str) -> list[str]:
         raise FileNotFoundError(
             f"comic_context.json missing for '{project_name}' — run the research step first")
     ctx = json.loads(ctx_path.read_text())
-    urls = [u for u in (ctx.get("reader_urls") or []) if u]
+    if ctx.get("plot_source") == "answer_research":
+        from stages.stage_1.answer_research import ordered_reader_urls, repair_reader_urls
+
+        # The hand-fill recovery path edits answer_context.json. Synchronize its
+        # ordered URLs into comic_context before download so later rank consumers
+        # use the same source list without rerunning research.
+        missing = repair_reader_urls(project_name, log=lambda _m: None)
+        if missing:
+            ranks = ", ".join(str(item["rank"]) for item in missing)
+            raise ValueError(f"Q&A reader URLs unresolved for rank(s): {ranks}; repair them before download")
+        return ordered_reader_urls(project_name)
+    urls = [str(u or "").strip() for u in (ctx.get("reader_urls") or [])]
     if not urls:
         raise ValueError(f"comic_context.json has no reader_urls for '{project_name}'")
+    if any(not u for u in urls):
+        raise ValueError(f"comic_context.json has unresolved reader_urls for '{project_name}'")
     return urls
 
 

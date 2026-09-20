@@ -16,7 +16,7 @@ from . import cited_sources
 from . import openrouter_gate
 from . import planner as planner_module
 from .errors import ScoutUserError
-from .models import FeedbackNote, ResearchSession, ScoutMode, SessionState
+from .models import EvidenceGate, FeedbackNote, ResearchSession, ScoutMode, SessionState
 from .planner import ResearchPlan
 from .policies import PolicyBundle
 from .storage import SessionStore
@@ -51,6 +51,7 @@ _GENERAL_ITEM_PROPS: dict[str, Any] = {
     "series_issue_year": {"type": "string"},
     "what_visibly_happens": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
+    "claim_citation": cited_sources.CLAIM_CITATION_SCHEMA,
 }
 
 
@@ -135,9 +136,7 @@ class ScoutWorkflow:
                 "general",
                 user_intent=_intent_with_feedback(session),
                 angle=self._angle(bundle, session.mode),
-                # Same target the planner path states in its cardinality block,
-                # so both routes ask a round for the same number of candidates.
-                count=str(planner_module.CANDIDATE_TARGET),
+                count=str(planner_module.DISTINCT_SOURCE_TARGET),
                 digest=self.digest,
             )
             prompt_text, prompt_hash = prompt.text, prompt.sha256
@@ -163,11 +162,27 @@ class ScoutWorkflow:
         # which is what overwrites the list they come from. An id that no longer
         # resolves is dropped rather than raising: a truncated or hand-edited
         # artifact must not be able to take the whole round down.
+        kept: list[dict[str, Any]] = []
         if session.kept_candidate_ids:
             previous = self._candidates_by_id(session)
             kept = [previous[cid] for cid in session.kept_candidate_ids if cid in previous]
-            candidates = kept + candidates
             session.kept_candidate_ids = []
+        returned_sources = _research_source_urls(payload)
+        candidates, validation = _validate_new_general_candidates(
+            candidates,
+            returned_sources,
+            protected_fingerprints={
+                cited_sources.citation_fingerprint(citation)
+                for candidate in kept
+                if (citation := cited_sources.claim_citation(candidate)) is not None
+            },
+        )
+        candidates = kept + candidates
+        accepted_bound_sources = {
+            cited_sources.citation_fingerprint(citation)[0]
+            for candidate in candidates
+            if (citation := cited_sources.claim_citation(candidate)) is not None
+        }
         self.store.write_artifact(session.id, "general/research.v1.json", _raw_record(raw))
         self.store.write_artifact(
             session.id,
@@ -180,6 +195,18 @@ class ScoutWorkflow:
             session.id,
             f"general/candidates.rev{session.revision}.v1.json",
             {"revision": session.revision, "candidates": candidates},
+        )
+        self.store.write_artifact(
+            session.id,
+            f"general/candidate_validation.rev{session.revision}.v1.json",
+            {
+                "revision": session.revision,
+                "returned_source_count": len(returned_sources),
+                "accepted_bound_source_count": len(accepted_bound_sources),
+                "input_candidate_count": validation["input_candidate_count"],
+                "accepted_candidate_count": len(candidates),
+                "rejected": validation["rejected"],
+            },
         )
         # Plan artifact every round, fallback rounds too — reruns stay reconstructable.
         self.store.write_artifact(
@@ -194,6 +221,9 @@ class ScoutWorkflow:
             "effort": config.YOUCOM_RESEARCH_EFFORT,
             "revision": session.revision,
             "plan_source": plan_record["source"],
+            "returned_source_count": len(returned_sources),
+            "accepted_bound_source_count": len(accepted_bound_sources),
+            "candidate_validation_rejections": validation["rejected"],
         }
         if plan is not None:
             detail["plan_summary"] = f"{plan.unit} · {plan.cardinality}" + (
@@ -659,6 +689,44 @@ class ScoutWorkflow:
         # Sequentially, inside this one worker: verify_selected already runs the
         # candidates in parallel and a pool nested here would multiply out.
         fetched = cited_sources.fetch_cited_sources(candidate)
+        bound = cited_sources.claim_citation(candidate)
+        # New source-bound candidates cannot be confirmed unless the exact quote
+        # occurs in the text we actually retrieved. A reader truncation/failure
+        # is an evidence gap, never a contradiction; old artifacts without this
+        # field retain their original gate path.
+        if "claim_citation" in candidate:
+            if bound is None:
+                return (
+                    EvidenceGate(
+                        verdict="inconclusive",
+                        reason="claim_citation is missing or malformed",
+                    ),
+                    _raw_record(raw),
+                    "",
+                )
+            bound_source = next(
+                (source for source in fetched if cited_sources.canonical_url(source.url)
+                 == cited_sources.canonical_url(bound.url)),
+                None,
+            )
+            if bound_source is None or not bound_source.ok:
+                return (
+                    EvidenceGate(
+                        verdict="inconclusive",
+                        reason="bound citation could not be retrieved",
+                    ),
+                    _raw_record(raw),
+                    "",
+                )
+            if not cited_sources.quote_matches_source(bound, bound_source):
+                return (
+                    EvidenceGate(
+                        verdict="inconclusive",
+                        reason="bound quote does not occur in retrieved source text",
+                    ),
+                    _raw_record(raw),
+                    "",
+                )
         prompt = bundle.render(
             "evidence_gate",
             user_intent=intent,
@@ -824,3 +892,60 @@ def _extract_candidates(payload: Any, *, prefix: str = "") -> list[dict[str, Any
         except (TypeError, ValueError):
             return []
     return []
+
+
+def _research_source_urls(payload: Any) -> set[str]:
+    """Canonical URLs returned by this general-research response."""
+
+    if not isinstance(payload, Mapping):
+        return set()
+    output = payload.get("output")
+    container = output if isinstance(output, Mapping) else payload
+    sources = container.get("sources")
+    if not isinstance(sources, list):
+        return set()
+    return {
+        canonical
+        for source in sources
+        if isinstance(source, Mapping)
+        and isinstance(source.get("url"), str)
+        and (canonical := cited_sources.canonical_url(source["url"]))
+    }
+
+
+def _validate_new_general_candidates(
+    candidates: Sequence[dict[str, Any]],
+    returned_sources: set[str],
+    *,
+    protected_fingerprints: set[tuple[str, str]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Screen only a freshly produced general batch before it reaches review.
+
+    The strict API schema is a request, not a trust boundary. This makes a
+    missing/invented binding visible in a durable artifact and rejects only
+    exact canonical-source+quote duplicates; different quotes from one real
+    page remain legitimate support for different candidates.
+    """
+
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    seen = set(protected_fingerprints)
+    for candidate in candidates:
+        candidate_id = str(candidate.get("id", ""))
+        citation = cited_sources.claim_citation(candidate)
+        if citation is None:
+            rejected.append({"candidate_id": candidate_id, "reason": "missing_claim_citation"})
+            continue
+        fingerprint = cited_sources.citation_fingerprint(citation)
+        if not fingerprint[0] or fingerprint[0] not in returned_sources:
+            rejected.append({"candidate_id": candidate_id, "reason": "claim_citation_url_not_returned"})
+            continue
+        if fingerprint in seen:
+            rejected.append({"candidate_id": candidate_id, "reason": "duplicate_claim_citation"})
+            continue
+        seen.add(fingerprint)
+        accepted.append(candidate)
+    return accepted, {
+        "input_candidate_count": len(candidates),
+        "rejected": rejected,
+    }

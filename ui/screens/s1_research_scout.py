@@ -526,7 +526,7 @@ def build(
         if _needs_override(selected_specific, gates):
             controls.append(ft.Checkbox(
                 key="override-gates",
-                label="I have read the verdicts above and want to continue anyway",
+                label="I have read the verdicts and any missing reader URLs, and want to continue anyway",
                 value=override_holder[0],
                 on_change=_override_changed,
             ))
@@ -582,7 +582,7 @@ def build(
         )
         back_button = secondary_button("← Back to candidates", _back_to_candidates_click)
         headline = (
-            "Selection locked in — overriding the verdicts above."
+            "Selection locked in — continuing despite the production warnings. Missing reader URLs must be repaired in Stage 2."
             if override_holder[0]
             else "Selection locked in."
         )
@@ -592,7 +592,7 @@ def build(
         if can_override_production_gates(session, root=RESEARCH_SESSIONS_ROOT):
             controls.append(ft.Checkbox(
                 key="override-gates",
-                label="I have read the verdicts above and want to continue anyway",
+                label="I have read the verdicts and any missing reader URLs, and want to continue anyway",
                 value=override_holder[0],
                 on_change=_override_changed,
             ))
