@@ -6,6 +6,7 @@ Clear button deletes raw_comic/ so the user can re-download.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,33 @@ from ..theme import (
     TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
 from utils.clear_stage import clear_stage_2
+
+
+def _load_comic_info(project_name: str) -> dict[str, str]:
+    if not project_name:
+        return {}
+    p_dir = Path(__file__).resolve().parents[2] / "projects" / project_name
+    c_path = p_dir / "comic_context.json"
+    if c_path.exists():
+        try:
+            data = json.loads(c_path.read_text(encoding="utf-8"))
+            title = str(data.get("title") or "")
+            series = str(data.get("series") or "")
+            issues = data.get("issue") or data.get("issues")
+            issue = str(issues[0] if isinstance(issues, list) and issues else issues or "")
+            year = str(data.get("year") or "")
+            return {"title": title, "series": series, "issue": issue, "year": year}
+        except Exception:
+            pass
+    a_path = p_dir / "answer_context.json"
+    if a_path.exists():
+        try:
+            data = json.loads(a_path.read_text(encoding="utf-8"))
+            question = str(data.get("question") or "")
+            return {"title": question, "series": "", "issue": "", "year": ""}
+        except Exception:
+            pass
+    return {"title": project_name, "series": "", "issue": "", "year": ""}
 
 
 def get_scout_missing_readers(project_name: str) -> list[dict]:
@@ -118,6 +146,42 @@ def build(
     )
     repair_button.key = "repair-reader-urls"
 
+    clipboard = ft.Clipboard()
+    clipboard_attached = {"done": False}
+
+    def _ensure_clipboard():
+        if clipboard_attached["done"]:
+            return
+        try:
+            services = getattr(page, "services", None)
+            if services is not None and clipboard not in services:
+                services.append(clipboard)
+            clipboard_attached["done"] = True
+        except Exception:
+            pass
+
+    async def _async_copy(text: str):
+        await clipboard.set(text)
+
+    def _show_snack(msg: str):
+        try:
+            overlay = getattr(page, "overlay", None)
+            if overlay is not None:
+                sb = ft.SnackBar(content=ft.Text(msg))
+                overlay.append(sb)
+                sb.open = True
+                page.update()
+        except Exception:
+            pass
+
+    def _copy_to_clipboard(text: str, label_name: str = ""):
+        _ensure_clipboard()
+        try:
+            page.run_task(_async_copy, text)
+        except Exception:
+            pass
+        _show_snack(f"Copied {label_name}: {text}" if label_name else f"Copied: {text}")
+
     def _refresh_missing_panel(*, update: bool = False) -> None:
         rows = missing_readers[0]
         controls: list[ft.Control] = []
@@ -157,7 +221,20 @@ def build(
                         text_size=11,
                     )
                     reader_fields[rank] = field
-                controls.append(field)
+
+                title_to_copy = source_comic if source_comic and source_comic != "Unknown comic" else entity
+                copy_row = ft.Row([
+                    ft.Text(f"#{rank} {title_to_copy}", size=11, weight=ft.FontWeight.BOLD,
+                            color=TEXT_PRIMARY, selectable=True, expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.CONTENT_COPY,
+                        icon_size=14,
+                        tooltip=f"Copy '{title_to_copy}'",
+                        style=ft.ButtonStyle(padding=ft.padding.all(4)),
+                        on_click=(lambda t=title_to_copy: lambda _e: _copy_to_clipboard(t, "comic title"))(),
+                    ),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                controls.append(ft.Column([copy_row, field], spacing=2))
             controls.append(repair_button)
         missing_panel.controls = controls
         blocked = bool(rows) or bool(reader_error[0]) or repair_busy[0]
@@ -407,6 +484,50 @@ def build(
     ], spacing=0, expand=True)
 
     # Right column
+    comic_info = _load_comic_info(state.project_name)
+    display_title = comic_info.get("title") or state.project_name
+    series_issue = f"{comic_info.get('series', '')} {comic_info.get('issue', '')}".strip()
+    comic_card_controls: list[ft.Control] = []
+    if display_title:
+        sub_items: list[ft.Control] = []
+        if series_issue and series_issue != display_title:
+            sub_items.append(
+                ft.Row([
+                    ft.Text(series_issue, size=11, color=ACCENT, selectable=True, expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.CONTENT_COPY,
+                        icon_size=13,
+                        tooltip=f"Copy '{series_issue}'",
+                        style=ft.ButtonStyle(padding=ft.padding.all(2)),
+                        on_click=(lambda s=series_issue: lambda _e: _copy_to_clipboard(s, "series"))(),
+                    ),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+            )
+        comic_card_controls.append(
+            ft.Container(
+                content=ft.Column([
+                    ft.Row([
+                        ft.Text("CURRENT PROJECT / COMIC", size=9, weight=ft.FontWeight.BOLD, color=ACCENT),
+                        ft.Container(expand=True),
+                        ft.IconButton(
+                            icon=ft.Icons.CONTENT_COPY,
+                            icon_size=13,
+                            tooltip="Copy title",
+                            style=ft.ButtonStyle(padding=ft.padding.all(2)),
+                            on_click=(lambda t=display_title: lambda _e: _copy_to_clipboard(t, "title"))(),
+                        ),
+                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Text(display_title, size=12, weight=ft.FontWeight.BOLD,
+                            color=TEXT_PRIMARY, selectable=True),
+                    *sub_items,
+                ], spacing=2),
+                bgcolor=BG_ELEVATED,
+                border=ft.border.all(1, BORDER),
+                border_radius=6,
+                padding=10,
+            )
+        )
+
     right = ft.Column([
         ft.Text("STEP 2 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Download Comic", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
@@ -415,6 +536,7 @@ def build(
             "Pages are saved to raw_comic/ and cached — re-runs skip existing files.",
             size=12, color=TEXT_MUTED,
         ),
+        *comic_card_controls,
         ft.Container(height=16),
         missing_panel,
         download_button,
