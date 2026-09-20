@@ -161,7 +161,10 @@ def build(
             pass
 
     async def _async_copy(text: str):
-        await clipboard.set(text)
+        try:
+            await clipboard.set(text)
+        except Exception:
+            pass
 
     def _show_snack(msg: str):
         try:
