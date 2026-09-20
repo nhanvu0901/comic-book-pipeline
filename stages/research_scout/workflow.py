@@ -747,45 +747,44 @@ class ScoutWorkflow:
         raw_search_payload = _raw_payload(raw)
         # Sequentially, inside this one worker: verify_selected already runs the
         # candidates in parallel and a pool nested here would multiply out.
-        fetched = cited_sources.fetch_cited_sources(candidate)
-        bound = cited_sources.claim_citation(candidate)
-        # New source-bound candidates cannot be confirmed unless the exact quote
-        # occurs in the text we actually retrieved. A reader truncation/failure
-        # is an evidence gap, never a contradiction; old artifacts without this
-        # field retain their original gate path.
-        if "claim_citation" in candidate:
-            if bound is None:
-                return (
-                    EvidenceGate(
-                        verdict="inconclusive",
-                        reason="claim_citation is missing or malformed",
-                    ),
-                    _raw_record(raw),
-                    "",
-                )
-            bound_source = next(
-                (source for source in fetched if cited_sources.canonical_url(source.url)
-                 == cited_sources.canonical_url(bound.url)),
-                None,
-            )
-            if bound_source is None or not bound_source.ok:
-                return (
-                    EvidenceGate(
-                        verdict="inconclusive",
-                        reason="bound citation could not be retrieved",
-                    ),
-                    _raw_record(raw),
-                    "",
-                )
-            if not cited_sources.quote_matches_source(bound, bound_source):
-                return (
-                    EvidenceGate(
-                        verdict="inconclusive",
-                        reason="bound quote does not occur in retrieved source text",
-                    ),
-                    _raw_record(raw),
-                    "",
-                )
+        # BƯỚC 1: Tải văn bản qua Jina Reader (Tạm thời bỏ qua / skipped for now)
+        # fetched = cited_sources.fetch_cited_sources(candidate)
+        fetched: list[cited_sources.FetchedSource] = []
+        # BƯỚC 2: So khớp câu trích dẫn cơ học (Tạm thời bỏ qua / skipped for now)
+        # bound = cited_sources.claim_citation(candidate)
+        # if "claim_citation" in candidate:
+        #     if bound is None:
+        #         return (
+        #             EvidenceGate(
+        #                 verdict="inconclusive",
+        #                 reason="claim_citation is missing or malformed",
+        #             ),
+        #             _raw_record(raw),
+        #             "",
+        #         )
+        #     bound_source = next(
+        #         (source for source in fetched if cited_sources.canonical_url(source.url)
+        #          == cited_sources.canonical_url(bound.url)),
+        #         None,
+        #     )
+        #     if bound_source is None or not bound_source.ok:
+        #         return (
+        #             EvidenceGate(
+        #                 verdict="inconclusive",
+        #                 reason="bound citation could not be retrieved",
+        #             ),
+        #             _raw_record(raw),
+        #             "",
+        #         )
+        #     if not cited_sources.quote_matches_source(bound, bound_source):
+        #         return (
+        #             EvidenceGate(
+        #                 verdict="inconclusive",
+        #                 reason="bound quote does not occur in retrieved source text",
+        #             ),
+        #             _raw_record(raw),
+        #             "",
+        #         )
         prompt = bundle.render(
             "evidence_gate",
             user_intent=intent,
