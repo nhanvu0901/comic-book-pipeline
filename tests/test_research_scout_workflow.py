@@ -453,7 +453,9 @@ def test_specific_audit_records_evidence_model_and_prompt_hash(monkeypatch, mock
     specific_event = json.loads(audit_lines[-1])
 
     assert specific_event["event"] == "candidates_verified"
-    assert specific_event["detail"]["model"] == "deepseek/deepseek-v4-flash"
+    # Whatever this deployment configured, not the shipped default — a .env
+    # that names another model must not turn this test red.
+    assert specific_event["detail"]["model"] == config.SCOUT_EVIDENCE_MODEL
     # One prompt per gated candidate now, so provenance is per candidate too.
     assert len(specific_event["detail"]["prompt_hashes"]["a"]) == 64
 
