@@ -749,7 +749,8 @@ class ScoutWorkflow:
         # candidates in parallel and a pool nested here would multiply out.
         # BƯỚC 1: Tải văn bản qua Jina Reader (Tạm thời bỏ qua / skipped for now)
         # fetched = cited_sources.fetch_cited_sources(candidate)
-        fetched: list[cited_sources.FetchedSource] = []
+        # Thay vào đó, trích xuất trực tiếp các sources và snippets đã được You.com crawl về
+        fetched = cited_sources.extract_sources_from_payload(raw_search_payload, candidate)
         # BƯỚC 2: So khớp câu trích dẫn cơ học (Tạm thời bỏ qua / skipped for now)
         # bound = cited_sources.claim_citation(candidate)
         # if "claim_citation" in candidate:

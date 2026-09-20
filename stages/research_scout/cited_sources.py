@@ -278,3 +278,48 @@ def build_raw_evidence(sources: list[FetchedSource], search_payload: Any) -> str
     lines.append(_SEARCH_HEADING)
     lines.append(f"  {json.dumps(search_payload, ensure_ascii=False)}")
     return "\n".join(lines)
+
+
+def extract_sources_from_payload(
+    payload: Any, candidate: Any = None
+) -> list[FetchedSource]:
+    """Extract sources and livecrawl snippets directly from a You.com research payload.
+
+    This avoids fragile third-party reader proxies (which often hit HTTP 422 on fandom
+    wikis or truncate long pages) by using the high-fidelity snippets already crawled
+    and returned by You.com Research.
+    """
+    fetched: list[FetchedSource] = []
+    seen: set[str] = set()
+
+    if isinstance(payload, Mapping):
+        output = payload.get("output")
+        container = output if isinstance(output, Mapping) else payload
+        sources = container.get("sources")
+        if isinstance(sources, list):
+            for s in sources:
+                if not isinstance(s, Mapping):
+                    continue
+                url = str(s.get("url") or "").strip()
+                canonical = canonical_url(url)
+                if not canonical or canonical in seen:
+                    continue
+                seen.add(canonical)
+                snippets = s.get("snippets")
+                if isinstance(snippets, list) and snippets:
+                    text = "\n\n".join(str(snip) for snip in snippets if snip)
+                else:
+                    text = str(s.get("description") or s.get("title") or "")
+                if text:
+                    fetched.append(FetchedSource(url=url, text=text))
+
+    if isinstance(candidate, Mapping):
+        citation = claim_citation(candidate)
+        if citation is not None and citation.url:
+            canonical = canonical_url(citation.url)
+            if canonical and canonical not in seen:
+                seen.add(canonical)
+                fetched.append(FetchedSource(url=citation.url, text=citation.quote))
+
+    return fetched
+

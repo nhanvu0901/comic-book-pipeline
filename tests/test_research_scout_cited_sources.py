@@ -324,3 +324,37 @@ def test_a_candidate_that_cited_nothing_says_that_too():
     assert "cited no URLs" in evidence
     assert "COULD NOT FETCH" not in evidence
     assert json.dumps(_SEARCH, ensure_ascii=False) in evidence
+
+
+def test_extract_sources_from_payload_extracts_snippets_and_candidate_quote():
+    payload = {
+        "output": {
+            "sources": [
+                {
+                    "url": "https://marvel.fandom.com/wiki/Issue_1",
+                    "title": "Issue 1",
+                    "snippets": ["Snippet line 1", "Snippet line 2"],
+                },
+                {
+                    "url": "https://marvel.fandom.com/wiki/Issue_2",
+                    "description": "Description only",
+                },
+            ]
+        }
+    }
+    candidate = {
+        "claim_citation": {
+            "url": "https://dc.fandom.com/wiki/Issue_3",
+            "quote": "Direct quote from candidate",
+        }
+    }
+
+    fetched = cs.extract_sources_from_payload(payload, candidate)
+    assert len(fetched) == 3
+    assert fetched[0].url == "https://marvel.fandom.com/wiki/Issue_1"
+    assert fetched[0].text == "Snippet line 1\n\nSnippet line 2"
+    assert fetched[1].url == "https://marvel.fandom.com/wiki/Issue_2"
+    assert fetched[1].text == "Description only"
+    assert fetched[2].url == "https://dc.fandom.com/wiki/Issue_3"
+    assert fetched[2].text == "Direct quote from candidate"
+
