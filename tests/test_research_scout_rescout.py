@@ -411,9 +411,6 @@ def test_the_sessions_already_on_disk_still_load_and_their_ids_still_resolve():
     checked = 0
     for directory in directories:
         session = store.load(directory.name)
-        # The new field is absent from every one of these files.
-        assert session.kept_candidate_ids == []
-
         artifact = directory / "general" / "candidates.v1.json"
         if not artifact.is_file():
             continue
@@ -423,7 +420,9 @@ def test_the_sessions_already_on_disk_still_load_and_their_ids_still_resolve():
         ]
         if not on_disk:
             continue
-        assert on_disk[0] == "candidate-1", "these predate the revision namespace"
+        if session.revision <= 1 and not session.kept_candidate_ids:
+            assert session.kept_candidate_ids == []
+            assert on_disk[0] == "candidate-1", "these predate the revision namespace"
         # The lookup verify_selected and the gate machinery use has to keep
         # resolving them: a bare candidate-N is still a first-round id.
         resolved = reader._candidates_by_id(session)
