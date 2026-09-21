@@ -87,6 +87,7 @@ def build(
     reader_error: list[str] = [""]
     reader_fields: dict[int, ft.TextField] = {}
     repair_busy = [False]
+    download_busy = [False]
     missing_panel = ft.Column(spacing=8)
 
     def render_grid(manifest: list[dict]):
@@ -224,6 +225,7 @@ def build(
                         text_size=11,
                     )
                     reader_fields[rank] = field
+                field.disabled = repair_busy[0] or download_busy[0]
 
                 title_to_copy = source_comic if source_comic and source_comic != "Unknown comic" else entity
                 copy_row = ft.Row([
@@ -240,9 +242,10 @@ def build(
                 controls.append(ft.Column([copy_row, field], spacing=2))
             controls.append(repair_button)
         missing_panel.controls = controls
-        blocked = bool(rows) or bool(reader_error[0]) or repair_busy[0]
+        blocked = (bool(rows) or bool(reader_error[0]) or repair_busy[0]
+                   or download_busy[0])
         download_button.disabled = blocked
-        repair_button.disabled = not rows or repair_busy[0]
+        repair_button.disabled = not rows or repair_busy[0] or download_busy[0]
         if update:
             page.update()
 
@@ -255,47 +258,68 @@ def build(
     _refresh_missing_panel()
 
     async def _execute():
+        if download_busy[0] or repair_busy[0]:
+            return
         if not state.project_name:
             status_text.value = "No project loaded — go back to Stage 1."
             status_text.color = DANGER
             page.update()
             return
+        download_busy[0] = True
+        _refresh_missing_panel(update=True)
         # Re-read the persisted Q&A context at click time. The visible list can
         # be stale after another repair action, but a download must never run on
         # unresolved items or silently renumber/drop them.
-        remaining = list(get_scout_missing_readers(state.project_name))
-        if remaining:
-            missing_readers[0] = remaining
-            status_text.value = "Repair the missing reader URLs before downloading."
-            status_text.color = WARN
-            _refresh_missing_panel(update=True)
-            return
-        running.visible = True
-        status_text.value = "Downloading comic pages…"
-        status_text.color = WARN
-        page.update()
-
         try:
-            manifest = await run_blocking(run_stage_download, state.project_name, push_log)
-        except Exception as e:
-            running.visible = False
-            status_text.value = "Failed — see log."
-            status_text.color = DANGER
-            push_log(format_exception(e))
+            try:
+                remaining = list(get_scout_missing_readers(state.project_name))
+            except ValueError as exc:
+                reader_error[0] = str(exc)
+                missing_readers[0] = []
+                status_text.value = "Could not inspect selected issues."
+                status_text.color = DANGER
+                return
+            except Exception as exc:
+                reader_error[0] = "Could not inspect selected issues — see log."
+                missing_readers[0] = []
+                status_text.value = reader_error[0]
+                status_text.color = DANGER
+                push_log(format_exception(exc))
+                return
+            reader_error[0] = ""
+            if remaining:
+                missing_readers[0] = remaining
+                status_text.value = "Repair the missing reader URLs before downloading."
+                status_text.color = WARN
+                return
+            running.visible = True
+            status_text.value = "Downloading comic pages…"
+            status_text.color = WARN
             page.update()
-            return
 
-        render_grid(manifest)
-        state.mark_approved(2)
-        state.current_stage = max(state.current_stage, 3)
-        save_state(state)
+            try:
+                manifest = await run_blocking(run_stage_download, state.project_name, push_log)
+            except Exception as exc:
+                running.visible = False
+                status_text.value = "Failed — see log."
+                status_text.color = DANGER
+                push_log(format_exception(exc))
+                return
 
-        running.visible = False
-        total = sum(len(ch.get("pages", [])) for ch in manifest)
-        status_text.value = f"Download complete — {total} pages."
-        status_text.color = SUCCESS
-        page.update()
-        on_state_change()
+            render_grid(manifest)
+            state.mark_approved(2)
+            state.current_stage = max(state.current_stage, 3)
+            save_state(state)
+
+            running.visible = False
+            total = sum(len(ch.get("pages", [])) for ch in manifest)
+            status_text.value = f"Download complete — {total} pages."
+            status_text.color = SUCCESS
+            page.update()
+            on_state_change()
+        finally:
+            download_busy[0] = False
+            _refresh_missing_panel(update=True)
 
     def run_click(_e):
         page.run_task(_execute)

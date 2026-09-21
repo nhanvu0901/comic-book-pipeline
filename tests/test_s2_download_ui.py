@@ -139,6 +139,34 @@ def test_reader_inspection_error_blocks_download_without_inventing_a_rank_zero_i
     )
 
 
+def test_click_time_reader_inspection_error_stays_in_the_repair_panel(monkeypatch):
+    """A stale initial inspection must not escape the async Download task."""
+
+    page = FakePage()
+    state = AppState(project_name="qa-project")
+    calls = []
+
+    def inspect(_project):
+        calls.append(_project)
+        if len(calls) == 1:
+            return []
+        raise ValueError("answer_context.json changed while this screen was open")
+
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", inspect)
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+
+    root = s2_download.build(page, state, on_go=lambda _stage: None, on_state_change=lambda: None)
+    _by_key(root, "stage1-download").on_click(None)
+    _run_task(page)
+
+    assert calls == ["qa-project", "qa-project"]
+    assert _by_key(root, "stage1-download").disabled is True
+    assert "answer_context.json changed while this screen was open" in "\n".join(
+        str(control.value or "") for control in _walk(root) if isinstance(control, ft.Text)
+    )
+
+
 def test_ui_repair_uses_the_real_persisted_reader_contract(monkeypatch, tmp_path):
     project_root = tmp_path / "qa-project"
     project_root.mkdir()

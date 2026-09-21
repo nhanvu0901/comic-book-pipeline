@@ -221,9 +221,14 @@ def create_project_from_session(
     unresolved_reader_urls: list[dict] = []
     if session.mode is ScoutMode.QA:
         research = _qa_research(session, selected)
-        answer_research.build_contexts(
-            session.user_intent, research, project_slug, allow_missing_reader_urls=override
-        )
+        try:
+            answer_research.build_contexts(
+                session.user_intent, research, project_slug, allow_missing_reader_urls=override
+            )
+        except answer_research.MissingReaderUrlsError as exc:
+            raise ScoutUserError(
+                f"{exc}\n(enable override to create the project with unresolved reader URLs)"
+            ) from exc
         unresolved_reader_urls = answer_research.get_missing_reader_urls(project_slug)
     else:
         candidate, gate = selected[0]
