@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
+import time
 from typing import Callable
 
 import flet as ft
@@ -463,7 +465,7 @@ def build(
     )
     enrich_switch = ft.Switch(
         label="Enrich context from wiki (slower, better narration)",
-        value=True, active_color=ACCENT,
+        value=False, active_color=ACCENT,
     )
     saga_switch = ft.Switch(
         label="Crossover saga — weave issues into ONE story (per-issue context)",
@@ -492,10 +494,23 @@ def build(
             page.update()
             return
         if not proj:
-            status_text.value = "Project name is required for URL-direct mode."
-            status_text.color = DANGER
-            page.update()
-            return
+            tokens = [t.strip() for t in raw.replace(",", "\n").split() if t.strip()]
+            if tokens:
+                first = tokens[0]
+                m_reader = re.search(r"/reader/(\d+)/(\d+)", first)
+                m_series = re.search(r"/(\d+)-([a-z0-9-]+?)\.html", first)
+                if m_series:
+                    proj = re.sub(r"-+", "_", m_series.group(2).strip("-"))
+                elif m_reader:
+                    proj = f"comic_{m_reader.group(1)}_{m_reader.group(2)}"
+                else:
+                    proj = f"comic_url_{int(time.time())}"
+                url_project_field.value = proj
+            else:
+                status_text.value = "Paste at least one URL first."
+                status_text.color = DANGER
+                page.update()
+                return
         state.project_name = proj
         save_state(state)
         direct_download_busy[0] = True
@@ -545,6 +560,9 @@ def build(
 
     def run_url_click(_e):
         page.run_task(_execute_url)
+
+    dl_url_button = primary_button("Download from URL(s)", run_url_click, icon=ft.Icons.LINK)
+    dl_url_button.key = "download-from-url"
 
     def _show_snack(msg: str):
         sb = ft.SnackBar(content=ft.Text(msg))
@@ -683,7 +701,7 @@ def build(
         saga_switch,
         max_issues_field,
         ft.Container(height=4),
-        primary_button("Download from URL(s)", run_url_click, icon=ft.Icons.LINK),
+        dl_url_button,
 
         ft.Container(height=14),
         primary_button("Continue to Stage 3 →", approve_and_go,

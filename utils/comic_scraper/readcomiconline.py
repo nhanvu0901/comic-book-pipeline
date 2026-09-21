@@ -88,9 +88,9 @@ def _new_session() -> cf_req.Session:
         timeout=15,
     )
 
-    if "__guard_token" not in sess.cookies:
+    if not any(k in sess.cookies for k in ("__guard_trust", "__guard_token", "__guard_id")):
         raise RuntimeError(
-            "POST /_v did not set guard cookies — challenge solver may be broken."
+            f"POST /_v did not set guard cookies (got: {list(sess.cookies.keys())}) — challenge solver may be broken."
         )
     print(f"[scraper] Challenge solved: nonce={nonce} in {dt * 1000:.0f}ms")
     return sess
@@ -99,7 +99,7 @@ def _new_session() -> cf_req.Session:
 def _get_session() -> cf_req.Session:
     """Return a cached session; re-solve the challenge if it was dropped."""
     global _session
-    if _session is None or "__guard_token" not in _session.cookies:
+    if _session is None or not any(k in _session.cookies for k in ("__guard_trust", "__guard_token", "__guard_id")):
         _session = _new_session()
     return _session
 

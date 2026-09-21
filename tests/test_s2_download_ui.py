@@ -399,3 +399,42 @@ def test_normal_project_has_no_missing_reader_panel_and_download_stays_enabled(m
 
     assert _by_key(root, "stage1-download").disabled is False
     assert not [control for control in _walk(root) if getattr(control, "key", None) == "repair-reader-urls"]
+
+
+def test_url_direct_enrich_context_defaults_to_false(monkeypatch):
+    _page, root = _build(monkeypatch, [], lambda *_args, **_kwargs: [])
+    switches = [c for c in _walk(root) if isinstance(c, ft.Switch) and "Enrich context" in str(c.label or "")]
+    assert len(switches) == 1
+    assert switches[0].value is False, "enrich context switch should default to False"
+
+
+def test_url_direct_auto_derives_project_name_when_blank(monkeypatch):
+    page = FakePage()
+    state = AppState(project_name="")
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+
+    downloaded = []
+    def fake_download_from_url(proj, raw, issues, enrich, log):
+        downloaded.append((proj, raw, enrich))
+        return [{"label": "#1", "pages": ["/fake/page_01.jpg"]}]
+
+    monkeypatch.setattr(s2_download, "run_stage_download_from_url", fake_download_from_url)
+
+    root = s2_download.build(page, state, on_go=lambda _stage: None, on_state_change=lambda: None)
+    text_fields = [c for c in _walk(root) if isinstance(c, ft.TextField)]
+    url_field = next(c for c in text_fields if "Comic URL" in str(c.label or ""))
+    proj_field = next(c for c in text_fields if "Project name" in str(c.label or ""))
+    dl_url_btn = _by_key(root, "download-from-url")
+
+    url_field.value = "https://batcave.biz/reader/31569/223504,https://batcave.biz/reader/30400/213523"
+    proj_field.value = ""
+
+    dl_url_btn.on_click(None)
+    _run_task(page)
+
+    assert proj_field.value == "comic_31569_223504"
+    assert len(downloaded) == 1
+    assert downloaded[0][0] == "comic_31569_223504"
+    assert downloaded[0][2] is False  # enrich is False
