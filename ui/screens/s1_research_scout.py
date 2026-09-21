@@ -40,6 +40,7 @@ from ..bridge import (
     list_bank_suggestions,
     rerun_scout_general,
     rescout_keeping_confirmed,
+    rescout_keeping_selected,
     run_blocking,
     run_scout_general,
     start_scout_session,
@@ -150,6 +151,7 @@ def _candidate_card(
     *,
     gate: dict,
     selection: ft.Control,
+    is_kept: bool = False,
     trailing: list[ft.Control] | None = None,
 ) -> ft.Control:
     candidate_id = _candidate_id(candidate, index)
@@ -168,11 +170,19 @@ def _candidate_card(
         urls = [*urls, reader_url]
     flags = [str(flag) for flag in (candidate.get("flags") or [])]
     flags.extend(str(flag) for flag in (gate.get("flags") or []))
+    header_controls: list[ft.Control] = [
+        ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, expand=True),
+    ]
+    if is_kept:
+        header_controls.append(ft.Container(
+            content=ft.Text("PINNED", size=9, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
+            bgcolor=ft.Colors.AMBER_400,
+            padding=ft.padding.symmetric(horizontal=6, vertical=2),
+            border_radius=4,
+        ))
+    header_controls.append(_verdict_badge(gate))
     details: list[ft.Control] = [
-        ft.Row([
-            ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, expand=True),
-            _verdict_badge(gate),
-        ], spacing=8),
+        ft.Row(header_controls, spacing=8),
         ft.Text(summary, size=12, color=TEXT_MUTED, selectable=True),
     ]
     if gate.get("reason"):
@@ -460,6 +470,7 @@ def build(
         cards: list[ft.Control] = []
         for index, candidate in enumerate(candidates):
             candidate_id = _candidate_id(candidate, index)
+            is_kept = bool(session.revision > 1 and not candidate_id.startswith(f"r{session.revision}-"))
             selection = ft.Checkbox(
                 key=f"select-{candidate_id}",
                 label="Select",
@@ -485,6 +496,7 @@ def build(
                 candidate, index,
                 gate=_candidate_gate(candidate_id, gates),
                 selection=selection,
+                is_kept=is_kept,
                 trailing=trailing,
             ))
 
@@ -513,8 +525,6 @@ def build(
         controls: list[ft.Control] = [*cards, verify_button]
         kept = _confirmed_selected(session, gates)
         if kept:
-            # Hidden until something is confirmed: with nothing to keep there is
-            # nothing this does that the plain feedback re-run does not already.
             rescout = secondary_button(
                 f"Re-scout, keep confirmed ({len(kept)})", _rescout_click,
             )
@@ -522,6 +532,19 @@ def build(
             controls.append(ft.Row([
                 rescout,
                 ft.Text("costs one research call", size=10, color=TEXT_MUTED),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        unconfirmed_selected = [cid for cid in selected_specific if cid not in set(kept)]
+        if unconfirmed_selected:
+            rescout_selected = secondary_button(
+                f"Keep selected & scout more ({len(selected_specific)})",
+                _rescout_selected_click,
+                icon=ft.Icons.BOOKMARK_ADD,
+            )
+            rescout_selected.key = "rescout-keep-selected"
+            controls.append(ft.Row([
+                rescout_selected,
+                ft.Text("pins selected cards & searches for fresh alternatives (~30s)", size=11, color=TEXT_MUTED),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         if _needs_override(selected_specific, gates):
             controls.append(ft.Checkbox(
@@ -687,7 +710,7 @@ def build(
                 ))
             elif name == "general_research_rerun":
                 bubbles.append(_rerun_bubble(detail))
-            elif name == "rescout_keeping_confirmed":
+            elif name in ("rescout_keeping_confirmed", "rescout_keeping_selected"):
                 bubbles.append(_rescout_bubble(detail))
             elif name == "candidates_verified":
                 bubbles.append(_verified_bubble(detail, candidates))
@@ -991,6 +1014,16 @@ def build(
             return
         _run_busy(
             "Researching… ~30s", lambda: rescout_keeping_confirmed(session.id),
+        )
+
+    def _rescout_selected_click(_e) -> None:
+        session = session_holder[0]
+        if not session or not selected_specific:
+            return
+        ids = sorted(selected_specific)
+        _run_busy(
+            "Keeping selected & researching more… ~30s",
+            lambda: rescout_keeping_selected(session.id, ids),
         )
 
     def _approve_selection_click(_e) -> None:

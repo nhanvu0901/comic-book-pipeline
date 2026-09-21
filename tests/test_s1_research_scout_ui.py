@@ -1124,3 +1124,31 @@ def test_the_transcript_records_the_rescout_rather_than_skipping_it(tmp_path):
 
     assert "keeping 1 confirmed" in text
     assert "replacing 2" in text
+
+
+def test_unconfirmed_selection_offers_rescout_keeping_selected(tmp_path, monkeypatch):
+    """When a user likes an inconclusive or unverified candidate, they can keep it
+    and scout for more candidates into the next round."""
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-keep-selected-inconclusive",
+        candidates=[{"id": "a", "title": "A"}, {"id": "b", "title": "B"}],
+        gates=[_gate("a", "inconclusive"), _gate("b", "rejected")],
+        selected=["a"],
+    )
+    calls = []
+
+    def _fake_rescout_selected(session_id, ids):
+        calls.append((session_id, ids))
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "rescout_keeping_selected", _fake_rescout_selected)
+    page, controls = _build(tmp_path, session)
+
+    button = _by_key(controls, "rescout-keep-selected")
+    assert "Keep selected & scout more (1)" in _label(button)
+
+    button.on_click(object())
+    _run_recorded_task(page)
+    assert calls == [("qa-keep-selected-inconclusive", ["a"])]
+

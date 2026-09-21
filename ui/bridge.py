@@ -232,6 +232,14 @@ def rescout_keeping_confirmed(session_id: str):
     return workflow.run_general(session_id)
 
 
+def rescout_keeping_selected(session_id: str, candidate_ids=None):
+    """Keep any currently selected candidates (regardless of verdict) and search for more."""
+    workflow = _scout_workflow()
+    workflow.rescout_keeping_selected(session_id, candidate_ids)
+    return workflow.run_general(session_id)
+
+
+
 def back_scout_candidates(session_id: str):
     return _scout_workflow().back_to_candidates(session_id)
 

@@ -476,3 +476,32 @@ def test_a_rerun_with_nothing_to_prune_writes_no_empty_gate_artifact(workflow):
     assert not workflow.store.artifact_path(
         session.id, "specific/evidence_gate.v1.json"
     ).exists()
+
+
+def test_rescout_keeping_selected_preserves_any_candidate_even_without_confirmed_gate(workflow):
+    """A user can pin/keep ANY candidate they like into the next round, even if
+    it is inconclusive or unverified, and it prepends to round 2."""
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+
+    # Beta is candidate-2 in round 1; keep it without gating it
+    session = workflow.rescout_keeping_selected(session.id, ["candidate-2"])
+    assert session.kept_candidate_ids == ["candidate-2"]
+    assert session.revision == 2
+
+    round2 = workflow.run_general(session.id)
+    ids2 = _candidate_ids(workflow, session.id)
+
+    # Beta survived in front under its original id
+    assert ids2[0] == "candidate-2"
+    # Round 2's new candidates have the r2- prefix
+    assert all(cid.startswith("r2-") for cid in ids2[1:])
+
+
+def test_rescout_keeping_selected_rejects_empty_selection(workflow):
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+
+    with pytest.raises(Exception, match="select at least one candidate"):
+        workflow.rescout_keeping_selected(session.id, [])
+

@@ -124,6 +124,7 @@ ALLOWED = {
         "approve_selected": SessionState.PRODUCTION_GATES,
         "rerun_general": SessionState.GENERAL_DRAFT,
         "rescout_keeping_confirmed": SessionState.GENERAL_DRAFT,
+        "rescout_keeping_selected": SessionState.GENERAL_DRAFT,
         "archive": SessionState.ARCHIVED,
     },
     SessionState.PRODUCTION_GATES: {
@@ -484,6 +485,51 @@ class ScoutWorkflow:
             event="rescout_keeping_confirmed",
             detail={"kept": confirmed, "dropped": dropped},
         )
+
+    def rescout_keeping_selected(
+        self, session_id: str, candidate_ids: Sequence[str] | None = None
+    ) -> ResearchSession:
+        """Keep any currently selected candidates (regardless of verdict) and
+        launch a fresh research round to discover additional candidates.
+
+        The kept candidates survive with their own ids and gates, and are
+        prepended to the next round's candidate list.
+        """
+        session = self._load_and_transition(session_id, "rescout_keeping_selected")
+        ids = (
+            self._clean_ids(candidate_ids)
+            if candidate_ids is not None
+            else list(session.selected_specific_candidate_ids)
+        )
+        candidates = self._candidates_by_id(session)
+        kept = [cid for cid in ids if cid in candidates]
+        if not kept:
+            raise ScoutUserError(
+                "select at least one candidate to keep before re-scouting"
+            )
+
+        gates = self._existing_gates(session_id)
+        dropped = [cid for cid in gates if cid not in kept]
+        session.feedback_log.append(
+            FeedbackNote(
+                state=SessionState.CANDIDATE_REVIEW.value,
+                text=_rescout_note(
+                    [_candidate_label(candidates, cid) for cid in kept],
+                    [_candidate_label(candidates, cid) for cid in dropped],
+                ),
+            )
+        )
+        session.kept_candidate_ids = list(kept)
+        session.selected_specific_candidate_ids = list(kept)
+        self._write_gates(session_id, kept)
+        session.revision += 1
+        session.state = SessionState.GENERAL_DRAFT
+        return self.store.save(
+            session,
+            event="rescout_keeping_selected",
+            detail={"kept": kept, "dropped": dropped},
+        )
+
 
     def _load_and_transition(self, session_id: str, action: str) -> ResearchSession:
         session = self.store.load(session_id)
