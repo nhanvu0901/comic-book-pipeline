@@ -45,6 +45,11 @@ class AppState:
     # remains available while Stage 1 is still collecting evidence.
     scout_session_id: str = ""
     scout_mode: str = "qa"
+    # Set only by the explicit Stage 2 return action.  It lets Stage 1 offer
+    # the original custom slug without treating unrelated resumed sessions as
+    # belonging to the currently open project.
+    returned_scout_project: str = ""
+    returned_scout_session_id: str = ""
     # Stage 3
     chosen_mode: str = ""
     chosen_hook: str = ""
@@ -68,6 +73,25 @@ class AppState:
         for s in range(stage + 1, 9):
             if self.approved.get(str(s)):
                 self.dirty[str(s)] = True
+
+    def return_to_research(self, session_id: str, mode: str, prompt: str) -> None:
+        """Make a project editable from its saved Stage 1 research session again.
+
+        The project files remain available for the re-approved selection, but every
+        pipeline approval describes output derived from the old selection and must
+        no longer unlock a later screen.
+        """
+        self.scout_session_id = session_id
+        self.scout_mode = mode
+        self.last_prompt = prompt
+        self.pipeline_mode = "explore_answer" if mode == "qa" else "micro_moment"
+        self.current_stage = 1
+        self.approved = {}
+        self.dirty = {}
+        # This is deliberately project-scoped state, rather than guessing from
+        # arbitrary unfinished sessions when Stage 1 is opened later.
+        self.returned_scout_project = self.project_name
+        self.returned_scout_session_id = session_id
 
     def reset(self) -> None:
         self.approved = {}

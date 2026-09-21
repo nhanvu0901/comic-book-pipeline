@@ -15,7 +15,8 @@ import flet as ft
 from .. import bridge
 from ..bridge import (asset_src, 
     format_exception, load_raw_pages, run_blocking,
-    run_stage_download, run_stage_download_from_url, run_stage_download_saga,
+    return_scout_project_to_research, run_stage_download, run_stage_download_from_url,
+    run_stage_download_saga,
 )
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
@@ -88,6 +89,8 @@ def build(
     reader_fields: dict[int, ft.TextField] = {}
     repair_busy = [False]
     download_busy = [False]
+    direct_download_busy = [False]
+    return_busy = [False]
     missing_panel = ft.Column(spacing=8)
 
     def render_grid(manifest: list[dict]):
@@ -242,10 +245,16 @@ def build(
                 controls.append(ft.Column([copy_row, field], spacing=2))
             controls.append(repair_button)
         missing_panel.controls = controls
+        needs_stage_one_reapproval = (
+            state.returned_scout_project == state.project_name
+            and not state.is_approved(1)
+        )
         blocked = (bool(rows) or bool(reader_error[0]) or repair_busy[0]
-                   or download_busy[0])
+                   or download_busy[0] or needs_stage_one_reapproval)
         download_button.disabled = blocked
-        repair_button.disabled = not rows or repair_busy[0] or download_busy[0]
+        repair_button.disabled = (
+            not rows or repair_busy[0] or download_busy[0] or needs_stage_one_reapproval
+        )
         if update:
             page.update()
 
@@ -258,11 +267,16 @@ def build(
     _refresh_missing_panel()
 
     async def _execute():
-        if download_busy[0] or repair_busy[0]:
+        if download_busy[0] or repair_busy[0] or return_busy[0]:
             return
         if not state.project_name:
             status_text.value = "No project loaded — go back to Stage 1."
             status_text.color = DANGER
+            page.update()
+            return
+        if state.returned_scout_project == state.project_name and not state.is_approved(1):
+            status_text.value = "Approve the restored Stage 1 selection before downloading again."
+            status_text.color = WARN
             page.update()
             return
         download_busy[0] = True
@@ -325,7 +339,7 @@ def build(
         page.run_task(_execute)
 
     async def _repair_missing_readers():
-        if repair_busy[0] or not state.project_name or not missing_readers[0]:
+        if repair_busy[0] or return_busy[0] or not state.project_name or not missing_readers[0]:
             return
         repair_busy[0] = True
         status_text.value = "Saving reader URLs and resolving remaining issues…"
@@ -365,11 +379,75 @@ def build(
             _refresh_missing_panel(update=True)
 
     def repair_click(_e):
-        if not repair_busy[0]:
+        if not repair_busy[0] and not return_busy[0]:
             page.run_task(_repair_missing_readers)
 
     download_button.on_click = run_click
     repair_button.on_click = repair_click
+
+    async def _return_to_stage_one() -> None:
+        """Restore the disk-backed scout session without issuing new research calls."""
+        if return_busy[0] or download_busy[0] or repair_busy[0] or direct_download_busy[0]:
+            return
+        if not state.project_name:
+            status_text.value = "No project loaded — cannot restore its Stage 1 research."
+            status_text.color = DANGER
+            page.update()
+            return
+        # The first return already detached this project's session.  Stage 1
+        # may now be showing either its candidate checklist or production
+        # form, while the user briefly visits Stage 2 through the sidebar.
+        # Resume that exact in-memory/persisted association instead of asking
+        # the backend to detach it a second time (which is valid only from the
+        # original completed session state).
+        if (
+            state.returned_scout_project == state.project_name
+            and state.returned_scout_session_id == state.scout_session_id
+            and state.scout_session_id
+            and not state.is_approved(1)
+        ):
+            try:
+                save_state(state)
+                on_go(1)
+            except Exception as exc:
+                status_text.value = str(exc) or "Could not save the restored Stage 1 session."
+                status_text.color = DANGER
+                page.update()
+            return
+        return_busy[0] = True
+        running.visible = True
+        status_text.value = "Restoring saved Stage 1 research…"
+        status_text.color = WARN
+        page.update()
+        try:
+            session = await run_blocking(
+                return_scout_project_to_research, state.project_name,
+            )
+            state.return_to_research(session.id, session.mode.value, session.user_intent)
+            save_state(state)
+            on_go(1)
+        except Exception as exc:
+            running.visible = False
+            status_text.value = str(exc) or "Could not restore the original research session."
+            status_text.color = DANGER
+            page.update()
+        finally:
+            return_busy[0] = False
+
+    def return_to_stage_one_click(_e):
+        if return_busy[0] or download_busy[0] or repair_busy[0] or direct_download_busy[0]:
+            return
+        page.run_task(_return_to_stage_one)
+
+    def guarded_go(stage: int) -> None:
+        # three_col owns the sidebar.  Supplying this wrapper makes its Stage 1
+        # row perform precisely the same restore action as the explicit button.
+        if return_busy[0]:
+            return
+        if stage == 1:
+            return_to_stage_one_click(None)
+            return
+        on_go(stage)
 
     # ─── URL-direct mode (skip Stage 1) ─────────────────────────────────────
     url_field = ft.TextField(
@@ -404,6 +482,8 @@ def build(
     )
 
     async def _execute_url():
+        if return_busy[0] or direct_download_busy[0]:
+            return
         raw = (url_field.value or "").strip()
         proj = (url_project_field.value or "").strip()
         if not raw:
@@ -418,6 +498,7 @@ def build(
             return
         state.project_name = proj
         save_state(state)
+        direct_download_busy[0] = True
 
         running.visible = True
         status_text.value = ("Crossover-saga download — per-issue context…"
@@ -447,19 +528,20 @@ def build(
             status_text.color = DANGER
             push_log(format_exception(e))
             page.update()
-            return
+        else:
+            render_grid(manifest)
+            state.mark_approved(2)
+            state.current_stage = max(state.current_stage, 3)
+            save_state(state)
 
-        render_grid(manifest)
-        state.mark_approved(2)
-        state.current_stage = max(state.current_stage, 3)
-        save_state(state)
-
-        running.visible = False
-        total = sum(len(ch.get("pages", [])) for ch in manifest)
-        status_text.value = f"URL-direct download complete — {total} pages."
-        status_text.color = SUCCESS
-        page.update()
-        on_state_change()
+            running.visible = False
+            total = sum(len(ch.get("pages", [])) for ch in manifest)
+            status_text.value = f"URL-direct download complete — {total} pages."
+            status_text.color = SUCCESS
+            page.update()
+            on_state_change()
+        finally:
+            direct_download_busy[0] = False
 
     def run_url_click(_e):
         page.run_task(_execute_url)
@@ -471,6 +553,8 @@ def build(
         page.update()
 
     def _do_clear(_e):
+        if return_busy[0]:
+            return
         try:
             removed = clear_stage_2(
                 state.project_name, raw=True, preprocessed=False,
@@ -486,6 +570,8 @@ def build(
         page.update()
 
     def approve_and_go(_e):
+        if return_busy[0]:
+            return
         state.mark_approved(2)
         state.current_stage = 3
         save_state(state)
@@ -555,6 +641,12 @@ def build(
             )
         )
 
+    return_button = secondary_button(
+        "← Return to Stage 1 research", return_to_stage_one_click,
+        icon=ft.Icons.ARROW_BACK,
+    )
+    return_button.key = "return-to-stage1"
+
     right = ft.Column([
         ft.Text("STEP 2 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Download Comic", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
@@ -567,6 +659,8 @@ def build(
         ft.Container(height=16),
         missing_panel,
         download_button,
+        ft.Container(height=8),
+        return_button,
         ft.Container(height=8),
         secondary_button("Clear downloads", _do_clear, icon=ft.Icons.DELETE_OUTLINE),
 
@@ -598,7 +692,7 @@ def build(
     ], spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
 
     return three_col(
-        center, right, state=state, on_go=on_go,
+        center, right, state=state, on_go=guarded_go,
         header_title="Download Comic",
         header_subtitle="Scrape comic pages from batcave.biz before preprocessing.",
     )

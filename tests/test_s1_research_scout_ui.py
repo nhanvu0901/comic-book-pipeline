@@ -74,6 +74,45 @@ def test_stage_one_routes_to_research_scout():
     assert app.STAGE_BUILDERS[1] is s1_research_scout.build
 
 
+def test_returned_session_reloads_its_selected_cards_and_original_custom_slug(tmp_path):
+    """The persisted return marker is narrow: it restores this session only."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="returned-session", mode=ScoutMode.QA, user_intent="Superman fight questions",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {
+        "candidates": [{"id": candidate_id, "title": candidate_id.upper()}
+                       for candidate_id in ("a", "b", "c")],
+    })
+    s1_research_scout.RESEARCH_SESSIONS_ROOT = tmp_path / "research_sessions"
+    bridge.RESEARCH_SESSIONS_ROOT = tmp_path / "research_sessions"
+    state = AppState(
+        project_name="my-custom-slug", scout_session_id=session.id,
+        returned_scout_project="my-custom-slug", returned_scout_session_id=session.id,
+    )
+    page = FakePage()
+    controls = s1_research_scout.build(
+        page, state, on_go=lambda _stage: None, on_state_change=lambda: None,
+    )
+
+    selected = [node for node in _walk(controls)
+                if isinstance(node, ft.Checkbox) and str(getattr(node, "key", "")).startswith("select-")]
+    assert [node.value for node in selected] == [True, True, True]
+
+    # Move the same restored session to the production form, as happens after
+    # the user re-approves its saved candidate selection.
+    session.state = SessionState.PRODUCTION_GATES
+    store.save(session)
+    controls = s1_research_scout.build(
+        page, state, on_go=lambda _stage: None, on_state_change=lambda: None,
+    )
+    slug = next(node for node in _walk(controls) if getattr(node, "key", None) == "project-slug")
+    assert slug.value == "my-custom-slug"
+
+
 def test_approve_is_disabled_for_qa_with_two_selected_items(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = ResearchSession(
@@ -1151,4 +1190,3 @@ def test_unconfirmed_selection_offers_rescout_keeping_selected(tmp_path, monkeyp
     button.on_click(object())
     _run_recorded_task(page)
     assert calls == [("qa-keep-selected-inconclusive", ["a"])]
-

@@ -277,6 +277,17 @@ def create_scout_project(session_id: str, project_slug: str, *, override: bool =
     return create_project_from_session(session_id, project_slug, override=override)
 
 
+def return_scout_project_to_research(project_name: str):
+    """Synchronously return a Stage 2 project to its persisted Scout session.
+
+    This is deliberately disk-only: screen code owns AppState and runs this
+    through ``run_blocking`` while it disables duplicate UI actions.
+    """
+    from stages.research_scout.project_return import return_project_to_research
+
+    return return_project_to_research(project_name)
+
+
 def get_scout_missing_readers(project_name: str) -> list[dict]:
     from stages.stage_1.answer_research import get_missing_reader_urls
 

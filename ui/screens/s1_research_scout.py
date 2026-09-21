@@ -588,7 +588,17 @@ def build(
     def _production_gates_bubble(session: ResearchSession) -> ft.Control:
         if slug_session_id[0] != session.id:
             slug_session_id[0] = session.id
-            slug_value[0] = slugify(session.user_intent or "untitled_research")
+            # A project explicitly returned from Stage 2 carries its original
+            # slug in persisted AppState.  Keep that convenience narrowly tied
+            # to this return flow: an unrelated unfinished session must still
+            # receive the ordinary intent-derived suggestion.
+            slug_value[0] = (
+                state.project_name
+                if (state.returned_scout_project == state.project_name
+                    and state.returned_scout_session_id == session.id
+                    and state.project_name)
+                else slugify(session.user_intent or "untitled_research")
+            )
         elif slug_holder[0] is not None:
             slug_value[0] = str(slug_holder[0].value or "")
         slug_field = ft.TextField(
@@ -741,6 +751,10 @@ def build(
 
     def _apply_session_and_render(result) -> None:
         session_holder[0] = result
+        if (state.returned_scout_session_id
+                and state.returned_scout_session_id != result.id):
+            state.returned_scout_project = ""
+            state.returned_scout_session_id = ""
         # The session on disk owns the selection. A re-scout or a feedback
         # re-run narrows it — to the kept candidates, or to nothing — and ticks
         # left over from the round just replaced would keep Approve enabled over
@@ -759,6 +773,8 @@ def build(
         override_holder[0] = False
         _reset_production_form()
         session_holder[0] = None
+        state.returned_scout_project = ""
+        state.returned_scout_session_id = ""
         intent_field.value = ""
         _forget_suggestions()
         _render_full()
@@ -767,6 +783,8 @@ def build(
         session = session_holder[0]
         state.project_name = project_name
         state.scout_session_id = ""
+        state.returned_scout_project = ""
+        state.returned_scout_session_id = ""
         if session:
             state.last_prompt = session.user_intent
             state.pipeline_mode = "explore_answer" if session.mode is ScoutMode.QA else "micro_moment"
@@ -1100,6 +1118,9 @@ def build(
             state.scout_session_id = loaded.id
             state.scout_mode = loaded.mode.value
             state.last_prompt = loaded.user_intent
+            if state.returned_scout_session_id != loaded.id:
+                state.returned_scout_project = ""
+                state.returned_scout_session_id = ""
             selected_specific.clear()
             selected_specific.update(loaded.selected_specific_candidate_ids)
             verifying.clear()

@@ -7,7 +7,9 @@ import asyncio
 import flet as ft
 
 import ui.screens.s2_download as s2_download
+import ui.state as ui_state
 from stages.stage_1 import answer_research
+from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from ui.state import AppState
 
 from tests.ui_test_doubles import StrictFakePage as FakePage
@@ -43,6 +45,201 @@ def _build(monkeypatch, missing, repair):
     monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
     root = s2_download.build(page, state, on_go=lambda _stage: None, on_state_change=lambda: None)
     return page, root
+
+
+def _return_button(root):
+    return _by_key(root, "return-to-stage1")
+
+
+def _sidebar_stage_one(root):
+    """The first stage row in three_col's left stepper."""
+    return root.controls[0].content.controls[1]
+
+
+def _returned_session() -> ResearchSession:
+    return ResearchSession(
+        id="restored-session",
+        mode=ScoutMode.QA,
+        user_intent="Who has beaten Superman?",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["candidate-a", "candidate-b", "candidate-c"],
+        created_project=None,
+    )
+
+
+def _return_ready_screen(monkeypatch, *, on_go=None):
+    page = FakePage()
+    state = AppState(
+        project_name="custom-project",
+        current_stage=2,
+        scout_session_id="",  # _finish_create_project deliberately cleared it.
+        approved={str(n): True for n in range(1, 7)},
+        dirty={"4": True},
+    )
+    calls = []
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+    monkeypatch.setattr(
+        s2_download, "return_scout_project_to_research",
+        lambda project: calls.append(project) or _returned_session(),
+        raising=False,
+    )
+    root = s2_download.build(
+        page, state, on_go=on_go or (lambda _stage: None), on_state_change=lambda: None,
+    )
+    return page, state, root, calls
+
+
+def test_return_button_restores_the_saved_research_session_and_invalidates_pipeline(monkeypatch):
+    page, state, root, calls = _return_ready_screen(monkeypatch)
+
+    _return_button(root).on_click(None)
+    _run_task(page)
+
+    assert calls == ["custom-project"]
+    assert state.scout_session_id == "restored-session"
+    assert state.scout_mode == "qa"
+    assert state.last_prompt == "Who has beaten Superman?"
+    assert state.pipeline_mode == "explore_answer"
+    assert state.current_stage == 1
+    assert all(not state.is_approved(stage) for stage in range(1, 9))
+    assert state.dirty == {}
+
+
+def test_sidebar_stage_one_uses_the_same_return_flow_as_the_explicit_button(monkeypatch):
+    page, state, root, calls = _return_ready_screen(monkeypatch)
+    stages = []
+    # Rebuild only to wire this test's navigation observation into the sidebar.
+    page, state, root, calls = _return_ready_screen(monkeypatch, on_go=stages.append)
+
+    _sidebar_stage_one(root).on_click(None)
+    _run_task(page)
+
+    assert calls == ["custom-project"]
+    assert stages == [1]
+    assert state.scout_session_id == "restored-session"
+    assert state.current_stage == 1
+
+
+def test_return_error_keeps_the_current_project_and_does_not_navigate(monkeypatch):
+    page, state, root, _calls = _return_ready_screen(monkeypatch)
+    before = (state.project_name, state.current_stage, dict(state.approved), dict(state.dirty))
+    monkeypatch.setattr(
+        s2_download, "return_scout_project_to_research",
+        lambda _project: (_ for _ in ()).throw(ValueError("Original research session is unavailable")),
+        raising=False,
+    )
+
+    _return_button(root).on_click(None)
+    _run_task(page)
+
+    assert (state.project_name, state.current_stage, state.approved, state.dirty) == before
+    assert "Original research session is unavailable" in "\n".join(
+        str(control.value or "") for control in _walk(root) if isinstance(control, ft.Text)
+    )
+
+
+def test_return_error_reenables_the_action_for_a_retry(monkeypatch):
+    page, state, root, _calls = _return_ready_screen(monkeypatch)
+    attempts = []
+
+    def restore(_project):
+        attempts.append(_project)
+        if len(attempts) == 1:
+            raise ValueError("session temporarily unavailable")
+        return _returned_session()
+
+    monkeypatch.setattr(s2_download, "return_scout_project_to_research", restore)
+    _return_button(root).on_click(None)
+    _run_task(page)
+    _return_button(root).on_click(None)
+    _run_task(page)
+
+    assert attempts == ["custom-project", "custom-project"]
+    assert state.current_stage == 1
+
+
+def test_return_retries_after_state_save_fails_post_restore(monkeypatch):
+    navigated = []
+    page, state, root, calls = _return_ready_screen(monkeypatch, on_go=navigated.append)
+    saves = []
+
+    def save_once_then_succeed(saved_state):
+        saves.append(saved_state.scout_session_id)
+        if len(saves) == 1:
+            raise OSError("state.json temporarily unavailable")
+
+    monkeypatch.setattr(s2_download, "save_state", save_once_then_succeed)
+
+    _return_button(root).on_click(None)
+    _run_task(page)
+    assert calls == ["custom-project"]
+    assert navigated == []
+    assert state.scout_session_id == "restored-session"
+
+    _return_button(root).on_click(None)
+    _run_task(page)
+
+    assert calls == ["custom-project"]
+    assert saves == ["restored-session", "restored-session"]
+    assert navigated == [1]
+
+
+def test_sidebar_return_resumes_the_already_restored_production_form_without_backend(monkeypatch):
+    page = FakePage()
+    navigated = []
+    state = AppState(
+        project_name="custom-project", current_stage=2,
+        scout_session_id="restored-session", scout_mode="qa",
+        last_prompt="Who has beaten Superman?", pipeline_mode="explore_answer",
+        returned_scout_project="custom-project", returned_scout_session_id="restored-session",
+    )
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+    monkeypatch.setattr(
+        s2_download, "return_scout_project_to_research",
+        lambda _project: (_ for _ in ()).throw(AssertionError("backend must not run")),
+    )
+    root = s2_download.build(
+        page, state, on_go=navigated.append, on_state_change=lambda: None,
+    )
+
+    _sidebar_stage_one(root).on_click(None)
+    _run_task(page)
+
+    assert navigated == [1]
+    assert state.scout_session_id == "restored-session"
+    assert state.current_stage == 2  # app's on_go performs the actual stage assignment.
+
+
+def test_returned_state_persists_the_exact_session_identity(monkeypatch, tmp_path):
+    monkeypatch.setattr(ui_state, "PROJECTS_ROOT", tmp_path)
+    state = AppState(project_name="custom-project", approved={"1": True, "2": True})
+    session = _returned_session()
+
+    state.return_to_research(session.id, session.mode.value, session.user_intent)
+    ui_state.save_state(state)
+    loaded = ui_state.load_state("custom-project")
+
+    assert loaded.scout_session_id == session.id
+    assert loaded.returned_scout_session_id == session.id
+    assert loaded.returned_scout_project == "custom-project"
+    assert not loaded.is_approved(1) and not loaded.is_approved(2)
+
+
+def test_restored_unapproved_stage_one_cannot_download_the_old_context(monkeypatch):
+    page = FakePage()
+    state = AppState(
+        project_name="custom-project", returned_scout_project="custom-project",
+        returned_scout_session_id="restored-session",
+    )
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    root = s2_download.build(page, state, on_go=lambda _stage: None, on_state_change=lambda: None)
+
+    assert _by_key(root, "stage1-download").disabled is True
 
 
 def test_missing_reader_panel_names_rank_entity_and_source_and_blocks_download(monkeypatch):
