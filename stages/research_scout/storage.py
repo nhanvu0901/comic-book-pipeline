@@ -12,6 +12,22 @@ from utils.atomic_json import write_json_atomic
 from .models import ResearchSession, ScoutMode
 
 
+def _normalize_resolve(p: Path) -> Path:
+    """Resolve a path and strip Windows extended-length prefixes (\\\\?\\ or \\\\?\\UNC\\).
+
+    On Windows, pathlib.Path.resolve() can prepend '\\\\?\\' to non-existent paths
+    while leaving existing directories unprefixed, causing .relative_to() to raise
+    ValueError even when one path is a genuine subpath of the other.
+    """
+    resolved = p.resolve()
+    s = str(resolved)
+    if s.startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + s[8:])
+    if s.startswith("\\\\?\\"):
+        return Path(s[4:])
+    return resolved
+
+
 class SessionStore:
     """Persist each research session in its own directory."""
 
@@ -38,7 +54,7 @@ class SessionStore:
 
         session_dir = self.root / session_id
         try:
-            session_dir.resolve().relative_to(self.root.resolve())
+            _normalize_resolve(session_dir).relative_to(_normalize_resolve(self.root))
         except ValueError as exc:
             raise ValueError("session id must stay within the store root") from exc
         return session_dir
@@ -101,7 +117,7 @@ class SessionStore:
 
         candidate = session_dir / artifact
         try:
-            candidate.resolve().relative_to(session_dir.resolve())
+            _normalize_resolve(candidate).relative_to(_normalize_resolve(session_dir))
         except ValueError as exc:
             raise ValueError("artifact name must stay within the session directory") from exc
         return candidate
