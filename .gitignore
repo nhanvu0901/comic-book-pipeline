@@ -56,3 +56,20 @@ playground/
 # weight on Windows and 5148 of them once drowned every git status.
 ._*
 .DS_Store
+
+# Pytest temp folders and caches
+.pytest-tmp*/
+.pytest_cache/
+
+# Local server logs and runtime files
+.ui-lan.*
+*.log
+*.err
+
+# Scratch spaces and local assistant caches
+.scratch/
+scratch/
+.trash/
+.claude/
+CLAUDE.local.md
+.hf_space_source/
