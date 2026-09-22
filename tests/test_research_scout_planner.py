@@ -95,6 +95,9 @@ def test_compile_schema_is_strict_at_both_object_levels():
     items = schema["properties"]["candidates"]["items"]
     assert items["additionalProperties"] is False
     assert set(items["required"]) == set(items["properties"])
+    claim_citation = items["properties"]["claim_citation"]
+    assert claim_citation["required"] == ["url", "quote"]
+    assert "claim_citation" in items["required"]
 
 
 def test_compile_schema_maps_string_array_extra_field():
@@ -138,7 +141,7 @@ def test_assemble_prompt_contains_unit_sentence_and_digest_at_end():
 
 @pytest.mark.parametrize("cardinality,expected_snippet", [
     ("exhaustive", "Sweep EVERY retrieved source"),
-    ("options", "propose distinct options"),
+    ("options", "genuinely supported options"),
     ("pinpoint", "The set is closed and named in the task"),
 ])
 def test_assemble_prompt_cardinality_block(cardinality, expected_snippet):
@@ -288,3 +291,41 @@ def test_repair_prompt_names_the_rule_that_was_broken(monkeypatch):
     assert len(requests) == 2
     repair_text = requests[1]["messages"][1]["content"]
     assert "'summary' is reserved" in repair_text
+
+
+# ─── Research breadth follows independent sources, not a candidate floor ────
+
+
+def test_both_research_routes_ask_for_source_breadth_without_a_candidate_floor():
+    """Source coverage is a research aim; a candidate count invites padding."""
+    from stages.research_scout.models import ScoutMode
+    from stages.research_scout.policies import PolicyBundle
+
+    target = str(planner.DISTINCT_SOURCE_TARGET)
+
+    planner_text = assemble_prompt(_plan(cardinality="exhaustive"), digest="none")
+    assert f"about {target} distinct source pages" in planner_text
+    assert "no candidate minimum" in planner_text
+    assert "never pad" in planner_text
+    assert "claim_citation URL and a verbatim sentence" in planner_text
+
+    for mode in (ScoutMode.QA, ScoutMode.MICRO):
+        fallback = PolicyBundle.load(mode).render(
+            "general",
+            user_intent="Which heroes?",
+            angle="power failure",
+            count=target,
+            digest="none",
+        )
+        assert f"about {target} distinct source pages" in fallback.text, mode
+        assert "no candidate minimum" in fallback.text, mode
+        assert "never pad" in fallback.text, mode
+        assert "claim_citation" in fallback.text, mode
+
+
+def test_the_options_cardinality_keeps_variety_without_demanding_volume():
+    text = assemble_prompt(_plan(cardinality="options"), digest="none")
+    assert "variety" in text
+    assert f"about {planner.DISTINCT_SOURCE_TARGET} distinct source pages" in text
+    assert "no candidate minimum" in text
+    assert "never pad" in text

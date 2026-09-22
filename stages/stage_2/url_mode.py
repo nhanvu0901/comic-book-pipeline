@@ -251,12 +251,15 @@ def download_readers_only(
     raw_comic/manifest.json; it never touches comic_context.json.
     """
     log = progress or print
-    urls = [u.strip() for u in reader_urls if u and u.strip()]
+    urls = [str(u or "").strip() for u in reader_urls]
     if not urls:
         raise ValueError("download_readers_only: empty URL list")
-    for u in urls:
+    for rank, u in enumerate(urls, start=1):
         if classify_url(u) != "reader":
-            raise ValueError(f"Not a batcave.biz reader URL: {u}")
+            raise ValueError(
+                f"download_readers_only: unresolved or invalid reader URL at rank {rank}; "
+                "repair it before download"
+            )
 
     # Dedup exact-duplicate URLs (two answer items citing the SAME issue) so batcave
     # isn't scraped twice — but keep each unique URL's FIRST-OCCURRENCE rank as its

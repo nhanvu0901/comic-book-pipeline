@@ -23,6 +23,8 @@ from pydantic import BaseModel, Field
 
 import config
 
+from . import cited_sources
+
 
 _TIMEOUT = 180.0
 _REQUEST_FAILED = object()
@@ -38,7 +40,7 @@ _MAX_PROMPT_CHARS = 4000
 RESERVED_FIELD_NAMES = frozenset({
     "title", "summary", "character_or_thing", "series_issue_year",
     "what_visibly_happens", "evidence_urls", "rank_reason", "id", "flags",
-    "notes", "candidates",
+    "claim_citation", "notes", "candidates",
 })
 
 
@@ -95,6 +97,7 @@ _CORE_ITEM_PROPS: dict[str, Any] = {
     "series_issue_year": {"type": "string"},
     "what_visibly_happens": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
+    "claim_citation": cited_sources.CLAIM_CITATION_SCHEMA,
 }
 
 
@@ -141,6 +144,10 @@ def compile_schema(plan: ResearchPlan) -> dict[str, Any]:
 _INVARIANT_RULES = (
     "Rules:\n"
     "- Cite only URLs you actually retrieved — never invent a source.\n"
+    "- Bind every candidate to exactly one claim_citation URL and a verbatim "
+    "sentence from that retrieved page. That sentence must support this "
+    "candidate's exact issue/year and visible claim; do not invent missing "
+    "details.\n"
     "- Name the exact series + issue number + year whenever a retrieved "
     "source names them; never invent missing issue details.\n"
     "- Describe what VISIBLY happens on the page, not implied or inferred "
@@ -150,15 +157,27 @@ _INVARIANT_RULES = (
     "in the summary."
 )
 
+# Research breadth is driven by source coverage, never a candidate floor.  The
+# API cannot enforce array minima, and a candidate minimum made the model split
+# one article into invented entries.  This is deliberately modest: it tells the
+# model to seek independent evidence without asking it to fabricate volume.
+DISTINCT_SOURCE_TARGET = 6
+
 _CARDINALITY_BLOCKS: dict[str, str] = {
     "exhaustive": (
         "Sweep EVERY retrieved source. Full, partial, assisted, and temporary "
-        "cases all count — state the difference in the summary. If the "
-        "sources support 10 candidates, return 10."
+        "cases all count — state the difference in the summary. Seek coverage "
+        f"from about {DISTINCT_SOURCE_TARGET} distinct source pages when the "
+        "research supports it, but return only genuinely supported candidates: "
+        "there is no candidate minimum and never pad the list. State the "
+        "actual distinct-source and candidate counts in notes."
     ),
     "options": (
         "Candidates are alternatives for the Master to choose from — propose "
-        "distinct options and favor variety over volume."
+        "distinct, genuinely supported options, favoring variety. Seek coverage "
+        f"from about {DISTINCT_SOURCE_TARGET} distinct source pages when the "
+        "research supports it; there is no candidate minimum and never pad the "
+        "list. State the actual distinct-source and candidate counts in notes."
     ),
     "pinpoint": (
         "The set is closed and named in the task — cover exactly that range, "
@@ -238,7 +257,7 @@ pre-bounded set named in the question — cover exactly that range).
 ("fan-consensus best", "most brutal", "strongest shown on page").
 - extra_fields: 0-6 additional per-item fields beyond the core ones the \
 code always adds (title, summary, series_issue_year, what_visibly_happens, \
-evidence_urls). Each is {name: lowercase_snake_case, type: "string" or \
+evidence_urls, claim_citation). Each is {name: lowercase_snake_case, type: "string" or \
 "string_array", description}.
 - research_prompt: the research instruction specific to this question.
 

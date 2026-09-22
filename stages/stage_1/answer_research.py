@@ -18,6 +18,7 @@ import re
 import socket
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 
@@ -44,6 +45,10 @@ _ITEM_FIELDS = (
 # without them still loads unchanged. `relationships` = what the entity IS to the other
 # characters in the moment; `stakes_why` = why this moment is remarkable / what it costs.
 _OPTIONAL_ITEM_FIELDS = ("relationships", "stakes_why")
+
+
+class MissingReaderUrlsError(ValueError):
+    """Deliberate stop: Q&A research exists but cannot yet be downloaded."""
 
 _ANSWER_SYSTEM = """You are a comic-feats research analyst. You are given a QUESTION \
 about comics and RAW You.com Web Search evidence. Use only that supplied evidence to \
@@ -243,6 +248,28 @@ def _research_with_youcom(question: str, hint: str, max_items: int) -> str:
 
 _YEAR_RE = re.compile(r"\((\d{4})")
 _ISSUE_RE = re.compile(r"#\s*(\d+(?:\.\d+)?)")
+_VOLUME_SUFFIX_RE = re.compile(r"\s+\bvol(?:ume)?\.?\s*\d+\s*$", re.IGNORECASE)
+_READER_URL_RE = re.compile(r"https://batcave\.biz/reader/\d+/\d+/?\Z")
+
+
+def is_batcave_reader_url(value: object) -> bool:
+    return isinstance(value, str) and bool(_READER_URL_RE.fullmatch(value.strip()))
+
+
+def _unresolved_reader_items(items: list[dict]) -> list[dict]:
+    unresolved = []
+    for rank, item in enumerate(items, start=1):
+        url = str(item.get("reader_url") or "").strip()
+        item["reader_url"] = url
+        item["reader_url_status"] = "ready" if is_batcave_reader_url(url) else "missing_reader_url"
+        if item["reader_url_status"] == "missing_reader_url":
+            unresolved.append({
+                "rank": rank,
+                "entity": str(item.get("entity") or ""),
+                "source_comic": str(item.get("source_comic") or ""),
+                "reader_url": url,
+            })
+    return unresolved
 
 
 def _parse_source_comic(source_comic: str) -> tuple[str, str, str]:
@@ -255,6 +282,7 @@ def _parse_source_comic(source_comic: str) -> tuple[str, str, str]:
     year = m.group(1) if (m := _YEAR_RE.search(s)) else ""
     issue = m.group(1) if (m := _ISSUE_RE.search(s)) else ""
     name = re.split(r"[(#]", s, maxsplit=1)[0].strip().strip('"“”\'').strip()
+    name = _VOLUME_SUFFIX_RE.sub("", name).strip()
     return name, year, issue
 
 
@@ -475,7 +503,7 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
 
     items = _order_by_surprise(_clean_items(data.get("items")))[:max_items]
     if len(items) < _MIN_ITEMS:
-        raise ValueError(
+        raise MissingReaderUrlsError(
             f"research_answer: only {len(items)} verified item(s) — need >= {_MIN_ITEMS} "
             "for a listicle (research produced too few to trust)"
         )
@@ -510,7 +538,7 @@ def _answer_digest(question: str, items: list[dict]) -> str:
 
 def build_contexts(
     question: str, research: dict, project_name: str,
-    *, researched_at: str = "", log=print,
+    *, researched_at: str = "", allow_missing_reader_urls: bool = False, log=print,
 ) -> tuple[Path, Path]:
     """Materialise research into answer_context.json + comic_context.json.
 
@@ -547,7 +575,7 @@ def build_contexts(
         log(f"[answer-research] {'✓ verified' if v.get('ok') else '⚠ FLAG'}: "
             f"{it['entity']} — {it['source_comic']} :: {v.get('note', '')}")
 
-        if not (it.get("reader_url") or "").strip():
+        if not is_batcave_reader_url(it.get("reader_url")):
             try:
                 url = resolve_reader_url(it["source_comic"], it.get("source_year", ""),
                                          it["entity"], log=log)
@@ -559,6 +587,25 @@ def build_contexts(
                 log(f"[answer-research] ↳ auto-resolved reader_url for {it['entity']}: {url}")
 
     # --- answer_context.json (presentation order; rank 1 first, shock last) ---
+    answer_items = [
+        {
+            "rank": i,
+            "entity": it["entity"],
+            "how_or_why": it["how_or_why"],
+            "source_comic": it["source_comic"],
+            "source_year": it["source_year"],
+            "reader_url": it["reader_url"],
+            "drawable_moment": it["drawable_moment"],
+            "verification_note": it["verification_note"],
+            "surprise_level": it["surprise_level"],
+            "relationships": it.get("relationships", ""),
+            "stakes_why": it.get("stakes_why", ""),
+            "verified": it.get("verified", True),
+            "verify_note": it.get("verify_note", ""),
+        }
+        for i, it in enumerate(items, 1)
+    ]
+    unresolved = _unresolved_reader_items(answer_items)
     answer_ctx = {
         "question": question,
         "answer_summary": research.get("answer_summary", ""),
@@ -567,26 +614,8 @@ def build_contexts(
         "viewer_context": research.get("viewer_context", ""),
         "researched_at": researched_at,
         "source_engine": research.get("source_engine", ""),
-        "items": [
-            {
-                "rank": i,
-                "entity": it["entity"],
-                "how_or_why": it["how_or_why"],
-                "source_comic": it["source_comic"],
-                "source_year": it["source_year"],
-                "reader_url": it["reader_url"],
-                "drawable_moment": it["drawable_moment"],
-                "verification_note": it["verification_note"],
-                "surprise_level": it["surprise_level"],
-                # ADDITIVE per-item WHO/WHY (optional; "" when research omitted them).
-                "relationships": it.get("relationships", ""),
-                "stakes_why": it.get("stakes_why", ""),
-                # FIX D: Comic Vine cross-check result (flag for review; not a drop).
-                "verified": it.get("verified", True),
-                "verify_note": it.get("verify_note", ""),
-            }
-            for i, it in enumerate(items, 1)
-        ],
+        "items": answer_items,
+        "unresolved_reader_urls": unresolved,
     }
     root = get_project_dirs(slug)["root"]
     root.mkdir(parents=True, exist_ok=True)
@@ -598,8 +627,8 @@ def build_contexts(
     # AFTER persisting answer_context.json: the research must survive the failure so a
     # human can hand-fill the missing reader_url(s) there and resume with
     # `--rebuild-contexts` (raising first would throw the whole research away).
-    missing = [it["entity"] for it in items if not (it.get("reader_url") or "").strip()]
-    if missing:
+    missing = [item["entity"] for item in unresolved]
+    if missing and not allow_missing_reader_urls:
         raise ValueError(
             "build_contexts: empty reader_url for item(s): "
             + ", ".join(missing)
@@ -636,12 +665,88 @@ def build_contexts(
             }
             for i, it in enumerate(items, 1)
         ],
-        "reader_urls": [it["reader_url"] for it in items],
+        "reader_urls": [item["reader_url"] for item in answer_items],
+        "unresolved_reader_urls": unresolved,
     }
     # Deliberately NO "summary" key (Stage 2 VLM cold-read fills it from panels) and
     # NO "user_prompt" key (identity Hook 0 no-ops without it) — design map, item 2.
     comic_path_str = save_comic_context(comic_ctx, slug, get_project_dirs)
     return answer_path, Path(comic_path_str)
+
+
+def get_missing_reader_urls(project_name: str) -> list[dict]:
+    """Return unresolved Q&A items from their actual persisted reader URLs."""
+    root = get_project_dirs(project_name)["root"]
+    answer_path = root / "answer_context.json"
+    if not answer_path.exists():
+        return []
+    try:
+        answer = json.loads(answer_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"could not read answer_context.json for {project_name!r}") from exc
+    items = answer.get("items") if isinstance(answer, Mapping) else None
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ValueError(f"answer_context.json has malformed items for {project_name!r}")
+    return _unresolved_reader_items(items)
+
+
+def ordered_reader_urls(project_name: str) -> list[str]:
+    """Read the authoritative, rank-ordered Q&A URLs from answer_context.json."""
+    root = get_project_dirs(project_name)["root"]
+    try:
+        answer = json.loads((root / "answer_context.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"could not read answer_context.json for {project_name!r}") from exc
+    items = answer.get("items") if isinstance(answer, Mapping) else None
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ValueError(f"answer_context.json has malformed items for {project_name!r}")
+    return [str(item.get("reader_url") or "").strip() for item in items]
+
+
+def repair_reader_urls(
+    project_name: str,
+    reader_urls: Mapping[int, str] | None = None,
+    *,
+    log=print,
+) -> list[dict]:
+    """Repair only unresolved answer-item reader URLs, preserving all research data."""
+    root = get_project_dirs(project_name)["root"]
+    answer_path = root / "answer_context.json"
+    comic_path = root / "comic_context.json"
+    try:
+        answer = json.loads(answer_path.read_text(encoding="utf-8"))
+        comic = json.loads(comic_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"could not read Q&A contexts for {project_name!r}") from exc
+    items = answer.get("items") if isinstance(answer, Mapping) else None
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ValueError(f"answer_context.json has malformed items for {project_name!r}")
+    if not isinstance(comic, dict):
+        raise ValueError(f"comic_context.json is malformed for {project_name!r}")
+
+    missing = {item["rank"] for item in _unresolved_reader_items(items)}
+    for rank, url in (reader_urls or {}).items():
+        if not isinstance(rank, int) or rank not in missing:
+            raise ValueError(f"reader URL rank {rank!r} is not unresolved")
+        if not is_batcave_reader_url(url):
+            raise ValueError(f"rank {rank} needs an https://batcave.biz/reader/<series>/<chapter> URL")
+        items[rank - 1]["reader_url"] = url.strip()
+
+    for item in items:
+        if is_batcave_reader_url(item.get("reader_url")):
+            continue
+        url = resolve_reader_url(item.get("source_comic", ""), item.get("source_year", ""),
+                                 item.get("entity", ""), log=log)
+        if is_batcave_reader_url(url):
+            item["reader_url"] = url
+
+    unresolved = _unresolved_reader_items(items)
+    answer["unresolved_reader_urls"] = unresolved
+    comic["reader_urls"] = [item["reader_url"] for item in items]
+    comic["unresolved_reader_urls"] = unresolved
+    answer_path.write_text(json.dumps(answer, indent=2, ensure_ascii=False), encoding="utf-8")
+    comic_path.write_text(json.dumps(comic, indent=2, ensure_ascii=False), encoding="utf-8")
+    return unresolved
 
 
 if __name__ == "__main__":

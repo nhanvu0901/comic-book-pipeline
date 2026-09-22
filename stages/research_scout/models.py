@@ -2,7 +2,7 @@
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ScoutMode(str, Enum):
@@ -12,11 +12,19 @@ class ScoutMode(str, Enum):
 
 class SessionState(str, Enum):
     GENERAL_DRAFT = "general_draft"
-    GENERAL_REVIEW = "general_review"
-    SPECIFIC_REVIEW = "specific_review"
+    CANDIDATE_REVIEW = "candidate_review"
     PRODUCTION_GATES = "production_gates"
     COMPLETE = "complete"
     ARCHIVED = "archived"
+
+
+# The two review steps the scout used to have. Both were views of the SAME
+# candidate list, so both collapse into CANDIDATE_REVIEW — sessions written
+# before the collapse are still on disk and must keep loading.
+_LEGACY_STATES = {
+    "general_review": SessionState.CANDIDATE_REVIEW,
+    "specific_review": SessionState.CANDIDATE_REVIEW,
+}
 
 
 class FeedbackNote(BaseModel):
@@ -38,12 +46,27 @@ class ResearchSession(BaseModel):
     user_intent: str
     state: SessionState = SessionState.GENERAL_DRAFT
     revision: int = 1
-    selected_general_candidate_id: str | None = None
     selected_specific_candidate_ids: list[str] = Field(default_factory=list)
     created_project: str | None = None
     # Absent from session.json files written before this field existed — the
     # default keeps those old sessions loading instead of failing validation.
     feedback_log: list[FeedbackNote] = Field(default_factory=list)
+    # Candidates the next general-research round must carry forward rather than
+    # replace, with the ids (and therefore the gates) they already have. Set by
+    # rescout_keeping_confirmed and spent — and cleared — by the run_general
+    # that follows it, so it is never read twice. Also absent from older
+    # session.json files; same default, same reason.
+    kept_candidate_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _map_legacy_states(cls, value: object) -> object:
+        """Translate a pre-collapse review state instead of failing validation.
+
+        Dropping the old members without this would make every session already
+        sitting in a review state unloadable — the UI lists them, so they would
+        vanish from the resume rail rather than carry on."""
+        return _LEGACY_STATES.get(value, value) if isinstance(value, str) else value
 
 
 class Candidate(BaseModel):

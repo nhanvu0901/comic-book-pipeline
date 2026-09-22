@@ -5,7 +5,7 @@
       "dc.fandom.com",
       "comicbookroundup.com",
       "aiptcomics.com",
-      "multiversitycomics.com",
+      "comics.org",
       "cbr.com",
       "leagueofcomicgeeks.com",
       "reddit.com"
@@ -20,9 +20,8 @@
       "aiptcomics.com",
       "multiversitycomics.com",
       "cbr.com",
-      "leagueofcomicgeeks.com",
-      "reddit.com"
+      "leagueofcomicgeeks.com"
     ],
-    "purpose": "Verify a selected candidate with targeted web searches."
+    "purpose": "Verify a selected candidate with targeted web searches. No reddit.com: it is where fans argue, not where an issue number and year are established, and at count=8 it crowded every other domain out. A Reddit URL a candidate cites itself is still fetched as one of its citations."
   }
 }

@@ -18,6 +18,13 @@ class GateFlag(str, Enum):
     DUPLICATE = "duplicate"
     MALFORMED_OUTPUT = "malformed_output"
     MALFORMED = "malformed_output"
+    # A gate that came back with anything other than "confirmed". Distinct from
+    # MALFORMED_OUTPUT on purpose: an unconfirmed verdict is a judgement a human
+    # may overrule, while a gate that cannot be read at all is a defect.
+    VERDICT_NOT_CONFIRMED = "verdict_not_confirmed"
+    # The gate emitted a flag string this code does not know. Also a judgement,
+    # so it must not be laundered into MALFORMED_OUTPUT and become unoverridable.
+    MODEL_FLAG = "model_flag"
 
 
 def validate_candidate(candidate: Any, raw_call: RawCall, mode: ScoutMode) -> list[GateFlag]:

@@ -138,17 +138,29 @@ def start_scout_session(mode: str, user_intent: str):
         # next angle in research_policies/general_angles.v1.json when the bank
         # has nothing usable (Master 2026-08-28: a bare angle isn't a question,
         # so it must be turned into one before it reaches the general-research
-        # prompt — see ScoutWorkflow.discover_question), so a normal
+        # prompt — see ScoutWorkflow.discover_questions), so a normal
         # general-research round always has something to research instead of
         # erroring out. This stays the documented behaviour for any
         # programmatic (non-UI) caller — the Stage 1 UI itself no longer calls
-        # this with an empty intent; see discover_intent() below for why.
+        # this with an empty intent; see discover_questions() below for why.
+        # The batch's first entry is this caller's single question; the UI is
+        # the only place that gets to show the rest as a choice.
         suggestions = bank_suggestions_for_mode(scout_mode)
-        intent = suggestions[0]["question"] if suggestions else workflow.discover_question(scout_mode)
+        if suggestions:
+            intent = suggestions[0]["question"]
+        else:
+            # Full batch, not count=1: it is the same single research call
+            # either way, and asking for one question while handing the prompt
+            # all five angles just makes the prompt contradict itself.
+            batch = workflow.discover_questions(scout_mode)
+            field = "question" if scout_mode is ScoutMode.QA else "moment"
+            intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
     return workflow.start(scout_mode, intent)
 
 
-def discover_intent(mode: str) -> str:
+def discover_questions(
+    mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = ()
+) -> list[dict]:
     """Tier B on its own, WITHOUT starting a session — the human-review step
     that stages/youcom_scout.py::is_burned's docstring deliberately relies on.
     is_burned lets synonym re-skins of an already-REJECTED qa_question_bank.md
@@ -156,15 +168,21 @@ def discover_intent(mode: str) -> str:
     discover is the catch for those". A second empty Send used to pipe a
     freshly discovered question straight into start_scout_session +
     run_scout_general — spending a SECOND research call enumerating answers to
-    a dud lane before any human saw the question at all. This returns just the
-    discovered question/moment so the UI can drop it into the intent box for a
-    human to read, edit, or delete; pressing Send again then researches it
-    normally. Never writes to SessionStore — see
-    stages.research_scout.workflow.ScoutWorkflow.discover_question for the
+    a dud lane before any human saw the question at all. This returns the
+    discovered questions/moments so the UI can offer them as a CHOICE; picking
+    one only drops it in the intent box for a human to read, edit, or delete,
+    and pressing Send then researches it normally.
+
+    `exclude` is every question already offered in this chat, so a re-roll
+    costs one research call and comes back with a different batch. Never
+    writes to SessionStore — see
+    stages.research_scout.workflow.ScoutWorkflow.discover_questions for the
     session-free discovery itself."""
     from stages.research_scout.models import ScoutMode
 
-    return _scout_workflow().discover_question(ScoutMode(mode))
+    return _scout_workflow().discover_questions(
+        ScoutMode(mode), count=count, exclude=tuple(exclude)
+    )
 
 
 def list_bank_suggestions(mode: str) -> list[dict]:
@@ -180,8 +198,19 @@ def run_scout_general(session_id: str):
     return _scout_workflow().run_general(session_id)
 
 
-def run_scout_specific(session_id: str, feedback: str = ""):
-    return _scout_workflow().research_specific(session_id, feedback)
+def verify_scout_selection(
+    session_id: str,
+    candidate_ids: list[str] | tuple[str, ...],
+    *,
+    only: list[str] | tuple[str, ...] | None = None,
+    on_result=None,
+):
+    """Evidence-gate the ticked candidates. `only` narrows which of them are
+    actually re-gated, so a single failed card can be retried on its own without
+    paying for the four that already came back."""
+    return _scout_workflow().verify_selected(
+        session_id, candidate_ids, only=only, on_result=on_result
+    )
 
 
 def rerun_scout_general(session_id: str, feedback: str = ""):
@@ -192,20 +221,31 @@ def rerun_scout_general(session_id: str, feedback: str = ""):
     return workflow.run_general(session_id)
 
 
-def back_scout_general(session_id: str):
-    return _scout_workflow().back_general(session_id)
+def rescout_keeping_confirmed(session_id: str):
+    """Replace the candidates that did not hold up, keep the ones that did.
+
+    One bridge call per user action, like rerun_scout_general: the re-scout and
+    the research round it implies happen on the SAME workflow instance here, so
+    the UI never has to orchestrate the pair itself."""
+    workflow = _scout_workflow()
+    workflow.rescout_keeping_confirmed(session_id)
+    return workflow.run_general(session_id)
 
 
-def approve_scout_general(session_id: str, candidate_id: str):
-    return _scout_workflow().approve_general(session_id, candidate_id)
+def rescout_keeping_selected(session_id: str, candidate_ids=None):
+    """Keep any currently selected candidates (regardless of verdict) and search for more."""
+    workflow = _scout_workflow()
+    workflow.rescout_keeping_selected(session_id, candidate_ids)
+    return workflow.run_general(session_id)
 
 
-def approve_scout_specific(
-    session_id: str,
-    candidate_ids: list[str] | tuple[str, ...],
-    feedback: str = "",
-):
-    return _scout_workflow().decide_specific(session_id, candidate_ids, feedback=feedback)
+
+def back_scout_candidates(session_id: str):
+    return _scout_workflow().back_to_candidates(session_id)
+
+
+def approve_scout_selection(session_id: str, candidate_ids=None):
+    return _scout_workflow().approve_selected(session_id, candidate_ids)
 
 
 def archive_scout_session(session_id: str, reason: str = "Research restarted"):
@@ -231,10 +271,35 @@ def archive_scout_session(session_id: str, reason: str = "Research restarted"):
         )
 
 
-def create_scout_project(session_id: str, project_slug: str) -> str:
+def create_scout_project(session_id: str, project_slug: str, *, override: bool = False) -> str:
     from stages.research_scout.project_factory import create_project_from_session
 
-    return create_project_from_session(session_id, project_slug)
+    return create_project_from_session(session_id, project_slug, override=override)
+
+
+def return_scout_project_to_research(project_name: str):
+    """Synchronously return a Stage 2 project to its persisted Scout session.
+
+    This is deliberately disk-only: screen code owns AppState and runs this
+    through ``run_blocking`` while it disables duplicate UI actions.
+    """
+    from stages.research_scout.project_return import return_project_to_research
+
+    return return_project_to_research(project_name)
+
+
+def get_scout_missing_readers(project_name: str) -> list[dict]:
+    from stages.stage_1.answer_research import get_missing_reader_urls
+
+    return get_missing_reader_urls(project_name)
+
+
+def repair_scout_readers(
+    project_name: str, reader_urls: dict[int, str] | None = None, log: Callable[[str], None] = print,
+) -> list[dict]:
+    from stages.stage_1.answer_research import repair_reader_urls
+
+    return repair_reader_urls(project_name, reader_urls, log=log)
 
 
 def list_scout_sessions(root: Path | None = None) -> list[Any]:
@@ -431,6 +496,22 @@ def run_stage_1(
 # ─── Stage 2: Download ─────────────────────────────────────────────────────
 
 def run_stage_download(project_name: str, log: Callable[[str], None]) -> list[dict]:
+    from config import get_project_dirs
+    ctx_path = get_project_dirs(project_name)["root"] / "comic_context.json"
+    ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+    if ctx.get("plot_source") == "answer_research":
+        # A user may have hand-filled answer_context.json from the recovery
+        # instructions. Sync its authoritative ordered URLs into comic_context
+        # before Stage 2 so later rank-based Stage 3/review readers see the same list.
+        missing = repair_scout_readers(project_name, log=log)
+        if missing:
+            ranks = ", ".join(str(item["rank"]) for item in missing)
+            raise ValueError(f"Q&A reader URLs unresolved for rank(s): {ranks}; repair them before download")
+        from stages.stage_1.answer_research import ordered_reader_urls
+        from stages.stage_2.download import load_manifest
+        from stages.stage_2.url_mode import download_readers_only
+        download_readers_only(project_name, ordered_reader_urls(project_name), progress=log)
+        return load_manifest(project_name)
     from stages.stage_2.download import download_comic
     return download_comic(project_name, progress=log)
 
@@ -926,5 +1007,12 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
 # ─── Error formatting ──────────────────────────────────────────────────────
 
 def format_exception(e: BaseException) -> str:
+    # ScoutUserError has already been written as complete user-facing copy.
+    # Ordinary ValueError remains diagnostic: it can be a real bug raised by a
+    # downstream stage and must retain its traceback for investigation.
+    from stages.research_scout.errors import ScoutUserError
+
+    if isinstance(e, ScoutUserError):
+        return str(e)
     tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
     return tb[-2000:]

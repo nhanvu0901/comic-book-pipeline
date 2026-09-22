@@ -2,10 +2,15 @@
 
 Redesigned as a chat: every research round, approval, feedback and verdict is a
 chat bubble rebuilt from durable disk state (session.json + audit.jsonl +
-artifacts). The only in-memory state kept across renders is UI-only selection
-(which candidate is radio'd / checked) and the busy flag — never a parallel
-log of chat messages. Typing feedback re-runs the current phase with that
-feedback threaded into the research prompt (see workflow._intent_with_feedback).
+artifacts). The only in-memory state kept across renders is UI-only state —
+which candidates are ticked, which are mid-verify, whether the user has
+consented to override the verdicts — and the busy flag; never a parallel log of
+chat messages. Typing feedback re-runs general research with that feedback
+threaded into the prompt (see workflow._intent_with_feedback).
+
+There is ONE candidate list, reviewed once. It used to be asked twice over the
+identical candidates: a radio round deciding who got evidence-gated, then a
+checkbox round deciding who became the project, with the radio pick discarded.
 """
 from __future__ import annotations
 
@@ -14,17 +19,17 @@ from typing import Callable
 import flet as ft
 
 from config import RESEARCH_SESSIONS_ROOT
+from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.stage_1.storage import slugify
 
 from ..bridge import (
     archive_scout_session,
-    approve_scout_general,
-    approve_scout_specific,
-    back_scout_general,
+    approve_scout_selection,
+    back_scout_candidates,
     create_scout_project,
     delete_scout_session,
-    discover_intent,
+    discover_questions,
     format_exception,
     list_scout_sessions,
     load_scout_audit,
@@ -34,10 +39,12 @@ from ..bridge import (
     load_scout_session,
     list_bank_suggestions,
     rerun_scout_general,
+    rescout_keeping_confirmed,
+    rescout_keeping_selected,
     run_blocking,
     run_scout_general,
-    run_scout_specific,
     start_scout_session,
+    verify_scout_selection,
 )
 from ..layout import primary_button, secondary_button, three_col
 from ..state import AppState, save_state
@@ -51,6 +58,10 @@ from ..theme import (
 RESEARCH_SESSIONS_ROOT = RESEARCH_SESSIONS_ROOT
 
 _BUBBLE_WIDTH = 640
+
+# How many questions one Tier B research call is asked for — one per angle in
+# research_policies/general_angles.v1.json.
+_DISCOVER_BATCH = 5
 
 
 def _session_for_ui(session_id: str) -> ResearchSession | None:
@@ -71,16 +82,67 @@ def _session_created_at(session_id: str) -> str:
     return ""
 
 
+# Every id the workflow issues is `candidate-{n}` or `r{revision}-candidate-{n}`,
+# so a stand-in for a candidate that carries none of its own must not be spelled
+# that way. It used to be `candidate-{index}` — which, once one list can hold
+# candidates from two rounds, is an id that already belongs to a real comic:
+# the card would then be handed that comic's verdict.
+_NO_ID_PREFIX = "unidentified-candidate-"
+
+
 def _candidate_id(candidate: dict, index: int) -> str:
     value = candidate.get("id")
-    return str(value).strip() if value is not None and str(value).strip() else f"candidate-{index}"
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    return f"{_NO_ID_PREFIX}{index}"
 
 
 def _candidate_gate(candidate_id: str, gates: list[dict]) -> dict:
+    """The gate for THIS candidate, or nothing.
+
+    This used to end in `return gates[0] if len(gates) == 1 else {}`, and the
+    only artifact production code ever wrote held exactly one gate — so all ten
+    cards proudly displayed one candidate's verdict as if it were their own.
+    An unverified candidate has no verdict, and saying so is the honest answer.
+    """
     for gate in gates:
         if str(gate.get("candidate_id") or gate.get("id") or "") == candidate_id:
             return gate
-    return gates[0] if len(gates) == 1 else {}
+    return {}
+
+
+def _verdict_badge(gate: dict) -> ft.Control:
+    """The card's own verdict line: NOT VERIFIED until this candidate was gated."""
+    verdict = str(gate.get("verdict") or "").strip()
+    if not verdict:
+        return ft.Text("NOT VERIFIED", size=11, color=TEXT_MUTED, weight=ft.FontWeight.BOLD)
+    color = SUCCESS if verdict == "confirmed" else (WARN if verdict == "inconclusive" else DANGER)
+    return ft.Text(f"{verdict.upper()}", size=11, color=color, weight=ft.FontWeight.BOLD)
+
+
+def _confirmed_selected(session: ResearchSession, gates: list[dict]) -> list[str]:
+    """The candidates a re-scout would hold on to.
+
+    Read off the session's persisted selection, not the live ticks, because
+    that is the list `rescout_keeping_confirmed` itself reads — so the count on
+    the button is the count the action delivers.
+    """
+    return [
+        candidate_id
+        for candidate_id in session.selected_specific_candidate_ids
+        if str(_candidate_gate(candidate_id, gates).get("verdict") or "").strip().lower()
+        == "confirmed"
+    ]
+
+
+def _needs_override(selected: set[str], gates: list[dict]) -> bool:
+    """True when approving would need an explicit override: any ticked candidate
+    whose gate is missing or came back as anything but confirmed."""
+    return any(
+        str(_candidate_gate(candidate_id, gates).get("verdict") or "").strip().lower()
+        != "confirmed"
+        for candidate_id in selected
+    )
 
 
 def _candidate_card(
@@ -89,6 +151,8 @@ def _candidate_card(
     *,
     gate: dict,
     selection: ft.Control,
+    is_kept: bool = False,
+    trailing: list[ft.Control] | None = None,
 ) -> ft.Control:
     candidate_id = _candidate_id(candidate, index)
     title = str(candidate.get("title") or candidate.get("entity") or candidate_id)
@@ -106,16 +170,30 @@ def _candidate_card(
         urls = [*urls, reader_url]
     flags = [str(flag) for flag in (candidate.get("flags") or [])]
     flags.extend(str(flag) for flag in (gate.get("flags") or []))
+    header_controls: list[ft.Control] = [
+        ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, expand=True),
+    ]
+    if is_kept:
+        header_controls.append(ft.Container(
+            content=ft.Text("PINNED", size=9, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
+            bgcolor=ft.Colors.AMBER_400,
+            padding=ft.padding.symmetric(horizontal=6, vertical=2),
+            border_radius=4,
+        ))
+    header_controls.append(_verdict_badge(gate))
     details: list[ft.Control] = [
-        ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+        ft.Row(header_controls, spacing=8),
         ft.Text(summary, size=12, color=TEXT_MUTED, selectable=True),
     ]
+    if gate.get("reason"):
+        details.append(ft.Text(str(gate["reason"]), size=11, color=TEXT_MUTED, selectable=True))
     if candidate.get("series_issue_year"):
         details.append(ft.Text(str(candidate["series_issue_year"]), size=11, color=TEXT_PRIMARY))
     for url in urls:
         details.append(ft.Text(f"Source: {url}", size=10, color=ACCENT, selectable=True))
     if flags:
         details.append(ft.Text(f"Flags: {', '.join(flags)}", size=10, color=WARN, selectable=True))
+    details.extend(trailing or [])
     return ft.Container(
         key=f"candidate-card-{candidate_id}",
         content=ft.Row([selection, ft.Column(details, spacing=4, expand=True)], spacing=10),
@@ -153,29 +231,13 @@ def _current_general_round_index(completed_events: list[dict], session: Research
     return matches[-1] if matches else len(completed_events) - 1
 
 
-def _gate_content(gates: list[dict]) -> list[ft.Control]:
-    gate = gates[0] if gates else {}
-    verdict = str(gate.get("verdict") or "inconclusive")
-    reason = str(gate.get("reason") or "")
-    flags = [str(flag) for flag in (gate.get("flags") or [])]
-    color = SUCCESS if verdict == "confirmed" else (WARN if verdict == "inconclusive" else DANGER)
-    content: list[ft.Control] = [
-        ft.Text(f"Verdict: {verdict.upper()}", size=13, color=color, weight=ft.FontWeight.BOLD),
-    ]
-    if reason:
-        content.append(ft.Text(reason, size=12, color=TEXT_MUTED, selectable=True))
-    if flags:
-        content.append(ft.Text(f"Flags: {', '.join(flags)}", size=11, color=WARN))
-    return content
-
-
 def _general_collapsed_lines(session: ResearchSession, candidates: list[dict]) -> ft.Control:
-    approved_id = session.selected_general_candidate_id
+    selected = set(session.selected_specific_candidate_ids)
     lines: list[ft.Control] = []
     for index, candidate in enumerate(candidates):
         candidate_id = _candidate_id(candidate, index)
         title = str(candidate.get("title") or candidate.get("entity") or candidate_id)
-        approved = candidate_id == approved_id
+        approved = candidate_id in selected
         prefix = "✓ " if approved else "• "
         lines.append(ft.Text(f"{prefix}{title}", size=12, color=SUCCESS if approved else TEXT_MUTED))
     if not lines:
@@ -193,10 +255,8 @@ def _input_spec(session: ResearchSession | None) -> tuple[str, bool]:
         )
     if session.state is SessionState.GENERAL_DRAFT:
         return "Press Run general research above.", True
-    if session.state is SessionState.GENERAL_REVIEW:
+    if session.state is SessionState.CANDIDATE_REVIEW:
         return "Type feedback and press Send to re-run research…", False
-    if session.state is SessionState.SPECIFIC_REVIEW:
-        return "Type feedback to redo the evidence search…", False
     if session.state is SessionState.PRODUCTION_GATES:
         return "Create the project or archive.", True
     return "", True
@@ -233,8 +293,11 @@ def _scout_bubble(content: ft.Control) -> ft.Control:
 
 def _system_bubble(text: str, *, danger: bool = False) -> ft.Control:
     return ft.Row([
-        ft.Text(text, size=11, color=DANGER if danger else TEXT_MUTED,
-                text_align=ft.TextAlign.CENTER),
+        ft.Container(
+            content=ft.Text(text, size=11, color=DANGER if danger else TEXT_MUTED,
+                            text_align=ft.TextAlign.LEFT),
+            width=_BUBBLE_WIDTH,
+        ),
     ], alignment=ft.MainAxisAlignment.CENTER)
 
 
@@ -265,22 +328,41 @@ def _rerun_bubble(detail: dict) -> ft.Control:
     return _user_bubble(ft.Text(text, size=13, color=TEXT_PRIMARY, selectable=True))
 
 
-def _general_approved_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
-    title = _resolve_title(str(detail.get("candidate_id") or ""), candidates)
-    return _user_bubble(ft.Text(f"Approved: {title}", size=13, color=TEXT_PRIMARY))
+def _rescout_bubble(detail: dict) -> ft.Control:
+    kept = len(detail.get("kept") or [])
+    dropped = len(detail.get("dropped") or [])
+    return _user_bubble(ft.Text(
+        f"Re-scout — keeping {kept} confirmed, replacing {dropped}.",
+        size=13, color=TEXT_PRIMARY,
+    ))
 
 
-def _specific_decided_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
+def _selection_approved_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
     ids = [str(candidate_id) for candidate_id in (detail.get("candidate_ids") or [])]
     titles = [_resolve_title(candidate_id, candidates) for candidate_id in ids]
-    lines: list[ft.Control] = [
-        ft.Text(f"Selected: {', '.join(titles) if titles else '(none)'}",
-                size=13, color=TEXT_PRIMARY),
-    ]
-    feedback = str(detail.get("feedback") or "").strip()
-    if feedback:
-        lines.append(ft.Text(f"Feedback: {feedback}", size=12, color=TEXT_MUTED))
-    return _user_bubble(ft.Column(lines, spacing=4))
+    return _user_bubble(ft.Text(
+        f"Approved: {', '.join(titles) if titles else '(none)'}", size=13, color=TEXT_PRIMARY,
+    ))
+
+
+def _verified_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
+    """One line per gated candidate — the verdict, or why the branch never
+    produced one. A failure marks only its own candidate."""
+    verdicts = detail.get("verdicts") or {}
+    failed = detail.get("failed") or {}
+    lines: list[ft.Control] = []
+    for candidate_id in (detail.get("candidate_ids") or []):
+        title = _resolve_title(str(candidate_id), candidates)
+        if candidate_id in failed:
+            lines.append(ft.Text(f"{title}: could not verify — {failed[candidate_id]}",
+                                 size=12, color=DANGER, selectable=True))
+        elif candidate_id in verdicts:
+            verdict = str(verdicts[candidate_id])
+            color = SUCCESS if verdict == "confirmed" else WARN
+            lines.append(ft.Text(f"{title}: {verdict.upper()}", size=12, color=color))
+    if not lines:
+        lines.append(ft.Text("Nothing was re-verified.", size=12, color=TEXT_MUTED))
+    return _scout_bubble(ft.Column(lines, spacing=4))
 
 
 def _archived_bubble(detail: dict) -> ft.Control:
@@ -288,21 +370,28 @@ def _archived_bubble(detail: dict) -> ft.Control:
     return _system_bubble(f"Session archived — {reason}" if reason else "Session archived.")
 
 
+def _discovered_text(entry: dict) -> str:
+    """The one human-readable line of a Tier B entry, whichever mode produced
+    it — QA discovers a `question`, Micro discovers a `moment`."""
+    return str(entry.get("question") or entry.get("moment") or "").strip()
+
+
 def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
     """Tier A of the empty-intent fallback, shown for free before any research
     round runs. Master 2026-08-22: Send-with-empty-box must not silently spend
     API budget, so this is a dead-end by design — nothing here starts a
     session. Typing one of these into the box (or anything else) and pressing
-    Send runs the normal flow; pressing Send empty AGAIN discovers a fresh
-    question (Tier B) and drops it into the box for review — it does NOT
-    research it (Master 2026-08-28: that restores the human-review step
-    is_burned's docstring in stages/youcom_scout.py says catches synonym
-    re-skins of already-rejected bank questions)."""
+    Send runs the normal flow; pressing Send empty AGAIN spends one research
+    call on a batch of fresh questions (Tier B) and offers them as a choice —
+    it does NOT research any of them (Master 2026-08-28: that keeps the
+    human-review step is_burned's docstring in stages/youcom_scout.py says
+    catches synonym re-skins of already-rejected bank questions)."""
     lines: list[ft.Control] = [
         ft.Text(
             "Still-open questions from qa_question_bank.md — type one into the box "
             "and press Send, or press Send again on an empty box and we'll find a "
-            "new question for you to look over before it's researched.",
+            "batch of new questions for you to choose from before anything is "
+            "researched.",
             size=12, color=TEXT_MUTED,
         ),
     ]
@@ -326,48 +415,146 @@ def build(
         state.scout_mode = session_holder[0].mode.value
         if not state.last_prompt:
             state.last_prompt = session_holder[0].user_intent
-    selected_general: list[str] = [
-        session_holder[0].selected_general_candidate_id or "" if session_holder[0] else ""
-    ]
     selected_specific: set[str] = set(
         session_holder[0].selected_specific_candidate_ids if session_holder[0] else []
     )
     busy = [False]
     slug_holder: list[ft.TextField | None] = [None]
+    slug_session_id = [""]
+    slug_value = [""]
+    # Override is DECIDED here but APPLIED at creation time (project_factory), so
+    # the tick has to survive the hop from candidate review to production gates.
+    override_holder = [False]
+    # Per-card progress from verify_selected's worker threads. Display only —
+    # on_result must never write to the store.
+    verifying: set[str] = set()
     # Tier A suggestions currently on screen (empty-intent fallback) and whether
     # they've already been shown once for the CURRENT no-session state — a second
     # empty Send is read as an explicit ask to research a fresh angle instead
     # (Tier B), rather than silently spending API budget on the first empty Send.
     bank_suggestions_holder: list[list[dict]] = [[]]
     bank_shown = [False]
+    # Tier B: the batch of discovered questions currently offered in the chat,
+    # which one is ticked, every question offered so far (the re-roll's
+    # `exclude`, so a new batch can't repeat one the user already turned down),
+    # and the one-line note a re-roll that found nothing new leaves behind.
+    discovered_holder: list[list[dict]] = [[]]
+    discovered_pick = [""]
+    discovered_offered: list[str] = []
+    discovered_note = [""]
+
+    def _reset_production_form() -> None:
+        slug_holder[0] = None
+        slug_session_id[0] = ""
+        slug_value[0] = ""
+
+    def _forget_suggestions() -> None:
+        bank_shown[0] = False
+        bank_suggestions_holder[0] = []
+        discovered_holder[0] = []
+        discovered_pick[0] = ""
+        discovered_offered.clear()
+        discovered_note[0] = ""
 
     # ─── Chat transcript: rebuilt fresh from disk on every render ─────────
 
-    def _general_review_content(candidates: list[dict], gates: list[dict]) -> ft.Control:
+    def _candidate_review_content(
+        session: ResearchSession, candidates: list[dict], gates: list[dict],
+    ) -> ft.Control:
+        """The one candidate list. Tick, verify, approve.
+
+        There used to be two of these over the identical list: a radio round
+        that chose who got evidence-gated, then a checkbox round that chose who
+        became the project — and the radio pick was thrown away.
+        """
         cards: list[ft.Control] = []
         for index, candidate in enumerate(candidates):
             candidate_id = _candidate_id(candidate, index)
-            radio = ft.Radio(value=candidate_id, label="Approve this candidate")
+            is_kept = bool(session.revision > 1 and not candidate_id.startswith(f"r{session.revision}-"))
+            selection = ft.Checkbox(
+                key=f"select-{candidate_id}",
+                label="Select",
+                value=candidate_id in selected_specific,
+                on_change=lambda e, cid=candidate_id: _selection_changed(
+                    cid, bool(e.control.value)
+                ),
+            )
+            trailing: list[ft.Control] = []
+            if candidate_id in verifying:
+                trailing.append(ft.Row([
+                    ft.ProgressRing(width=12, height=12, stroke_width=2),
+                    ft.Text("Verifying…", size=11, color=TEXT_MUTED),
+                ], spacing=6))
+            else:
+                reverify = secondary_button(
+                    "Re-verify", lambda _e, cid=candidate_id: _reverify_click(cid),
+                    disabled=candidate_id not in selected_specific,
+                )
+                reverify.key = f"reverify-{candidate_id}"
+                trailing.append(reverify)
             cards.append(_candidate_card(
-                candidate, index, gate=_candidate_gate(candidate_id, gates), selection=radio,
+                candidate, index,
+                gate=_candidate_gate(candidate_id, gates),
+                selection=selection,
+                is_kept=is_kept,
+                trailing=trailing,
             ))
 
-        def _radio_changed(event):
-            if busy[0]:
-                return
-            selected_general[0] = event.control.value
-            _render_full()
-
-        group = ft.RadioGroup(
-            value=selected_general[0] or None,
-            content=ft.Column(cards, spacing=8),
-            on_change=_radio_changed,
+        # Count what the click will actually buy, not what is ticked: a card that
+        # already holds a gate is skipped by verify_selected, so labelling this
+        # with the tick count promises verdicts it will not go and fetch.
+        # Refreshing a verdict you already have is the per-card Re-verify button.
+        pending = [
+            candidate_id for candidate_id in sorted(selected_specific)
+            if not _candidate_gate(candidate_id, gates)
+        ]
+        verify_button = primary_button(
+            f"Verify selected ({len(pending)})",
+            lambda e, ids=pending: _verify_click(ids),
+            disabled=not pending,
+            icon=ft.Icons.FACT_CHECK,
         )
+        verify_button.key = "verify-selected"
         approve_button = primary_button(
-            "Approve & find evidence →", _approve_general_click,
-            disabled=not selected_general[0],
+            "Approve & name project", _approve_selection_click,
+            disabled=not _selection_count_valid(session.mode, selected_specific),
+            icon=ft.Icons.CHECK,
         )
-        return ft.Column([group, approve_button], spacing=10)
+        approve_button.key = "approve-selected"
+
+        controls: list[ft.Control] = [*cards, verify_button]
+        kept = _confirmed_selected(session, gates)
+        if kept:
+            rescout = secondary_button(
+                f"Re-scout, keep confirmed ({len(kept)})", _rescout_click,
+            )
+            rescout.key = "rescout-keep-confirmed"
+            controls.append(ft.Row([
+                rescout,
+                ft.Text("costs one research call", size=10, color=TEXT_MUTED),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        unconfirmed_selected = [cid for cid in selected_specific if cid not in set(kept)]
+        if unconfirmed_selected:
+            rescout_selected = secondary_button(
+                f"Keep selected & scout more ({len(selected_specific)})",
+                _rescout_selected_click,
+                icon=ft.Icons.BOOKMARK_ADD,
+            )
+            rescout_selected.key = "rescout-keep-selected"
+            controls.append(ft.Row([
+                rescout_selected,
+                ft.Text("pins selected cards & searches for fresh alternatives (~30s)", size=11, color=TEXT_MUTED),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        if _needs_override(selected_specific, gates):
+            controls.append(ft.Checkbox(
+                key="override-gates",
+                label="I have read the verdicts and any missing reader URLs, and want to continue anyway",
+                value=override_holder[0],
+                on_change=_override_changed,
+            ))
+        controls.append(approve_button)
+        return ft.Column(controls, spacing=8)
 
     def _general_completed_bubble(
         event: dict, idx: int, is_current: bool, session: ResearchSession,
@@ -386,8 +573,8 @@ def build(
             summary = f"Round {label_rev} — {count_text} (superseded)"
             return _scout_bubble(ft.Text(summary, size=12, color=TEXT_MUTED))
         content = (
-            _general_review_content(candidates, gates)
-            if session.state is SessionState.GENERAL_REVIEW
+            _candidate_review_content(session, candidates, gates)
+            if session.state is SessionState.CANDIDATE_REVIEW
             else _general_collapsed_lines(session, candidates)
         )
         plan_summary = detail.get("plan_summary")
@@ -398,39 +585,25 @@ def build(
             content,
         ], spacing=6))
 
-    def _specific_review_content(
-        session: ResearchSession, candidates: list[dict], gates: list[dict],
-    ) -> ft.Control:
-        cards: list[ft.Control] = []
-        for index, candidate in enumerate(candidates):
-            candidate_id = _candidate_id(candidate, index)
-            selection = ft.Checkbox(
-                key=f"select-{candidate_id}",
-                label="Select",
-                value=candidate_id in selected_specific,
-                on_change=lambda e, cid=candidate_id: _specific_selection_changed(
-                    cid, bool(e.control.value)
-                ),
-            )
-            cards.append(_candidate_card(
-                candidate, index, gate=_candidate_gate(candidate_id, gates), selection=selection,
-            ))
-        approve_button = primary_button(
-            "Approve selected →", _approve_specific_click,
-            disabled=not _selection_count_valid(session.mode, selected_specific),
-            icon=ft.Icons.CHECK,
-        )
-        approve_button.key = "approve-specific"
-        back_button = secondary_button("← Back to general", _back_general_click)
-        return ft.Column([
-            *cards,
-            ft.Row([approve_button, back_button], spacing=10),
-        ], spacing=8)
-
     def _production_gates_bubble(session: ResearchSession) -> ft.Control:
+        if slug_session_id[0] != session.id:
+            slug_session_id[0] = session.id
+            # A project explicitly returned from Stage 2 carries its original
+            # slug in persisted AppState.  Keep that convenience narrowly tied
+            # to this return flow: an unrelated unfinished session must still
+            # receive the ordinary intent-derived suggestion.
+            slug_value[0] = (
+                state.project_name
+                if (state.returned_scout_project == state.project_name
+                    and state.returned_scout_session_id == session.id
+                    and state.project_name)
+                else slugify(session.user_intent or "untitled_research")
+            )
+        elif slug_holder[0] is not None:
+            slug_value[0] = str(slug_holder[0].value or "")
         slug_field = ft.TextField(
             key="project-slug",
-            value=slugify(session.user_intent or "untitled_research"),
+            value=slug_value[0],
             label="Project name",
             width=230,
             border_color=BORDER,
@@ -440,10 +613,24 @@ def build(
         create_button = primary_button(
             "Create project", _create_project_click, icon=ft.Icons.CREATE_NEW_FOLDER,
         )
-        return _scout_bubble(ft.Column([
-            ft.Text("Production gates passed.", size=13, color=TEXT_PRIMARY),
-            ft.Row([slug_field, create_button], spacing=10),
-        ], spacing=8))
+        back_button = secondary_button("← Back to candidates", _back_to_candidates_click)
+        headline = (
+            "Selection locked in — continuing despite the production warnings. Missing reader URLs must be repaired in Stage 2."
+            if override_holder[0]
+            else "Selection locked in."
+        )
+        controls: list[ft.Control] = [
+            ft.Text(headline, size=13, color=TEXT_PRIMARY),
+        ]
+        if can_override_production_gates(session, root=RESEARCH_SESSIONS_ROOT):
+            controls.append(ft.Checkbox(
+                key="override-gates",
+                label="I have read the verdicts and any missing reader URLs, and want to continue anyway",
+                value=override_holder[0],
+                on_change=_override_changed,
+            ))
+        controls.append(ft.Row([slug_field, create_button, back_button], spacing=10))
+        return _scout_bubble(ft.Column(controls, spacing=8))
 
     def _run_general_bubble() -> ft.Control:
         button = primary_button("Run general research", _run_general_click, icon=ft.Icons.SEARCH)
@@ -453,9 +640,57 @@ def build(
             button,
         ], spacing=8))
 
+    def _discovered_questions_bubble() -> ft.Control:
+        """Tier B's batch, single-select, with a re-roll.
+
+        Ticking one only FILLS THE INPUT BOX — it must never start research.
+        Master 2026-08-28: discover -> start_scout_session -> run_scout_general
+        in one go spent a second research call enumerating answers to a dud
+        lane before any human read the question, and is_burned()'s own
+        docstring (stages/youcom_scout.py) says the review step after discover
+        is what catches synonym re-skins of already-rejected bank questions.
+        The bubble stays on screen after a pick so the user can change it.
+        """
+        choices: list[ft.Control] = []
+        for index, entry in enumerate(discovered_holder[0]):
+            angle = str(entry.get("angle") or "").strip()
+            choices.append(ft.Row([
+                ft.Radio(value=str(index)),
+                ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED) if angle else ft.Container(),
+                ft.Text(_discovered_text(entry), size=12, color=TEXT_PRIMARY,
+                        selectable=True, expand=True),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        lines: list[ft.Control] = [
+            ft.Text("Pick one to research, or look for a different batch:",
+                    size=12, color=TEXT_MUTED),
+            ft.RadioGroup(
+                key="discovered-questions",
+                value=discovered_pick[0] or None,
+                content=ft.Column(choices, spacing=2),
+                on_change=_discovered_pick_changed,
+            ),
+        ]
+        if discovered_note[0]:
+            lines.append(ft.Text(discovered_note[0], size=11, color=WARN))
+        reroll = secondary_button(
+            f"None of these — find {_DISCOVER_BATCH} more", _reroll_click
+        )
+        reroll.key = "discovered-reroll"
+        lines.append(ft.Row([
+            reroll,
+            ft.Text("costs one research call", size=10, color=TEXT_MUTED),
+        ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        lines.append(ft.Text(
+            "The one you pick lands in the box — edit it if you like, then press Send to research it.",
+            size=11, color=TEXT_MUTED,
+        ))
+        return _scout_bubble(ft.Column(lines, spacing=8))
+
     def _render_chat() -> list[ft.Control]:
         session = session_holder[0]
         if session is None:
+            if discovered_holder[0]:
+                return [_discovered_questions_bubble()]
             if bank_suggestions_holder[0]:
                 return [_bank_suggestions_bubble(bank_suggestions_holder[0])]
             return [_system_bubble(
@@ -485,22 +720,26 @@ def build(
                 ))
             elif name == "general_research_rerun":
                 bubbles.append(_rerun_bubble(detail))
-            elif name == "general_candidate_approved":
-                bubbles.append(_general_approved_bubble(detail, candidates))
-            elif name == "specific_research_completed":
-                bubbles.append(_scout_bubble(ft.Column(_gate_content(gates), spacing=6)))
-            elif name == "specific_candidates_decided":
-                bubbles.append(_specific_decided_bubble(detail, candidates))
+            elif name in ("rescout_keeping_confirmed", "rescout_keeping_selected"):
+                bubbles.append(_rescout_bubble(detail))
+            elif name == "candidates_verified":
+                bubbles.append(_verified_bubble(detail, candidates))
+            elif name == "selection_approved":
+                bubbles.append(_selection_approved_bubble(detail, candidates))
             elif name == "session_archived":
                 bubbles.append(_archived_bubble(detail))
-            # unknown events (returned_to_general_review, project_created, ...): skip silently
+            # unknown events (returned_to_candidate_review, project_created, ...): skip silently
 
         # State-driven appends happen regardless of audit content — this keeps the
-        # approve-specific control reachable even for a session seeded directly onto
-        # disk without a matching audit trail (a hand-built SPECIFIC_REVIEW fixture,
-        # for example), matching the non-negotiable state-based contract for that key.
-        if session.state is SessionState.SPECIFIC_REVIEW:
-            bubbles.append(_scout_bubble(_specific_review_content(session, candidates, gates)))
+        # review controls reachable even for a session seeded directly onto disk with
+        # no matching audit trail (a hand-built CANDIDATE_REVIEW fixture, say),
+        # matching the state-based contract those keys carry.
+        if session.state is SessionState.CANDIDATE_REVIEW and not any(
+            event.get("event") == "general_research_completed" for event in audit
+        ):
+            bubbles.append(_scout_bubble(
+                _candidate_review_content(session, candidates, gates)
+            ))
         if session.state is SessionState.PRODUCTION_GATES:
             bubbles.append(_production_gates_bubble(session))
         if session.state is SessionState.GENERAL_DRAFT:
@@ -512,24 +751,40 @@ def build(
 
     def _apply_session_and_render(result) -> None:
         session_holder[0] = result
+        if (state.returned_scout_session_id
+                and state.returned_scout_session_id != result.id):
+            state.returned_scout_project = ""
+            state.returned_scout_session_id = ""
+        # The session on disk owns the selection. A re-scout or a feedback
+        # re-run narrows it — to the kept candidates, or to nothing — and ticks
+        # left over from the round just replaced would keep Approve enabled over
+        # candidates that are no longer on screen.
+        ids = getattr(result, "selected_specific_candidate_ids", None)
+        if ids is not None:
+            selected_specific.clear()
+            selected_specific.update(ids)
         intent_field.value = ""
-        bank_suggestions_holder[0] = []
-        bank_shown[0] = False
+        _forget_suggestions()
         _render_full()
 
     def _clear_to_new(_result=None) -> None:
-        selected_general[0] = ""
         selected_specific.clear()
+        verifying.clear()
+        override_holder[0] = False
+        _reset_production_form()
         session_holder[0] = None
+        state.returned_scout_project = ""
+        state.returned_scout_session_id = ""
         intent_field.value = ""
-        bank_suggestions_holder[0] = []
-        bank_shown[0] = False
+        _forget_suggestions()
         _render_full()
 
     def _finish_create_project(project_name) -> None:
         session = session_holder[0]
         state.project_name = project_name
         state.scout_session_id = ""
+        state.returned_scout_project = ""
+        state.returned_scout_session_id = ""
         if session:
             state.last_prompt = session.user_intent
             state.pipeline_mode = "explore_answer" if session.mode is ScoutMode.QA else "micro_moment"
@@ -559,6 +814,71 @@ def build(
 
         page.run_task(_execute)
 
+    def _discovered_pick_changed(event) -> None:
+        """Tick a discovered question -> it lands in the input box, full stop.
+
+        Deliberately NOT a research trigger. See _discovered_questions_bubble
+        and the long comment in _send_click: the human reading (and optionally
+        editing) the question before Send IS the review step that catches the
+        synonym re-skins is_burned() lets through on purpose.
+        """
+        if busy[0]:
+            return
+        raw = str(getattr(event.control, "value", "") or "")
+        try:
+            entry = discovered_holder[0][int(raw)]
+        except (TypeError, ValueError, IndexError):
+            return
+        discovered_pick[0] = raw
+        intent_field.value = _discovered_text(entry)
+        _render_full()
+
+    def _show_discovered(batch) -> None:
+        entries = [entry for entry in (batch or []) if _discovered_text(entry)]
+        already = {text.casefold() for text in discovered_offered}
+        fresh = [
+            entry for entry in entries
+            if _discovered_text(entry).casefold() not in already
+        ]
+        if discovered_holder[0]:
+            # A re-roll. Never blank the list: nothing new — or nothing at all
+            # but Tier B's angle fallback, which is what a dead You.com yields —
+            # leaves the batch already on screen exactly where it is.
+            if not fresh or all(entry.get("fallback") for entry in fresh):
+                discovered_note[0] = (
+                    "Nothing new came back — keeping the batch above."
+                )
+                _render_full()
+                return
+        elif not fresh:
+            fresh = entries
+        if not fresh:
+            _render_full(error="No question came back — type one into the box yourself.")
+            return
+        bank_shown[0] = False
+        bank_suggestions_holder[0] = []
+        discovered_note[0] = ""
+        discovered_pick[0] = ""
+        discovered_holder[0] = fresh
+        discovered_offered.extend(_discovered_text(entry) for entry in fresh)
+        _render_full()
+
+    def _discover_batch(mode: str) -> None:
+        """One research call, whether it is the first batch or a re-roll. The
+        questions already offered go along as `exclude` so the model is not paid
+        to hand back a batch the user has just turned down."""
+        excluded = list(discovered_offered)
+        _run_busy(
+            f"Finding {_DISCOVER_BATCH} questions…",
+            lambda: discover_questions(mode, count=_DISCOVER_BATCH, exclude=excluded),
+            on_success=_show_discovered,
+        )
+
+    def _reroll_click(_e) -> None:
+        if busy[0]:
+            return
+        _discover_batch(mode_group.value or ScoutMode.QA.value)
+
     def _send_click(_e) -> None:
         if busy[0]:
             return
@@ -568,6 +888,14 @@ def build(
         if session is None or session.state in {SessionState.ARCHIVED, SessionState.COMPLETE}:
             mode = mode_group.value or ScoutMode.QA.value
             if not text:
+                # A Tier B batch is already on screen: Send-on-empty is neither a
+                # re-roll (that button says what it costs) nor a reason to put the
+                # bank bubble back behind it — say what to do and spend nothing.
+                if discovered_holder[0]:
+                    _render_full(
+                        error="Pick one of the questions above, or ask for a different batch."
+                    )
+                    return
                 # First empty Send: show Tier A (bank) suggestions for free and stop —
                 # do NOT spend API budget without the user asking for it.
                 if not bank_shown[0]:
@@ -579,32 +907,21 @@ def build(
                         return
                 # Second empty Send (bank_shown[0] already True), or the bank had
                 # nothing to show at all (empty for this mode, or nothing left
-                # after banlist filtering): discover a real Tier B question and
-                # PUT IT IN THE INPUT BOX for a human to read, edit, or delete —
-                # do NOT research it yet. Master 2026-08-28: a straight-through
-                # discover -> start_scout_session -> run_scout_general used to
-                # spend a SECOND research call enumerating answers to a dud lane
-                # (a synonym re-skin of an already-rejected bank question) before
+                # after banlist filtering): spend ONE research call on a Tier B
+                # batch and OFFER IT AS A CHOICE — do NOT research any of it
+                # yet. Master 2026-08-28: a straight-through discover ->
+                # start_scout_session -> run_scout_general used to spend a
+                # SECOND research call enumerating answers to a dud lane (a
+                # synonym re-skin of an already-rejected bank question) before
                 # any human saw it — is_burned()'s own docstring in
                 # stages/youcom_scout.py says the Master-review step after
-                # discover is what is supposed to catch those. Landing the
-                # question in the box and stopping restores that review step;
-                # the human presses Send again, normally, to research it.
-                bank_shown[0] = False
-                bank_suggestions_holder[0] = []
-
-                def _fill_discovered(question: str) -> None:
-                    intent_field.value = question
-                    _render_full()
-
-                _run_busy(
-                    "Finding a question…", lambda: discover_intent(mode),
-                    on_success=_fill_discovered,
-                )
+                # discover is what is supposed to catch those. Picking one only
+                # lands it in the input box; the human reads it, edits it if
+                # they want, and presses Send again to research it.
+                _discover_batch(mode)
                 return
 
-            bank_shown[0] = False
-            bank_suggestions_holder[0] = []
+            _forget_suggestions()
             old = session
 
             def _work():
@@ -618,30 +935,25 @@ def build(
             _run_busy("Researching… ~30s", _work)
             return
 
-        if session.state is SessionState.GENERAL_REVIEW:
+        if session.state is SessionState.CANDIDATE_REVIEW:
             if not text:
-                _render_full(error="Type feedback before sending, or approve a candidate above.")
+                _render_full(
+                    error="Type feedback before sending, or verify the candidates above."
+                )
                 return
             _run_busy("Researching… ~30s", lambda: rerun_scout_general(session.id, text))
-            return
-
-        if session.state is SessionState.SPECIFIC_REVIEW:
-            if not text:
-                _render_full(error="Type feedback before sending.")
-                return
-            _run_busy("Checking evidence…", lambda: run_scout_specific(session.id, text))
             return
 
         # GENERAL_DRAFT / PRODUCTION_GATES: Send stays disabled; defensive no-op.
 
     def _mode_changed(_e) -> None:
         state.scout_mode = mode_group.value or ScoutMode.QA.value
-        # Tier A suggestions are QA-only content — stale ones from the other
-        # mode must not linger, and switching modes counts as a fresh attempt.
-        bank_shown[0] = False
-        bank_suggestions_holder[0] = []
+        # Tier A suggestions are QA-only content and a Tier B batch is either
+        # questions or moments, never both — stale ones from the other mode must
+        # not linger, and switching modes counts as a fresh attempt.
+        _forget_suggestions()
 
-    def _specific_selection_changed(candidate_id: str, checked: bool) -> None:
+    def _selection_changed(candidate_id: str, checked: bool) -> None:
         if busy[0]:
             return
         session = session_holder[0]
@@ -653,38 +965,108 @@ def build(
             selected_specific.add(candidate_id)
         else:
             selected_specific.discard(candidate_id)
+        # A tick that no longer needs overriding must not keep a stale consent.
+        gates = load_scout_gates(session.id, root=RESEARCH_SESSIONS_ROOT) if session else []
+        if not _needs_override(selected_specific, gates):
+            override_holder[0] = False
         _render_full()
 
-    def _approve_general_click(_e) -> None:
-        session = session_holder[0]
-        candidate_id = selected_general[0]
-        if not session or not candidate_id:
+    def _override_changed(event) -> None:
+        if busy[0]:
             return
+        override_holder[0] = bool(event.control.value)
+        _render_full()
+
+    def _verify(candidate_ids: list[str], only: list[str] | None, label: str) -> None:
+        session = session_holder[0]
+        if not session or not candidate_ids:
+            return
+        verifying.clear()
+        verifying.update(candidate_ids if only is None else only)
+
+        async def _redraw() -> None:
+            _apply_render()
+            page.update()
+
+        def _landed(candidate_id, _outcome) -> None:
+            """Fires from one of verify_selected's worker threads as that branch
+            finishes. Display only — it drops the card's spinner and asks the page
+            to redraw, and deliberately writes nothing: the gate artifact is the
+            workflow's to write, once, after every branch has settled."""
+            verifying.discard(candidate_id)
+            try:
+                page.run_task(_redraw)
+            except Exception:
+                pass
 
         def _work():
-            approved = approve_scout_general(session.id, candidate_id)
-            return run_scout_specific(approved.id)
+            try:
+                return verify_scout_selection(
+                    session.id, candidate_ids, only=only, on_result=_landed,
+                )
+            finally:
+                # Whichever way it ends — including an exception _run_busy will
+                # turn into an error bubble — no card may be left spinning.
+                verifying.clear()
 
-        _run_busy("Checking evidence…", _work)
+        _run_busy(label, _work, on_success=_apply_session_and_render)
 
-    def _approve_specific_click(_e) -> None:
+    def _verify_click(pending: list[str]) -> None:
         session = session_holder[0]
-        if not session or not _selection_count_valid(session.mode, selected_specific):
+        if not session or not selected_specific or not pending:
             return
-        ids = sorted(selected_specific)
-        _run_busy("Saving selection…", lambda: approve_scout_specific(session.id, ids, ""))
+        # The whole selection goes in so the artifact stays one-entry-per-
+        # selection; `pending` is only what the label counted.
+        _verify(sorted(selected_specific), None, f"Checking evidence for {len(pending)}…")
 
-    def _back_general_click(_e) -> None:
+    def _reverify_click(candidate_id: str) -> None:
+        """Re-gate one card without paying for the others again. The whole
+        selection still goes in, so the artifact stays one-entry-per-selection."""
+        if candidate_id not in selected_specific:
+            return
+        _verify(sorted(selected_specific), [candidate_id], "Re-checking evidence…")
+
+    def _rescout_click(_e) -> None:
         session = session_holder[0]
         if not session:
             return
-        _run_busy("Returning to general review…", lambda: back_scout_general(session.id))
+        _run_busy(
+            "Researching… ~30s", lambda: rescout_keeping_confirmed(session.id),
+        )
+
+    def _rescout_selected_click(_e) -> None:
+        session = session_holder[0]
+        if not session or not selected_specific:
+            return
+        ids = sorted(selected_specific)
+        _run_busy(
+            "Keeping selected & researching more… ~30s",
+            lambda: rescout_keeping_selected(session.id, ids),
+        )
+
+    def _approve_selection_click(_e) -> None:
+        session = session_holder[0]
+        if not session or not _selection_count_valid(session.mode, selected_specific):
+            return
+        # The ticks own the approval, not whatever the last verify left on disk.
+        ids = sorted(selected_specific)
+        _run_busy(
+            "Locking the selection in…",
+            lambda: approve_scout_selection(session.id, ids),
+        )
+
+    def _back_to_candidates_click(_e) -> None:
+        session = session_holder[0]
+        if not session:
+            return
+        _run_busy("Returning to the candidates…", lambda: back_scout_candidates(session.id))
 
     def _create_project_click(_e) -> None:
         session = session_holder[0]
         if not session:
             return
         slug_field = slug_holder[0]
+        slug_value[0] = str(slug_field.value or "") if slug_field else ""
         project_slug = (slug_field.value if slug_field else "").strip() or slugify(
             session.user_intent or ""
         )
@@ -693,7 +1075,9 @@ def build(
             return
         _run_busy(
             "Creating project…",
-            lambda: create_scout_project(session.id, project_slug),
+            lambda: create_scout_project(
+                session.id, project_slug, override=override_holder[0]
+            ),
             on_success=_finish_create_project,
         )
 
@@ -734,9 +1118,15 @@ def build(
             state.scout_session_id = loaded.id
             state.scout_mode = loaded.mode.value
             state.last_prompt = loaded.user_intent
-            selected_general[0] = loaded.selected_general_candidate_id or ""
+            if state.returned_scout_session_id != loaded.id:
+                state.returned_scout_project = ""
+                state.returned_scout_session_id = ""
             selected_specific.clear()
             selected_specific.update(loaded.selected_specific_candidate_ids)
+            verifying.clear()
+            override_holder[0] = False
+            if slug_session_id[0] != loaded.id:
+                _reset_production_form()
             _apply_session_and_render(loaded)
 
         _run_busy("Loading session…", _work, on_success=_on_resumed)
@@ -753,13 +1143,14 @@ def build(
             page.pop_dialog()
             delete_scout_session(session.id, root=RESEARCH_SESSIONS_ROOT)
             if session_holder[0] is not None and session_holder[0].id == session.id:
-                selected_general[0] = ""
                 selected_specific.clear()
+                verifying.clear()
+                override_holder[0] = False
+                _reset_production_form()
                 session_holder[0] = None
                 state.scout_session_id = ""
                 intent_field.value = ""
-                bank_suggestions_holder[0] = []
-                bank_shown[0] = False
+                _forget_suggestions()
             _render_full()
 
         created = _session_created_at(session.id)
