@@ -158,12 +158,13 @@ def _header(title: str, subtitle: str) -> ft.Control:
 
 # ─── Small reusable bits ──────────────────────────────────────────────────
 
-def primary_button(label: str, on_click, *, icon=None, disabled: bool = False) -> ft.ElevatedButton:
+def primary_button(label: str, on_click=None, *, icon=None, disabled: bool = False, url: str | None = None) -> ft.ElevatedButton:
     return ft.ElevatedButton(
         label,
         on_click=on_click,
         icon=icon,
         disabled=disabled,
+        url=url,
         bgcolor=ACCENT,
         color="#ffffff",
         height=42,
@@ -174,12 +175,13 @@ def primary_button(label: str, on_click, *, icon=None, disabled: bool = False) -
     )
 
 
-def secondary_button(label: str, on_click, *, icon=None, disabled: bool = False) -> ft.OutlinedButton:
+def secondary_button(label: str, on_click=None, *, icon=None, disabled: bool = False, url: str | None = None) -> ft.OutlinedButton:
     return ft.OutlinedButton(
         label,
         on_click=on_click,
         icon=icon,
         disabled=disabled,
+        url=url,
         height=42,
         style=ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=6),

@@ -198,11 +198,25 @@ def build(
     if existing and final_path:
         size_mb = final_path.stat().st_size / (1024 * 1024)
         dl_url = asset_src(final_path)
+
+        def _do_download(_e):
+            try:
+                page.run_task(page.launch_url, dl_url)
+            except Exception:
+                pass
+
         right_controls.extend([
             primary_button(
                 f"Download final.mp4 ({size_mb:.1f} MB)",
-                lambda _e: page.launch_url(dl_url),
+                on_click=_do_download,
+                url=dl_url,
                 icon=ft.Icons.DOWNLOAD,
+            ),
+            ft.Container(height=4),
+            ft.TextButton(
+                "🔗 Open / Save final.mp4 in new tab",
+                url=dl_url,
+                style=ft.ButtonStyle(padding=ft.padding.all(0)),
             ),
             ft.Container(height=8),
             secondary_button("Re-assemble Video", assemble_click, icon=ft.Icons.REFRESH),
