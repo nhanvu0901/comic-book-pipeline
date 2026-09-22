@@ -117,6 +117,49 @@ def build(
     script_area.on_change = _update_counter
     _update_counter()
 
+    def _open_prompt_dialog(prompt_text: str, file_url: str, filename: str):
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.DESCRIPTION, color=ACCENT),
+                ft.Text(f"Gemini Prompt: {filename}", size=16, weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        "Your prompt is ready! You can download the .md file to your Mac or copy the text directly:",
+                        size=12, color=TEXT_MUTED,
+                    ),
+                    ft.TextField(
+                        value=prompt_text,
+                        multiline=True,
+                        read_only=True,
+                        min_lines=12,
+                        max_lines=18,
+                        text_size=12,
+                        border_color=BORDER,
+                        focused_border_color=ACCENT,
+                    ),
+                ], spacing=10, scroll=ft.ScrollMode.AUTO),
+                width=650,
+                height=380,
+            ),
+            actions=[
+                secondary_button(
+                    "Download to Mac (.md)",
+                    lambda _e: page.run_task(page.launch_url, file_url),
+                    icon=ft.Icons.DOWNLOAD,
+                ),
+                primary_button(
+                    "Copy to Clipboard",
+                    lambda _e: page.run_task(_copy_to_clipboard, prompt_text, "Prompt"),
+                    icon=ft.Icons.COPY,
+                ),
+                ft.TextButton("Close", on_click=lambda _e: page.pop_dialog()),
+            ],
+        )
+        page.show_dialog(dialog)
+
     # ── Prompt Generation actions ──────────────────────────────────────────
     async def copy_prompt_click(_e):
         if not state.project_name:
@@ -128,11 +171,13 @@ def build(
         page.update()
         try:
             prompt_text, out_path = generate_gemini_writer_prompt(state.project_name)
+            file_url = f"/{state.project_name}/{out_path.name}"
             push_log(f"[prompt] Generated {out_path.name} ({len(prompt_text)} chars)")
             await _copy_to_clipboard(prompt_text, "Gemini Prompt")
             running.visible = False
             status_text.value = f"Prompt saved to {out_path.name} and copied to clipboard!"
             status_text.color = SUCCESS
+            _open_prompt_dialog(prompt_text, file_url, out_path.name)
             page.update()
         except Exception as exc:
             running.visible = False
@@ -141,19 +186,33 @@ def build(
             push_log(format_exception(exc))
             page.update()
 
-    def export_prompt_click(_e):
+    async def export_prompt_click(_e):
         if not state.project_name:
             _show_snack("No project selected.")
             return
+        running.visible = True
+        status_text.value = "Preparing prompt download for your browser…"
+        status_text.color = WARN
+        page.update()
         try:
-            _, out_path = generate_gemini_writer_prompt(state.project_name)
-            push_log(f"[prompt] Exported: {out_path}")
-            _show_snack(f"Exported to {out_path.name}")
-            status_text.value = f"Exported prompt to {out_path.name}"
+            prompt_text, out_path = generate_gemini_writer_prompt(state.project_name)
+            file_url = f"/{state.project_name}/{out_path.name}"
+            push_log(f"[prompt] Triggering browser download to Mac: {file_url}")
+            # Launch file URL in browser — client browser on Mac fetches the .md file directly
+            await page.launch_url(file_url)
+            await _copy_to_clipboard(prompt_text, "Gemini Prompt")
+            running.visible = False
+            status_text.value = f"Downloading {out_path.name} to Mac & copied to clipboard!"
             status_text.color = SUCCESS
+            _show_snack(f"Opened {out_path.name} in your browser to download to Mac!")
+            _open_prompt_dialog(prompt_text, file_url, out_path.name)
             page.update()
         except Exception as exc:
-            _show_snack(f"Error exporting prompt: {exc}")
+            running.visible = False
+            status_text.value = f"Failed to export prompt: {exc}"
+            status_text.color = DANGER
+            push_log(format_exception(exc))
+            page.update()
 
     def clear_script_click(_e):
         script_area.value = ""
@@ -205,7 +264,7 @@ def build(
     # Top action bar in center column
     top_bar = ft.Row([
         primary_button("Copy Gemini Prompt", copy_prompt_click, icon=ft.Icons.COPY),
-        secondary_button("Download Prompt (.md)", export_prompt_click, icon=ft.Icons.DOWNLOAD_ROUNDED),
+        secondary_button("Download Prompt to Mac (.md)", export_prompt_click, icon=ft.Icons.DOWNLOAD_ROUNDED),
         secondary_button("Clear", clear_script_click, icon=ft.Icons.CLEAR),
     ], spacing=10, wrap=True)
 
