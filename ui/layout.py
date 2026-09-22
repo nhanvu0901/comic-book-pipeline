@@ -145,10 +145,10 @@ def three_col(
 
 def _header(title: str, subtitle: str) -> ft.Control:
     parts: list[ft.Control] = [
-        ft.Text(title, size=22, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+        ft.Text(title, size=22, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True),
     ]
     if subtitle:
-        parts.append(ft.Text(subtitle, size=12, color=TEXT_MUTED))
+        parts.append(ft.Text(subtitle, size=12, color=TEXT_MUTED, selectable=True))
     return ft.Container(
         content=ft.Column(parts, spacing=3),
         padding=ft.padding.only(left=28, right=28, top=22, bottom=16),

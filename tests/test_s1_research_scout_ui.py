@@ -1190,3 +1190,50 @@ def test_unconfirmed_selection_offers_rescout_keeping_selected(tmp_path, monkeyp
     button.on_click(object())
     _run_recorded_task(page)
     assert calls == [("qa-keep-selected-inconclusive", ["a"])]
+
+
+def test_all_scout_text_is_selectable(tmp_path):
+    """Every text element in Stage 1 scout UI must have selectable=True so users can copy text."""
+    import ast
+    from pathlib import Path
+
+    # 1. AST check: ensure every ft.Text instantiation in s1_research_scout.py explicitly passes selectable=True
+    source_path = Path(s1_research_scout.__file__)
+    tree = ast.parse(source_path.read_text("utf-8"))
+
+    class TextAstVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.failures = []
+
+        def visit_Call(self, node):
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "Text":
+                selectable_kw = [kw for kw in node.keywords if kw.arg == "selectable"]
+                if not selectable_kw:
+                    self.failures.append(f"Line {node.lineno}: ft.Text is missing selectable=True")
+                elif not getattr(selectable_kw[0].value, "value", None) is True:
+                    self.failures.append(f"Line {node.lineno}: ft.Text has selectable != True")
+            self.generic_visit(node)
+
+    visitor = TextAstVisitor()
+    visitor.visit(tree)
+    assert not visitor.failures, "\n".join(visitor.failures)
+
+    # 2. Runtime check on rendered scout controls (center transcript & right rail, excluding the global nav stepper)
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-selectable-test",
+        candidates=[{"id": "a", "title": "Comic Alpha", "summary": "Visual summary"}],
+        gates=[_gate("a", "confirmed")],
+        selected=["a"],
+    )
+    _page, controls = _build(tmp_path, session)
+
+    unselectable_texts = []
+    for scout_container in controls.controls[1:]:
+        for node in _walk(scout_container):
+            if isinstance(node, ft.Text):
+                if not getattr(node, "selectable", False):
+                    unselectable_texts.append(f"Unselectable text found: {node.value!r}")
+
+    assert not unselectable_texts, "\n".join(unselectable_texts)
+

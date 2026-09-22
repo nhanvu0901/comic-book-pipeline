@@ -115,9 +115,9 @@ def _verdict_badge(gate: dict) -> ft.Control:
     """The card's own verdict line: NOT VERIFIED until this candidate was gated."""
     verdict = str(gate.get("verdict") or "").strip()
     if not verdict:
-        return ft.Text("NOT VERIFIED", size=11, color=TEXT_MUTED, weight=ft.FontWeight.BOLD)
+        return ft.Text("NOT VERIFIED", size=11, color=TEXT_MUTED, weight=ft.FontWeight.BOLD, selectable=True)
     color = SUCCESS if verdict == "confirmed" else (WARN if verdict == "inconclusive" else DANGER)
-    return ft.Text(f"{verdict.upper()}", size=11, color=color, weight=ft.FontWeight.BOLD)
+    return ft.Text(f"{verdict.upper()}", size=11, color=color, weight=ft.FontWeight.BOLD, selectable=True)
 
 
 def _confirmed_selected(session: ResearchSession, gates: list[dict]) -> list[str]:
@@ -171,11 +171,11 @@ def _candidate_card(
     flags = [str(flag) for flag in (candidate.get("flags") or [])]
     flags.extend(str(flag) for flag in (gate.get("flags") or []))
     header_controls: list[ft.Control] = [
-        ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, expand=True),
+        ft.Text(title, size=14, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, expand=True, selectable=True),
     ]
     if is_kept:
         header_controls.append(ft.Container(
-            content=ft.Text("PINNED", size=9, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
+            content=ft.Text("PINNED", size=9, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK, selectable=True),
             bgcolor=ft.Colors.AMBER_400,
             padding=ft.padding.symmetric(horizontal=6, vertical=2),
             border_radius=4,
@@ -188,7 +188,7 @@ def _candidate_card(
     if gate.get("reason"):
         details.append(ft.Text(str(gate["reason"]), size=11, color=TEXT_MUTED, selectable=True))
     if candidate.get("series_issue_year"):
-        details.append(ft.Text(str(candidate["series_issue_year"]), size=11, color=TEXT_PRIMARY))
+        details.append(ft.Text(str(candidate["series_issue_year"]), size=11, color=TEXT_PRIMARY, selectable=True))
     for url in urls:
         details.append(ft.Text(f"Source: {url}", size=10, color=ACCENT, selectable=True))
     if flags:
@@ -239,9 +239,9 @@ def _general_collapsed_lines(session: ResearchSession, candidates: list[dict]) -
         title = str(candidate.get("title") or candidate.get("entity") or candidate_id)
         approved = candidate_id in selected
         prefix = "✓ " if approved else "• "
-        lines.append(ft.Text(f"{prefix}{title}", size=12, color=SUCCESS if approved else TEXT_MUTED))
+        lines.append(ft.Text(f"{prefix}{title}", size=12, color=SUCCESS if approved else TEXT_MUTED, selectable=True))
     if not lines:
-        lines.append(ft.Text("No candidates recorded for this round.", size=12, color=TEXT_MUTED))
+        lines.append(ft.Text("No candidates recorded for this round.", size=12, color=TEXT_MUTED, selectable=True))
     return ft.Column(lines, spacing=4)
 
 
@@ -279,7 +279,7 @@ def _scout_bubble(content: ft.Control) -> ft.Control:
     return ft.Row([
         ft.Container(
             content=ft.Column([
-                ft.Text("SCOUT", size=9, color=TEXT_MUTED, weight=ft.FontWeight.BOLD),
+                ft.Text("SCOUT", size=9, color=TEXT_MUTED, weight=ft.FontWeight.BOLD, selectable=True),
                 content,
             ], spacing=6),
             bgcolor=BG_PANEL,
@@ -295,7 +295,7 @@ def _system_bubble(text: str, *, danger: bool = False) -> ft.Control:
     return ft.Row([
         ft.Container(
             content=ft.Text(text, size=11, color=DANGER if danger else TEXT_MUTED,
-                            text_align=ft.TextAlign.LEFT),
+                            text_align=ft.TextAlign.LEFT, selectable=True),
             width=_BUBBLE_WIDTH,
         ),
     ], alignment=ft.MainAxisAlignment.CENTER)
@@ -304,14 +304,14 @@ def _system_bubble(text: str, *, danger: bool = False) -> ft.Control:
 def _progress_bubble(label: str) -> ft.Control:
     return _scout_bubble(ft.Row([
         ft.ProgressRing(width=14, height=14, stroke_width=2),
-        ft.Text(label, size=12, color=TEXT_MUTED),
+        ft.Text(label, size=12, color=TEXT_MUTED, selectable=True),
     ], spacing=10))
 
 
 def _session_created_bubble(session: ResearchSession) -> ft.Control:
     chip = ft.Container(
         content=ft.Text(session.mode.value.upper(), size=9, color=TEXT_MUTED,
-                        weight=ft.FontWeight.BOLD),
+                        weight=ft.FontWeight.BOLD, selectable=True),
         padding=ft.padding.symmetric(horizontal=6, vertical=2),
         border=ft.border.all(1, BORDER),
         border_radius=4,
@@ -333,7 +333,7 @@ def _rescout_bubble(detail: dict) -> ft.Control:
     dropped = len(detail.get("dropped") or [])
     return _user_bubble(ft.Text(
         f"Re-scout — keeping {kept} confirmed, replacing {dropped}.",
-        size=13, color=TEXT_PRIMARY,
+        size=13, color=TEXT_PRIMARY, selectable=True,
     ))
 
 
@@ -341,7 +341,7 @@ def _selection_approved_bubble(detail: dict, candidates: list[dict]) -> ft.Contr
     ids = [str(candidate_id) for candidate_id in (detail.get("candidate_ids") or [])]
     titles = [_resolve_title(candidate_id, candidates) for candidate_id in ids]
     return _user_bubble(ft.Text(
-        f"Approved: {', '.join(titles) if titles else '(none)'}", size=13, color=TEXT_PRIMARY,
+        f"Approved: {', '.join(titles) if titles else '(none)'}", size=13, color=TEXT_PRIMARY, selectable=True,
     ))
 
 
@@ -359,9 +359,9 @@ def _verified_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
         elif candidate_id in verdicts:
             verdict = str(verdicts[candidate_id])
             color = SUCCESS if verdict == "confirmed" else WARN
-            lines.append(ft.Text(f"{title}: {verdict.upper()}", size=12, color=color))
+            lines.append(ft.Text(f"{title}: {verdict.upper()}", size=12, color=color, selectable=True))
     if not lines:
-        lines.append(ft.Text("Nothing was re-verified.", size=12, color=TEXT_MUTED))
+        lines.append(ft.Text("Nothing was re-verified.", size=12, color=TEXT_MUTED, selectable=True))
     return _scout_bubble(ft.Column(lines, spacing=4))
 
 
@@ -392,7 +392,7 @@ def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
             "and press Send, or press Send again on an empty box and we'll find a "
             "batch of new questions for you to choose from before anything is "
             "researched.",
-            size=12, color=TEXT_MUTED,
+            size=12, color=TEXT_MUTED, selectable=True,
         ),
     ]
     for row in suggestions:
@@ -483,7 +483,7 @@ def build(
             if candidate_id in verifying:
                 trailing.append(ft.Row([
                     ft.ProgressRing(width=12, height=12, stroke_width=2),
-                    ft.Text("Verifying…", size=11, color=TEXT_MUTED),
+                    ft.Text("Verifying…", size=11, color=TEXT_MUTED, selectable=True),
                 ], spacing=6))
             else:
                 reverify = secondary_button(
@@ -531,7 +531,7 @@ def build(
             rescout.key = "rescout-keep-confirmed"
             controls.append(ft.Row([
                 rescout,
-                ft.Text("costs one research call", size=10, color=TEXT_MUTED),
+                ft.Text("costs one research call", size=10, color=TEXT_MUTED, selectable=True),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
         unconfirmed_selected = [cid for cid in selected_specific if cid not in set(kept)]
@@ -544,7 +544,7 @@ def build(
             rescout_selected.key = "rescout-keep-selected"
             controls.append(ft.Row([
                 rescout_selected,
-                ft.Text("pins selected cards & searches for fresh alternatives (~30s)", size=11, color=TEXT_MUTED),
+                ft.Text("pins selected cards & searches for fresh alternatives (~30s)", size=11, color=TEXT_MUTED, selectable=True),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         if _needs_override(selected_specific, gates):
             controls.append(ft.Checkbox(
@@ -571,7 +571,7 @@ def build(
             n = len(rev_candidates)
             count_text = "no candidates" if n == 0 else f"{n} candidates"
             summary = f"Round {label_rev} — {count_text} (superseded)"
-            return _scout_bubble(ft.Text(summary, size=12, color=TEXT_MUTED))
+            return _scout_bubble(ft.Text(summary, size=12, color=TEXT_MUTED, selectable=True))
         content = (
             _candidate_review_content(session, candidates, gates)
             if session.state is SessionState.CANDIDATE_REVIEW
@@ -581,7 +581,7 @@ def build(
         if not plan_summary:
             return _scout_bubble(content)
         return _scout_bubble(ft.Column([
-            ft.Text(f"Plan: {plan_summary}", size=10, color=TEXT_MUTED),
+            ft.Text(f"Plan: {plan_summary}", size=10, color=TEXT_MUTED, selectable=True),
             content,
         ], spacing=6))
 
@@ -620,7 +620,7 @@ def build(
             else "Selection locked in."
         )
         controls: list[ft.Control] = [
-            ft.Text(headline, size=13, color=TEXT_PRIMARY),
+            ft.Text(headline, size=13, color=TEXT_PRIMARY, selectable=True),
         ]
         if can_override_production_gates(session, root=RESEARCH_SESSIONS_ROOT):
             controls.append(ft.Checkbox(
@@ -636,7 +636,7 @@ def build(
         button = primary_button("Run general research", _run_general_click, icon=ft.Icons.SEARCH)
         return _scout_bubble(ft.Column([
             ft.Text("Ready to run the first research round for this session.",
-                    size=12, color=TEXT_MUTED),
+                    size=12, color=TEXT_MUTED, selectable=True),
             button,
         ], spacing=8))
 
@@ -656,13 +656,13 @@ def build(
             angle = str(entry.get("angle") or "").strip()
             choices.append(ft.Row([
                 ft.Radio(value=str(index)),
-                ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED) if angle else ft.Container(),
+                ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED, selectable=True) if angle else ft.Container(),
                 ft.Text(_discovered_text(entry), size=12, color=TEXT_PRIMARY,
                         selectable=True, expand=True),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         lines: list[ft.Control] = [
             ft.Text("Pick one to research, or look for a different batch:",
-                    size=12, color=TEXT_MUTED),
+                    size=12, color=TEXT_MUTED, selectable=True),
             ft.RadioGroup(
                 key="discovered-questions",
                 value=discovered_pick[0] or None,
@@ -671,18 +671,18 @@ def build(
             ),
         ]
         if discovered_note[0]:
-            lines.append(ft.Text(discovered_note[0], size=11, color=WARN))
+            lines.append(ft.Text(discovered_note[0], size=11, color=WARN, selectable=True))
         reroll = secondary_button(
             f"None of these — find {_DISCOVER_BATCH} more", _reroll_click
         )
         reroll.key = "discovered-reroll"
         lines.append(ft.Row([
             reroll,
-            ft.Text("costs one research call", size=10, color=TEXT_MUTED),
+            ft.Text("costs one research call", size=10, color=TEXT_MUTED, selectable=True),
         ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         lines.append(ft.Text(
             "The one you pick lands in the box — edit it if you like, then press Send to research it.",
-            size=11, color=TEXT_MUTED,
+            size=11, color=TEXT_MUTED, selectable=True,
         ))
         return _scout_bubble(ft.Column(lines, spacing=8))
 
@@ -1156,15 +1156,15 @@ def build(
         created = _session_created_at(session.id)
         detail: list[ft.Control] = [
             ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
-                    size=12, color=TEXT_PRIMARY),
+                    size=12, color=TEXT_PRIMARY, selectable=True),
         ]
         if created:
-            detail.append(ft.Text(f"Created {created}", size=11, color=TEXT_MUTED))
+            detail.append(ft.Text(f"Created {created}", size=11, color=TEXT_MUTED, selectable=True))
         detail.append(ft.Text("This cannot be undone.", size=12, color=DANGER,
-                              weight=ft.FontWeight.BOLD))
+                              weight=ft.FontWeight.BOLD, selectable=True))
         page.show_dialog(ft.AlertDialog(
             modal=True,
-            title=ft.Text("Delete this research session?"),
+            title=ft.Text("Delete this research session?", selectable=True),
             content=ft.Column(detail, spacing=6, tight=True),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
@@ -1177,7 +1177,7 @@ def build(
     def _render_resume_list() -> ft.Control:
         sessions = list_scout_sessions(root=RESEARCH_SESSIONS_ROOT)
         if not sessions:
-            return ft.Text("No unfinished research sessions.", size=11, color=TEXT_MUTED)
+            return ft.Text("No unfinished research sessions.", size=11, color=TEXT_MUTED, selectable=True)
         return ft.Column([
             ft.Container(
                 content=ft.Row([
@@ -1188,9 +1188,9 @@ def build(
                         key=f"resume-session-{session.id}",
                         content=ft.Column([
                             ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
-                                    size=12, color=TEXT_PRIMARY),
+                                    size=12, color=TEXT_PRIMARY, selectable=True),
                             ft.Text(f"{session.id} · {session.state.value}",
-                                    size=10, color=TEXT_MUTED),
+                                    size=10, color=TEXT_MUTED, selectable=True),
                         ], spacing=2),
                         expand=True,
                         ink=True,
@@ -1216,22 +1216,22 @@ def build(
     def _build_right_rail_controls() -> list[ft.Control]:
         session = session_holder[0]
         controls: list[ft.Control] = [
-            ft.Text("STEP 1 OF 8", size=10, color=TEXT_MUTED),
-            ft.Text("Research Scout", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+            ft.Text("STEP 1 OF 8", size=10, color=TEXT_MUTED, selectable=True),
+            ft.Text("Research Scout", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True),
             ft.Text(
                 "Collect source-backed comic candidates, review evidence, "
                 "then create the project.",
-                size=12, color=TEXT_MUTED,
+                size=12, color=TEXT_MUTED, selectable=True,
             ),
             ft.Container(height=12),
         ]
         if session is not None:
             controls.append(ft.Row([
-                ft.Text("CURRENT STATE", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD),
+                ft.Text("CURRENT STATE", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD, selectable=True),
                 ft.Container(
                     key="current-state",
                     content=ft.Text(session.state.value.replace("_", " ").upper(),
-                                    size=10, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+                                    size=10, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, selectable=True),
                     bgcolor=BG_PANEL,
                     border=ft.border.all(1, BORDER),
                     border_radius=4,
@@ -1240,7 +1240,7 @@ def build(
             ], spacing=8))
             controls.append(ft.Container(height=12))
         controls.extend([
-            ft.Text("UNFINISHED SESSIONS", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD),
+            ft.Text("UNFINISHED SESSIONS", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD, selectable=True),
             _render_resume_list(),
             ft.Container(height=12),
             secondary_button("New research (archive current)", _new_research_click),
