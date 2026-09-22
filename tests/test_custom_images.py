@@ -475,3 +475,33 @@ def test_doc_green_keeps_its_own_panel_after_the_split():
         shots, {"2:1": "/SKELETON.jpg", "2:2": "/SHIELD.jpg"}, _ADAMANTIUM_NARRATION)
     dg = [s for s in shots if "Doc Green" in s.caption_text]
     assert len(dg) == 1 and not dg[0].custom_image, "Doc Green's panel must be visible again"
+
+
+def test_two_custom_images_across_split_shots_land_correctly():
+    """When a scene has 2 fragments and 2 shots, but the first shot ends with the leading words
+    of the second fragment (e.g. '...damage, but three' / 'injuries should have killed him...'),
+    the second fragment's image must land on the second shot where the majority of its words
+    are spoken, rather than colliding with the first shot and dropping an image."""
+    narration = {
+        "scenes": [
+            {
+                "scene_id": 1,
+                "visual_beats": [
+                    "Wolverine walks off lethal damage,",
+                    "but three injuries should have killed him outright."
+                ]
+            }
+        ]
+    }
+    shots = [
+        _capshot(0, "Wolverine walks off lethal damage, but three", 2.472, beat_id=1),
+        _capshot(1, "injuries should have killed him outright.", 2.119, beat_id=1),
+    ]
+    shots_._apply_custom_images_to_shots(
+        shots,
+        {"1:0": "/img_damage.jpg", "1:1": "/img_injuries.jpg"},
+        narration
+    )
+    assert shots[0].custom_image == "/img_damage.jpg"
+    assert shots[1].custom_image == "/img_injuries.jpg"
+

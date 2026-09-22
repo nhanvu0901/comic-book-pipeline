@@ -1455,6 +1455,67 @@ def _fragment_text(narration: dict | None, sid: int, fi: int) -> str:
     return ""
 
 
+def _clean_tokens(text: str) -> list[str]:
+    import re
+    return [w.lower() for w in re.findall(r"\b[\w'-]+\b", str(text or ""))]
+
+
+def _longest_common_contiguous_run(a: list[str], b: list[str]) -> int:
+    """Length of the longest contiguous common token sequence between two token lists."""
+    if not a or not b:
+        return 0
+    m, n = len(a), len(b)
+    prev = [0] * (n + 1)
+    max_len = 0
+    for i in range(1, m + 1):
+        curr = [0] * (n + 1)
+        for j in range(1, n + 1):
+            if a[i - 1] == b[j - 1]:
+                curr[j] = prev[j - 1] + 1
+                if curr[j] > max_len:
+                    max_len = curr[j]
+            else:
+                curr[j] = 0
+        prev = curr
+    return max_len
+
+
+def _fragment_match_score(frag: str, cap: str) -> float:
+    """Calculate a match score between a narration fragment and a shot caption."""
+    f_tokens = _clean_tokens(frag)
+    c_tokens = _clean_tokens(cap)
+    if not f_tokens or not c_tokens:
+        return 0.0
+
+    f_str = " ".join(f_tokens)
+    c_str = " ".join(c_tokens)
+
+    # 1. Exact match
+    if f_str == c_str:
+        return 10000.0
+
+    # 2. Fragment is completely contained in caption (e.g. caption merged multiple visual beats)
+    if f_str in c_str:
+        return 8000.0 + len(f_tokens)
+
+    # 3. Caption is completely contained in fragment (e.g. visual beat was split across multiple captions)
+    if c_str in f_str:
+        return 6000.0 + len(c_tokens)
+
+    # 4. Longest contiguous common sequence of tokens
+    run = _longest_common_contiguous_run(f_tokens, c_tokens)
+    shared = len(set(f_tokens) & set(c_tokens))
+
+    if run >= 2:
+        r_cap = run / len(c_tokens)
+        r_frag = run / len(f_tokens)
+        return 1000.0 * r_cap + 500.0 * r_frag + 10.0 * run + shared
+    elif shared >= 2:
+        return 10.0 * shared
+
+    return 0.0
+
+
 def _shot_for_fragment(shots: list, idxs: list[int], frag: str) -> int | None:
     """Index (into `shots`) of the shot whose caption CARRIES `frag` — the shot the viewer is
     looking at while those exact words are spoken.
@@ -1470,32 +1531,15 @@ def _shot_for_fragment(shots: list, idxs: list[int], frag: str) -> int | None:
     Matching on the words is immune to merging: merged or not, the shot that speaks the fragment
     is the shot that should carry its image. Longest-overlap wins so a fragment that is a prefix
     of another still resolves to the tighter caption."""
-    if not frag:
+    if not frag or not idxs:
         return None
-    best, best_len = None, 0
+    best, best_score = None, 0.0
     for i in idxs:
-        cap = " ".join(str(getattr(shots[i], "caption_text", "") or "").split())
-        if not cap:
-            continue
-        # the fragment is verbatim narration, so a merged caption CONTAINS it outright
-        if frag in cap and len(frag) > best_len:
-            best, best_len = i, len(frag)
-    if best is not None:
-        return best
-    # partial: the builder may have split a fragment across shots — take the caption sharing the
-    # longest leading run of words with it.
-    words = frag.split()
-    for i in idxs:
-        cap = " ".join(str(getattr(shots[i], "caption_text", "") or "").split())
-        run = 0
-        for w in words:
-            if w in cap:
-                run += 1
-            else:
-                break
-        if run > best_len:
-            best, best_len = i, run
-    return best if best_len >= 2 else None
+        cap = getattr(shots[i], "caption_text", "") or ""
+        score = _fragment_match_score(frag, cap)
+        if score > best_score:
+            best, best_score = i, score
+    return best if best_score >= 20.0 else None
 
 
 def _split_shot_at_fragment(shots: list, i: int, frag: str) -> int | None:
@@ -1508,10 +1552,20 @@ def _split_shot_at_fragment(shots: list, i: int, frag: str) -> int | None:
     first half may still be a normal panel shot. Returns None when the fragment is not a clean
     interior boundary, in which case the caller leaves the shot alone rather than mangling it."""
     import copy
+    import re
     sh = shots[i]
     cap = " ".join(str(getattr(sh, "caption_text", "") or "").split())
-    frag = " ".join(str(frag).split())
-    at = cap.find(frag)
+    frag_clean = " ".join(str(frag).split())
+    at = cap.find(frag_clean)
+    if at <= 0:
+        words = re.findall(r"\b[\w'-]+\b", frag_clean)
+        if words:
+            for n in range(min(3, len(words)), 0, -1):
+                phrase = " ".join(words[:n])
+                m = re.search(r"\b" + re.escape(phrase) + r"\b", cap, re.IGNORECASE)
+                if m and m.start() > 0:
+                    at = m.start()
+                    break
     if at <= 0:                      # not found, or the fragment already starts this shot
         return None
     head, tail = cap[:at].strip(), cap[at:].strip()
@@ -1601,6 +1655,13 @@ def _apply_custom_images_to_shots(shots: list, custom_map: dict[str, str],
                         print(f"[stage5] custom-image: split shot {hit} so beat {beat_key} keeps "
                               f"its own image (two fragments shared one shot)")
                         continue
+                    free_shots = [k for k in idxs if not getattr(shots[k], "custom_image", "")]
+                    if free_shots:
+                        target_k = min(free_shots, key=lambda k: abs(k - idxs[min(fi, len(idxs) - 1)]))
+                        shots[target_k].custom_image = abs_path
+                        print(f"[stage5] custom-image: beat {beat_key} collided on shot {hit} with an existing image; "
+                              f"assigned to available shot {target_k} in scene {sid} instead of dropping")
+                        continue
                     print(f"[stage5] custom-image: beat {beat_key} shares a shot with another "
                           f"custom image and could not be split — one image will not be seen")
                 shots[hit].custom_image = abs_path
@@ -1620,7 +1681,12 @@ def _apply_custom_images_to_shots(shots: list, custom_map: dict[str, str],
                       f"but it only has {len(idxs)} shot(s) — clamping to the last one so the "
                       f"image still appears (fragments were merged upstream)")
                 fi = len(idxs) - 1
-            shots[idxs[max(0, fi)]].custom_image = abs_path
+            target_idx = idxs[max(0, fi)]
+            if getattr(shots[target_idx], "custom_image", "") and getattr(shots[target_idx], "custom_image", "") != abs_path:
+                free_shots = [k for k in idxs if not getattr(shots[k], "custom_image", "")]
+                if free_shots:
+                    target_idx = min(free_shots, key=lambda k: abs(k - target_idx))
+            shots[target_idx].custom_image = abs_path
         else:
             for i in idxs:
                 shots[i].custom_image = abs_path
