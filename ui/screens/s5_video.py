@@ -14,7 +14,7 @@ import flet as ft
 from flet_video import Video, VideoMedia
 
 from config import PROJECTS_ROOT
-from ..bridge import format_exception, run_blocking, run_stage_5
+from ..bridge import asset_src, format_exception, run_blocking, run_stage_5
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
@@ -32,18 +32,22 @@ def build(
 ) -> ft.Control:
     final_path = PROJECTS_ROOT / state.project_name / "final.mp4" if state.project_name else None
     existing = final_path and final_path.exists()
+    if existing and not state.is_approved(8):
+        state.mark_approved(8)
+        save_state(state)
 
     video_slot = ft.Container(expand=True, alignment=ft.Alignment.CENTER)
     status_text = ft.Text(
-        "final.mp4 already exists — press Play below" if existing else "Click Assemble to build the video.",
+        "final.mp4 ready — click Download or press Play below" if existing else "Click Assemble to build the video.",
         color=TEXT_MUTED, size=12,
     )
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     lv, push_log = log_list(page)
 
     def _mount_video(path: Path):
+        res_src = asset_src(path)
         v = Video(
-            playlist=[VideoMedia(resource=str(path))],
+            playlist=[VideoMedia(resource=res_src)],
             autoplay=False,
             show_controls=True,
             width=405,   # 9:16 at reasonable screen size
@@ -100,7 +104,13 @@ def build(
             return
         folder = PROJECTS_ROOT / state.project_name
         try:
-            subprocess.run(["open", str(folder)], check=False)
+            import os, sys
+            if sys.platform == "win32":
+                os.startfile(str(folder))
+            elif sys.platform == "darwin":
+                subprocess.run(["open", str(folder)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(folder)], check=False)
         except Exception as e:
             push_log(f"open failed: {e}")
 
@@ -135,7 +145,7 @@ def build(
               if state.project_name else None)
         if fp and fp.exists():
             _mount_video(fp)
-            status_text.value = "final.mp4 already exists — press Play below"
+            status_text.value = "final.mp4 ready — click Download or press Play below"
         else:
             video_slot.content = ft.Container(
                 content=ft.Column([
@@ -175,16 +185,34 @@ def build(
         ),
     ], spacing=0, expand=True)
 
-    right = ft.Column([
+    right_controls = [
         ft.Text("STEP 8 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
-            "1080×1920 9:16 H.264 MP4 with Ken Burns on panels, MrBeast-style "
-            "captions, and Cartesia audio.",
+            "1080×1920 9:16 H.264 MP4 with Ken Burns on panels and Chatterbox narration audio.",
             size=12, color=TEXT_MUTED,
         ),
         ft.Container(height=16),
-        primary_button("Assemble Video", assemble_click, icon=ft.Icons.MOVIE_FILTER),
+    ]
+
+    if existing and final_path:
+        size_mb = final_path.stat().st_size / (1024 * 1024)
+        dl_url = asset_src(final_path)
+        right_controls.extend([
+            primary_button(
+                f"Download final.mp4 ({size_mb:.1f} MB)",
+                lambda _e: page.launch_url(dl_url),
+                icon=ft.Icons.DOWNLOAD,
+            ),
+            ft.Container(height=8),
+            secondary_button("Re-assemble Video", assemble_click, icon=ft.Icons.REFRESH),
+        ])
+    else:
+        right_controls.extend([
+            primary_button("Assemble Video", assemble_click, icon=ft.Icons.MOVIE_FILTER),
+        ])
+
+    right_controls.extend([
         ft.Container(height=8),
         secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=8),
@@ -192,7 +220,9 @@ def build(
         ft.Container(height=20),
         ft.Text("WHEN YOU'RE DONE", size=10, color=TEXT_MUTED),
         secondary_button("Start a new project", start_over, icon=ft.Icons.ADD),
-    ], spacing=8, expand=True)
+    ])
+
+    right = ft.Column(right_controls, spacing=8, expand=True)
 
     return three_col(
         center, right, state=state, on_go=on_go,
