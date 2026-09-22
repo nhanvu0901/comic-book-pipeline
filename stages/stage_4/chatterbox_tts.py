@@ -155,16 +155,21 @@ def synthesize(
     chunks = _chunks(text)
     ex = CHATTERBOX_EXAGGERATION if exaggeration is None else float(exaggeration)
     cfg = CHATTERBOX_CFG_WEIGHT if cfg_weight is None else float(cfg_weight)
+    prompt_wav = None
+    if voice_id and Path(voice_id).is_file():
+        prompt_wav = str(voice_id)
+    elif CHATTERBOX_VOICE_WAV and Path(CHATTERBOX_VOICE_WAV).is_file():
+        prompt_wav = str(CHATTERBOX_VOICE_WAV)
+
     _log(f"[chatterbox] {len(chunks)} chunk(s), exaggeration={ex}, cfg_weight={cfg}"
-         + (f", voice={Path(voice_id or CHATTERBOX_VOICE_WAV).name}"
-            if (voice_id or CHATTERBOX_VOICE_WAV) else ", built-in voice"))
+         + (f", voice={Path(prompt_wav).name}" if prompt_wav else ", built-in voice"))
 
     tmp = Path(tempfile.mkdtemp(prefix="chatterbox_"))
     job = tmp / "job.json"
     job.write_text(json.dumps({
         "chunks": [{"text": c, "exaggeration": ex, "cfg_weight": cfg} for c in chunks],
         "out_dir": str(tmp / "wav"),
-        "audio_prompt": (voice_id or CHATTERBOX_VOICE_WAV) or None,
+        "audio_prompt": prompt_wav,
         "temperature": CHATTERBOX_TEMPERATURE,
         "device": CHATTERBOX_DEVICE or None,
     }))

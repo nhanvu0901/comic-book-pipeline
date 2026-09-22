@@ -234,6 +234,7 @@ def build(
                 voice_id or None,
                 model or None,
                 push_log,
+                provider="cartesia",
             )
         except (Exception, SystemExit) as e:
             # SystemExit included: the review gate (stages/review_gate.py ensure_reviewed)
@@ -252,6 +253,9 @@ def build(
         dur = result.get("audio_duration_seconds", 0.0)
         status_text.value = f"Synthesized {dur:.2f}s — press Play."
         status_text.color = SUCCESS
+        state.mark_approved(6)
+        save_state(state)
+        approve_btn.disabled = False
 
         # Reload the player with the fresh file
         new_path = PROJECTS_ROOT / state.project_name / "audio.wav"
@@ -380,6 +384,11 @@ def build(
         save_state(state)
         on_go(7)
 
+    approve_btn = primary_button(
+        "Approve & Continue →", approve_and_go,
+        disabled=not (existing_audio or state.is_approved(6)),
+    )
+
     # ─── Layout ────────────────────────────────────────────────────────────
     player_card = ft.Container(
         content=ft.Column([
@@ -451,8 +460,7 @@ def build(
         ft.Container(height=8),
         secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=14),
-        primary_button("Approve & Continue →", approve_and_go,
-                       disabled=not state.is_approved(6)),
+        approve_btn,
     ], spacing=10, expand=True)
 
     return three_col(

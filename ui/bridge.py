@@ -795,6 +795,8 @@ def run_stage_4(
     voice_id: str | None,
     model: str | None,
     log: Callable[[str], None],
+    *,
+    provider: str | None = None,
 ) -> dict:
     from stages.stage_4.pipeline import synthesize_project
 
@@ -807,6 +809,7 @@ def run_stage_4(
             project_name,
             voice_id=voice_id or None,
             model=model or None,
+            provider=provider or None,
             post_atempo=1.35,  # explicit: the UI must never fall back to a slower pace
             force=True,
         )

@@ -137,6 +137,7 @@ def synthesize_project(
     flat: bool = False,          # True → old single-emotion behavior, no per-scene SSML tags
     voice_id: str | None = None,
     model: str | None = None,
+    provider: str | None = None,
     post_atempo: float | None = None,  # ffmpeg atempo — pitch-preserving tempo change.
                                 # Single source of truth is config.POST_ATEMPO (1.10 since
                                 # 2026-08-01). It used to be hard-coded here, which is how the
@@ -186,7 +187,16 @@ def synthesize_project(
             print("[stage4] narration.json changed since audio.wav was rendered — "
                   "auto-regenerating (kills stale-audio-under-new-captions)")
         base_emotion = (emotion or _base_emotion_for(narration)).strip().lower()
-        if TTS_PROVIDER == "chatterbox":
+
+        # Provider resolution: explicit > model prefix hint (sonic-* -> cartesia) > global config
+        active_provider = (provider or "").strip().lower()
+        if not active_provider:
+            if model and model.startswith("sonic"):
+                active_provider = "cartesia"
+            else:
+                active_provider = TTS_PROVIDER
+
+        if active_provider == "chatterbox":
             # LOCAL Chatterbox (NOT the hosted "resemble" provider, which is also Chatterbox).
             # Runs in .venv-chatterbox; the reason to use it is the per-chunk emotion knob.
             # Master 2026-07-31: longform is the trial ground — the three Short modes stay on
@@ -204,7 +214,7 @@ def synthesize_project(
                 "exaggeration": CHATTERBOX_EXAGGERATION,
                 "cfg_weight": CHATTERBOX_CFG_WEIGHT,
             }, indent=2))
-        elif TTS_PROVIDER == "resemble":
+        elif active_provider == "resemble":
             from .resemble_tts import synthesize as _synthesize, select_voice
             # Resemble has no Cartesia <emotion> SSML — speak plain normalized text.
             full_text = _normalize_for_tts(
