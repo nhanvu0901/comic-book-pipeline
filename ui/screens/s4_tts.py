@@ -216,25 +216,22 @@ def build(
 
     # ─── Synthesize ────────────────────────────────────────────────────────
     async def _execute():
-        voice_id = _resolve_voice_id()
-        model = (model_dropdown.value or CARTESIA_MODEL).strip()
-
-        state.tts_voice_id = voice_id
-        state.tts_model = model
+        state.tts_voice_id = "arthur"
+        state.tts_model = "chatterbox"
         save_state(state)
 
         running.visible = True
-        status_text.value = f"Calling Cartesia ({model})…"
+        status_text.value = "Synthesizing with Chatterbox (Arthur voice clone)…"
         status_text.color = WARN
         page.update()
         try:
             result = await run_blocking(
                 run_stage_4,
                 state.project_name,
-                voice_id or None,
-                model or None,
+                None,
+                None,
                 push_log,
-                provider="cartesia",
+                provider="chatterbox",
             )
         except (Exception, SystemExit) as e:
             # SystemExit included: the review gate (stages/review_gate.py ensure_reviewed)
@@ -448,15 +445,24 @@ def build(
 
     right = ft.Column([
         ft.Text("STEP 6 OF 8", size=10, color=TEXT_MUTED),
-        ft.Text("TTS Audio", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
-        ft.Text("Cartesia TTS — voice + model selectable. Word-level timestamps.",
+        ft.Text("TTS Audio (Chatterbox)", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+        ft.Text("Local Chatterbox voice clone (Arthur) — zero cloud API cost.",
                 size=12, color=TEXT_MUTED),
-        ft.Container(height=18),
-        voice_dropdown,
-        custom_voice_field,
-        model_dropdown,
         ft.Container(height=14),
-        primary_button("Synthesize", generate_click, icon=ft.Icons.GRAPHIC_EQ),
+        ft.Container(
+            content=ft.Column([
+                ft.Text("VOICE PROFILE", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD),
+                ft.Text("Arthur (Channel Voice)", size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                ft.Text("Reference: assets/voices/arthur_ref.wav", size=11, color=TEXT_MUTED),
+                ft.Text("Engine: Local Chatterbox PyTorch Model", size=11, color=TEXT_MUTED),
+            ], spacing=3),
+            padding=14,
+            border=ft.border.all(1, BORDER),
+            border_radius=8,
+            bgcolor=BG_ELEVATED,
+        ),
+        ft.Container(height=14),
+        primary_button("Synthesize (Chatterbox)", generate_click, icon=ft.Icons.GRAPHIC_EQ),
         ft.Container(height=8),
         secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=14),
@@ -466,7 +472,7 @@ def build(
     return three_col(
         center, right, state=state, on_go=on_go,
         header_title="Synthesize Narration Audio",
-        header_subtitle="Cartesia TTS + word timestamps. Play to preview.",
+        header_subtitle="Chatterbox Local TTS + Arthur voice clone. Play to preview.",
     )
 
 
