@@ -48,8 +48,12 @@ def _logged_in() -> bool:
         return False
 
 
+# Master 2026-09-23: Clear all Claude Code CLI calls. Default OFF (0) to eliminate
+# CLI crashes ("Claude Code returned an error result: success") and lengthy retry freezes.
+CLAUDE_SDK_ENABLED = os.getenv("CLAUDE_SDK_ENABLED", "0").strip().lower() in ("1", "true", "yes")
+
 def sdk_available() -> bool:
-    return _SDK_IMPORTABLE and _logged_in()
+    return CLAUDE_SDK_ENABLED and _SDK_IMPORTABLE and _logged_in()
 
 
 # Transient (server-side) failures worth retrying in-process: 529 Overloaded and

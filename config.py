@@ -71,7 +71,9 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", LLM_MODELS[0])
 #       (LLM_MODELS / CREATIVE_LLM_MODELS / FIDELITY_LLM_MODELS) with multi-model
 #       fallback as before.
 # VLM (Stage 2 panel vision) is NOT affected by this — it always uses VLM_MODELS.
-FREE_MODEL = os.getenv("FREE_MODEL", "false").lower() in ("true", "1", "yes")
+# Master 2026-09-23: Default FREE_MODEL = True so text generation uses standard
+# OpenRouter / Gemini / DeepSeek chains instead of Claude Code CLI.
+FREE_MODEL = os.getenv("FREE_MODEL", "true").lower() in ("true", "1", "yes")
 
 # Creative writing chain — separate from LLM_MODELS, used only by Stage 3 phase C
 # (write_scenes + retry_fix). Other phases keep LLM_MODELS.
