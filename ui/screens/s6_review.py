@@ -420,11 +420,11 @@ def _skipped_for_qa(
             save_state(state)
             page.update()
             on_go(8)
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
             running.visible = False
-            status_text.value = "Video render failed — see log."
+            status_text.value = "Blocked by review gate — see log." if isinstance(exc, SystemExit) else "Video render failed — see log."
             status_text.color = DANGER
-            push_log(format_exception(exc))
+            push_log(str(exc) if isinstance(exc, SystemExit) else format_exception(exc))
             page.update()
 
     render_btn = primary_button(
