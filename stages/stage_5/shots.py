@@ -1307,12 +1307,15 @@ def _load_custom_image_vectors(project: str | None) -> dict:
 
 
 def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
-                         locked: dict[str, str], *, score_fn: Callable) -> dict[str, str]:
+                         locked: dict[str, str], *,
+                         panel_locked: set[str] | None = None,
+                         score_fn: Callable) -> dict[str, str]:
     """Pure greedy assignment: decide which BEAT each custom image lands on.
 
     `beats` = [(beat_key, text), ...] in story order. `images` = the custom_images.json
     "images" list (each a dict with at least "file"; may carry "desc"). `locked` =
     {beat_key: file} from Master's hand-locks (_custom_locks) — resolved DIRECTLY, no argmax.
+    `panel_locked` = set of beat_keys Master locked to comic panels, off-limits to argmax.
     `score_fn(beat_text, image_dict) -> float` scores every remaining (beat, image) pair
     (real caller: cosine on the image's VLM desc, SigLIP-vector fallback — see
     _score_custom_image; tests inject a stub for determinism, same idiom as this repo's
@@ -1333,7 +1336,7 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     # scipy.optimize.linear_sum_assignment only if that ever stops being true.
     """
     out: dict[str, str] = {}
-    claimed_beats: set[str] = set()
+    claimed_beats: set[str] = set(panel_locked or ())
     unlocked: list[dict] = []
     for img in images:
         f = img.get("file")
@@ -1392,29 +1395,30 @@ def _score_custom_image(beat_text: str, image: dict, *, project: str | None,
 
 def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
     """[(beat_key, text), ...] for every beat Master can lock a custom image to, in the SAME
-    beat_key scheme review_gate.build_candidates writes to locks.json ("intro" | "outro" |
-    "<scene_id>" | "<scene_id>:<frag_idx>" for a micro fragment) — so a lock written by the review
+    beat_key scheme review_gate writes to locks.json — so a lock written by the review
     UI and the argmax pool here always agree on identity."""
+    from ..review_gate import bookend_row_keys
     scenes = narration.get("scenes") or []
-    micro = str(narration.get("mode") or "") == "micro_moment"
     rows: list[tuple[str, str]] = []
     intro = next((s for s in scenes if s.get("is_intro")), None)
     outro = next((s for s in scenes if s.get("is_outro")), None)
     if intro is not None:
-        rows.append(("intro", str(intro.get("text", "") or "")))
+        for bk, _unit, txt in bookend_row_keys(intro, "intro"):
+            rows.append((bk, txt))
     for s in scenes:
         if s.get("is_intro") or s.get("is_outro"):
             continue
         sid = int(s.get("scene_id") or 0)
-        raw_beats = (s.get("visual_beats") or []) if micro else []
+        raw_beats = s.get("visual_beats") or []
         frags = [b for b in raw_beats if _vb_text(b)]
-        if micro and frags:
+        if frags:
             for fi, b in enumerate(frags):
                 rows.append((f"{sid}:{fi}", _vb_text(b)))
         else:
             rows.append((str(sid), str(s.get("text", "") or "")))
     if outro is not None:
-        rows.append(("outro", str(outro.get("text", "") or "")))
+        for bk, _unit, txt in bookend_row_keys(outro, "outro"):
+            rows.append((bk, txt))
     return rows
 
 
@@ -1439,7 +1443,12 @@ def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, st
             loaded_siglip = True
         return _score_custom_image(text, img, project=project, siglip_vecs=siglip_vecs)
 
-    by_key = assign_custom_images(beats, images, locked, score_fn=_score)
+    from ..review_gate import load_state as _load_review_state
+    _locks = (_load_review_state(project) or {}).get("locks") or {} if project else {}
+    panel_locked = {k for k, v in _locks.items()
+                    if isinstance(v, dict) and not v.get("custom_image")}
+
+    by_key = assign_custom_images(beats, images, locked, panel_locked=panel_locked, score_fn=_score)
     return {bk: str(root / f) for bk, f in by_key.items()}
 
 
