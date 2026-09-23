@@ -141,37 +141,6 @@ def clean_and_parse_gemini_script(raw_text: str) -> tuple[str, list[str], str]:
     return chosen_hook, paras, outro
 
 
-def parse_and_save_script(
-    project_name: str,
-    raw_text: str,
-    *,
-    log: Callable[[str], None] = print,
-) -> dict:
-    """Parse Master/Gemini-written narration text into a complete, valid narration.json.
-
-    - Identifies Hook, Body scenes (paragraph-aware), and Outro.
-    - Anchors scenes to pages/chapters via answer_context beats.
-    - Generates visual_beats for video pacing.
-    - Persists narration.json and narration.tts.sha256.
-    """
-    text = (raw_text or "").strip()
-    if not text:
-        raise ValueError("Narration text is empty.")
-
-    root = PROJECTS_ROOT / project_name
-    comic_ctx, pages = load_inputs(project_name)
-    story_pages = filter_story_pages(pages)
-
-    answer_path = root / "answer_context.json"
-    answer_ctx = json.loads(answer_path.read_text(encoding="utf-8")) if answer_path.exists() else {}
-
-    # Robust Gemini parse: extract clean hook, body paragraphs, outro
-    hook, paras, outro = clean_and_parse_gemini_script(text)
-
-    # Fallback if no paragraphs were extracted
-    if not paras and not hook:
-        raise ValueError("Could not extract any narrative scenes from the input.")
-
 def _clean_tokens(text: str) -> set[str]:
     words = re.findall(r"\b[a-zA-Z0-9_'-]{3,}\b", text.lower())
     stopwords = {
@@ -219,6 +188,37 @@ def _align_paras_to_beats(paras: list[str], beats: list) -> list:
         return [beats[best_perm[i]] for i in range(len(paras))]
     return beats
 
+
+def parse_and_save_script(
+    project_name: str,
+    raw_text: str,
+    *,
+    log: Callable[[str], None] = print,
+) -> dict:
+    """Parse Master/Gemini-written narration text into a complete, valid narration.json.
+
+    - Identifies Hook, Body scenes (paragraph-aware), and Outro.
+    - Anchors scenes to pages/chapters via answer_context beats.
+    - Generates visual_beats for video pacing.
+    - Persists narration.json and narration.tts.sha256.
+    """
+    text = (raw_text or "").strip()
+    if not text:
+        raise ValueError("Narration text is empty.")
+
+    root = PROJECTS_ROOT / project_name
+    comic_ctx, pages = load_inputs(project_name)
+    story_pages = filter_story_pages(pages)
+
+    answer_path = root / "answer_context.json"
+    answer_ctx = json.loads(answer_path.read_text(encoding="utf-8")) if answer_path.exists() else {}
+
+    # Robust Gemini parse: extract clean hook, body paragraphs, outro
+    hook, paras, outro = clean_and_parse_gemini_script(text)
+
+    # Fallback if no paragraphs were extracted
+    if not paras and not hook:
+        raise ValueError("Could not extract any narrative scenes from the input.")
 
     # Map to answer beats if available
     beats = []
