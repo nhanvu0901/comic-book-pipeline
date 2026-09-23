@@ -1953,7 +1953,8 @@ def _build_shots_per_chunk_locked(
     # order (scene lock first). A pure scene-lock project is byte-identical to before.
     locked_cands: dict[int, list] = {}
     for sid, sc in scenes_by_id.items():
-        if sc.get("is_intro") or sc.get("is_outro"):
+        _bfrags = [c for c in (sc.get("visual_beats") or []) if _vb_text(c)]
+        if (sc.get("is_intro") or sc.get("is_outro")) and len(_bfrags) <= 1:
             continue
         sid_prefix = f"{sid}:"
         lock_entries = [locks.get(str(sid))] + [
@@ -1965,6 +1966,8 @@ def _build_shots_per_chunk_locked(
                 if k not in keys:
                     keys.append(k)
         cands = [cand_by_key[k] for k in keys if k in cand_by_key]
+        if not cands and any(isinstance(le, dict) and le.get("custom_image") for le in lock_entries):
+            cands = [pool[0]] if pool else []
         if cands:
             locked_cands[sid] = cands
 
@@ -2047,7 +2050,8 @@ def _build_shots_per_chunk_locked(
             is_intro = bool(scene.get("is_intro"))
             is_outro = bool(scene.get("is_outro"))
             cands = locked_cands.get(sid)
-            if is_intro and intro_panels:
+            _bfrags = [c for c in (scene.get("visual_beats") or []) if _vb_text(c)]
+            if is_intro and intro_panels and len(_bfrags) <= 1:
                 # Multi-panel subject hook: split the intro beat into ≤N contiguous
                 # time-groups (K bounded by beat_dur/min like the body) and show a
                 # distinct top-ranked subject panel in each — a moving intro of the
@@ -2143,7 +2147,8 @@ def _build_shots_per_chunk_locked(
                         _key, panel, src, _tb = cands[0]
                     segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
                                  "text": text, "dur": max(0.0, dur),
-                                 "is_intro": is_intro, "is_outro": is_outro,
+                                 "is_intro": is_intro and (fi == 0),
+                                 "is_outro": is_outro and (fi == len(parts) - 1),
                                  # Bind the image to THIS fragment here, where we still know which
                                  # fragment it is. The alternative — letting
                                  # _apply_custom_images_to_shots find it later by ordinal index —
