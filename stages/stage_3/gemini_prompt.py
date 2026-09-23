@@ -172,6 +172,54 @@ def parse_and_save_script(
     if not paras and not hook:
         raise ValueError("Could not extract any narrative scenes from the input.")
 
+def _clean_tokens(text: str) -> set[str]:
+    words = re.findall(r"\b[a-zA-Z0-9_'-]{3,}\b", text.lower())
+    stopwords = {
+        "the", "and", "for", "with", "that", "this", "from", "into",
+        "his", "her", "their", "was", "were", "then", "out", "all",
+        "about", "after", "over", "under", "again", "been", "being",
+    }
+    return set(words) - stopwords
+
+
+def _align_paras_to_beats(paras: list[str], beats: list) -> list:
+    """Bijectively align k narration paragraphs to k beats based on entity/vocabulary overlap.
+
+    When Master or Gemini writes narration with a different pacing/order (e.g. escalating
+    from low twist to highest twist), paragraphs may appear in a different order from the
+    original download/candidate order. This finds the optimal 1-to-1 permutation rather than
+    blindly assigning paragraph i to beat i.
+    """
+    if len(paras) != len(beats) or len(beats) <= 1 or len(beats) > 8:
+        return beats
+
+    scores = []
+    for p in paras:
+        p_toks = _clean_tokens(p)
+        row = []
+        for b in beats:
+            chars = getattr(b, "characters_active", []) or []
+            b_text = f"{getattr(b, 'name', '')} {' '.join(chars)} {getattr(b, 'summary', '')}"
+            b_toks = _clean_tokens(b_text)
+            row.append(len(p_toks & b_toks))
+        scores.append(row)
+
+    import itertools
+    best_perm = None
+    best_score = -1
+    for perm in itertools.permutations(range(len(beats))):
+        total = sum(scores[i][perm[i]] for i in range(len(paras)))
+        if total > best_score:
+            best_score = total
+            best_perm = perm
+
+    identity_score = sum(scores[i][i] for i in range(len(paras)))
+    # Only re-order if best permutation is strictly better than sequential order
+    if best_perm and best_score > identity_score:
+        return [beats[best_perm[i]] for i in range(len(paras))]
+    return beats
+
+
     # Map to answer beats if available
     beats = []
     if answer_ctx and answer_ctx.get("items"):
@@ -180,11 +228,15 @@ def parse_and_save_script(
         except Exception as e:
             log(f"[parse_script] build_answer_beats error ({e}); fallback to sequential")
 
+    aligned_beats = beats
+    if beats and len(paras) == len(beats) and len(beats) > 1:
+        aligned_beats = _align_paras_to_beats(paras, beats)
+
     scenes: list[dict] = []
     scene_id = 1
 
     # Intro / Hook scene
-    hook_page = beats[0].page_refs[0] if beats and beats[0].page_refs else (story_pages[0].get("page_number", 1) if story_pages else 1)
+    hook_page = aligned_beats[0].page_refs[0] if aligned_beats and aligned_beats[0].page_refs else (story_pages[0].get("page_number", 1) if story_pages else 1)
     if hook:
         wc = len(hook.split())
         scenes.append({
@@ -203,7 +255,7 @@ def parse_and_save_script(
         scene_id += 1
 
     # Body scenes: Paragraph-aware assignment
-    n_beats = len(beats)
+    n_beats = len(aligned_beats)
     n_paras = len(paras)
 
     for p_idx, para in enumerate(paras):
@@ -214,12 +266,12 @@ def parse_and_save_script(
         # Determine anchor beat for this paragraph
         if n_beats > 0:
             if n_paras == n_beats:
-                b = beats[p_idx]
+                b = aligned_beats[p_idx]
             else:
                 b_idx = min(int(p_idx / max(n_paras, 1) * n_beats), n_beats - 1)
-                b = beats[b_idx]
+                b = aligned_beats[b_idx]
             pref = int(b.page_refs[0]) if b.page_refs else 1
-            bid = b.id
+            bid = p_idx + 1 if n_paras == n_beats else b.id
         else:
             page_idx = min(int(p_idx / max(n_paras, 1) * len(story_pages)), len(story_pages) - 1) if story_pages else 0
             pref = int(story_pages[page_idx].get("page_number", 1)) if story_pages else 1
@@ -247,7 +299,7 @@ def parse_and_save_script(
             scene_id += 1
 
     # Outro scene
-    outro_page = beats[-1].page_refs[0] if beats and beats[-1].page_refs else (story_pages[-1].get("page_number", 1) if story_pages else 1)
+    outro_page = aligned_beats[-1].page_refs[0] if aligned_beats and aligned_beats[-1].page_refs else (story_pages[-1].get("page_number", 1) if story_pages else 1)
     if outro:
         wc = len(outro.split())
         scenes.append({
@@ -278,11 +330,11 @@ def parse_and_save_script(
 
     # Assemble beats list for schema compatibility
     beats_out = []
-    if beats:
-        for b in beats:
+    if aligned_beats:
+        for idx, b in enumerate(aligned_beats, start=1):
             beats_out.append({
-                "id": b.id,
-                "function": b.function,
+                "id": idx,
+                "function": "COLD_OPEN" if idx == 1 else ("LANDING" if idx == len(aligned_beats) else "SETUP"),
                 "name": b.name,
                 "page_refs": b.page_refs,
                 "key_panels": b.key_panels,
