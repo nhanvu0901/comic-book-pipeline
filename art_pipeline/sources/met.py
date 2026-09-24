@@ -6,6 +6,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from stages.user_errors import ArtworkNotUsableError
+
 from ..config import MET_API_BASE, MET_USER_AGENT
 
 
@@ -51,7 +53,7 @@ def parse_candidate(meta: dict) -> dict:
 def fetch_image(meta: dict, dest: Path) -> Path:
     url = (meta.get("primaryImage") or "").strip()
     if not url:
-        raise ValueError(f"objectID {meta.get('objectID')}: no primaryImage")
+        raise ArtworkNotUsableError(f"objectID {meta.get('objectID')}: no primaryImage")
     req = urllib.request.Request(url, headers={"User-Agent": MET_USER_AGENT})
     with urllib.request.urlopen(req, timeout=120) as r:
         dest.parent.mkdir(parents=True, exist_ok=True)

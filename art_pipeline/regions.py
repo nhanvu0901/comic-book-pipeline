@@ -20,6 +20,7 @@ from PIL import Image
 from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, VLM_MODELS
 from stages.stage_2.cache import image_hash, load_cached, save_cached
 from stages.stage_2.schema import PanelInfo, PreprocessedPage
+from stages.user_errors import MissingInputError
 
 from ._json import extract_json as _extract_json
 
@@ -233,7 +234,10 @@ def process_artworks(project_name: str, *, force: bool = False, log=print) -> li
     root = get_art_project_path(project_name)
     manifest_path = root / "raw_art" / "manifest.json"
     if not manifest_path.exists():
-        raise FileNotFoundError(f"no manifest: {manifest_path}. Run fetch first.")
+        raise MissingInputError(
+            f"No artwork downloaded yet for {project_name}. Run Fetch from Met "
+            "first (python -m art_pipeline fetch from a terminal)."
+        )
     manifest = json.loads(manifest_path.read_text())
 
     results: list[dict] = []

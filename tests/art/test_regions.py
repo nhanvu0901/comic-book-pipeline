@@ -1,4 +1,7 @@
+import pytest
+
 from art_pipeline import regions
+from stages.user_errors import MissingInputError, UserFacingError
 
 
 def test_clamp_bbox_pct_clamps_and_rejects_degenerate():
@@ -52,3 +55,13 @@ def test_build_page_dict_matches_preprocessed_schema():
     assert p0["index"] == 0 and set(p0["bbox"]) == {"x", "y", "w", "h"}
     assert page["text_blocks"] == []
     assert page["issue_label"] == "Wheat Field with Cypresses"
+
+
+def test_process_artworks_without_fetch_is_user_facing(tmp_path, monkeypatch):
+    """No raw_art/manifest.json yet (Fetch never ran) must name the sidebar step,
+    not a code stage number, and reach the app as copy — not a traceback."""
+    monkeypatch.setattr(regions, "get_art_project_path", lambda n: tmp_path)
+    with pytest.raises(FileNotFoundError) as caught:
+        regions.process_artworks("p")
+    assert isinstance(caught.value, (MissingInputError, UserFacingError))
+    assert "Fetch from Met" in str(caught.value)

@@ -8,6 +8,8 @@ Layout written (mirrors the comic project shape so downstream reuse is free):
 """
 import json
 
+from stages.user_errors import ArtworkNotUsableError
+
 from .config import ART_LF_MODES, get_art_project_path
 from .sources import met
 
@@ -43,7 +45,7 @@ def fetch_artworks(
         meta = met.fetch_meta(oid)
         ok, why = met.validate_cc0(meta)
         if not ok:
-            raise ValueError(why)  # hard CC0 gate — spec §4-A2
+            raise ArtworkNotUsableError(why)  # hard CC0 gate — spec §4-A2
         img = raw / f"art_{n:03d}_{oid}.jpg"
         if img.exists():
             log(f"[fetch] reusing {img.name}")

@@ -10,6 +10,8 @@ import re
 import urllib.parse
 import urllib.request
 
+from stages.user_errors import InsufficientGroundingError
+
 from .config import (
     ART_GROUNDING_MIN_CHARS, ART_SDK_MIN_STORY_CHARS, MET_USER_AGENT,
     get_art_project_path,
@@ -148,7 +150,7 @@ def build_art_context(project_name: str, *, log=print) -> dict:
             sources.append(sdk["source_url"])
             plot_source = "met+wikipedia+sdk-web"
     if needs_sdk_fallback(combined):
-        raise ValueError(
+        raise InsufficientGroundingError(
             f"Grounding too thin ({len(combined)} chars < {ART_GROUNDING_MIN_CHARS}): "
             "not enough verified story to narrate (spec §4-A4 gate). Pick a "
             "story-richer artwork.")

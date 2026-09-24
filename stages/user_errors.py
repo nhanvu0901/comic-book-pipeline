@@ -33,3 +33,11 @@ class MissingInputError(UserFacingError, FileNotFoundError):
 
 class SourceUrlError(UserFacingError, ValueError):
     """A download has no comic link to work from, or was given one it cannot use."""
+
+
+class ArtworkNotUsableError(UserFacingError, ValueError):
+    """An artwork failed the public-domain/CC0 gate, or has no image to download."""
+
+
+class InsufficientGroundingError(UserFacingError, ValueError):
+    """Not enough verified story material to narrate — pick a story-richer artwork."""

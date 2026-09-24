@@ -1,5 +1,9 @@
 import json
+
+import pytest
+
 from art_pipeline import fetch
+from stages.user_errors import UserFacingError
 
 
 def test_build_manifest_mirrors_comic_shape():
@@ -36,3 +40,14 @@ def test_fetch_artworks_refuses_non_pd(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(ValueError, match="NOT public domain"):
         fetch.fetch_artworks("p2", [2], log=lambda m: None)
+
+
+def test_fetch_artworks_refuses_non_pd_is_user_facing(tmp_path, monkeypatch):
+    """The CC0 gate refusal must reach the app as complete copy, not a traceback."""
+    meta = {"objectID": 3, "isPublicDomain": False, "primaryImage": "http://x/i.jpg"}
+    monkeypatch.setattr(fetch.met, "fetch_meta", lambda oid: meta)
+    monkeypatch.setattr(fetch, "get_art_project_path", lambda n: tmp_path / n)
+    (tmp_path / "p3").mkdir()
+    with pytest.raises(ValueError) as caught:
+        fetch.fetch_artworks("p3", [3], log=lambda m: None)
+    assert isinstance(caught.value, UserFacingError)

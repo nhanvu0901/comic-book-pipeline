@@ -25,6 +25,7 @@ from stages.stage_5.pipeline import (
 )
 from stages.stage_5.schema import AssemblyResult, Shot
 from stages.stage_5.shots import render_shot
+from stages.user_errors import MissingInputError
 from utils.ffmpeg_filter import filter_path
 
 from . import config as C
@@ -517,7 +518,10 @@ def assemble_art_video(
     narration = json.loads((root / "narration.json").read_text())
     for req in ("audio.wav", "word_timestamps.json"):
         if not (root / req).exists():
-            raise FileNotFoundError(f"missing {req}: run tts first.")
+            raise MissingInputError(
+                f"No narrated audio yet for {project_name}. Run TTS Audio "
+                "first (python -m art_pipeline tts from a terminal)."
+            )
     word_timestamps = json.loads((root / "word_timestamps.json").read_text())
     audio_duration = _wav_duration(root / "audio.wav")
     timings_path = root / "scene_timings.json"

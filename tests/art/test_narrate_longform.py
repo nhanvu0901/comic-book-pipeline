@@ -332,6 +332,20 @@ def test_said_block_truncates_and_lists():
     assert block.count("- sentence number") == 10
 
 
+def test_write_longform_narration_without_regions_is_user_facing(tmp_path, monkeypatch):
+    """No preprocessed/page_*.json yet (Detect Regions never ran) must name the
+    sidebar step, not a code stage number, and reach the app as copy."""
+    import art_pipeline.narrate_longform as nlf
+    from stages.user_errors import MissingInputError, UserFacingError
+    monkeypatch.setattr(nlf, "get_art_project_path", lambda n: tmp_path)
+    (tmp_path / "outline.json").write_text("{}")
+    (tmp_path / "art_context.json").write_text("{}")
+    with pytest.raises(FileNotFoundError) as caught:
+        nlf.write_longform_narration("p")
+    assert isinstance(caught.value, (MissingInputError, UserFacingError))
+    assert "Detect Regions" in str(caught.value)
+
+
 def test_lf_system_prompt_formats():
     """The chapter system prompt must format with all placeholders — a stray
     brace from a prompt edit would break every chapter LLM call (not caught by
