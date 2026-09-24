@@ -1,5 +1,5 @@
 """
-Screen 4: Cartesia TTS review.
+Stage 6 of the UI: TTS audio (Chatterbox, local).
 
 Synthesizes narration with the chosen voice + model, then lets the user
 preview the result with a real player (play/pause toggle, seek bar,
@@ -325,8 +325,8 @@ def build(
     clear_radio = ft.RadioGroup(
         value="all",
         content=ft.Column([
-            ft.Radio(value="all", label="Clear all (re-bills Cartesia)"),
-            ft.Radio(value="alignment", label="Clear alignment only (free)"),
+            ft.Radio(value="all", label="Clear all (audio is re-synthesized)"),
+            ft.Radio(value="alignment", label="Clear alignment only (keeps audio.wav)"),
         ], tight=True, spacing=2),
     )
 
@@ -369,7 +369,7 @@ def build(
         clear_radio.value = "all"
         dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Clear Stage 4 data"),
+            title=ft.Text("Clear TTS audio"),
             content=clear_radio,
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),

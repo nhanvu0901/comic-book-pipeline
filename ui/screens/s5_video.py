@@ -162,7 +162,7 @@ def build(
     def open_clear_dialog(_e):
         dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Clear Stage 5 data"),
+            title=ft.Text("Clear render scratch"),
             content=ft.Text("Delete _stage5/ scratch (keeps final.mp4)?"),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
