@@ -144,7 +144,10 @@ def build(
                         border_color=BORDER,
                         focused_border_color=ACCENT,
                     ),
-                ], spacing=10, scroll=ft.ScrollMode.AUTO),
+                # STRETCH: the box took ~300px of a 650px dialog, and on the LAN address
+                # (clipboard blocked) selecting in it by hand is how the prompt gets out.
+                ], spacing=10, scroll=ft.ScrollMode.AUTO,
+                   horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
                 width=650,
                 height=380,
             ),

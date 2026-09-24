@@ -78,3 +78,33 @@ def test_tts_screen_hides_the_info_card_until_there_is_something_to_list(tmp_pat
 def test_vlm_roster_accepts_characters_written_as_plain_names():
     text = format_for_vlm({"characters": ["Deadpool", {"name": "Hulk", "role": "brute"}]})
     assert "- Deadpool" in text and "- Hulk: brute" in text
+
+
+def test_prompt_dialog_text_box_uses_the_dialogs_full_width(tmp_path, monkeypatch):
+    """Copying is blocked on the LAN address, so people select the prompt in this box by
+    hand. It sat in a ~300px column inside a 650px dialog."""
+    import ui.screens.s3_narrate as s3_narrate
+
+    monkeypatch.setattr(s3_narrate, "saved_script_for_editor", lambda _p: ("", ""))
+    monkeypatch.setattr(s3_narrate, "_item_count", lambda _p: 0, raising=False)
+    monkeypatch.setattr(s3_narrate, "generate_gemini_writer_prompt",
+                        lambda _p: ("PROMPT TEXT", tmp_path / "p_writer_prompt.md"))
+
+    async def _no_copy(*_a, **_k):
+        return False
+
+    monkeypatch.setattr(s3_narrate, "copy_text", _no_copy)
+    page = StrictFakePage()
+    page.services = []
+    root = s3_narrate.build(page, AppState(project_name="p", current_stage=4),
+                            on_go=lambda _s: None, on_state_change=lambda: None)
+    copy_button = next(c for c in _walk(root) if isinstance(c, ft.ElevatedButton)
+                       and c.content == "Copy Gemini Prompt")
+    page.overlay = []
+    asyncio.run(copy_button.on_click(None))
+
+    dialog = page.dialogs[-1]
+    column = dialog.content.content
+    box = next(c for c in column.controls if isinstance(c, ft.TextField))
+    assert box.value == "PROMPT TEXT"
+    assert column.horizontal_alignment == ft.CrossAxisAlignment.STRETCH
