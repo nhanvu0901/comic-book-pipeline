@@ -385,7 +385,16 @@ def _show_project_picker(
             on_selected()
         label = (f"Cancel — back to {state.project_name}" if state.project_name
                   else "Cancel — back to research")
-        actions.append(ft.TextButton(label, on_click=_safe(cancel)))
+        # A 60-character slug ran this label past the card's right edge. One line with an
+        # ellipsis, bounded by the space left in the row; the tooltip has the full name.
+        actions.append(ft.Container(
+            content=ft.TextButton(
+                content=ft.Text(label, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
+                tooltip=label,
+                on_click=_safe(cancel),
+            ),
+            expand=True,
+        ))
     rows.append(ft.Row(actions, spacing=12,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER))
 

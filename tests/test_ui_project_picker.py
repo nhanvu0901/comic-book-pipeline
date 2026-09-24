@@ -48,8 +48,11 @@ def _walk(control, depth: int = 0):
 
 
 def _label(b) -> str:
-    """flet 0.85 keeps a button's caption in `content`, not `text`."""
+    """flet 0.85 keeps a button's caption in `content`, not `text` — a plain string, or a
+    Text when the caption needs its own overflow handling."""
     c = getattr(b, "content", None)
+    if isinstance(c, ft.Text):
+        return str(c.value or "")
     return c if isinstance(c, str) else str(getattr(b, "text", "") or "")
 
 
@@ -108,6 +111,25 @@ def test_picker_hides_cancel_at_bootstrap(tmp_path, monkeypatch):
 
     cancel = [b for b in _buttons(page.views[0]) if "cancel" in _label(b).lower()]
     assert not cancel, "at bootstrap the picker IS the entry point — Cancel would strand the user"
+
+
+def test_a_long_project_name_in_the_cancel_label_is_cut_not_spilled(tmp_path, monkeypatch):
+    """Slugs run to 60 characters, and "Cancel — back to <slug>" ran past the right edge
+    of the picker card. The label keeps one line and ends in an ellipsis; the tooltip
+    carries the full name."""
+    _setup_roots(tmp_path, monkeypatch)
+    page = FakePage()
+    name = "what_is_the_most_insane_construct_john_stewart_ever_tried_to"
+    app._show_project_picker(page, AppState(project_name=name), lambda: None, can_cancel=True)
+
+    cancel = next(b for b in _buttons(page.views[0]) if "cancel" in _label(b).lower())
+
+    assert isinstance(cancel.content, ft.Text)
+    assert cancel.content.no_wrap and cancel.content.overflow == ft.TextOverflow.ELLIPSIS
+    assert name in cancel.tooltip
+    holder = next(c for c in _walk(page.views[0])
+                  if getattr(c, "content", None) is cancel)
+    assert holder.expand, "the button needs a bounded width for the ellipsis to engage"
 
 
 def test_cancel_label_is_honest_when_there_is_no_project_name_yet(tmp_path, monkeypatch):
