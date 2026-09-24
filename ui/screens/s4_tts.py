@@ -438,7 +438,7 @@ def build(
         ),
         ft.Container(
             content=ft.Column([
-                ft.Row([running, status_text], spacing=10),
+                ft.Row([running, ft.Container(status_text, expand=True)], spacing=10),
                 ft.Container(content=lv, height=120, border=ft.border.all(1, BORDER),
                              border_radius=6),
             ], spacing=8),

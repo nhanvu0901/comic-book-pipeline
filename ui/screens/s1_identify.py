@@ -608,7 +608,7 @@ def build(
             expand=True,
         ),
         ft.Container(
-            content=ft.Row([running, status_text], spacing=10),
+            content=ft.Row([running, ft.Container(status_text, expand=True)], spacing=10),
             padding=ft.padding.symmetric(horizontal=28, vertical=12),
         ),
     ], spacing=0, expand=True)
