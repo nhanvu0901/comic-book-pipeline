@@ -120,7 +120,7 @@ def test_zombie_sweep_kills_fat_node_when_nothing_loaded():
          patch("subprocess.run", side_effect=_fake_ps_run("", node_line)), \
          patch("os.kill") as kill:
         pipeline._lms_kill_zombie_nodes(_log(msgs))
-    kill.assert_called_once_with(4242, pipeline.signal.SIGKILL)
+    kill.assert_called_once_with(4242, getattr(pipeline.signal, "SIGKILL", pipeline.signal.SIGTERM))
     assert any("killed zombie node pid=4242" in m for m in msgs)
 
 

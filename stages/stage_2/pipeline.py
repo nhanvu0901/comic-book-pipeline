@@ -359,7 +359,9 @@ def _lms_kill_zombie_nodes(log: Callable[[str], None] = print) -> None:
             if rss_kb <= _ZOMBIE_RSS_FLOOR_KB:
                 continue
             try:
-                os.kill(pid, signal.SIGKILL)
+                # SIGKILL does not exist on Windows (where `ps -axo` is absent anyway and
+                # the sweep bails out above); fall back so the attribute lookup is portable.
+                os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
                 log(f"[lms] killed zombie node pid={pid} rss={rss_kb / 1_000_000:.1f}GB")
             except Exception as exc:
                 log(f"[lms] zombie kill pid={pid} failed ({type(exc).__name__}: {exc})")

@@ -173,7 +173,7 @@ def test_resolve_custom_images_scores_via_desc_semantic_sim(tmp_path, monkeypatc
     narration = {"scenes": [{"scene_id": 1, "text": "a hero flying through the sky"}]}
     out = shots._resolve_custom_images("p", narration)
     assert list(out.keys()) == ["1"]
-    assert out["1"].endswith(doc["images"][0]["file"])
+    assert Path(out["1"]).as_posix().endswith(doc["images"][0]["file"])
 
 
 def test_resolve_custom_images_falls_back_to_siglip_when_no_desc(tmp_path, monkeypatch):

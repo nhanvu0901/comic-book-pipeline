@@ -5,6 +5,7 @@ stages/stage_2/identity_check.py) catches this via proper-noun disagreement and
 rebuilds plot_summary from the panels themselves. Pure logic + mocked SDK/summarize —
 no network, no render, no pytest fixtures beyond monkeypatch."""
 import json
+from pathlib import Path
 
 import stages.stage_2.identity_check as ic
 import stages.stage_2.pipeline as pipe
@@ -228,7 +229,7 @@ def test_module_self_check_runs_clean():
     import sys
     result = subprocess.run(
         [sys.executable, "-m", "stages.stage_2.identity_check"],
-        capture_output=True, text=True, cwd=__file__.rsplit("/tests/", 1)[0],
+        capture_output=True, text=True, cwd=str(Path(__file__).resolve().parents[1]),
     )
     assert result.returncode == 0, result.stderr
     assert "OK:" in result.stdout
