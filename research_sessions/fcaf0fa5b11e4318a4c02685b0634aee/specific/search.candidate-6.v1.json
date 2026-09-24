@@ -1,0 +1,50 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "comic_or_adaptation": "Comic",
+            "issue_year_matches_sources": "Yes. The issue is Mighty Thor (Vol. 2) #700, released October 18, 2017, with cover date December 2017.",
+            "reprint_check": "Not a reprint magazine; this is an original comic issue, not a reprint of an earlier US issue.",
+            "second_source_url": "https://marvel.fandom.com/wiki/Mighty_Thor_Vol_1_700",
+            "single_issue_or_multi": "Single issue. The Galactus defeat is described as occurring in Mighty Thor #700 itself, though the issue is part of a broader arc.",
+            "source_url": "https://www.cbr.com/mighty-thor-700-galactus-ego-stronger/",
+            "subject_main_in_issue": "Yes. King Thor is a featured/main story subject in the issue, and the Galactus defeat is part of the issue’s King Thor segment.",
+            "verbatim_sentence": "When an old Galactus came to Earth in an attempt to consume it, King Thor and his family fought back against him. The All-Black almost corrupted Thor, convincing him to attack Galactus full on. The blade was seemingly destroyed in the battle, but it proved enough to give King Thor the advantage he needed to push Galactus back away from the world.",
+            "verdict": "CONFIRMED",
+            "volume_and_year": "Mighty Thor (2015/Vol. 2) #700 (2017)"
+          }
+        ],
+        "notes": "This exact claim is supported by detailed recap text describing King Thor pushing Galactus back in Mighty Thor #700. The issue page metadata also matches the 2017 release and identifies Black Galactus, the Butcher of Worlds as a featured character/death, but the precise defeat sentence comes from the CBR recap."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://leagueofcomicgeeks.com/comic/4741462/the-mighty-thor-700",
+          "title": "The Mighty Thor #700 - League of Comic Geeks",
+          "snippets": [
+            "Read reviews and discussion of The Mighty Thor #700 from Robbie Thompson and Jason Aaron and Olivier Coipel, published by Marvel Comics\n##### New Comics\nThe final judgement comes as the Mangog arrives! The War Thor will meet the beast head on. But even the bloodthirst of this Ultimate Thor may pale in comparison to the might of the Mangog! The battle rages as Jane’s cancer takes a turn for the worse, and she might not have to wait for the final judgment at all. The clock is ticking, and no hammer can save her this time. It’s the beginning of the end that will lead to the most dramatic return in the Marvel Universe!\nComic   ·   64 pages   ·   $5.99   ·   Wraparound Cover\n\nCover Date\n\nDec 2017\n\nUPC\n\n75960608774770011\n\nDistributor SKU\n\nAUG170848\n#### The Blood of the Norns\nStory   ·   50 pages\n### Characters\nEarth-616\n\nMain\n\nBlack Galactus the Butcher of Worlds\n\nBlack Galactus the Butcher of Worlds\n\nGalan\n\nEarth-14412\n\nMain\n\nThor\n\nThor\n\nJane Foster\n\nMain\n\nThor Odinson\n\nThor Odinson\n\nEarth-14412\n\nMain\n\nThor Odinson\n\nThor Odinson\n\nMain\n\nThrog\n\nThrog\n\nSimon Walterson\n\nMain\n\nWar Thor\n\nWar Thor\n\nVolstagg\n\nSupporting\n\nAll-Black (Symbiote)\n\nAll-Black (Symbiote)\n\nSupporting\n### More From The Mighty Thor (2015 - 2018)\nThe Mighty Thor #703\n\nThe Mighty Thor #702\n\nDec 20th, 2017\n\nThe Mighty Thor #702\n\nThe Mighty Thor #701\n\nNov 15th, 2017\n\nThe Mighty Thor #701\n\nThe Mighty Thor #700\n\nOct 18th, 2017\n\nThe Mighty Thor #700\n\nThe Mighty Thor #23\nMarvel Comics   ·   Released Oct 18, 2017\nThe Mighty Thor #700\nOverview Submit Corrections Submit New Variant Cover Contribution History"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/mighty-thor-700-galactus-ego-stronger/",
+          "title": "How Mighty Thor #700 Made Galactus and Ego the Living Planet Even Stronger",
+          "snippets": [
+            "# How Mighty Thor #700 Made Galactus and Ego the Living Planet Even Stronger\nThis includes cosmic powers like Galactus and Ego the Living Planet, both of whom got massive power boosts thanks to All-Black during the days of King Thor.\n## KING THOR & ALL BLACK, THE NECRO-SWORD\nHailing from a distant possible future of the Marvel Universe, King Thor is the ruler of Asgard and one of the most powerful beings in the universe. His life was very similar to that of the Thor from Earth-616, and he even seems to believe that his reality is, in fact, the future for the mainline Thor\nIn this distant future, Loki was swayed back to evil and eventually annihilated all life on Earth just to spite his brother, and this turned Thor into a harsher man, more akin to Odin than he'd ever been\nAlthough the modern Thor battled Gorr in the present day and his past, King Thor first encountered All-Black the Necrosword when it was wielded by Gorr to conquer Asgard and kill Thor's son Woden. However, King Thor, Marvel's main Thor and his brash past self were able to stop Gorr from killing every god in existence\nThe old Thor lived on after the battle, helping resurrect Midgard with the help of his granddaughters (Frigg, Ellsiv, and Atli) and fighting alongside a Phoenix empowered Wolverine against the machinations of a returned Doctor Doom\nThe All-Black is a much more dangerous weapon than one would ever dream of when it's outside of Gorr's hands. Later comics revealed that the All-Black is in actuality first symbiote, created by the dark god Knull and tempered in the corpse of a Celestial. It was turned into his blade during Knull's assault on the newly born universe before being known as the Necrosword and the Godslayer\nWhen Knull was defeated, the blade left and bonded to Gorr, giving him his abilities and strength. The blade was believed lost for a time, although it would eventually end up in the hands of Malkeith in the present day, who used it in his attempts to win the War of the Realms\n## WHAT HAPPENED TO EGO AND GALACTUS\nKing Thor would eventually be forced to use the Necrosword himself in battle in the distant future. When an old Galactus came to Earth in an attempt to consume it, King Thor and his family fought back against him. The All-Black almost corrupted Thor, convincing him to attack Galactus full on. The blade was seemingly destroyed in the battle, but it proved enough to give King Thor the advantage he needed to push Galactus back away from the world\nHowever, the Necrosword really infected Galactus, bonding to him. The symbiote drove Galactus away from being a force of nature and made him a far more malicious force in the galaxy. He became Black Galactus the Butcher of Worlds\n{\"name\":\"How Mighty Thor Made Galactus and Ego the Living Planet Even Stronger\",\"item\":\"https://www.cbr.com/mighty-thor-700-galactus-ego-stronger/\"}"
+          ]
+        },
+        {
+          "url": "https://marvel.fandom.com/wiki/Mighty_Thor_Vol_1_700",
+          "title": "Mighty Thor Vol 1 700",
+          "snippets": [
+            "Featured Characters: Odinson (Main story and flashback) Thor (Dr. Jane Foster) (Main story and flashback) War Thor (Volstagg) King Thor ⏵ Black Galactus, the Butcher of Worlds (Death) Loki Throg (Simon Walterson) (First appearance as Throg) Supporting Characters: Toothgrinder (Main story and\nJane Foster) (Main story and flashback) War Thor (Volstagg) King Thor ⏵ Black Galactus, the Butcher of Worlds (Death) Loki Throg (Simon Walterson) (First appearance as Throg) Supporting Characters: Toothgrinder (Main story and flashback) Thori Queen Karnilla (Death) Norns Skuld Urd Verdandi Lady Sif Warriors Three Fandral Hildegarde Hogun Goddesses of Thunder ⏴ Ellisiv ⏵ ⏴ Frigg ⏵ ⏴ Atli ⏵ ⏴ Steve (Last appearance)\n- Kathleen Wisneski/Editor\n- Norns (Fates) (Earth-616)/Quotes\nEnglish\n# Mighty Thor Vol 1 700\n## Appearing in \"The Blood of the Norns\"\n**Featured Characters:**\n\n- Odinson (Main story and flashback)\n- Thor (Dr. Jane Foster) (Main story and flashback)\n- War Thor (Volstagg)\n- King Thor ⏵\n- Black Galactus, the Butcher of Worlds (Death)\n- Loki\n- Throg (Simon Walterson) (First appearance as Throg)\n- Moon (Vision or hallucination)\n          - Blue Area of the Moon (Vision or hallucination)\n- Ultimate Universe (Referenced) (Destroyed)\n- King Thor's Universe\n- Twilight of the Gods (Referenced)\n- The Battle for the Stones (Vision or hallucination)\n## Synopsis for \"The Blood of the Norns\"\nThe Nornkeep. At the roots of the World Tree, the Odinson, previously known as the Mighty Thor, watches his past glorious self in the golden sap of Yggdrasil, as he's been summoned by Karnilla, Queen of the Norns, who needs his help: Malekith seeks to slay the Norns themselves. If that should happen, he and his Dark Cabal shall be free to shape their destiny to their desire, no matter the consequences\n$5.99\n1. \"The Blood of the Norns\"\nWriter(s)\nJason Aaron"
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}
