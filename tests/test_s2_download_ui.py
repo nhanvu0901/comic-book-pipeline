@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import flet as ft
 
@@ -468,3 +469,88 @@ def test_url_direct_auto_derives_project_name_when_blank(monkeypatch):
     assert len(downloaded) == 1
     assert downloaded[0][0] == "comic_31569_223504"
     assert downloaded[0][2] is False  # enrich is False
+
+
+# ─── URL-direct download: the typed project name ────────────────────────────
+
+def _url_direct_screen(monkeypatch, tmp_path, state):
+    monkeypatch.setattr(ui_state, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    downloads = []
+
+    def _download(project, raw, issues, enrich, log):
+        downloads.append(project)
+        return []
+
+    monkeypatch.setattr(s2_download, "run_stage_download_from_url", _download)
+    page = FakePage()
+    root = s2_download.build(page, state, on_go=lambda _s: None, on_state_change=lambda: None)
+    fields = {c.label: c for c in _walk(root) if isinstance(c, ft.TextField)}
+    fields["Comic URL(s)"].value = "https://batcave.biz/reader/123/456"
+    return page, root, fields, downloads
+
+
+def test_a_typed_project_name_becomes_a_safe_folder_name(monkeypatch, tmp_path):
+    """Windows refuses ':' in a folder name, and the save ran before the handler's try —
+    so "Ms. Marvel: No Normal" made the button do nothing at all."""
+    state = AppState(project_name="", current_stage=2)
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+    fields["Project name (created if new)"].value = "Ms. Marvel: No Normal"
+
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+
+    assert downloads == ["ms_marvel_no_normal"]
+    assert state.project_name == "ms_marvel_no_normal"
+    assert fields["Project name (created if new)"].value == "ms_marvel_no_normal"
+    assert (tmp_path / "ms_marvel_no_normal" / "state.json").exists()
+
+
+def test_downloading_into_another_project_does_not_carry_this_ones_state(monkeypatch, tmp_path):
+    state = AppState(project_name="first-comic", current_stage=2,
+                     approved={"1": True, "4": True}, scout_session_id="first-session",
+                     pipeline_mode="explore_answer")
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+    fields["Project name (created if new)"].value = "second_comic"
+
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+
+    saved = json.loads((tmp_path / "second_comic" / "state.json").read_text())
+    assert saved["approved"] == {"2": True}
+    assert saved["scout_session_id"] == ""
+    assert saved["pipeline_mode"] == AppState().pipeline_mode
+
+
+def test_a_failed_save_is_reported_and_the_button_works_again(monkeypatch, tmp_path):
+    state = AppState(project_name="", current_stage=2)
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+    fields["Project name (created if new)"].value = "some_comic"
+
+    def _disk_full(_state):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(s2_download, "save_state", _disk_full)
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+    status = [c.value for c in _walk(root) if isinstance(c, ft.Text) and c.color]
+    assert any("Failed" in str(v) for v in status), status
+
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+    assert downloads == ["some_comic"]
+
+
+def test_a_name_that_is_already_a_folder_name_is_kept_whole(monkeypatch, tmp_path):
+    """Stage 1's slugify also cuts at 60 characters; applied to an existing longer slug it
+    would silently download into a new, truncated project."""
+    long_name = "a_series_slug_taken_from_its_batcave_url_that_runs_past_sixty_chars"
+    state = AppState(project_name=long_name, current_stage=2)
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+
+    assert downloads == [long_name]

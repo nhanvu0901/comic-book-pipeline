@@ -21,7 +21,7 @@ import flet as ft
 from config import RESEARCH_SESSIONS_ROOT
 from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
-from stages.stage_1.storage import slugify
+from stages.stage_1.storage import project_folder_name, slugify
 from stages.user_errors import NothingToDeleteError
 
 from ..bridge import (
@@ -1124,7 +1124,8 @@ def build(
             return
         slug_field = slug_holder[0]
         slug_value[0] = str(slug_field.value or "") if slug_field else ""
-        project_slug = (slug_field.value if slug_field else "").strip() or slugify(
+        # Free text becomes the project's folder: make it a safe folder name first.
+        project_slug = project_folder_name(slug_field.value if slug_field else "") or slugify(
             session.user_intent or ""
         )
         if not project_slug:

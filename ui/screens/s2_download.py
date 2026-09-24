@@ -22,11 +22,12 @@ from ..bridge import (asset_src,
 )
 from ..clipboard import BLOCKED_HINT, copy_text
 from ..layout import log_list, primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import AppState, load_state, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS,
     TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from stages.stage_1.storage import project_folder_name
 from utils.clear_stage import clear_stage_2
 
 
@@ -500,7 +501,8 @@ def build(
         if return_busy[0] or direct_download_busy[0]:
             return
         raw = (url_field.value or "").strip()
-        proj = (url_project_field.value or "").strip()
+        # The typed name becomes a folder (see project_folder_name).
+        proj = project_folder_name(url_project_field.value or "")
         if not raw:
             status_text.value = "Paste at least one URL first."
             status_text.color = DANGER
@@ -524,8 +526,11 @@ def build(
                 status_text.color = DANGER
                 page.update()
                 return
-        state.project_name = proj
-        save_state(state)
+        url_project_field.value = proj
+        if proj != state.project_name:
+            # Another project: its own saved state, or a blank one — never this one's
+            # approvals and research session written under the new name.
+            state.__dict__.update(load_state(proj).__dict__)
         direct_download_busy[0] = True
 
         running.visible = True
@@ -536,6 +541,7 @@ def build(
         page.update()
 
         try:
+            save_state(state)
             if saga_switch.value:
                 try:
                     max_iss = max(1, int((max_issues_field.value or "5").strip()))

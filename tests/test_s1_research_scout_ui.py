@@ -1351,3 +1351,30 @@ def test_all_scout_text_is_selectable(tmp_path):
 
     assert not unselectable_texts, "\n".join(unselectable_texts)
 
+
+
+def test_create_project_turns_a_typed_title_into_a_safe_folder_name(tmp_path, monkeypatch):
+    """The slug field is free text. "Wolverine: Origins?" reached mkdir as-is, which
+    Windows refuses — the create failed with a raw OSError traceback."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-session-slug",
+        mode=ScoutMode.QA,
+        user_intent="Who has beaten Superman in a fight?",
+        state=SessionState.PRODUCTION_GATES,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    created = []
+    monkeypatch.setattr(s1_research_scout, "create_scout_project",
+                        lambda session_id, slug, override=False: created.append(slug) or slug)
+    page, controls = _build(tmp_path, session)
+    slug_field = next(n for n in _walk(controls) if getattr(n, "key", None) == "project-slug")
+    slug_field.value = "Wolverine: Origins?"
+
+    create = next(n for n in _walk(controls) if isinstance(n, ft.ElevatedButton)
+                  and getattr(n, "content", None) == "Create project")
+    create.on_click(object())
+    _run_recorded_task(page)
+
+    assert created == ["wolverine_origins"]
