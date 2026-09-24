@@ -99,3 +99,61 @@ def test_missing_locks_file_is_not_an_error(tmp_path, monkeypatch):
     import ui.bridge as bridge
     monkeypatch.setattr(bridge, "PROJECTS_ROOT", tmp_path)
     assert bridge.load_review_locks("nope")["locks"] == {}
+
+
+# ─── Windows: the target can be open elsewhere for a moment ─────────────────
+# os.replace fails on Windows while another program has the target open (antivirus or
+# a sync client scanning the file just written, an editor reading it). locks.json is
+# rewritten on every click in Review Beats, so a brief hold must not lose a click.
+
+def _no_sleep(monkeypatch):
+    import utils.fs_remove as fs_remove
+    monkeypatch.setattr(fs_remove.time, "sleep", lambda _s: None)
+
+
+def test_a_briefly_held_target_is_retried(tmp_path, monkeypatch):
+    import utils.atomic_json as atomic_json
+
+    _no_sleep(monkeypatch)
+    p = tmp_path / "locks.json"
+    p.write_text('{"old": true}')
+    real_replace = os.replace
+    blocked = []
+
+    def _held_twice(src, dst):
+        if len(blocked) < 2:
+            blocked.append(dst)
+            raise PermissionError(32, "The process cannot access the file", str(dst))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(atomic_json.os, "replace", _held_twice)
+
+    write_json_atomic(p, {"new": True})
+
+    assert json.loads(p.read_text()) == {"new": True}
+    assert len(blocked) == 2
+    assert not (tmp_path / "locks.json.tmp").exists()
+
+
+def test_a_target_that_stays_held_gives_a_readable_error_and_keeps_the_old_file(
+    tmp_path, monkeypatch,
+):
+    import utils.atomic_json as atomic_json
+    from stages.user_errors import UserFacingError
+
+    _no_sleep(monkeypatch)
+    p = tmp_path / "locks.json"
+    p.write_text('{"old": true}')
+
+    def _always_held(src, dst):
+        raise PermissionError(32, "The process cannot access the file", str(dst))
+
+    monkeypatch.setattr(atomic_json.os, "replace", _always_held)
+
+    with pytest.raises(PermissionError) as caught:
+        write_json_atomic(p, {"new": True})
+
+    assert isinstance(caught.value, UserFacingError)
+    assert "locks.json" in str(caught.value)
+    assert json.loads(p.read_text()) == {"old": True}
+    assert not (tmp_path / "locks.json.tmp").exists()

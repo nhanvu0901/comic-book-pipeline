@@ -45,18 +45,18 @@ def remove_tree(path: Path | str, *, attempts: int = 4, delay: float = 0.5) -> N
     aside_root.mkdir(exist_ok=True)
     aside = aside_root / f"{target.name}-{uuid4().hex[:8]}"
     try:
-        _with_retries(lambda: os.replace(target, aside), attempts, delay)
+        retry_on_lock(lambda: os.replace(target, aside), attempts=attempts, delay=delay)
     except PermissionError as exc:
         _sweep(aside_root)
-        open_file = next((p for p in target.rglob("*") if p.is_file() and _is_open(p)), None)
+        open_file = open_file_under(target)
         if open_file is None:
             reason = (exc.strerror or str(exc)).rstrip(".") + "."
         else:
             reason = f"'{open_file.name}' is still open in another program. {_CLOSE_IT}"
         raise FileInUseError(f"Could not delete {target.name}: {reason} Nothing was deleted.") from exc
     try:
-        _with_retries(lambda: shutil.rmtree(aside, onexc=_clear_readonly_and_retry),
-                      attempts, delay)
+        retry_on_lock(lambda: shutil.rmtree(aside, onexc=_clear_readonly_and_retry),
+                      attempts=attempts, delay=delay)
     except OSError as exc:
         # The folder is already gone from its place; only a straggler is left inside
         # .deleting, and the next delete sweeps it.
@@ -78,7 +78,7 @@ def remove_file(path: Path | str, *, attempts: int = 4, delay: float = 0.5) -> N
             _clear_readonly_and_retry(os.unlink, target, exc)
 
     try:
-        _with_retries(_unlink, attempts, delay)
+        retry_on_lock(_unlink, attempts=attempts, delay=delay)
     except PermissionError as exc:
         if _is_open(target):
             reason = f"it is still open in another program. {_CLOSE_IT}"
@@ -87,7 +87,10 @@ def remove_file(path: Path | str, *, attempts: int = 4, delay: float = 0.5) -> N
         raise FileInUseError(f"Could not delete {target.name}: {reason}") from exc
 
 
-def _with_retries(action, attempts: int, delay: float) -> None:
+def retry_on_lock(action, *, attempts: int = 4, delay: float = 0.5) -> None:
+    """Run `action`, retrying a PermissionError a few times. On Windows that is what an
+    open handle elsewhere looks like, and most holds (antivirus or a sync client scanning
+    a fresh file, a viewer, the app's own file server) end within a second."""
     for attempt in range(attempts):
         try:
             action()
@@ -119,6 +122,13 @@ def _sweep(aside_root: Path) -> None:
         aside_root.rmdir()
     except OSError:
         pass
+
+
+def open_file_under(path: Path) -> Path | None:
+    """The first file at or under `path` that another program holds open, if any."""
+    path = Path(path)
+    candidates = path.rglob("*") if path.is_dir() else [path]
+    return next((p for p in candidates if p.is_file() and _is_open(p)), None)
 
 
 def _is_open(path: Path) -> bool:
