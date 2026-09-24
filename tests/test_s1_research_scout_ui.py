@@ -208,6 +208,36 @@ def test_tick_order_is_the_video_order_and_each_tick_shows_its_number(tmp_path, 
     assert captured["candidate_ids"] == ["candidate-10", "candidate-1", "candidate-2"]
 
 
+def test_bubbles_from_an_earlier_round_show_titles_not_raw_ids(tmp_path):
+    """A verify/approve bubble names candidates of the round it happened in; once a
+    re-run replaced that round, the current list no longer has them — the archive does."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-old-round-titles", mode=ScoutMode.QA, user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW, revision=2,
+    )
+    store.save(session)
+    store.append_audit(session.id, "candidates_verified", detail={
+        "candidate_ids": ["candidate-1"], "verdicts": {"candidate-1": "inconclusive"}})
+    store.append_audit(session.id, "selection_approved", detail={"candidate_ids": ["candidate-1"]})
+    store.write_artifact(session.id, "general/candidates.rev1.v1.json",
+                         {"candidates": [{"id": "candidate-1", "title": "Round One Title"}]})
+    store.write_artifact(session.id, "general/candidates.v1.json",
+                         {"candidates": [{"id": "r2-candidate-1", "title": "Round Two Title"}]})
+    _page, controls = _build(tmp_path, session)
+    text = _text_content(controls)
+    assert "Round One Title: INCONCLUSIVE" in text
+    assert "#1 Round One Title" in text
+    assert "candidate-1:" not in text
+
+
+def test_right_rail_scrolls_so_every_session_stays_reachable(tmp_path):
+    _page, controls = _build(tmp_path)
+    rails = [n for n in _walk(controls) if isinstance(n, ft.Column)
+             and any(isinstance(c, ft.Text) and c.value == "UNFINISHED SESSIONS" for c in n.controls)]
+    assert rails and rails[0].scroll == ft.ScrollMode.AUTO
+
+
 def test_resume_lists_unfinished_session_without_creating_project(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = store.create(ScoutMode.MICRO, "Hulk")

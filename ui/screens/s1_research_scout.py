@@ -748,6 +748,15 @@ def build(
         candidates = load_scout_candidates(session.id, root=RESEARCH_SESSIONS_ROOT)
         gates = load_scout_gates(session.id, root=RESEARCH_SESSIONS_ROOT)
         audit = load_scout_audit(session.id, root=RESEARCH_SESSIONS_ROOT)
+        # Titles for the transcript. Verify/approve bubbles from EARLIER rounds name
+        # candidates that the current round no longer lists; with only the current list
+        # they printed raw ids ("r2-candidate-3"). Archived rounds fill the gaps.
+        title_pool = list(candidates)
+        for rev in range(session.revision, 0, -1):
+            title_pool.extend(
+                c for c in load_scout_candidates_rev(session.id, rev, root=RESEARCH_SESSIONS_ROOT)
+                if str(c.get("id") or "").strip()
+            )
 
         completed_events = [e for e in audit if e.get("event") == "general_research_completed"]
         current_idx = _current_general_round_index(completed_events, session)
@@ -770,9 +779,9 @@ def build(
             elif name in ("rescout_keeping_confirmed", "rescout_keeping_selected"):
                 bubbles.append(_rescout_bubble(detail))
             elif name == "candidates_verified":
-                bubbles.append(_verified_bubble(detail, candidates))
+                bubbles.append(_verified_bubble(detail, title_pool))
             elif name == "selection_approved":
-                bubbles.append(_selection_approved_bubble(detail, candidates))
+                bubbles.append(_selection_approved_bubble(detail, title_pool))
             elif name == "session_archived":
                 bubbles.append(_archived_bubble(detail))
             # unknown events (returned_to_candidate_review, project_created, ...): skip silently
@@ -1258,7 +1267,7 @@ def build(
                 border_radius=6,
             )
             for session in sessions
-        ], spacing=6, scroll=ft.ScrollMode.AUTO)
+        ], spacing=6)   # the whole rail scrolls; a nested unbounded scroll never engaged
 
     def _build_right_rail_controls() -> list[ft.Control]:
         session = session_holder[0]
@@ -1352,7 +1361,9 @@ def build(
         border=ft.border.only(top=ft.BorderSide(1, BORDER)),
     )
 
-    right_column = ft.Column([], spacing=7, expand=True)
+    # Scrolls as a whole: with a handful of unfinished sessions the list ran past the
+    # window and the sessions below — and the New/Archive buttons — were unreachable.
+    right_column = ft.Column([], spacing=7, expand=True, scroll=ft.ScrollMode.AUTO)
 
     _apply_render()
 

@@ -251,7 +251,10 @@ def test_missing_reader_panel_names_rank_entity_and_source_and_blocks_download(m
 
     field = _by_key(root, "missing-reader-2")
     download = _by_key(root, "stage1-download")
-    assert field.label == "#2 — Deadpool — Deadpool #3 (2008)"
+    # The item is named in full on the line above the field; the field's own label stays
+    # short (a label carrying the whole title overflowed the field and overprinted itself).
+    assert _by_key(root, "missing-reader-title-2").value == "#2 — Deadpool — Deadpool #3 (2008)"
+    assert field.label == "Reader URL for #2"
     assert download.disabled is True
     assert _by_key(root, "repair-reader-urls")
     assert not page.tasks

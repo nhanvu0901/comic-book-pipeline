@@ -20,6 +20,7 @@ from ..bridge import (asset_src,
     return_scout_project_to_research, run_stage_download, run_stage_download_from_url,
     run_stage_download_saga,
 )
+from ..clipboard import BLOCKED_HINT, copy_text
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
@@ -137,11 +138,9 @@ def build(
             spacing=4, expand=True,
         )
 
-    # Load existing manifest if any
-    if state.project_name:
-        existing = load_raw_pages(state.project_name)
-        if existing:
-            render_grid(existing)
+    # Load existing manifest if any — and show the empty-state hint when there is none,
+    # instead of a blank centre column.
+    render_grid(load_raw_pages(state.project_name) if state.project_name else [])
 
     download_button = primary_button(
         "Download (from Stage 1)", lambda _e: None, icon=ft.Icons.DOWNLOAD,
@@ -166,11 +165,12 @@ def build(
         except Exception:
             pass
 
-    async def _async_copy(text: str):
-        try:
-            await clipboard.set(text)
-        except Exception:
-            pass
+    async def _async_copy(text: str, label_name: str = ""):
+        # Report the copy's REAL outcome — it runs after the click handler returns, so
+        # announcing success in the handler lied whenever the browser refused.
+        what = f"{label_name}: {text}" if label_name else text
+        _show_snack(f"Copied {what}" if await copy_text(clipboard, text)
+                    else f"Could not copy {label_name or 'text'} — {BLOCKED_HINT}.")
 
     def _show_snack(msg: str):
         try:
@@ -186,10 +186,9 @@ def build(
     def _copy_to_clipboard(text: str, label_name: str = ""):
         _ensure_clipboard()
         try:
-            page.run_task(_async_copy, text)
+            page.run_task(_async_copy, text, label_name)
         except Exception:
-            pass
-        _show_snack(f"Copied {label_name}: {text}" if label_name else f"Copied: {text}")
+            _show_snack(f"Could not copy {label_name or 'text'} — {BLOCKED_HINT}.")
 
     def _refresh_missing_panel(*, update: bool = False) -> None:
         rows = missing_readers[0]
@@ -220,9 +219,11 @@ def build(
                 source_comic = str(row.get("source_comic") or "Unknown comic")
                 field = reader_fields.get(rank)
                 if field is None:
+                    # The row above already names the item; a label carrying the whole
+                    # title overflowed the field and printed over itself.
                     field = ft.TextField(
                         key=f"missing-reader-{rank}",
-                        label=f"#{rank} — {entity} — {source_comic}",
+                        label=f"Reader URL for #{rank}",
                         value=str(row.get("reader_url") or ""),
                         hint_text="https://batcave.biz/reader/123/456",
                         border_color=BORDER,
@@ -234,8 +235,9 @@ def build(
 
                 title_to_copy = source_comic if source_comic and source_comic != "Unknown comic" else entity
                 copy_row = ft.Row([
-                    ft.Text(f"#{rank} {title_to_copy}", size=11, weight=ft.FontWeight.BOLD,
-                            color=TEXT_PRIMARY, selectable=True, expand=True),
+                    ft.Text(f"#{rank} — {entity} — {source_comic}", size=11,
+                            weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True,
+                            expand=True, key=f"missing-reader-title-{rank}"),
                     ft.IconButton(
                         icon=ft.Icons.CONTENT_COPY,
                         icon_size=14,
@@ -463,16 +465,18 @@ def build(
         hint_text="e.g. #1-3, #1,#3,#5  (leave blank for ALL)",
         border_color=BORDER, focused_border_color=ACCENT, text_size=12,
     )
+    # Short labels: a Switch label does not wrap, and the long ones were cut off at the
+    # rail's edge. The paragraph above the form explains what each one does.
     enrich_switch = ft.Switch(
-        label="Enrich context from wiki (slower, better narration)",
+        label="Enrich context from wiki",
         value=False, active_color=ACCENT,
     )
     saga_switch = ft.Switch(
-        label="Crossover saga — weave issues into ONE story (per-issue context)",
+        label="Crossover saga",
         value=False, active_color=ACCENT,
     )
     max_issues_field = ft.TextField(
-        label="Max issues (saga + series URL)",
+        label="Max saga issues",
         value="5", width=200,
         border_color=BORDER, focused_border_color=ACCENT, text_size=12,
     )
@@ -660,7 +664,7 @@ def build(
         )
 
     return_button = secondary_button(
-        "← Return to Stage 1 research", return_to_stage_one_click,
+        "Return to Stage 1 research", return_to_stage_one_click,
         icon=ft.Icons.ARROW_BACK,
     )
     return_button.key = "return-to-stage1"

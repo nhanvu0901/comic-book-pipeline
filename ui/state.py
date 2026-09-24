@@ -20,7 +20,7 @@ from config import PROJECTS_ROOT
 PICKER_STAGE = 0
 
 STAGE_NAMES = {
-    1: "Identify Comic",
+    1: "Research Scout",
     2: "Download Comic",
     3: "Preprocess Pages",
     4: "Narration Script",

@@ -166,6 +166,16 @@ def build(
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     lv, push_log = log_list(page)
     info = ft.Column([], spacing=3)
+    # Hidden while there is nothing to list (no audio yet) — otherwise the padded,
+    # bordered card rendered as an empty box under the player.
+    info_card = ft.Container(
+        content=info,
+        padding=16,
+        border=ft.border.all(1, BORDER),
+        border_radius=8,
+        bgcolor=BG_ELEVATED,
+        visible=False,
+    )
 
     def _update_info():
         if not state.project_name:
@@ -198,8 +208,9 @@ def build(
             except json.JSONDecodeError:
                 pass
         info.controls = rows
+        info_card.visible = bool(rows)
         try:
-            info.update()
+            info_card.update()
         except Exception:
             pass
 
@@ -410,14 +421,6 @@ def build(
             ),
         ], spacing=4),
         padding=ft.padding.symmetric(horizontal=20, vertical=16),
-        border=ft.border.all(1, BORDER),
-        border_radius=8,
-        bgcolor=BG_ELEVATED,
-    )
-
-    info_card = ft.Container(
-        content=info,
-        padding=16,
         border=ft.border.all(1, BORDER),
         border_radius=8,
         bgcolor=BG_ELEVATED,

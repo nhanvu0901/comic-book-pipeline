@@ -255,7 +255,11 @@ def _show_project_picker(
                             key=f"open-project-{name}",
                             content=ft.Row([
                                 ft.Icon(ft.Icons.FOLDER_OPEN, color=TEXT_MUTED, size=18),
-                                ft.Text(name, size=14, color=TEXT_PRIMARY),
+                                # Ellipsis, not overflow: a long slug ran under the
+                                # delete button next to it.
+                                ft.Text(name, size=14, color=TEXT_PRIMARY, expand=True,
+                                        no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+                                        tooltip=name),
                             ], spacing=10),
                             expand=True,
                             ink=True,

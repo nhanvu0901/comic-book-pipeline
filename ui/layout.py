@@ -2,10 +2,12 @@
 Shared layout primitives: the left stepper nav, the 3-column view shell,
 and status chips.
 """
+import asyncio
 from typing import Callable
 
 import flet as ft
 
+from .clipboard import BLOCKED_HINT, copy_text
 from .state import AppState, PICKER_STAGE, STAGE_NAMES
 from .theme import (
     ACCENT, BG, BG_ELEVATED, BG_PANEL, BORDER, STATUS_DIRTY, STATUS_DONE,
@@ -32,7 +34,10 @@ def stepper_nav(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
             padding=ft.padding.only(left=20, top=22, bottom=18),
         ),
     ]
-    for stage in range(1, 8):
+    # Every stage the app routes to (STAGE_NAMES mirrors app.STAGE_BUILDERS). A literal
+    # range here was bumped by hand as stages were added and stopped at 7 when the review
+    # gate went in, so Final Video (8) had no row and could only be reached by a button.
+    for stage in sorted(STAGE_NAMES):
         label, color = status_for(state, stage)
         active = stage == state.current_stage
         items.append(_step_row(stage, active, label, color, on_go, state))
@@ -49,7 +54,7 @@ def stepper_nav(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
     # was no route back to the picker at all until a project got created.
     footer_children.append(
         ft.TextButton(
-            "← All projects",
+            "All projects",
             icon=ft.Icons.ARROW_BACK,
             on_click=lambda _e: on_go(PICKER_STAGE),
             style=ft.ButtonStyle(padding=ft.padding.all(0)),
@@ -58,6 +63,7 @@ def stepper_nav(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
     items.append(
         ft.Container(
             content=ft.Column(footer_children, spacing=4),
+            width=240,   # span the rail, so the divider above it does not shrink to the text
             padding=ft.padding.symmetric(horizontal=20, vertical=14),
             margin=ft.margin.only(top=12),
             border=ft.border.only(top=ft.BorderSide(1, BORDER)),
@@ -159,16 +165,21 @@ def _header(title: str, subtitle: str) -> ft.Control:
 # ─── Small reusable bits ──────────────────────────────────────────────────
 
 def primary_button(label: str, on_click=None, *, icon=None, disabled: bool = False, url: str | None = None) -> ft.ElevatedButton:
+    # Colours per control state, not one fixed bgcolor: a fixed ACCENT painted a disabled
+    # button exactly like an enabled one, so a gated action (Download while reader URLs
+    # are missing, Approve before audio exists) looked clickable and silently did nothing.
+    # Per-state colours also follow a `disabled` flipped after the button was built.
     return ft.ElevatedButton(
         label,
         on_click=on_click,
         icon=icon,
         disabled=disabled,
         url=url,
-        bgcolor=ACCENT,
-        color="#ffffff",
         height=42,
         style=ft.ButtonStyle(
+            bgcolor={ft.ControlState.DISABLED: BG_ELEVATED, ft.ControlState.DEFAULT: ACCENT},
+            color={ft.ControlState.DISABLED: TEXT_MUTED, ft.ControlState.DEFAULT: "#ffffff"},
+            icon_color={ft.ControlState.DISABLED: TEXT_MUTED, ft.ControlState.DEFAULT: "#ffffff"},
             shape=ft.RoundedRectangleBorder(radius=6),
             padding=ft.padding.symmetric(horizontal=20),
         ),
@@ -253,47 +264,39 @@ def log_list(page: ft.Page, max_lines: int = 300) -> tuple[ft.Control, Callable[
         except Exception:
             pass
 
-    async def _do_copy(txt: str):
-        await clipboard.set(txt)
-
-    def _copy_all(_e):
-        _ensure_clipboard_attached()
-        text = "\n".join(lines_cache) or "(log empty)"
-        copied_ok = False
-        try:
-            page.run_task(_do_copy, text)
-            copied_ok = True
-        except Exception:
-            copied_ok = False
-
-        if copied_ok:
+    async def _copy_and_mark(txt: str):
+        # Mark the button from the copy's REAL result. It used to turn green as soon as
+        # the copy was *scheduled*, which on a plain-http LAN address (clipboard blocked)
+        # announced a copy that never happened.
+        copied = await copy_text(clipboard, txt)
+        if copied:
             copy_btn.icon = ft.Icons.CHECK
             copy_btn.icon_color = "#3ecf8e"
-            copy_btn.tooltip = f"Copied {len(text)} chars"
+            copy_btn.tooltip = f"Copied {len(txt)} chars"
         else:
             copy_btn.icon = ft.Icons.ERROR_OUTLINE
             copy_btn.icon_color = "#e06060"
-            copy_btn.tooltip = "Clipboard failed"
-
+            copy_btn.tooltip = f"Not copied — {BLOCKED_HINT}"
+        try:
+            copy_btn.update()
+        except Exception:
+            pass
+        await asyncio.sleep(1.2 if copied else 4)
+        copy_btn.icon = ft.Icons.CONTENT_COPY
+        copy_btn.icon_color = TEXT_MUTED
+        copy_btn.tooltip = "Copy entire log"
         try:
             copy_btn.update()
         except Exception:
             pass
 
-        def _reset():
-            copy_btn.icon = ft.Icons.CONTENT_COPY
-            copy_btn.icon_color = TEXT_MUTED
-            copy_btn.tooltip = "Copy entire log"
-            try:
-                page.run_task(_async_update_btn)
-            except Exception:
-                pass
-
-        async def _async_update_btn():
-            copy_btn.update()
-
-        import threading
-        threading.Timer(1.2, _reset).start()
+    def _copy_all(_e):
+        _ensure_clipboard_attached()
+        text = "\n".join(lines_cache) or "(log empty)"
+        try:
+            page.run_task(_copy_and_mark, text)
+        except Exception:
+            pass
 
     copy_btn.on_click = _copy_all
 

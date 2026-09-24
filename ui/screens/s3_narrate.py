@@ -11,6 +11,7 @@ No Claude API call is used.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -28,6 +29,7 @@ from stages.stage_3.gemini_prompt import (
     generate_gemini_writer_prompt, parse_and_save_script, saved_script_for_editor,
 )
 from stages.user_errors import UserFacingError
+from ..clipboard import BLOCKED_HINT, copy_text
 from utils.clear_stage import clear_stage_3
 
 
@@ -50,13 +52,12 @@ def build(
             services.append(clipboard)
         clipboard_attached["done"] = True
 
-    async def _copy_to_clipboard(text: str, label: str = ""):
+    async def _copy_to_clipboard(text: str, label: str = "") -> bool:
         _ensure_clipboard()
-        try:
-            await clipboard.set(text)
-            _show_snack(f"Copied {label} to clipboard!")
-        except Exception as exc:
-            _show_snack(f"Failed to copy {label}: {exc}")
+        copied = await copy_text(clipboard, text)
+        _show_snack(f"Copied {label} to clipboard." if copied
+                    else f"Could not copy {label}: {BLOCKED_HINT}.")
+        return copied
 
     def _show_snack(msg: str):
         sb = ft.SnackBar(content=ft.Text(msg))
@@ -96,13 +97,19 @@ def build(
     status_text = ft.Text(initial_note, color=WARN if initial_note else TEXT_MUTED, size=12)
     lv, push_log = log_list(page)
 
+    n_items = _item_count(state.project_name)
+
     def _update_counter(_e=None):
         text = script_area.value or ""
-        sentences = [t.strip() for t in text.replace("\n\n", "\n").split("\n") if t.strip()]
+        # Blank-line paragraphs: the unit the parser maps (paragraph N = item N). This
+        # counted non-empty LINES and called them sentences.
+        paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
         wc = len(text.split())
         dur = wc / 2.9
+        expected = (f" (need {n_items}, plus an optional hook and closing line)"
+                    if n_items else "")
         counter.value = (
-            f"{wc} words · ~{dur:.1f}s estimated · {len(sentences)} sentence(s)"
+            f"{wc} words · ~{dur:.1f}s estimated · {len(paragraphs)} paragraph(s){expected}"
             + ("  ⚠️ over 58s" if dur > 58 else "")
         )
         counter.color = WARN if dur > 58 else TEXT_MUTED
@@ -170,10 +177,13 @@ def build(
             prompt_text, out_path = generate_gemini_writer_prompt(state.project_name)
             file_url = f"/{state.project_name}/{out_path.name}"
             push_log(f"[prompt] Generated {out_path.name} ({len(prompt_text)} chars)")
-            await _copy_to_clipboard(prompt_text, "Gemini Prompt")
+            copied = await _copy_to_clipboard(prompt_text, "Gemini Prompt")
             running.visible = False
-            status_text.value = f"Prompt saved to {out_path.name} and copied to clipboard!"
-            status_text.color = SUCCESS
+            status_text.value = (
+                f"Prompt saved to {out_path.name} and copied to clipboard." if copied
+                else f"Prompt saved to {out_path.name}. Not copied: {BLOCKED_HINT} "
+                     "(in the box below), or download the .md.")
+            status_text.color = SUCCESS if copied else WARN
             _open_prompt_dialog(prompt_text, file_url, out_path.name)
             page.update()
         except Exception as exc:
@@ -197,9 +207,10 @@ def build(
             push_log(f"[prompt] Triggering browser download to Mac: {file_url}")
             # Launch file URL in browser — client browser on Mac fetches the .md file directly
             await page.launch_url(file_url)
-            await _copy_to_clipboard(prompt_text, "Gemini Prompt")
+            copied = await _copy_to_clipboard(prompt_text, "Gemini Prompt")
             running.visible = False
-            status_text.value = f"Downloading {out_path.name} to Mac & copied to clipboard!"
+            status_text.value = (f"Downloading {out_path.name}"
+                                 + (" — also copied to clipboard." if copied else "."))
             status_text.color = SUCCESS
             _show_snack(f"Opened {out_path.name} in your browser to download to Mac!")
             _open_prompt_dialog(prompt_text, file_url, out_path.name)
@@ -253,8 +264,10 @@ def build(
             on_go(5)
         except Exception as exc:
             running.visible = False
+            # A mapping refusal leads with its own first line (what is wrong); the log
+            # below is too short to show that line above the paragraph listing.
             status_text.value = (
-                "The script does not fit the items — see log." if isinstance(exc, UserFacingError)
+                str(exc).splitlines()[0] if isinstance(exc, UserFacingError)
                 else "Failed to parse/save narration — see log."
             )
             status_text.color = DANGER
@@ -336,3 +349,14 @@ def build(
         header_title="Step 4: Narration Script",
         header_subtitle="Export context to your Gemini account, then paste the written script below.",
     )
+
+
+def _item_count(project_name: str) -> int:
+    """Number of answer items (0 for a project without them)."""
+    if not project_name:
+        return 0
+    try:
+        ctx = json.loads((PROJECTS_ROOT / project_name / "answer_context.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    return len(ctx.get("items") or []) if isinstance(ctx, dict) else 0

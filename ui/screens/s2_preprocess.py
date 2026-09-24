@@ -66,7 +66,9 @@ def build(
                     expand=True,
                     runs_count=4,
                     max_extent=190,
-                    child_aspect_ratio=0.65,
+                    # Tall enough for the 200px thumbnail + label row + panel count at
+                    # the narrowest tile width; 0.65 clipped the "N panels" line.
+                    child_aspect_ratio=0.6,
                     spacing=10,
                     run_spacing=10,
                 ),
