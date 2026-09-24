@@ -1368,6 +1368,8 @@ def test_create_project_turns_a_typed_title_into_a_safe_folder_name(tmp_path, mo
     created = []
     monkeypatch.setattr(s1_research_scout, "create_scout_project",
                         lambda session_id, slug, override=False: created.append(slug) or slug)
+    # _finish_create_project saves state.json under PROJECTS_ROOT; keep it off the real one.
+    monkeypatch.setattr(s1_research_scout, "save_state", lambda _state: None)
     page, controls = _build(tmp_path, session)
     slug_field = next(n for n in _walk(controls) if getattr(n, "key", None) == "project-slug")
     slug_field.value = "Wolverine: Origins?"
