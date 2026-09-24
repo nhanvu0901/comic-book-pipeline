@@ -478,7 +478,11 @@ MIRROR_PANELS = os.getenv("MIRROR_PANELS", "false").lower() in ("true", "1", "ye
 # Read by stages/stage_5/shots.py (_ai_upscale_panel). Any failure (binary
 # missing, timeout, bad exit) falls back to the un-upscaled crop — never fatal.
 PANEL_UPSCALE = os.getenv("PANEL_UPSCALE", "true").lower() in ("true", "1", "yes")
-REALESRGAN_BIN = os.getenv("REALESRGAN_BIN", str(Path(__file__).parent / "tools/realesrgan/realesrgan-ncnn-vulkan"))
+# Windows only appends ".exe" when searching PATH, never to a path that names a folder,
+# so the default must carry it there or the upscale silently falls back every time.
+REALESRGAN_BIN = os.getenv("REALESRGAN_BIN", str(
+    Path(__file__).parent / "tools" / "realesrgan"
+    / ("realesrgan-ncnn-vulkan.exe" if os.name == "nt" else "realesrgan-ncnn-vulkan")))
 REALESRGAN_MODEL = os.getenv("REALESRGAN_MODEL", "realesrgan-x4plus-anime")
 
 # ─── Stage 5: channel branding (Grimframe) ──────────────────────────────────
