@@ -24,7 +24,7 @@ from typing import Callable
 
 from config import get_project_dirs
 from stages._arc import qa_item_chapters
-from stages.user_errors import DownloadIncompleteError
+from stages.user_errors import DownloadIncompleteError, SourceUrlError
 from utils.comic_scraper import scrape_issue_pages
 from .issue_resolver import resolve_chapters
 
@@ -85,7 +85,8 @@ def download_from_series(
     log = progress or print
     series_url = series_url.strip()
     if classify_url(series_url) != "series":
-        raise ValueError(f"Expected a batcave.biz series URL, got: {series_url}")
+        raise SourceUrlError(
+            f"Expected a batcave.biz series page (.../<number>-<name>.html), got: {series_url}")
 
     _news_id, slug = parse_series_slug(series_url)
     title_hint = slug_to_title(slug)
@@ -104,7 +105,9 @@ def download_from_series(
 
     chapters = resolve_chapters(series_url, issues)
     if not chapters:
-        raise RuntimeError(f"No chapters resolved for issues={issues!r} at {series_url}")
+        raise DownloadIncompleteError(
+            f"Found no issues matching {issues or 'all'!r} at {series_url}. Check the "
+            "series link and the issue numbers.")
     log(f"[url-mode] resolved {len(chapters)} chapter(s)")
 
     if enrich:
@@ -301,7 +304,8 @@ def download_saga(
     log = progress or print
     series_url = series_url.strip()
     if classify_url(series_url) != "series":
-        raise ValueError(f"Expected a batcave.biz series URL, got: {series_url}")
+        raise SourceUrlError(
+            f"Expected a batcave.biz series page (.../<number>-<name>.html), got: {series_url}")
 
     _news_id, slug = parse_series_slug(series_url)
     title_hint = slug_to_title(slug)
@@ -309,7 +313,8 @@ def download_saga(
 
     all_chapters = resolve_chapters(series_url, "")
     if not all_chapters:
-        raise RuntimeError(f"No chapters resolved at {series_url}")
+        raise DownloadIncompleteError(
+            f"Found no issues at {series_url}. Check that it is the series page.")
     chapters = all_chapters[: max(1, int(max_issues))]
     # normalize chapter_index to 1..N so page prefixes / issue mapping line up
     for i, ch in enumerate(chapters, start=1):

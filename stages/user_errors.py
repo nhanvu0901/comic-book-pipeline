@@ -16,7 +16,8 @@ class ScriptMappingError(UserFacingError, ValueError):
 
 
 class DownloadIncompleteError(UserFacingError, RuntimeError):
-    """One or more chapters did not download completely."""
+    """The download could not get the chapters it needs: none matched, or some came back
+    missing or empty."""
 
 
 class NothingToDeleteError(UserFacingError, ValueError):
@@ -28,3 +29,7 @@ class NothingToDeleteError(UserFacingError, ValueError):
 class MissingInputError(UserFacingError, FileNotFoundError):
     """An earlier step's output is not on disk yet. The message names that step as the app
     shows it (the code's stage numbers differ from the app's) plus the terminal command."""
+
+
+class SourceUrlError(UserFacingError, ValueError):
+    """A download has no comic link to work from, or was given one it cannot use."""

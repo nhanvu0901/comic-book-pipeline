@@ -9,6 +9,7 @@ import json
 from typing import Callable
 
 from config import get_project_dirs, PROJECTS_ROOT
+from stages.user_errors import DownloadIncompleteError, MissingInputError, SourceUrlError
 from .issue_resolver import resolve_chapters
 
 
@@ -25,24 +26,31 @@ def download_comic(
 
     ctx_path = PROJECTS_ROOT / project_name / "comic_context.json"
     if not ctx_path.exists():
-        raise FileNotFoundError(
-            f"comic_context.json not found for project '{project_name}'. "
-            "Run Stage 1 first."
+        raise MissingInputError(
+            f"No comic_context.json for project '{project_name}' yet. Create the project from "
+            "Research Scout first (python -m stages.stage_1 from a terminal)."
         )
 
     ctx = json.loads(ctx_path.read_text())
     batcave_url = ctx.get("batcave_url", "").strip()
     issues = ctx.get("issues", "").strip()
     if not batcave_url:
-        raise ValueError("comic_context.json has no batcave_url — cannot download.")
+        # Typical for a project made with Download from URL(s): it has no Stage 1 series
+        # link, and the Stage 1 download button still sits above that form.
+        raise SourceUrlError(
+            f"Project '{project_name}' has no comic link from Research Scout, so there is "
+            "nothing to download from here. Use Download from URL(s) with the comic's "
+            "batcave link, or approve a selection in Research Scout."
+        )
 
     project_root = get_project_dirs(project_name)["root"]
     log(f"[download] project={project_name} issues={issues!r}")
 
     chapters = resolve_chapters(batcave_url, issues)
     if not chapters:
-        raise RuntimeError(
-            f"No chapters resolved for issues={issues!r} at {batcave_url}"
+        raise DownloadIncompleteError(
+            f"Found no issues matching {issues or 'all'!r} at {batcave_url}. Check the "
+            "series link and the issue numbers."
         )
     log(f"[download] resolved {len(chapters)} chapter(s)")
 

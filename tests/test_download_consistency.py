@@ -179,3 +179,63 @@ def test_prune_removes_page_json_not_in_the_current_download(tmp_path):
     assert removed == 2
     assert keep.exists() and other.exists()
     assert not stale_same_number.exists() and not stale_extra.exists()
+
+
+# ─── predictable download errors read as messages, not tracebacks ───────────
+# The Download Comic screen prints these to its status/log; plain exceptions come out
+# as a traceback with server paths. Each keeps the builtin its callers already catch.
+
+def _dl_project(tmp_path, monkeypatch, context):
+    import stages.stage_2.download as dl
+    monkeypatch.setattr(dl, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(dl, "get_project_dirs", lambda name: {"root": tmp_path / name})
+    (tmp_path / "p").mkdir()
+    if context is not None:
+        (tmp_path / "p" / "comic_context.json").write_text(json.dumps(context))
+    return dl
+
+
+def test_download_without_a_project_context_names_the_research_step(tmp_path, monkeypatch):
+    dl = _dl_project(tmp_path, monkeypatch, None)
+    with pytest.raises(FileNotFoundError) as caught:
+        dl.download_comic("p", progress=lambda m: None)
+    assert isinstance(caught.value, UserFacingError)
+    assert "Research Scout" in str(caught.value)
+
+
+def test_a_project_with_no_comic_url_points_at_download_from_urls(tmp_path, monkeypatch):
+    """A project made with Download from URL(s) has no Stage 1 series link, and the
+    button right above it — Download (from Stage 1) — is still enabled."""
+    dl = _dl_project(tmp_path, monkeypatch, {"issues": ""})
+    with pytest.raises(ValueError) as caught:
+        dl.download_comic("p", progress=lambda m: None)
+    assert isinstance(caught.value, UserFacingError)
+    assert "Download from URL(s)" in str(caught.value)
+
+
+def test_a_series_link_that_matches_no_issues_says_what_to_check(tmp_path, monkeypatch):
+    dl = _dl_project(tmp_path, monkeypatch,
+                     {"batcave_url": "https://batcave.biz/1-some-series.html", "issues": "40-45"})
+    monkeypatch.setattr(dl, "resolve_chapters", lambda url, issues: [])
+    with pytest.raises(RuntimeError) as caught:
+        dl.download_comic("p", progress=lambda m: None)
+    assert isinstance(caught.value, UserFacingError)
+    assert "40-45" in str(caught.value) and "issue numbers" in str(caught.value)
+
+
+def test_url_mode_explains_a_link_that_is_not_a_series_page_and_an_empty_series(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(um, "_ensure_project_root", lambda name: tmp_path)
+    with pytest.raises(ValueError) as not_series:
+        um.download_from_series("p", "https://example.com/some-page", progress=lambda m: None)
+    assert isinstance(not_series.value, UserFacingError)
+
+    monkeypatch.setattr(um, "resolve_chapters", lambda url, issues: [])
+    with pytest.raises(RuntimeError) as empty:
+        um.download_from_series("p", "https://batcave.biz/1-some-series.html", "7",
+                                enrich=False, progress=lambda m: None)
+    assert isinstance(empty.value, UserFacingError)
+    with pytest.raises(RuntimeError) as empty_saga:
+        um.download_saga("p", "https://batcave.biz/1-some-series.html", progress=lambda m: None)
+    assert isinstance(empty_saga.value, UserFacingError)
