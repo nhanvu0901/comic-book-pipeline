@@ -115,9 +115,9 @@ def build(
             push_log(f"open failed: {e}")
 
     def start_over(_e):
-        state.reset()
-        save_state(state)
-        on_state_change()
+        # A blank Stage 1 for the next project. This used to clear approvals and save —
+        # wiping the finished project's stages — and then reopen that same project.
+        state.start_new_project()
         on_go(1)
 
     def _show_snack(msg: str):

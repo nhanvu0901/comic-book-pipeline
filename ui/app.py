@@ -175,13 +175,7 @@ def _show_project_picker(
                 # The directory is gone — clear the dangling stage/approval state that
                 # pointed at it (same reset new_project() below uses for a blank start),
                 # so the app never keeps addressing a project that no longer exists.
-                state.project_name = ""
-                state.scout_session_id = ""
-                state.scout_mode = "qa"
-                state.last_prompt = ""
-                state.current_stage = 1
-                state.approved = {}
-                state.dirty = {}
+                state.start_new_project()
             _show_project_picker(page, state, on_selected, can_cancel=can_cancel)
 
         inv = describe_project(name)
@@ -240,13 +234,7 @@ def _show_project_picker(
 
     def new_project(_e):
         # leave project empty — screen 1 will slug-create one from the prompt
-        state.project_name = ""
-        state.scout_session_id = ""
-        state.scout_mode = "qa"
-        state.last_prompt = ""
-        state.current_stage = 1
-        state.approved = {}
-        state.dirty = {}
+        state.start_new_project()
         on_selected()
 
     rows: list[ft.Control] = [
