@@ -156,7 +156,7 @@ def build(
     def _on_voice_change(_e):
         custom_voice_field.visible = voice_dropdown.value == CUSTOM_LABEL
         page.update()
-    voice_dropdown.on_change = _on_voice_change
+    voice_dropdown.on_select = _on_voice_change   # Dropdown has no on_change event
 
     # ─── Status / log ──────────────────────────────────────────────────────
     status_text = ft.Text(

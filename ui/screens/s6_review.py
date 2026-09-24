@@ -182,7 +182,9 @@ def build(
             label="Page", value=str(start_page),
             options=[ft.dropdown.Option(str(p)) for p in pages],
             border_color=BORDER, focused_border_color=ACCENT, text_size=12,
-            on_change=_on_page_change, width=140,
+            # Dropdown's event is on_select (flet 0.84+); on_change raised TypeError and
+            # took the whole session down the moment the swap-panel dialog opened.
+            on_select=_on_page_change, width=140,
         )
         _rebuild_grid()
 
