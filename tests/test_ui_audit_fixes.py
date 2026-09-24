@@ -108,3 +108,16 @@ def test_prompt_dialog_text_box_uses_the_dialogs_full_width(tmp_path, monkeypatc
     box = next(c for c in column.controls if isinstance(c, ft.TextField))
     assert box.value == "PROMPT TEXT"
     assert column.horizontal_alignment == ft.CrossAxisAlignment.STRETCH
+
+
+def test_preprocess_screen_says_what_to_do_when_there_are_no_pages_yet(monkeypatch):
+    """The centre pane was blank on arrival; its placeholder appeared only after Clear."""
+    import ui.screens.s2_preprocess as s2_preprocess
+
+    monkeypatch.setattr(s2_preprocess, "load_preprocessed", lambda _p: [])
+    root = s2_preprocess.build(StrictFakePage(), AppState(project_name="p", current_stage=3),
+                               on_go=lambda _s: None, on_state_change=lambda: None)
+
+    hints = [str(c.value) for c in _walk(root) if isinstance(c, ft.Text)
+             and "Run Preprocessing" in str(c.value)]
+    assert hints and "Download Comic" in hints[0]

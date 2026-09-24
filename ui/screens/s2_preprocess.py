@@ -41,7 +41,8 @@ def build(
     def render_grid(pages: list[dict]):
         if not pages:
             grid_ctl.content = ft.Container(
-                content=ft.Text("No pages yet — click Run to start.",
+                content=ft.Text("No preprocessed pages yet. Download the comic in Download "
+                                "Comic, then click Run Preprocessing.",
                                 color=TEXT_MUTED, size=13),
                 alignment=ft.Alignment.CENTER, expand=True,
             )
@@ -113,11 +114,8 @@ def build(
         )
         page.update()
 
-    # Load cached preprocessed if any
-    if state.project_name:
-        existing = load_preprocessed(state.project_name)
-        if existing:
-            render_grid(existing)
+    # Cached pages if any — otherwise the placeholder, not a blank pane.
+    render_grid(load_preprocessed(state.project_name) if state.project_name else [])
 
     async def _execute():
         if not state.project_name:
