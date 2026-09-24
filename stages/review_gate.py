@@ -318,16 +318,16 @@ def ensure_reviewed(project, skip_flag: bool = False, *, log=print) -> None:
     if not state.get("approved"):
         raise SystemExit(
             f"[review-gate] BLOCKED: '{project}' is not approved.\n"
-            f"  1. Build the panel shortlist:\n"
-            f"       python -m stages.review_gate --project {project} --build-candidates\n"
-            f"  2. Open the review UI, check the narration text + panel choices, and approve.\n"
+            f"  1. Build the panel shortlist: in the app, Stage 5 (Review Beats) → Build candidates;\n"
+            f"     from a terminal: python -m stages.review_gate --project {project} --build-candidates\n"
+            f"  2. In Stage 5 (Review Beats), check the narration text + panel choices, and approve.\n"
             f"  (--skip-review no longer bypasses this — the gate is hard for all modes.)"
         )
     approved_sha, current_sha = state.get("narration_sha1"), narration_sha1(project)
     if approved_sha and current_sha and approved_sha != current_sha:
         raise SystemExit(
             f"[review-gate] BLOCKED: narration.json changed since '{project}' was approved "
-            f"(approval is stale). Re-review and re-approve in the UI."
+            f"(approval is stale). Re-review and re-approve in Stage 5 (Review Beats)."
         )
     log(f"[review-gate] '{project}' approved — proceeding")
 

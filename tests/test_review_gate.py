@@ -79,6 +79,33 @@ def test_state_roundtrip_defaults(tmp_path, monkeypatch):
     assert rg.load_state("p")["locks"]["3"]["panel"] == 2
 
 
+def test_a_block_points_ui_users_at_the_review_beats_stage(tmp_path, monkeypatch):
+    """The TTS, Review & Edit and Final Video screens print this message as their only
+    guidance. A Stage 5 reference is what someone in the app can act on; the CLI command
+    stays for terminal runs."""
+    monkeypatch.setattr(rg, "REVIEW_GATE", True)
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    proj = tmp_path / "c"
+    proj.mkdir()
+    nar = proj / "narration.json"
+    nar.write_text(json.dumps({"scenes": [{"scene_id": 1, "text": "x"}]}))
+
+    with pytest.raises(SystemExit) as not_approved:
+        rg.ensure_reviewed("c")
+    assert "Stage 5 (Review Beats)" in str(not_approved.value)
+    assert "Build candidates" in str(not_approved.value)
+    assert "python -m stages.review_gate --project c --build-candidates" in str(not_approved.value)
+
+    st = rg.load_state("c")
+    st["approved"] = True
+    st["narration_sha1"] = rg.narration_sha1("c")
+    rg.save_state("c", st)
+    nar.write_text(json.dumps({"scenes": [{"scene_id": 1, "text": "CHANGED"}]}))
+    with pytest.raises(SystemExit) as stale:
+        rg.ensure_reviewed("c")
+    assert "Stage 5 (Review Beats)" in str(stale.value)
+
+
 # ─── skip-flag policy incl. answer_research force ────────────────────────────
 
 def test_skip_flag_policy(tmp_path, monkeypatch):
