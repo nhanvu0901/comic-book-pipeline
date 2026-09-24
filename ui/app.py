@@ -308,11 +308,12 @@ def _show_project_picker(
         ])
 
         def resume(session):
-            state.project_name = ""
+            # A session has no project yet: start blank, or the stepper keeps showing the
+            # previous project's approvals over it.
+            state.start_new_project()
             state.scout_session_id = session.id
             state.scout_mode = session.mode.value
             state.last_prompt = session.user_intent
-            state.current_stage = 1
             on_selected()
 
         for session in scout_sessions:

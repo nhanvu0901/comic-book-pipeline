@@ -81,3 +81,26 @@ def test_the_pickers_new_project_starts_from_a_blank_state_too(tmp_path, monkeyp
     _button(page.views[0], "+ New project").on_click(None)
 
     assert state == AppState(current_stage=1)
+
+
+def test_resuming_a_research_session_drops_the_previous_projects_state(tmp_path, monkeypatch):
+    """Resumed from the picker with a finished project open, the stepper kept that
+    project's DONE marks — and is_approved() answered for it — over a session that has
+    no project at all."""
+    from stages.research_scout.models import ScoutMode
+    from stages.research_scout.storage import SessionStore
+
+    state = _finished_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(app, "PROJECTS_ROOT", tmp_path)
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(bridge, "RESEARCH_SESSIONS_ROOT", sessions)
+    session = SessionStore(sessions).create(ScoutMode.MICRO, "Hulk moment")
+    page = FakePage()
+    app._show_project_picker(page, state, lambda: None, can_cancel=True)
+
+    resume = next(c for c in _walk(page.views[0])
+                  if getattr(c, "key", None) == f"resume-session-{session.id}")
+    resume.on_click(None)
+
+    assert state == AppState(current_stage=1, scout_session_id=session.id,
+                             scout_mode="micro", last_prompt="Hulk moment")
