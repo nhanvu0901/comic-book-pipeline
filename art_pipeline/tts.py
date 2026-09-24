@@ -23,18 +23,25 @@ def _apply_calm_audio(project_name: str, log=print) -> None:
 
 def synthesize_art(project_name: str, *, calm: bool = True, **kwargs):
     import stages.stage_4.pipeline as s4
-    s4.PROJECTS_ROOT = ART_PROJECTS_ROOT
-    if calm:
-        # caller kwargs win; otherwise apply the calm-voice defaults
-        kwargs.setdefault("emotion", C.ART_VOICE_EMOTION)
-        kwargs.setdefault("speed", C.ART_VOICE_SPEED)
-        kwargs.setdefault("volume", C.ART_VOICE_VOLUME)
-        kwargs.setdefault("post_atempo", C.ART_POST_ATEMPO)
-    # Only (re)shape audio that was actually (re)generated — never double-apply
-    # the frequency pass onto a reused WAV.
-    audio_existed = (ART_PROJECTS_ROOT / project_name / "audio.wav").exists()
-    regenerated = bool(kwargs.get("force")) or not audio_existed
-    result = s4.synthesize_project(project_name, **kwargs)
+    # Save/restore like longform_tts.synthesize_longform: PROJECTS_ROOT is a shared
+    # module attribute, so a raise here must not leave it pointed at art_projects/
+    # for the rest of the process (the next comic TTS call would read/write it).
+    prev_root = s4.PROJECTS_ROOT
+    try:
+        s4.PROJECTS_ROOT = ART_PROJECTS_ROOT
+        if calm:
+            # caller kwargs win; otherwise apply the calm-voice defaults
+            kwargs.setdefault("emotion", C.ART_VOICE_EMOTION)
+            kwargs.setdefault("speed", C.ART_VOICE_SPEED)
+            kwargs.setdefault("volume", C.ART_VOICE_VOLUME)
+            kwargs.setdefault("post_atempo", C.ART_POST_ATEMPO)
+        # Only (re)shape audio that was actually (re)generated — never double-apply
+        # the frequency pass onto a reused WAV.
+        audio_existed = (ART_PROJECTS_ROOT / project_name / "audio.wav").exists()
+        regenerated = bool(kwargs.get("force")) or not audio_existed
+        result = s4.synthesize_project(project_name, **kwargs)
+    finally:
+        s4.PROJECTS_ROOT = prev_root
     if calm and C.ART_CALM_AUDIO and regenerated:
         _apply_calm_audio(project_name)
     return result

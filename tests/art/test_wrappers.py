@@ -4,12 +4,20 @@ def test_tts_wrapper_points_stage4_at_art_root(monkeypatch):
     import stages.stage_4.pipeline as s4
 
     calls = {}
-    monkeypatch.setattr(s4, "synthesize_project",
-                        lambda name, **kw: calls.update(name=name, kw=kw) or "RESULT")
+
+    def fake_synthesize(name, **kw):
+        # capture PROJECTS_ROOT as Stage 4 would see it DURING the call
+        calls.update(name=name, kw=kw, root_during_call=s4.PROJECTS_ROOT)
+        return "RESULT"
+    monkeypatch.setattr(s4, "synthesize_project", fake_synthesize)
+    prev_root = s4.PROJECTS_ROOT
     out = tts.synthesize_art("proj-x", calm=False, emotion="calm")
     assert out == "RESULT"
     assert calls["name"] == "proj-x" and calls["kw"]["emotion"] == "calm"
-    assert s4.PROJECTS_ROOT == ART_PROJECTS_ROOT
+    assert calls["root_during_call"] == ART_PROJECTS_ROOT
+    # restored after the call — a shared module attribute must not stay pointed
+    # at art_projects/ for the rest of the process (comic TTS reads it too).
+    assert s4.PROJECTS_ROOT == prev_root
 
 
 def test_build_youtube_description_has_credit_url_and_cc0():
