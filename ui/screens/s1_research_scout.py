@@ -22,6 +22,7 @@ from config import RESEARCH_SESSIONS_ROOT
 from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.stage_1.storage import slugify
+from stages.user_errors import NothingToDeleteError
 
 from ..bridge import (
     archive_scout_session,
@@ -1197,7 +1198,15 @@ def build(
 
         def _do_delete(_e):
             page.pop_dialog()
-            delete_scout_session(session.id, root=RESEARCH_SESSIONS_ROOT)
+            try:
+                delete_scout_session(session.id, root=RESEARCH_SESSIONS_ROOT)
+            except NothingToDeleteError:
+                pass    # removed from the picker in another tab — gone either way
+            except Exception as exc:
+                # Raised inside a click handler, this vanished: the dialog closed and the
+                # row just stayed, with no reason given.
+                _render_full(error=format_exception(exc))
+                return
             if session_holder[0] is not None and session_holder[0].id == session.id:
                 selected_specific.clear()
                 verifying.clear()

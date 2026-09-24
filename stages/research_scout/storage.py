@@ -3,11 +3,12 @@
 from datetime import datetime, timezone
 import json
 import os
-import shutil
 from pathlib import Path
 from uuid import uuid4
 
+from stages.user_errors import NothingToDeleteError
 from utils.atomic_json import write_json_atomic
+from utils.fs_remove import remove_tree
 
 from .models import ResearchSession, ScoutMode
 
@@ -68,9 +69,13 @@ class SessionStore:
         (single path component, must resolve inside the store root) — a bad session_id
         must never let rmtree touch anything outside root."""
         target = self.session_dir(session_id)
+        if not target.exists():
+            raise NothingToDeleteError(
+                f"Research session {session_id!r} no longer exists — it was already deleted."
+            )
         if not target.is_dir():
-            raise ValueError(f"session directory does not exist: {session_id!r}")
-        shutil.rmtree(target)
+            raise ValueError(f"session path is not a directory: {session_id!r}")
+        remove_tree(target)
 
     def save(
         self,

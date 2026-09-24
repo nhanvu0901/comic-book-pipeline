@@ -937,6 +937,51 @@ def test_cancelling_the_session_delete_dialog_leaves_the_session_on_disk(tmp_pat
     assert store.session_dir(session.id).exists()
 
 
+def test_deleting_a_session_that_is_already_gone_still_clears_the_screen(tmp_path):
+    """Deleted from the project picker in another tab meanwhile. The rail must end up
+    exactly where a normal delete leaves it, not keep a row that points at nothing."""
+    root = tmp_path / "research_sessions"
+    store = SessionStore(root)
+    session = store.create(ScoutMode.QA, "Who has beaten Superman in a fight?")
+    page, controls = _build(tmp_path, session)
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+    store.delete(session.id)
+
+    confirm = next(b for b in _buttons(page.dialogs[-1]) if _label(b) == "Delete")
+    confirm.on_click(object())
+
+    assert "No unfinished research sessions." in _text_content(controls)
+
+
+def test_a_session_delete_that_fails_says_why_on_screen(tmp_path, monkeypatch):
+    from utils.fs_remove import FileInUseError
+
+    root = tmp_path / "research_sessions"
+    store = SessionStore(root)
+    session = store.create(ScoutMode.QA, "Who has beaten Superman in a fight?")
+
+    def _in_use(*_a, **_k):
+        raise FileInUseError("Could not delete it: 'audit.jsonl' is still open in another program.")
+
+    monkeypatch.setattr(s1_research_scout, "delete_scout_session", _in_use)
+    page, controls = _build(tmp_path, session)
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+    confirm = next(b for b in _buttons(page.dialogs[-1]) if _label(b) == "Delete")
+
+    confirm.on_click(object())
+
+    assert "audit.jsonl" in _text_content(controls)
+    assert store.session_dir(session.id).exists()
+
+
 # ─── Per-card verification progress ─────────────────────────────────────────
 
 def _review_session(tmp_path, ids=("a", "b", "c")):

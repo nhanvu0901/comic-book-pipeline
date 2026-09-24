@@ -7,14 +7,15 @@ import json
 import os
 import queue
 import re
-import shutil
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from config import PROJECTS_ROOT, RESEARCH_SESSIONS_ROOT
+from stages.user_errors import NothingToDeleteError
 from utils.atomic_json import write_json_atomic   # re-exported: ui.state / ui.custom_image import it from here
+from utils.fs_remove import remove_tree
 
 
 def _quarantine_corrupt(path: Path, what: str) -> None:
@@ -93,17 +94,24 @@ def delete_project(name: str) -> None:
     outside PROJECTS_ROOT — a bad `name` (`..` traversal, an absolute path, or an
     embedded path separator) must never let rmtree touch something else on disk.
     state.json lives INSIDE the project dir (ui/state.py::state_path), so deleting
-    the directory is the whole job; nothing else needs cleaning up."""
+    the directory is the whole job; nothing else needs cleaning up.
+
+    A project that is already gone raises NothingToDeleteError. That check runs before
+    resolve(): on Windows resolving a path that does not exist can come back in another
+    form, and the containment test then misreported a stale picker row as an attempt to
+    delete outside PROJECTS_ROOT."""
     if not isinstance(name, str) or not name:
         raise ValueError(f"invalid project name: {name!r}")
     candidate = Path(name)
     if candidate.is_absolute() or len(candidate.parts) != 1:
         raise ValueError(f"invalid project name: {name!r}")
-    root = PROJECTS_ROOT.resolve()
-    target = (PROJECTS_ROOT / name).resolve()
-    if target.parent != root or not target.is_dir():
+    target = PROJECTS_ROOT / name
+    if not target.exists():
+        raise NothingToDeleteError(f"Project {name!r} no longer exists — it was already deleted.")
+    resolved = target.resolve()
+    if resolved.parent != PROJECTS_ROOT.resolve() or not resolved.is_dir():
         raise ValueError(f"refusing to delete outside PROJECTS_ROOT: {name!r}")
-    shutil.rmtree(target)
+    remove_tree(resolved)
 
 
 # ─── Stage 1: Research Scout bridge ────────────────────────────────────────

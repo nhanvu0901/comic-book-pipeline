@@ -17,3 +17,9 @@ class ScriptMappingError(UserFacingError, ValueError):
 
 class DownloadIncompleteError(UserFacingError, RuntimeError):
     """One or more chapters did not download completely."""
+
+
+class NothingToDeleteError(UserFacingError, ValueError):
+    """The folder a delete targets no longer exists — removed from another tab or on disk.
+
+    Callers that only want the thing gone can treat this as success."""
