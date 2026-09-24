@@ -248,11 +248,19 @@ def build(
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
                 controls.append(ft.Column([copy_row, field], spacing=2))
             controls.append(repair_button)
-        missing_panel.controls = controls
         needs_stage_one_reapproval = (
             state.returned_scout_project == state.project_name
             and not state.is_approved(1)
         )
+        if needs_stage_one_reapproval:
+            # Say WHY the buttons below are disabled — greyed out with no reason reads
+            # as a broken screen.
+            controls.insert(0, ft.Text(
+                "This project was returned to research. Re-approve its selection in "
+                "Stage 1 before downloading or repairing URLs.",
+                key="needs-stage1-reapproval", size=11, color=WARN, selectable=True,
+            ))
+        missing_panel.controls = controls
         blocked = (bool(rows) or bool(reader_error[0]) or repair_busy[0]
                    or download_busy[0] or needs_stage_one_reapproval)
         download_button.disabled = blocked
