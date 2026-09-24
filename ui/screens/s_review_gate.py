@@ -777,7 +777,7 @@ def build(
 
     # ─── Import external intro image ────────────────────────────────────────
     # Master can open a Q&A with an image from disk instead of a comic panel. The
-    # inject (sips → jpg + preprocessed page + subject_panels force_intro entry)
+    # inject (convert → jpg + preprocessed page + subject_panels force_intro entry)
     # lives in ui/intro_import.py (pure, tested); this screen only calls it and
     # renders the current imports as a strip above the beat cards.
     intro_list_col = ft.Column(spacing=8)
