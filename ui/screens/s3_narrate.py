@@ -17,14 +17,17 @@ from typing import Callable
 import flet as ft
 
 from config import PROJECTS_ROOT
-from ..bridge import format_exception, load_narration, run_blocking
+from ..bridge import format_exception, run_blocking
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BORDER, DANGER, SUCCESS, TEXT_MUTED,
     TEXT_PRIMARY, WARN,
 )
-from stages.stage_3.gemini_prompt import generate_gemini_writer_prompt, parse_and_save_script
+from stages.stage_3.gemini_prompt import (
+    generate_gemini_writer_prompt, parse_and_save_script, saved_script_for_editor,
+)
+from stages.user_errors import UserFacingError
 from utils.clear_stage import clear_stage_3
 
 
@@ -62,17 +65,11 @@ def build(
         page.update()
 
     # ── Load existing narration if present ─────────────────────────────────
-    loaded = load_narration(state.project_name) if state.project_name else None
-    initial_text = ""
-    if loaded:
-        scenes = loaded.get("scenes") or []
-        initial_text = "\n\n".join(str(s.get("text", "")).strip() for s in scenes if s.get("text"))
-
-    # Also check if master_narration.md exists
-    if not initial_text and state.project_name:
-        mn_path = PROJECTS_ROOT / state.project_name / "master_narration.md"
-        if mn_path.exists():
-            initial_text = mn_path.read_text(encoding="utf-8").strip()
+    # One paragraph per item (not per sentence), and never a script written for a
+    # different item list — see saved_script_for_editor.
+    initial_text, initial_note = (
+        saved_script_for_editor(state.project_name) if state.project_name else ("", "")
+    )
 
     # ── Center Column: Script Input & Controls ─────────────────────────────
     script_area = ft.TextField(
@@ -96,7 +93,7 @@ def build(
 
     counter = ft.Text("", size=11, color=TEXT_MUTED)
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
-    status_text = ft.Text("", color=TEXT_MUTED, size=12)
+    status_text = ft.Text(initial_note, color=WARN if initial_note else TEXT_MUTED, size=12)
     lv, push_log = log_list(page)
 
     def _update_counter(_e=None):
@@ -256,9 +253,13 @@ def build(
             on_go(5)
         except Exception as exc:
             running.visible = False
-            status_text.value = "Failed to parse/save narration — see log."
+            status_text.value = (
+                "The script does not fit the items — see log." if isinstance(exc, UserFacingError)
+                else "Failed to parse/save narration — see log."
+            )
             status_text.color = DANGER
-            push_log(format_exception(exc))
+            for line in format_exception(exc).splitlines():
+                push_log(line)
             page.update()
 
     # Top action bar in center column
@@ -298,12 +299,12 @@ def build(
             actx = json.loads(answer_path.read_text(encoding="utf-8"))
             q_text = actx.get("question", "")
             items = actx.get("items") or []
-            for it in items[:6]:
-                rank = it.get("rank") or "?"
+            # Numbered in download order — the order the script's paragraphs must follow.
+            for n, it in enumerate(items, start=1):
                 ent = it.get("entity") or ""
                 comic = it.get("source_comic") or ""
                 items_controls.append(
-                    ft.Text(f"#{rank} {ent} ({comic})", size=11, color=TEXT_MUTED)
+                    ft.Text(f"#{n} {ent} ({comic})", size=11, color=TEXT_MUTED, selectable=True)
                 )
         except Exception:
             pass

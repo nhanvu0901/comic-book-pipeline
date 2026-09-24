@@ -17,17 +17,23 @@ THE SCOUT JSON — one object per answer item:
 ```
 
 Read each object like this:
-series_issue_year -> the item's comic (already volume-checked)
-verbatim_sentence -> your first beat, quote it as-is
-source_url -> that beat's citation (+ second_source_url if present)
-what_visibly_happens -> what to narrate
-comic_or_adaptation / single_issue_or_multi / subject_main_in_issue / reprint_check -> checks already done; restate, don't redo
-verdict -> skip any item that is not CONFIRMED
-well_known_or_deep_cut -> the scout's guess; re-judge it yourself
+item_number -> the item's fixed position. Your script keeps this order.
+entity -> who or what the item is about
+source_comic / source_year -> the item's comic (already volume-checked)
+how_or_why -> what happened and why it answers the question — your first beat
+drawable_moment -> the moment the picture for this item shows
+relationships / stakes_why -> who these people are to each other and why it matters (when present)
+verification_note -> where the research found it; open those sources first
+reader_url -> pipeline data, never narrated
+
+Every item goes in the video, in item_number order. Never skip, merge or reorder
+one: the comic pages are already downloaded in this order and each paragraph of
+your script is matched to its item by position. If an item cannot be grounded,
+that is a stop condition below — write NO INFO and name the item.
 
 That gives you ONE beat per item. You still need 2-3, so search only for the
-missing setup/payoff beats. And open source_url once: if the verbatim sentence
-isn't on that page, treat the beat as unsourced.
+missing setup/payoff beats. And open the sources in verification_note once: if
+they do not say what how_or_why claims, treat the beat as unsourced.
 
 PHASE 1 — GROUND EACH ITEM
 
@@ -80,8 +86,8 @@ Then stop and wait.
 PHASE 2 — WRITE THE SCRIPT (only after I type WRITE)
 The firewall
 
-The beat sheet is the whole world. You choose every word, the order, the jokes,
-and what to leave out. You do not add an event, a name, a number, a place, or an
+The beat sheet is the whole world. You choose every word, the jokes, and what
+to leave out — but not the item order: items stay in item_number order. You do not add an event, a name, a number, a place, or an
 emotion that is not on the sheet. If a beat is too thin to fill its 40 words,
 cut it shorter and give the words to another item. Do not thicken it.
 
@@ -228,15 +234,32 @@ Hard shape
 
 Structure
 
-  - Body: one paragraph per answer item, in order of increasing impact — the
-    most surprising answer goes LAST.
+  - Body: exactly ONE paragraph per answer item, in item_number order (item 1
+    first). The order is fixed — it was chosen before the pages were downloaded
+    (most surprising item last), and each paragraph is matched to its item by
+    position. Never merge two items, split one item across two paragraphs, or
+    skip one.
   - Each item: who → what they did → why it should have been impossible.
   - Roughly 40 to 60 words per item.
-  - Close the loop naturally. The final sentence should bring back the hook's
-    key word or its opposite, short, concise, deadpan.
+  - Close the loop with a separate one-line closing paragraph that brings back
+    the hook's key word or its opposite, short, concise, deadpan.
 
 PHASE 2 output:
 Write the script from the PHASE 1 beat sheet. The body should land around 170 to 215 words.
 The hook is 14 words maximum, a statement not a question.
 Write three hooks and pick the best one.
+Then write a line that says exactly FINAL SCRIPT, and under it the finished
+script in this shape — nothing else, no labels, no headings, no notes after it:
+
+FINAL SCRIPT
+<the chosen hook, one line>
+
+<item 1 paragraph>
+
+<item 2 paragraph>
+
+<... one paragraph per item, in item_number order ...>
+
+<the closing line>
+
 Write your entire response in English.

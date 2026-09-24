@@ -46,6 +46,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from config import PROJECTS_ROOT
+from stages._arc import qa_item_chapters
 
 # Default-ON boolean env, same idiom as shots.PANEL_ANCHOR_BIND.
 REVIEW_GATE = os.getenv("REVIEW_GATE", "1").strip().lower() not in ("0", "false", "no", "")
@@ -368,7 +369,13 @@ def _beat_source(scene: dict, comic_ctx: dict, answer_ctx: dict, *, issue_label:
 
     Item lookup order: (1) the beat's issue_label "#N" → item N-1 (robust — survives a
     narration hand-edit that drops per-scene source_image), then (2) the saga page
-    filename's chapter index, then (3) fall back to the single comic_context source."""
+    filename's chapter index, then (3) fall back to the single comic_context source.
+
+    Two items citing the SAME issue share one chapter, so "#N" names only the first of
+    them. Under the fixed item order a body beat's beat_id IS its item number, so when
+    that item lives in this same chapter (qa_item_chapters, the rule the download used)
+    the beat_id picks the right one of the pair. A beat_id that points at another
+    chapter is ignored — it cannot be trusted, and the chapter is."""
     items = answer_ctx.get("items") or []
     if items:
         idx = None
@@ -377,6 +384,14 @@ def _beat_source(scene: dict, comic_ctx: dict, answer_ctx: dict, *, issue_label:
             idx = int(m.group(1))
         if not (idx and 1 <= idx <= len(items)):
             idx = _chapter_index(scene.get("source_image"))
+        try:
+            beat_item = int(scene.get("beat_id") or 0)
+        except (TypeError, ValueError):
+            beat_item = 0
+        if idx and 1 <= beat_item <= len(items):
+            chapters = qa_item_chapters([str(it.get("reader_url") or "") for it in items])
+            if chapters[beat_item - 1] == idx:
+                idx = beat_item
         if idx and 1 <= idx <= len(items):
             it = items[idx - 1]
             return {"title": it.get("source_comic", ""), "issue": str(it.get("source_year", "")),

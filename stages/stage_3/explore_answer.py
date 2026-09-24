@@ -20,7 +20,7 @@ from ..question_archetype import question_archetype, is_statement_lead, is_compa
 from .schema import Beat, Glossary, Narration
 from ._llm import call_with_chain
 from .story_verify import run_story_verify
-from .._arc import issue_index_of_page
+from .._arc import issue_index_of_page, qa_item_chapters
 from .beat_split import split_hook_fragments
 from .write_script import (
     _anchor_scenes_to_beats,
@@ -117,15 +117,13 @@ def _body_scenes(scenes: list[dict]) -> list[dict]:
 
 
 def _ordered_items(answer_context: dict) -> list[tuple[int, dict]]:
-    """(original_index, item) pairs, sorted surprise-ascending (shock LAST).
+    """(original_index, item) pairs, in the order answer_context.json lists them.
 
-    original_index = the item's position in answer_context.json as Stage 1 wrote
-    it — used below as the chapter-number fallback, because Stage 2 downloads
-    the saga's issues in THAT order, not narration order. An explicit
-    "surprise_order" field (if present) wins the sort; otherwise items are kept
-    in research order (the spec expects Stage 1 to already emit them ascending)."""
-    raw_items = answer_context.get("items") or []
-    return sorted(enumerate(raw_items), key=lambda pair: pair[1].get("surprise_order", pair[0]))
+    The download order is the order of everything: item N is downloaded as chapter N,
+    narrated as beat N and reviewed as beat N. The order is decided once, in Stage 1
+    (most surprising item last), so nothing here re-sorts — a re-sort is exactly what
+    let narration and pictures drift apart."""
+    return list(enumerate(answer_context.get("items") or []))
 
 
 def build_answer_beats(
@@ -133,27 +131,20 @@ def build_answer_beats(
     answer_context: dict,
     story_pages: list[dict],
 ) -> list[Beat]:
-    """One Beat per answer-research item, in surprise-ascending order. Fully
+    """One Beat per answer-research item, in item (= download) order. Fully
     deterministic — no LLM. Each beat anchors to the earliest story page of its
     source issue (via the ch{NN}_page chapter prefix); key_panels stays empty so
     `_beat_anchor` resolves panel_ref to -1 (whole page) — Stage 5's semantic
     matcher then picks the actual panel from that page's content."""
     ordered = _ordered_items(answer_context)
     n = len(ordered)
-    # url→chapter map: chapters on disk are labelled by each URL's FIRST-OCCURRENCE
-    # rank in comic_context.reader_urls (download_readers_only dedups duplicates but
-    # keeps ranks). Items never carry chapter_index themselves, and a bare orig_idx+1
-    # points at a nonexistent chapter as soon as two items cite the same issue.
-    url_chapter: dict[str, int] = {}
-    for rank, u in enumerate(comic_context.get("reader_urls") or [], start=1):
-        u = str(u or "").strip()
-        if u and u not in url_chapter:
-            url_chapter[u] = rank
+    # Item → chapter by the SAME rule the download used (qa_item_chapters over the items'
+    # own reader URLs): items citing one issue share its first item's chapter. Read from
+    # the items, not comic_context.reader_urls — those are a synced copy that can lag.
+    chapters = qa_item_chapters([str(item.get("reader_url", "") or "") for _i, item in ordered])
     beats: list[Beat] = []
-    for pos, (orig_idx, item) in enumerate(ordered):
-        item_url = str(item.get("reader_url", "") or "").strip()
-        chapter = int(item.get("chapter_index") or url_chapter.get(item_url)
-                      or (orig_idx + 1))
+    for pos, (_orig_idx, item) in enumerate(ordered):
+        chapter = int(item.get("chapter_index") or chapters[pos])
         chapter_pages = [p for p in story_pages if issue_index_of_page(p) == chapter]
         page_nums = [int(p.get("page_number", 0) or 0) for p in chapter_pages]
         anchor_page = min(page_nums) if page_nums else 0
