@@ -62,16 +62,14 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         try:
             await run_blocking(bridge.run_ground, state.project_name, push_log)
+            _refresh_ground_status()
         except Exception as e:
-            running.visible = False
             ground_status.value = "Grounding failed/too thin — see log."
             ground_status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
             page.update()
-            return
-        running.visible = False
-        _refresh_ground_status()
-        page.update()
 
     async def _narrate():
         if not bridge.load_art_context(state.project_name):
@@ -85,20 +83,18 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         try:
             await run_blocking(bridge.run_narrate, state.project_name, state.mode, push_log)
+            narrate_status.color = SUCCESS
+            _mount_scenes()
+            state.mark_approved(4)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             narrate_status.value = "Failed — see log."
             narrate_status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
             page.update()
-            return
-        running.visible = False
-        narrate_status.color = SUCCESS
-        _mount_scenes()
-        state.mark_approved(4)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     async def _hunt():
         if not bridge.load_art_narration(state.project_name):
@@ -112,25 +108,23 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         try:
             out = await run_blocking(bridge.run_hunt, state.project_name, True, push_log)
+            if out.get("skipped"):
+                visuals_status.value = "Already hunted — use force to redo."
+            else:
+                visuals_status.value = (f"{out.get('resolved', 0)}/{out.get('requested', 0)} "
+                                        f"related scene(s) got web images.")
+            visuals_status.color = SUCCESS
+            _mount_scenes()
+            state.mark_dirty(5)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             visuals_status.value = "Failed — see log."
             visuals_status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
             page.update()
-            return
-        running.visible = False
-        if out.get("skipped"):
-            visuals_status.value = "Already hunted — use force to redo."
-        else:
-            visuals_status.value = (f"{out.get('resolved', 0)}/{out.get('requested', 0)} "
-                                    f"related scene(s) got web images.")
-        visuals_status.color = SUCCESS
-        _mount_scenes()
-        state.mark_dirty(5)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     def save_edits(_e):
         narration = bridge.load_art_narration(state.project_name)
@@ -141,12 +135,18 @@ def build(page: ft.Page, state: ArtAppState, *,
             tf = by_id.get(s.get("scene_id"))
             if tf is not None:
                 s["text"] = tf.value or ""
-        bridge.save_narration_edits(state.project_name, narration)
-        narrate_status.value = "Edits saved (word counts recomputed)."
-        narrate_status.color = SUCCESS
-        state.mark_dirty(5)
-        save_state(state)
-        page.update()
+        try:
+            bridge.save_narration_edits(state.project_name, narration)
+            narrate_status.value = "Edits saved (word counts recomputed)."
+            narrate_status.color = SUCCESS
+            state.mark_dirty(5)
+            save_state(state)
+        except Exception as e:
+            narrate_status.value = "Failed to save edits — see log."
+            narrate_status.color = DANGER
+            push_log(format_exception(e))
+        finally:
+            page.update()
 
     center = ft.Column([
         ft.Container(content=scenes_col,

@@ -42,21 +42,22 @@ def build(page: ft.Page, state: ArtAppState, *,
             await run_blocking(bridge.run_fetch, state.project_name, state.object_ids,
                                state.mode, state.theme, push_log,
                                length=getattr(state, "length", "short"))
+            # The tail (mount/save/notify) is part of the try: a failure here (e.g. a
+            # Windows file lock on state.json) must still clear the spinner and report,
+            # not leave the button spinning forever.
+            status.value = "Fetched. Review the artwork below, then continue."
+            status.color = SUCCESS
+            _mount_thumbs()
+            state.mark_approved(2)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log (non-CC0 artworks are refused)."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
             page.update()
-            return
-        running.visible = False
-        status.value = "Fetched. Review the artwork below, then continue."
-        status.color = SUCCESS
-        _mount_thumbs()
-        state.mark_approved(2)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     center = ft.Column([
         ft.Container(content=ft.Column([thumbs], scroll=ft.ScrollMode.AUTO, expand=True),

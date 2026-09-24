@@ -31,21 +31,19 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         try:
             result = await run_blocking(bridge.run_tts, state.project_name, push_log)
+            status.value = (f"Done: {result.get('audio_duration_seconds', 0)}s, "
+                            f"{len(result.get('word_timestamps') or [])} words.")
+            status.color = SUCCESS
+            state.mark_approved(5)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
             page.update()
-            return
-        running.visible = False
-        status.value = (f"Done: {result.get('audio_duration_seconds', 0)}s, "
-                        f"{len(result.get('word_timestamps') or [])} words.")
-        status.color = SUCCESS
-        state.mark_approved(5)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     def play(_e):
         p = bridge.ART_ROOT / state.project_name / "audio.wav"

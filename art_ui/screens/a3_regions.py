@@ -75,23 +75,23 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         try:
             pages = await run_blocking(bridge.run_regions, state.project_name, force, push_log)
+            # Tail is part of the try: a failure here must still clear the spinner
+            # and report, not leave the button spinning forever.
+            n = sum(len(p.get("panels") or []) for p in pages)
+            model = (pages or [{}])[0].get("vlm_model_used", "")
+            status.value = f"{n} region(s) via {model or 'grid-fallback'}."
+            status.color = SUCCESS if model and model != "grid-fallback" else WARN
+            _mount_previews()
+            state.mark_approved(3)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
             page.update()
-            return
-        running.visible = False
-        n = sum(len(p.get("panels") or []) for p in pages)
-        model = (pages or [{}])[0].get("vlm_model_used", "")
-        status.value = f"{n} region(s) via {model or 'grid-fallback'}."
-        status.color = SUCCESS if model and model != "grid-fallback" else WARN
-        _mount_previews()
-        state.mark_approved(3)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     center = ft.Column([
         ft.Container(content=previews,

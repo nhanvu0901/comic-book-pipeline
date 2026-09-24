@@ -48,24 +48,22 @@ def build(page: ft.Page, state: ArtAppState, *,
         page.update()
         try:
             result_path = await run_blocking(bridge.run_video, state.project_name, push_log)
+            p = Path(result_path)
+            size_mb = p.stat().st_size / (1024 * 1024)
+            status.value = f"Rendered {p.name} ({size_mb:.1f} MB)."
+            status.color = SUCCESS
+            _mount_video(p)
+            desc_text.value = bridge.load_youtube_description(state.project_name)
+            state.mark_approved(6)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
             page.update()
-            return
-        running.visible = False
-        p = Path(result_path)
-        size_mb = p.stat().st_size / (1024 * 1024)
-        status.value = f"Rendered {p.name} ({size_mb:.1f} MB)."
-        status.color = SUCCESS
-        _mount_video(p)
-        desc_text.value = bridge.load_youtube_description(state.project_name)
-        state.mark_approved(6)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     def open_folder(_e):
         if state.project_name:

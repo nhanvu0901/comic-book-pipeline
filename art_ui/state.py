@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from art_pipeline.config import ART_PROJECTS_ROOT
+from utils.atomic_json import write_json_atomic
 
 ART_ROOT: Path = ART_PROJECTS_ROOT
 
@@ -85,9 +86,7 @@ def load_state(project_name: str) -> ArtAppState:
 def save_state(s: ArtAppState) -> None:
     if not s.project_name:
         return
-    p = state_path(s.project_name)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(s.to_dict(), indent=2, ensure_ascii=False))
+    write_json_atomic(state_path(s.project_name), s.to_dict())
 
 
 def list_art_projects() -> list[str]:
