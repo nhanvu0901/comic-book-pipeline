@@ -1010,12 +1010,13 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
 # ─── Error formatting ──────────────────────────────────────────────────────
 
 def format_exception(e: BaseException) -> str:
-    # ScoutUserError has already been written as complete user-facing copy.
-    # Ordinary ValueError remains diagnostic: it can be a real bug raised by a
-    # downstream stage and must retain its traceback for investigation.
+    # ScoutUserError and UserFacingError have already been written as complete
+    # user-facing copy. Ordinary ValueError remains diagnostic: it can be a real bug
+    # raised by a downstream stage and must retain its traceback for investigation.
     from stages.research_scout.errors import ScoutUserError
+    from stages.user_errors import UserFacingError
 
-    if isinstance(e, ScoutUserError):
+    if isinstance(e, (ScoutUserError, UserFacingError)):
         return str(e)
     tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
     return tb[-2000:]

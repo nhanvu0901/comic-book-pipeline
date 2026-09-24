@@ -264,7 +264,7 @@ def scrape_issue_pages(
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     prefix = f"ch{chapter_index:02d}_"
-    existing = sorted(raw_dir.glob(f"{prefix}page_*.jpg"))
+    existing = sorted(raw_dir.glob(f"{prefix}page_*.jpg"), key=_page_number_of)
 
     data = _fetch_data(reader_url)
     if not data:
@@ -297,29 +297,45 @@ def scrape_issue_pages(
     # failure mid-chapter left 20/40 pages that every later run happily reused,
     # silently shipping a comic with missing pages). The per-page loop below already
     # skips files that exist, so an incomplete chapter resumes instead of re-fetching.
-    if len(existing) >= len(image_urls):
-        print(f"[scraper] Using cached pages: {len(existing)}/{len(image_urls)} in {raw_dir} ({prefix}*)")
-        return existing
-    if existing:
-        print(f"[scraper] cached {len(existing)}/{len(image_urls)} page(s) — resuming download of the rest")
+    # Return exactly THIS chapter's page names, in reading order: extra files left by a
+    # longer earlier download are not part of it, and a plain sort put page_100 before
+    # page_11.
+    expected = [raw_dir / f"{prefix}page_{i:02d}.jpg" for i in range(1, len(image_urls) + 1)]
+    cached = [p for p in expected if p.exists()]
+    if len(cached) == len(expected):
+        print(f"[scraper] Using cached pages: {len(cached)}/{len(image_urls)} in {raw_dir} ({prefix}*)")
+        return expected
+    if cached:
+        print(f"[scraper] cached {len(cached)}/{len(image_urls)} page(s) — resuming download of the rest")
     print(f"[scraper] Found {len(image_urls)} pages — downloading...")
 
-    pages: list[Path] = []
-    for i, url in enumerate(image_urls, start=1):
-        page_path = raw_dir / f"{prefix}page_{i:02d}.jpg"
+    missing: list[int] = []
+    for i, (url, page_path) in enumerate(zip(image_urls, expected), start=1):
         if page_path.exists():
-            pages.append(page_path)
             continue
 
         print(f"[scraper] Page {i}/{len(image_urls)}...", end=" ", flush=True)
         if _download_image(url, page_path):
-            pages.append(page_path)
             print("✓")
         else:
+            missing.append(i)
             print("✗")
         time.sleep(0.2)
 
-    return sorted(pages)
+    if missing:
+        # Fail loud: a chapter with holes used to be returned as if complete, and the
+        # comic shipped with pages missing. What did arrive stays cached for the retry.
+        raise RuntimeError(
+            f"{len(missing)} of {len(image_urls)} page(s) did not download for {reader_url}: "
+            f"page(s) {', '.join(str(n) for n in missing)}"
+        )
+    return expected
+
+
+def _page_number_of(path: Path) -> int:
+    """Numeric page from a chNN_page_MM.jpg name (0 when the name has none)."""
+    m = re.search(r"page_(\d+)", path.name)
+    return int(m.group(1)) if m else 0
 
 
 def scrape_single_page(
