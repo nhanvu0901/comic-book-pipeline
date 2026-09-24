@@ -6,7 +6,9 @@ player, lets the user open the output folder or re-run.
 """
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -21,6 +23,20 @@ from ..theme import (
     BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
 from utils.clear_stage import clear_stage_5
+
+
+def _has_desktop() -> bool:
+    """False for a Windows process in session 0 — the app started over SSH or as a
+    service. Nothing it opens can appear on screen, and the opener lingers for a minute."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        session = ctypes.c_ulong()
+        found = ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(session))
+    except Exception:
+        return True     # can't tell: try to open, as before
+    return not found or session.value != 0
 
 
 def build(
@@ -103,10 +119,16 @@ def build(
         if not state.project_name:
             return
         folder = PROJECTS_ROOT / state.project_name
+        if not _has_desktop():
+            status_text.value = (f"This server has no desktop session to open folders in "
+                                 f"(it was started over SSH or as a service). The project "
+                                 f"folder is at {folder}")
+            status_text.color = TEXT_MUTED
+            page.update()
+            return
         # Start the opener, never wait on it: os.startfile did not return when the app ran
-        # without a desktop (started over SSH or as a service), freezing this handler; and
-        # explorer.exe exits 1 even on success, so its exit code says nothing either.
-        import sys
+        # without a desktop, freezing this handler; and explorer.exe exits 1 even on
+        # success, so its exit code says nothing either.
         opener = {"win32": "explorer", "darwin": "open"}.get(sys.platform, "xdg-open")
         try:
             subprocess.Popen([opener, str(folder)])

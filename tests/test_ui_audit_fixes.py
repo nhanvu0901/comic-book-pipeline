@@ -163,6 +163,7 @@ def test_open_project_folder_uses_explorer_without_waiting_on_windows(tmp_path, 
 
     s5_video, root, button = _stage8(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(s5_video, "_has_desktop", lambda: True)
     opened = []
     monkeypatch.setattr(s5_video.subprocess, "Popen", lambda args, **_k: opened.append(args))
 
@@ -197,3 +198,20 @@ def test_review_and_edit_empty_state_names_the_step_to_do(monkeypatch):
     lines = _status_lines(root)
     assert any(line.startswith("No narration yet") and "Narration Script" in line
                for line in lines), lines
+
+
+def test_open_project_folder_only_shows_the_path_when_the_server_has_no_desktop(
+    tmp_path, monkeypatch,
+):
+    """Started over SSH or as a service, the app runs in Windows session 0: an opener
+    started from there shows nothing and never exits, so each click leaked a process."""
+    s5_video, root, button = _stage8(tmp_path, monkeypatch)
+    monkeypatch.setattr(s5_video, "_has_desktop", lambda: False)
+    started = []
+    monkeypatch.setattr(s5_video.subprocess, "Popen", lambda args, **_k: started.append(args))
+
+    button.on_click(None)
+
+    folder = str(tmp_path / "p")
+    assert started == []
+    assert any("no desktop" in line and folder in line for line in _status_lines(root))
