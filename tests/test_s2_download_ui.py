@@ -122,6 +122,33 @@ def test_sidebar_stage_one_uses_the_same_return_flow_as_the_explicit_button(monk
     assert state.current_stage == 1
 
 
+def test_with_no_project_loaded_stage_one_is_just_a_step_back(monkeypatch):
+    """After "+ New project", or while a research session has not made a project yet, the
+    sidebar still reaches Stage 2 — and its Stage 1 row answered "No project loaded —
+    cannot restore its Stage 1 research." and stayed put, so the sidebar had no way back.
+    With no project there is nothing to restore; both routes simply go back."""
+    page = FakePage()
+    state = AppState(project_name="", current_stage=2)
+    stages = []
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+
+    def _must_not_restore(_project):
+        raise AssertionError("there is no project to return to research")
+
+    monkeypatch.setattr(s2_download, "return_scout_project_to_research", _must_not_restore,
+                        raising=False)
+    root = s2_download.build(page, state, on_go=stages.append, on_state_change=lambda: None)
+
+    _sidebar_stage_one(root).on_click(None)
+    _run_task(page)
+    _return_button(root).on_click(None)
+    _run_task(page)
+
+    assert stages == [1, 1]
+
+
 def test_return_error_keeps_the_current_project_and_does_not_navigate(monkeypatch):
     page, state, root, _calls = _return_ready_screen(monkeypatch)
     before = (state.project_name, state.current_stage, dict(state.approved), dict(state.dirty))

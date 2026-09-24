@@ -402,9 +402,10 @@ def build(
         if return_busy[0] or download_busy[0] or repair_busy[0] or direct_download_busy[0]:
             return
         if not state.project_name:
-            status_text.value = "No project loaded — cannot restore its Stage 1 research."
-            status_text.color = DANGER
-            page.update()
+            # No project was made from this research yet (a new project, or a session
+            # resumed from the picker), so there is nothing to restore — just go back.
+            # Refusing here left the sidebar's Stage 1 row a dead end.
+            on_go(1)
             return
         # The first return already detached this project's session.  Stage 1
         # may now be showing either its candidate checklist or production
