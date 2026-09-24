@@ -1,7 +1,6 @@
 # art_ui/screens/a5_tts.py
 """A5: Cartesia TTS via the art wrapper (comic Stage 4 reused; logs captured
 via print-redirect in art_ui.bridge)."""
-import subprocess
 from typing import Callable
 
 import flet as ft
@@ -11,6 +10,7 @@ from ui.bridge import format_exception, run_blocking
 
 from .. import bridge
 from ..layout import art_shell, log_list, primary_button, secondary_button
+from ..open_path import open_path
 from ..state import ArtAppState, save_state
 
 
@@ -46,9 +46,10 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
 
     def play(_e):
-        p = bridge.ART_ROOT / state.project_name / "audio.wav"
-        if p.exists():
-            subprocess.run(["open", str(p)], check=False)
+        msg = open_path(bridge.ART_ROOT / state.project_name / "audio.wav")
+        status.value = msg
+        status.color = SUCCESS if msg.startswith("Opening") else DANGER
+        page.update()
 
     center = ft.Column([
         ft.Container(

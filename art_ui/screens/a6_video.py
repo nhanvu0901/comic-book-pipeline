@@ -1,7 +1,6 @@
 # art_ui/screens/a6_video.py
 """A6: final 9:16 render (comic Stage 5 with no-mirror/no-inpaint overrides) +
 the compliance youtube_description.txt for copy-paste."""
-import subprocess
 from pathlib import Path
 from typing import Callable
 
@@ -13,6 +12,7 @@ from ui.bridge import format_exception, run_blocking
 
 from .. import bridge
 from ..layout import art_shell, log_list, primary_button, secondary_button
+from ..open_path import open_path
 from ..state import ArtAppState, save_state
 
 
@@ -66,8 +66,12 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
 
     def open_folder(_e):
-        if state.project_name:
-            subprocess.run(["open", str(bridge.ART_ROOT / state.project_name)], check=False)
+        if not state.project_name:
+            return
+        msg = open_path(bridge.ART_ROOT / state.project_name)
+        status.value = msg
+        status.color = SUCCESS if msg.startswith("Opening") else DANGER
+        page.update()
 
     def start_over(_e):
         state.reset()
