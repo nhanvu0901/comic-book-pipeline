@@ -144,10 +144,12 @@ def _status_lines(root):
 
 def test_open_project_folder_says_where_the_folder_is(tmp_path, monkeypatch):
     """Over the LAN the folder opens on the server's desktop, so the button used to look
-    dead from the browser. It now always names the folder and where it opened."""
+    dead from the browser. It now always names the folder and where it opens. The opener
+    is started, never waited on: os.startfile never returned on the server when the app
+    ran without a desktop (started over SSH), which froze the handler."""
     s5_video, root, button = _stage8(tmp_path, monkeypatch)
     opened = []
-    monkeypatch.setattr(s5_video.subprocess, "run", lambda args, **_k: opened.append(args))
+    monkeypatch.setattr(s5_video.subprocess, "Popen", lambda args, **_k: opened.append(args))
 
     button.on_click(None)
 
@@ -156,13 +158,26 @@ def test_open_project_folder_says_where_the_folder_is(tmp_path, monkeypatch):
     assert any("on the server" in line and folder in line for line in _status_lines(root))
 
 
+def test_open_project_folder_uses_explorer_without_waiting_on_windows(tmp_path, monkeypatch):
+    import sys
+
+    s5_video, root, button = _stage8(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "platform", "win32")
+    opened = []
+    monkeypatch.setattr(s5_video.subprocess, "Popen", lambda args, **_k: opened.append(args))
+
+    button.on_click(None)
+
+    assert opened == [["explorer", str(tmp_path / "p")]]
+
+
 def test_open_project_folder_reports_a_failure_with_the_path(tmp_path, monkeypatch):
     s5_video, root, button = _stage8(tmp_path, monkeypatch)
 
     def _missing(args, **_k):
         raise FileNotFoundError(2, "No such file or directory", args[0])
 
-    monkeypatch.setattr(s5_video.subprocess, "run", _missing)
+    monkeypatch.setattr(s5_video.subprocess, "Popen", _missing)
 
     button.on_click(None)
 

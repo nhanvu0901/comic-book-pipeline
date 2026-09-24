@@ -103,21 +103,20 @@ def build(
         if not state.project_name:
             return
         folder = PROJECTS_ROOT / state.project_name
+        # Start the opener, never wait on it: os.startfile did not return when the app ran
+        # without a desktop (started over SSH or as a service), freezing this handler; and
+        # explorer.exe exits 1 even on success, so its exit code says nothing either.
+        import sys
+        opener = {"win32": "explorer", "darwin": "open"}.get(sys.platform, "xdg-open")
         try:
-            import os, sys
-            if sys.platform == "win32":
-                os.startfile(str(folder))
-            elif sys.platform == "darwin":
-                subprocess.run(["open", str(folder)], check=True)
-            else:
-                subprocess.run(["xdg-open", str(folder)], check=True)
+            subprocess.Popen([opener, str(folder)])
         except Exception as e:
             status_text.value = f"Could not open the project folder ({e}). It is at {folder}"
             status_text.color = DANGER
         else:
             # The window opens on the machine running the app — over the LAN that is the
             # server, not this browser — so always say which folder, and where.
-            status_text.value = f"Opened on the server: {folder}"
+            status_text.value = f"Opening on the server: {folder}"
             status_text.color = TEXT_MUTED
         page.update()
 
