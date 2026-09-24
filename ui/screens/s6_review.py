@@ -65,7 +65,7 @@ def build(
         center = ft.Container(
             content=ft.Column([
                 ft.Icon(ft.Icons.EDIT_NOTE, size=64, color=TEXT_MUTED),
-                ft.Text("No narration yet — run Stage 3-5 first.",
+                ft.Text("No narration yet — write and approve one in Narration Script first.",
                         size=13, color=TEXT_MUTED),
             ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             alignment=ft.Alignment.CENTER, expand=True,

@@ -121,3 +121,64 @@ def test_preprocess_screen_says_what_to_do_when_there_are_no_pages_yet(monkeypat
     hints = [str(c.value) for c in _walk(root) if isinstance(c, ft.Text)
              and "Run Preprocessing" in str(c.value)]
     assert hints and "Download Comic" in hints[0]
+
+
+def _stage8(tmp_path, monkeypatch):
+    import sys
+
+    import ui.screens.s5_video as s5_video
+
+    monkeypatch.setattr(s5_video, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(sys, "platform", "linux")
+    (tmp_path / "p").mkdir()
+    root = s5_video.build(StrictFakePage(), AppState(project_name="p", current_stage=8),
+                          on_go=lambda _s: None, on_state_change=lambda: None)
+    button = next(c for c in _walk(root) if isinstance(c, ft.OutlinedButton)
+                  and c.content == "Open Project Folder")
+    return s5_video, root, button
+
+
+def _status_lines(root):
+    return [str(c.value) for c in _walk(root) if isinstance(c, ft.Text) and c.value]
+
+
+def test_open_project_folder_says_where_the_folder_is(tmp_path, monkeypatch):
+    """Over the LAN the folder opens on the server's desktop, so the button used to look
+    dead from the browser. It now always names the folder and where it opened."""
+    s5_video, root, button = _stage8(tmp_path, monkeypatch)
+    opened = []
+    monkeypatch.setattr(s5_video.subprocess, "run", lambda args, **_k: opened.append(args))
+
+    button.on_click(None)
+
+    folder = str(tmp_path / "p")
+    assert opened == [["xdg-open", folder]]
+    assert any("on the server" in line and folder in line for line in _status_lines(root))
+
+
+def test_open_project_folder_reports_a_failure_with_the_path(tmp_path, monkeypatch):
+    s5_video, root, button = _stage8(tmp_path, monkeypatch)
+
+    def _missing(args, **_k):
+        raise FileNotFoundError(2, "No such file or directory", args[0])
+
+    monkeypatch.setattr(s5_video.subprocess, "run", _missing)
+
+    button.on_click(None)
+
+    folder = str(tmp_path / "p")
+    assert any("Could not open" in line and folder in line for line in _status_lines(root))
+
+
+def test_review_and_edit_empty_state_names_the_step_to_do(monkeypatch):
+    """"Run Stage 3-5 first" used code stage numbers; the sidebar says Narration Script."""
+    import ui.screens.s6_review as s6_review
+
+    monkeypatch.setattr(s6_review, "is_answer_project", lambda _p: False)
+    monkeypatch.setattr(s6_review, "load_narration", lambda _p: None)
+    root = s6_review.build(StrictFakePage(), AppState(project_name="p", current_stage=7),
+                           on_go=lambda _s: None, on_state_change=lambda: None)
+
+    lines = _status_lines(root)
+    assert any(line.startswith("No narration yet") and "Narration Script" in line
+               for line in lines), lines

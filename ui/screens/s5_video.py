@@ -39,7 +39,7 @@ def build(
     video_slot = ft.Container(expand=True, alignment=ft.Alignment.CENTER)
     status_text = ft.Text(
         "final.mp4 ready — click Download or press Play below" if existing else "Click Assemble to build the video.",
-        color=TEXT_MUTED, size=12,
+        color=TEXT_MUTED, size=12, selectable=True,
     )
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     lv, push_log = log_list(page)
@@ -108,11 +108,18 @@ def build(
             if sys.platform == "win32":
                 os.startfile(str(folder))
             elif sys.platform == "darwin":
-                subprocess.run(["open", str(folder)], check=False)
+                subprocess.run(["open", str(folder)], check=True)
             else:
-                subprocess.run(["xdg-open", str(folder)], check=False)
+                subprocess.run(["xdg-open", str(folder)], check=True)
         except Exception as e:
-            push_log(f"open failed: {e}")
+            status_text.value = f"Could not open the project folder ({e}). It is at {folder}"
+            status_text.color = DANGER
+        else:
+            # The window opens on the machine running the app — over the LAN that is the
+            # server, not this browser — so always say which folder, and where.
+            status_text.value = f"Opened on the server: {folder}"
+            status_text.color = TEXT_MUTED
+        page.update()
 
     def start_over(_e):
         # A blank Stage 1 for the next project. This used to clear approvals and save —
