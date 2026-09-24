@@ -42,6 +42,11 @@ def build(page: ft.Page, state: ArtAppState, *,
         ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
     async def _execute():
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
         status.value = "Rendering with ffmpeg (no mirror, no inpaint)…"
         status.color = WARN

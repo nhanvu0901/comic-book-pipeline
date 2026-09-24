@@ -93,3 +93,26 @@ def test_fetch_success_tail_ok_clears_spinner_and_marks_approved(tmp_path, monke
     assert "Fetched" in status.value
     assert state.is_approved(2)
     assert saved == ["p"]
+
+
+def test_fetch_with_no_project_writes_nothing_under_the_root(tmp_path, monkeypatch):
+    """The stepper (art_ui/layout.py _click) lets the user jump to Fetch with no
+    project selected. get_art_project_path("") resolves to ART_PROJECTS_ROOT itself,
+    so Fetch must refuse instead of writing raw_art/manifest.json + selection.json
+    straight into the root."""
+    monkeypatch.setattr(bridge, "ART_ROOT", tmp_path)
+    called = []
+    monkeypatch.setattr(bridge, "run_fetch", lambda *a, **k: called.append(True) or {"count": 1})
+
+    page = FakePage()
+    state = ArtAppState(project_name="", object_ids=[1])
+    root = screen.build(page, state, on_go=lambda _s: None, on_state_change=lambda: None)
+
+    _button(root, "Fetch").on_click(None)
+    _run_recorded_task(page)
+
+    assert called == [], "the pipeline must never run with no project selected"
+    assert list(tmp_path.iterdir()) == [], "nothing must be written under the root"
+    running, status = _running_and_status(root)
+    assert running.visible is False
+    assert "artwork" in status.value.lower()

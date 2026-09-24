@@ -34,6 +34,11 @@ def build(page: ft.Page, state: ArtAppState, *,
         status.value = "Already fetched — re-fetch reuses cached images."
 
     async def _execute():
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
         status.value = "Fetching from The Met…"
         status.color = WARN

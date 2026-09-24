@@ -25,6 +25,11 @@ def build(page: ft.Page, state: ArtAppState, *,
         status.value = "audio.wav exists — Synthesize re-generates it."
 
     async def _execute():
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
         status.value = "Synthesizing via Cartesia…"
         status.color = WARN

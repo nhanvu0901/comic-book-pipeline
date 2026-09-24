@@ -56,6 +56,11 @@ def build(page: ft.Page, state: ArtAppState, *,
     _mount_scenes()
 
     async def _ground():
+        if not state.project_name:
+            ground_status.value = "Pick or create an artwork first."
+            ground_status.color = DANGER
+            page.update()
+            return
         running.visible = True
         ground_status.value = "Gathering facts (Met + Wikipedia + SDK fallback)…"
         ground_status.color = WARN
@@ -72,6 +77,11 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
 
     async def _narrate():
+        if not state.project_name:
+            narrate_status.value = "Pick or create an artwork first."
+            narrate_status.color = DANGER
+            page.update()
+            return
         if not bridge.load_art_context(state.project_name):
             narrate_status.value = "Gather facts first."
             narrate_status.color = DANGER
@@ -97,6 +107,11 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
 
     async def _hunt():
+        if not state.project_name:
+            visuals_status.value = "Pick or create an artwork first."
+            visuals_status.color = DANGER
+            page.update()
+            return
         if not bridge.load_art_narration(state.project_name):
             visuals_status.value = "Write narration first."
             visuals_status.color = DANGER

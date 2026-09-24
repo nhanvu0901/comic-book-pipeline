@@ -69,6 +69,11 @@ def build(page: ft.Page, state: ArtAppState, *,
         status.value = "Regions already detected — Re-run (force) to redo."
 
     async def _execute(force: bool):
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
         status.value = "Proposing regions (VLM chain)…"
         status.color = WARN
