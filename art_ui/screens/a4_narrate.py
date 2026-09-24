@@ -62,6 +62,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
             return
         running.visible = True
+        ground_btn.disabled = True
         ground_status.value = "Gathering facts (Met + Wikipedia + SDK fallback)…"
         ground_status.color = WARN
         page.update()
@@ -74,6 +75,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             push_log(format_exception(e))
         finally:
             running.visible = False
+            ground_btn.disabled = False
             page.update()
 
     async def _narrate():
@@ -88,6 +90,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
             return
         running.visible = True
+        narrate_btn.disabled = True
         narrate_status.value = "Writing narration… (first run loads the embedding model)"
         narrate_status.color = WARN
         page.update()
@@ -104,6 +107,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             push_log(format_exception(e))
         finally:
             running.visible = False
+            narrate_btn.disabled = False
             page.update()
 
     async def _hunt():
@@ -118,6 +122,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
             return
         running.visible = True
+        hunt_btn.disabled = True
         visuals_status.value = "Hunting related images on the web (Claude SDK)…"
         visuals_status.color = WARN
         page.update()
@@ -139,6 +144,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             push_log(format_exception(e))
         finally:
             running.visible = False
+            hunt_btn.disabled = False
             page.update()
 
     def save_edits(_e):
@@ -178,19 +184,23 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    ground_btn = primary_button("1 · Gather Facts", lambda _e: page.run_task(_ground),
+                                icon=ft.Icons.FACT_CHECK)
+    narrate_btn = primary_button("2 · Write Narration", lambda _e: page.run_task(_narrate),
+                                 icon=ft.Icons.EDIT_NOTE)
+    hunt_btn = primary_button("3 · Hunt Visuals (SDK web)", lambda _e: page.run_task(_hunt),
+                              icon=ft.Icons.IMAGE_SEARCH)
+
     right = ft.Column([
         ft.Text("STEP 4 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Narration", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(f"mode: {state.mode}", size=12, color=TEXT_MUTED),
         ft.Container(height=12),
-        primary_button("1 · Gather Facts", lambda _e: page.run_task(_ground),
-                       icon=ft.Icons.FACT_CHECK),
+        ground_btn,
         ft.Container(height=8),
-        primary_button("2 · Write Narration", lambda _e: page.run_task(_narrate),
-                       icon=ft.Icons.EDIT_NOTE),
+        narrate_btn,
         ft.Container(height=8),
-        primary_button("3 · Hunt Visuals (SDK web)", lambda _e: page.run_task(_hunt),
-                       icon=ft.Icons.IMAGE_SEARCH),
+        hunt_btn,
         ft.Container(height=8),
         secondary_button("Save scene edits", save_edits, icon=ft.Icons.SAVE),
         ft.Container(height=8),

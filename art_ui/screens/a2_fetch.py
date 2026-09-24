@@ -40,6 +40,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
             return
         running.visible = True
+        fetch_btn.disabled = True
         status.value = "Fetching from The Met…"
         status.color = WARN
         page.update()
@@ -62,6 +63,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             push_log(format_exception(e))
         finally:
             running.visible = False
+            fetch_btn.disabled = False
             page.update()
 
     center = ft.Column([
@@ -77,13 +79,15 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    fetch_btn = primary_button("Fetch", lambda _e: page.run_task(_execute), icon=ft.Icons.DOWNLOAD)
+
     right = ft.Column([
         ft.Text("STEP 2 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Fetch from Met", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(f"objectIDs: {', '.join(str(i) for i in state.object_ids)}\nmode: {state.mode}",
                 size=12, color=TEXT_MUTED),
         ft.Container(height=12),
-        primary_button("Fetch", lambda _e: page.run_task(_execute), icon=ft.Icons.DOWNLOAD),
+        fetch_btn,
         ft.Container(height=8),
         secondary_button("Next: Regions →", lambda _e: on_go(3), icon=ft.Icons.ARROW_FORWARD),
     ], spacing=8, expand=True)

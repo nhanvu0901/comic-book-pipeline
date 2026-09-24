@@ -31,6 +31,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
             return
         running.visible = True
+        synth_btn.disabled = True
         status.value = "Synthesizing via Cartesia…"
         status.color = WARN
         page.update()
@@ -48,6 +49,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             push_log(format_exception(e))
         finally:
             running.visible = False
+            synth_btn.disabled = False
             page.update()
 
     def play(_e):
@@ -67,13 +69,15 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    synth_btn = primary_button("Synthesize", lambda _e: page.run_task(_execute), icon=ft.Icons.MIC)
+
     right = ft.Column([
         ft.Text("STEP 5 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("TTS Audio", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Cartesia voiceover + word timestamps (drives caption timing and cuts).",
                 size=12, color=TEXT_MUTED),
         ft.Container(height=12),
-        primary_button("Synthesize", lambda _e: page.run_task(_execute), icon=ft.Icons.MIC),
+        synth_btn,
         ft.Container(height=8),
         secondary_button("Play audio.wav", play, icon=ft.Icons.PLAY_CIRCLE),
         ft.Container(height=8),

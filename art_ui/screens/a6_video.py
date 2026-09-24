@@ -48,6 +48,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             page.update()
             return
         running.visible = True
+        assemble_btn.disabled = True
         status.value = "Rendering with ffmpeg (no mirror, no inpaint)…"
         status.color = WARN
         page.update()
@@ -68,6 +69,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             push_log(format_exception(e))
         finally:
             running.visible = False
+            assemble_btn.disabled = False
             page.update()
 
     def open_folder(_e):
@@ -97,12 +99,14 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    assemble_btn = primary_button("Assemble Video", lambda _e: page.run_task(_execute),
+                                  icon=ft.Icons.MOVIE_FILTER)
+
     right = ft.Column([
         ft.Text("STEP 6 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Container(height=8),
-        primary_button("Assemble Video", lambda _e: page.run_task(_execute),
-                       icon=ft.Icons.MOVIE_FILTER),
+        assemble_btn,
         ft.Container(height=8),
         secondary_button("Open Project Folder", open_folder, icon=ft.Icons.FOLDER_OPEN),
         ft.Container(height=16),

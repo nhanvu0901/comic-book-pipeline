@@ -116,3 +116,29 @@ def test_fetch_with_no_project_writes_nothing_under_the_root(tmp_path, monkeypat
     running, status = _running_and_status(root)
     assert running.visible is False
     assert "artwork" in status.value.lower()
+
+
+def test_fetch_button_disabled_while_running_and_reenabled_after(tmp_path, monkeypatch):
+    """A double-click while the first Fetch is still running must not start a second
+    concurrent run writing the same raw_art/manifest.json."""
+    monkeypatch.setattr(bridge, "ART_ROOT", tmp_path)
+    (tmp_path / "p").mkdir()
+    captured = {}
+    fetch_btn = None  # bound below, read inside the fake once the real call happens
+
+    def _fake_run_fetch(*a, **k):
+        captured["disabled_during_run"] = fetch_btn.disabled
+        return {"count": 1}
+    monkeypatch.setattr(bridge, "run_fetch", _fake_run_fetch)
+
+    page = FakePage()
+    state = ArtAppState(project_name="p", object_ids=[1])
+    root = screen.build(page, state, on_go=lambda _s: None, on_state_change=lambda: None)
+    fetch_btn = _button(root, "Fetch")
+
+    assert fetch_btn.disabled is not True
+    fetch_btn.on_click(None)
+    _run_recorded_task(page)
+
+    assert captured["disabled_during_run"] is True
+    assert fetch_btn.disabled is False
