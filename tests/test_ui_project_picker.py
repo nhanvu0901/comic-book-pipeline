@@ -409,3 +409,132 @@ def test_a_raising_open_project_handler_renders_a_visible_error(tmp_path, monkey
 
     text = _text_content(page.views[0])
     assert "state file corrupt" in text
+
+
+# ─── the picker refreshes its own View (stuck-dialog regression) ─────────────
+# flet paints dialogs inside the top View. The confirm handlers used to call
+# pop_dialog() and then replace the View (views.clear() + a new one) to redraw the list,
+# which left the closing dialog on screen with nothing behind it: the project was gone,
+# Cancel did nothing, and pressing Delete again showed a traceback. The browser half of
+# that can't be seen from here, but its cause can: the list must be redrawn inside the
+# View that is already on the page.
+
+def _open_delete_dialog(page, key: str):
+    icon = next(c for c in _walk(page.views[0]) if getattr(c, "key", None) == key)
+    icon.on_click(None)
+    return page.dialogs[-1]
+
+
+def _press(dialog, label: str) -> None:
+    next(b for b in _buttons(dialog) if _label(b) == label).on_click(None)
+
+
+def test_deleting_a_project_redraws_the_list_in_the_same_view(tmp_path, monkeypatch):
+    projects_root, _sessions_root = _setup_roots(tmp_path, monkeypatch)
+    _make_project(projects_root, "gone-comic")
+    _make_project(projects_root, "kept-comic")
+    page = FakePage()
+    app._show_project_picker(page, AppState(), lambda: None, can_cancel=False)
+    view = page.views[0]
+
+    _press(_open_delete_dialog(page, "delete-project-gone-comic"), "Delete")
+
+    assert len(page.views) == 1 and page.views[0] is view
+    keys = _keys(view)
+    assert "delete-project-gone-comic" not in keys
+    assert "delete-project-kept-comic" in keys
+    assert "picker-error" not in keys
+
+
+def test_a_failed_delete_shows_its_error_in_the_same_view(tmp_path, monkeypatch):
+    projects_root, _sessions_root = _setup_roots(tmp_path, monkeypatch)
+    _make_project(projects_root, "boom-comic")
+
+    def _raise(_name):
+        raise RuntimeError("disk exploded")
+
+    monkeypatch.setattr(app, "delete_project", _raise)
+    page = FakePage()
+    app._show_project_picker(page, AppState(), lambda: None, can_cancel=False)
+    view = page.views[0]
+
+    _press(_open_delete_dialog(page, "delete-project-boom-comic"), "Delete")
+
+    assert len(page.views) == 1 and page.views[0] is view
+    assert "disk exploded" in _text_content(view)
+
+
+def test_deleting_a_project_that_is_already_gone_just_redraws_the_list(tmp_path, monkeypatch):
+    """Another browser tab (the LAN server serves several) or Explorer removed it after
+    this picker was drawn. The user asked for it to be gone and it is — no error box,
+    and certainly not the old "refusing to delete outside PROJECTS_ROOT" traceback."""
+    projects_root, _sessions_root = _setup_roots(tmp_path, monkeypatch)
+    _make_project(projects_root, "stale-comic")
+    page = FakePage()
+    state = AppState(project_name="stale-comic", current_stage=4)
+    app._show_project_picker(page, state, lambda: None, can_cancel=True)
+    dialog = _open_delete_dialog(page, "delete-project-stale-comic")
+    import shutil
+    shutil.rmtree(projects_root / "stale-comic")
+
+    _press(dialog, "Delete")
+
+    keys = _keys(page.views[0])
+    assert "picker-error" not in keys
+    assert "delete-project-stale-comic" not in keys
+    assert state.project_name == ""
+
+
+def test_deleting_a_session_redraws_the_list_in_the_same_view(tmp_path, monkeypatch):
+    _projects_root, sessions_root = _setup_roots(tmp_path, monkeypatch)
+    session = _make_session(sessions_root)
+    page = FakePage()
+    app._show_project_picker(page, AppState(), lambda: None, can_cancel=False)
+    view = page.views[0]
+
+    _press(_open_delete_dialog(page, f"delete-session-{session.id}"), "Delete")
+
+    assert len(page.views) == 1 and page.views[0] is view
+    assert f"delete-session-{session.id}" not in _keys(view)
+
+
+def test_deleting_a_session_that_is_already_gone_just_redraws_the_list(tmp_path, monkeypatch):
+    _projects_root, sessions_root = _setup_roots(tmp_path, monkeypatch)
+    session = _make_session(sessions_root)
+    page = FakePage()
+    state = AppState(scout_session_id=session.id)
+    app._show_project_picker(page, state, lambda: None, can_cancel=True)
+    dialog = _open_delete_dialog(page, f"delete-session-{session.id}")
+    SessionStore(sessions_root).delete(session.id)
+
+    _press(dialog, "Delete")
+
+    keys = _keys(page.views[0])
+    assert "picker-error" not in keys
+    assert f"delete-session-{session.id}" not in keys
+    assert state.scout_session_id == ""
+
+
+def test_show_view_swaps_content_and_layout_inside_the_one_view():
+    """Every screen goes through _show_view, so no navigation can orphan an open dialog
+    either — and layout set by one screen (the picker's scroll and centring) must not
+    leak into the next."""
+    page = FakePage()
+    stage, picker, other = ft.Text("stage"), ft.Text("picker"), ft.Text("other")
+
+    app._show_view(page, "/s4", [stage])
+    view = page.views[0]
+    app._show_view(page, "/", [picker], scroll=ft.ScrollMode.AUTO,
+                   horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+    assert len(page.views) == 1 and page.views[0] is view
+    assert view.route == "/" and view.controls == [picker]
+    assert view.scroll == ft.ScrollMode.AUTO
+    assert view.horizontal_alignment == ft.CrossAxisAlignment.CENTER
+
+    app._show_view(page, "/s5", [other])
+
+    assert len(page.views) == 1 and page.views[0] is view
+    assert view.route == "/s5" and view.controls == [other]
+    assert view.scroll is None
+    assert view.horizontal_alignment == ft.CrossAxisAlignment.START

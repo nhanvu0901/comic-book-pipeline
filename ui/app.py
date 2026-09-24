@@ -1,8 +1,8 @@
 """
 Main Flet app entry: window setup, routing, stage screen dispatch.
 
-Navigation model: manual routing via `page.views` stack. Each stage is
-rendered by its own builder in ui/screens/*. We swap the current view when
+Navigation model: one View for the whole session. Each stage is rendered by
+its own builder in ui/screens/*, and _show_view swaps that View's content when
 the user clicks the stepper, presses Approve, or lands via resume-on-launch.
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import flet as ft
 
 from config import PROJECTS_ROOT
+from stages.user_errors import NothingToDeleteError
 
 from .screens import (
     s1_identify, s1_research_scout, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video,
@@ -52,20 +53,11 @@ async def main(page: ft.Page):
     state = _bootstrap_state()
 
     def render_current():
-        page.views.clear()
-        page.views.append(
-            ft.View(
-                route=f"/s{state.current_stage}",
-                bgcolor=BG,
-                padding=0,
-                controls=[STAGE_BUILDERS[state.current_stage](
-                    page, state,
-                    on_go=goto_stage,
-                    on_state_change=_refresh,
-                )],
-            )
-        )
-        page.update()
+        _show_view(page, f"/s{state.current_stage}", [STAGE_BUILDERS[state.current_stage](
+            page, state,
+            on_go=goto_stage,
+            on_state_change=_refresh,
+        )])
 
     def goto_stage(stage: int):
         # PICKER_STAGE is the "back to the project list" sentinel (see ui/state.py). Until
@@ -92,6 +84,38 @@ async def main(page: ft.Page):
         _show_project_picker(page, state, render_current, can_cancel=False)
     else:
         render_current()
+
+
+# Layout every screen starts from; a screen overrides only what it needs (the picker
+# scrolls and centres). Reset on every swap so one screen's layout never leaks into the next.
+_VIEW_LAYOUT = dict(
+    bgcolor=BG,
+    padding=0,
+    scroll=None,
+    vertical_alignment=ft.MainAxisAlignment.START,
+    horizontal_alignment=ft.CrossAxisAlignment.START,
+)
+
+
+def _show_view(page: ft.Page, route: str, controls: list[ft.Control], **layout) -> None:
+    """Draw `controls` as the app's screen, inside the one View the page keeps.
+
+    Never replace that View. flet paints dialogs inside the top View, so swapping in a
+    new one while a dialog is open — or still closing, right after pop_dialog() — leaves
+    the dialog on screen with nothing behind it: its Cancel does nothing, because the
+    server already counts it as closed. Deleting a project from the picker did exactly
+    that, since the confirm handler redrew the list right after closing the dialog.
+    Changing the existing View's route and content lets the dialog finish closing."""
+    props = {**_VIEW_LAYOUT, **layout}
+    if not page.views:
+        page.views.append(ft.View(route=route, controls=controls, **props))
+    else:
+        view = page.views[-1]
+        view.route = route
+        view.controls = controls
+        for name, value in props.items():
+            setattr(view, name, value)
+    page.update()
 
 
 def _bootstrap_state() -> AppState:
@@ -125,7 +149,6 @@ def _show_project_picker(
             try:
                 return handler(*args, **kwargs)
             except Exception as exc:
-                page.views.clear()
                 _show_project_picker(
                     page, state, on_selected, can_cancel=can_cancel,
                     error=format_exception(exc),
@@ -135,7 +158,6 @@ def _show_project_picker(
     def select(name: str):
         s = load_state(name)
         state.__dict__.update(s.__dict__)
-        page.views.clear()
         on_selected()
 
     def _confirm_delete_project(name: str) -> None:
@@ -145,7 +167,10 @@ def _show_project_picker(
 
         def _do_delete(_e):
             page.pop_dialog()
-            delete_project(name)
+            try:
+                delete_project(name)
+            except NothingToDeleteError:
+                pass    # removed from another tab or on disk — it is gone either way
             if state.project_name == name:
                 # The directory is gone — clear the dangling stage/approval state that
                 # pointed at it (same reset new_project() below uses for a blank start),
@@ -157,7 +182,6 @@ def _show_project_picker(
                 state.current_stage = 1
                 state.approved = {}
                 state.dirty = {}
-            page.views.clear()
             _show_project_picker(page, state, on_selected, can_cancel=can_cancel)
 
         inv = describe_project(name)
@@ -191,10 +215,12 @@ def _show_project_picker(
 
         def _do_delete(_e):
             page.pop_dialog()
-            delete_scout_session(session.id)
+            try:
+                delete_scout_session(session.id)
+            except NothingToDeleteError:
+                pass    # removed from another tab or on disk — it is gone either way
             if state.scout_session_id == session.id:
                 state.scout_session_id = ""
-            page.views.clear()
             _show_project_picker(page, state, on_selected, can_cancel=can_cancel)
 
         page.show_dialog(ft.AlertDialog(
@@ -221,7 +247,6 @@ def _show_project_picker(
         state.current_stage = 1
         state.approved = {}
         state.dirty = {}
-        page.views.clear()
         on_selected()
 
     rows: list[ft.Control] = [
@@ -300,7 +325,6 @@ def _show_project_picker(
             state.scout_mode = session.mode.value
             state.last_prompt = session.user_intent
             state.current_stage = 1
-            page.views.clear()
             on_selected()
 
         for session in scout_sessions:
@@ -358,7 +382,6 @@ def _show_project_picker(
     # project yet, but still came from somewhere and still needs a way back).
     if can_cancel:
         def cancel(_e):
-            page.views.clear()
             on_selected()
         label = (f"Cancel — back to {state.project_name}" if state.project_name
                   else "Cancel — back to research")
@@ -366,35 +389,28 @@ def _show_project_picker(
     rows.append(ft.Row(actions, spacing=12,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
-    page.views.clear()
-    page.views.append(
-        ft.View(
-            route="/",
-            bgcolor=BG,
-            padding=0,
-            # A few projects plus several research sessions can exceed the window
-            # height, and View.scroll defaults to None (no scrollbar, the overflow is
-            # simply unreachable). View "represents a Column control" from a layout
-            # perspective (flet's own docstring) and — unlike an arbitrary nested
-            # Column — is already bounded by the real window/page height, so enabling
-            # scroll HERE (rather than on some inner Column that has no outer bound)
-            # is what actually makes it engage, at any window size.
-            scroll=ft.ScrollMode.AUTO,
-            controls=[
-                ft.Container(
-                    content=ft.Column(rows, spacing=8,
-                                      horizontal_alignment=ft.CrossAxisAlignment.START),
-                    padding=40,
-                    width=520,
-                    bgcolor=BG_PANEL,
-                    border=ft.border.all(1, BORDER),
-                    border_radius=12,
-                    alignment=ft.Alignment.CENTER,
-                    margin=ft.margin.only(top=120),
-                )
-            ],
-            vertical_alignment=ft.MainAxisAlignment.START,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        )
+    _show_view(
+        page, "/",
+        [
+            ft.Container(
+                content=ft.Column(rows, spacing=8,
+                                  horizontal_alignment=ft.CrossAxisAlignment.START),
+                padding=40,
+                width=520,
+                bgcolor=BG_PANEL,
+                border=ft.border.all(1, BORDER),
+                border_radius=12,
+                alignment=ft.Alignment.CENTER,
+                margin=ft.margin.only(top=120),
+            )
+        ],
+        # A few projects plus several research sessions can exceed the window
+        # height, and View.scroll defaults to None (no scrollbar, the overflow is
+        # simply unreachable). View "represents a Column control" from a layout
+        # perspective (flet's own docstring) and — unlike an arbitrary nested
+        # Column — is already bounded by the real window/page height, so enabling
+        # scroll HERE (rather than on some inner Column that has no outer bound)
+        # is what actually makes it engage, at any window size.
+        scroll=ft.ScrollMode.AUTO,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
     )
-    page.update()
