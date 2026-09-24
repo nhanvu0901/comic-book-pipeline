@@ -1,0 +1,83 @@
+{
+  "revision": 7,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart creates a group of Marines as combat constructs",
+      "claim_citation": {
+        "quote": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      ],
+      "series_issue_year": "Green Lantern Vol. 4 #49 (2009)",
+      "summary": "Full construct feat: John manifests a squad of Marine constructs to fight with him. This is a tactical/assisted battlefield use of the ring rather than a permanent creation.",
+      "title": "Blackest Night Marine squad",
+      "what_visibly_happens": "John summons a whole Marine unit that joins the fight against the Black Lanterns.",
+      "id": "r3-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart fires a sniper-rifle construct into Mogo’s core",
+      "claim_citation": {
+        "quote": "John constructs a sniper rifle and fires a bullet into Mogo's core, killing the living planet and stopping the creation of corrupted rings.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Full construct feat: John builds a precise sniper rifle construct and uses it to deliver the finishing shot that kills Mogo. This is one of his most lethal and technically detailed constructs.",
+      "title": "The Mogo sniper shot",
+      "what_visibly_happens": "John manifests a sniper rifle, takes aim, and shoots a bullet straight into Mogo’s core.",
+      "id": "r3-candidate-3"
+    },
+    {
+      "character_or_thing": "Xanshi / restored-solar-system attempt",
+      "claim_citation": {
+        "quote": "Fueled by his regret, he was able to temporarily manifest the entire system as a construct in the hopes of bringing it back again.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/Xanshi"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1989)",
+      "summary": "Temporary reconstruction case. John’s ring attempt is enormous in scope: he tries to recreate an entire lost solar system/planetary system out of grief and remorse.",
+      "title": "Recreating Xanshi’s system",
+      "what_visibly_happens": "The construct reaches planetary scale, but it is only a temporary manifestation and does not permanently restore the dead world.",
+      "id": "r7-candidate-4"
+    },
+    {
+      "character_or_thing": "Green Lantern / Superman-sized giant self-construct",
+      "claim_citation": {
+        "quote": "John constructed a green mastodonic construct of himself to fight his Kryptonian ally, pushing his boundaries to the limit.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      ],
+      "series_issue_year": "Undetermined in retrieved source",
+      "summary": "Demonstration case. John makes a giant version of himself as a combat construct, but the retrieved source does not name the exact issue, so this remains partially supported.",
+      "title": "Giant self-construct",
+      "what_visibly_happens": "John turns himself into a towering green construct to brawl with Superman.",
+      "id": "r7-candidate-5"
+    },
+    {
+      "character_or_thing": "Ultraviolet monster and demon army",
+      "claim_citation": {
+        "quote": "In a mind-blowing battle, the former Green Lantern mustered up a giant monster and an army of demons to defeat the protectors of Earth without losing control over his constructs.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://www.cbr.com/justice-league-john-stewart-ultraviolet-lantern/"
+      ],
+      "series_issue_year": "Justice League #3 (2018)",
+      "summary": "Hypothetical/possession-adjacent case. Under Ultraviolet influence, John weaponizes shame into a massive summoned creature plus multiple demonic constructs.",
+      "title": "Ultraviolet monster-and-demons construct set",
+      "what_visibly_happens": "John unleashes a giant monster and an army of demons against the Justice League while under Ultraviolet influence.",
+      "id": "r7-candidate-6"
+    }
+  ]
+}

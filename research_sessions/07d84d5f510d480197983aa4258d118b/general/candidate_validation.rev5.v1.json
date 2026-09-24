@@ -1,0 +1,17 @@
+{
+  "revision": 5,
+  "returned_source_count": 7,
+  "accepted_bound_source_count": 3,
+  "input_candidate_count": 5,
+  "accepted_candidate_count": 5,
+  "rejected": [
+    {
+      "candidate_id": "r5-candidate-2",
+      "reason": "claim_citation_url_not_returned"
+    },
+    {
+      "candidate_id": "r5-candidate-3",
+      "reason": "claim_citation_url_not_returned"
+    }
+  ]
+}
