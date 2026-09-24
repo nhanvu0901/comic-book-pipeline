@@ -169,6 +169,45 @@ def test_approve_passes_the_three_current_ui_selections_to_the_workflow(tmp_path
     assert captured == {"session_id": session.id, "candidate_ids": ["a", "b", "c"]}
 
 
+def test_tick_order_is_the_video_order_and_each_tick_shows_its_number(tmp_path, monkeypatch):
+    """Item N is downloaded as chapter N and narrated as paragraph N, so the order the
+    items are ticked in is the order the video tells them — not the ids' alphabet."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-tick-order", mode=ScoutMode.QA, user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+    )
+    store.save(session)
+    ids = ("candidate-2", "candidate-10", "candidate-1", "candidate-3")
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": candidate_id, "title": candidate_id.upper()} for candidate_id in ids]},
+    )
+    captured = {}
+
+    def approve(session_id, candidate_ids=None):
+        captured["candidate_ids"] = candidate_ids
+        updated = store.load(session_id)
+        updated.selected_specific_candidate_ids = list(candidate_ids or [])
+        updated.state = SessionState.PRODUCTION_GATES
+        return store.save(updated)
+
+    monkeypatch.setattr(s1_research_scout, "approve_scout_selection", approve)
+    page, controls = _build(tmp_path, session)
+    for candidate_id in ("candidate-10", "candidate-3", "candidate-1", "candidate-2"):
+        _by_key(controls, f"select-{candidate_id}").on_change(_FakeEvent(True))
+    _by_key(controls, "select-candidate-3").on_change(_FakeEvent(False))   # later ticks move up
+
+    labels = {node.key: node.label for node in _walk(controls)
+              if isinstance(node, ft.Checkbox) and str(getattr(node, "key", "")).startswith("select-")}
+    assert labels == {"select-candidate-10": "#1", "select-candidate-1": "#2",
+                      "select-candidate-2": "#3", "select-candidate-3": "Select"}
+
+    _by_key(controls, "approve-selected").on_click(object())
+    _run_recorded_task(page)
+    assert captured["candidate_ids"] == ["candidate-10", "candidate-1", "candidate-2"]
+
+
 def test_resume_lists_unfinished_session_without_creating_project(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = store.create(ScoutMode.MICRO, "Hulk")

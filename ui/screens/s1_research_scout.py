@@ -135,7 +135,50 @@ def _confirmed_selected(session: ResearchSession, gates: list[dict]) -> list[str
     ]
 
 
-def _needs_override(selected: set[str], gates: list[dict]) -> bool:
+class _TickOrder:
+    """The ticked candidates, in the order they were ticked.
+
+    That order is the VIDEO order: item N is downloaded as chapter N and narrated as
+    paragraph N, so the user decides here which item comes first and which twist lands
+    last. It used to be a set sent as sorted(ids) — alphabetical by id, so
+    "candidate-10" went before "candidate-2" and nobody chose the order at all."""
+
+    def __init__(self, ids=()):
+        self._ids: list[str] = list(dict.fromkeys(ids))
+
+    def add(self, candidate_id: str) -> None:
+        if candidate_id not in self._ids:
+            self._ids.append(candidate_id)
+
+    def discard(self, candidate_id: str) -> None:
+        if candidate_id in self._ids:
+            self._ids.remove(candidate_id)
+
+    def clear(self) -> None:
+        self._ids.clear()
+
+    def update(self, ids) -> None:
+        for candidate_id in ids:
+            self.add(candidate_id)
+
+    def position(self, candidate_id: str) -> int:
+        """1-based place in the video order."""
+        return self._ids.index(candidate_id) + 1
+
+    def as_list(self) -> list[str]:
+        return list(self._ids)
+
+    def __contains__(self, candidate_id) -> bool:
+        return candidate_id in self._ids
+
+    def __iter__(self):
+        return iter(list(self._ids))
+
+    def __len__(self) -> int:
+        return len(self._ids)
+
+
+def _needs_override(selected, gates: list[dict]) -> bool:
     """True when approving would need an explicit override: any ticked candidate
     whose gate is missing or came back as anything but confirmed."""
     return any(
@@ -204,7 +247,7 @@ def _candidate_card(
     )
 
 
-def _selection_count_valid(mode: ScoutMode, selected: set[str]) -> bool:
+def _selection_count_valid(mode: ScoutMode, selected) -> bool:
     return (3 <= len(selected) <= 5) if mode is ScoutMode.QA else len(selected) == 1
 
 
@@ -339,9 +382,11 @@ def _rescout_bubble(detail: dict) -> ft.Control:
 
 def _selection_approved_bubble(detail: dict, candidates: list[dict]) -> ft.Control:
     ids = [str(candidate_id) for candidate_id in (detail.get("candidate_ids") or [])]
-    titles = [_resolve_title(candidate_id, candidates) for candidate_id in ids]
+    titles = [f"#{n} {_resolve_title(candidate_id, candidates)}"
+              for n, candidate_id in enumerate(ids, start=1)]
     return _user_bubble(ft.Text(
-        f"Approved: {', '.join(titles) if titles else '(none)'}", size=13, color=TEXT_PRIMARY, selectable=True,
+        f"Approved, in video order: {' · '.join(titles) if titles else '(none)'}",
+        size=13, color=TEXT_PRIMARY, selectable=True,
     ))
 
 
@@ -415,7 +460,7 @@ def build(
         state.scout_mode = session_holder[0].mode.value
         if not state.last_prompt:
             state.last_prompt = session_holder[0].user_intent
-    selected_specific: set[str] = set(
+    selected_specific = _TickOrder(
         session_holder[0].selected_specific_candidate_ids if session_holder[0] else []
     )
     busy = [False]
@@ -471,9 +516,11 @@ def build(
         for index, candidate in enumerate(candidates):
             candidate_id = _candidate_id(candidate, index)
             is_kept = bool(session.revision > 1 and not candidate_id.startswith(f"r{session.revision}-"))
+            # A ticked card shows its place in the video order (#1 is told first).
             selection = ft.Checkbox(
                 key=f"select-{candidate_id}",
-                label="Select",
+                label=(f"#{selected_specific.position(candidate_id)}"
+                       if candidate_id in selected_specific else "Select"),
                 value=candidate_id in selected_specific,
                 on_change=lambda e, cid=candidate_id: _selection_changed(
                     cid, bool(e.control.value)
@@ -505,7 +552,7 @@ def build(
         # with the tick count promises verdicts it will not go and fetch.
         # Refreshing a verdict you already have is the per-card Re-verify button.
         pending = [
-            candidate_id for candidate_id in sorted(selected_specific)
+            candidate_id for candidate_id in selected_specific.as_list()
             if not _candidate_gate(candidate_id, gates)
         ]
         verify_button = primary_button(
@@ -1017,14 +1064,14 @@ def build(
             return
         # The whole selection goes in so the artifact stays one-entry-per-
         # selection; `pending` is only what the label counted.
-        _verify(sorted(selected_specific), None, f"Checking evidence for {len(pending)}…")
+        _verify(selected_specific.as_list(), None, f"Checking evidence for {len(pending)}…")
 
     def _reverify_click(candidate_id: str) -> None:
         """Re-gate one card without paying for the others again. The whole
         selection still goes in, so the artifact stays one-entry-per-selection."""
         if candidate_id not in selected_specific:
             return
-        _verify(sorted(selected_specific), [candidate_id], "Re-checking evidence…")
+        _verify(selected_specific.as_list(), [candidate_id], "Re-checking evidence…")
 
     def _rescout_click(_e) -> None:
         session = session_holder[0]
@@ -1038,7 +1085,7 @@ def build(
         session = session_holder[0]
         if not session or not selected_specific:
             return
-        ids = sorted(selected_specific)
+        ids = selected_specific.as_list()
         _run_busy(
             "Keeping selected & researching more… ~30s",
             lambda: rescout_keeping_selected(session.id, ids),
@@ -1049,7 +1096,7 @@ def build(
         if not session or not _selection_count_valid(session.mode, selected_specific):
             return
         # The ticks own the approval, not whatever the last verify left on disk.
-        ids = sorted(selected_specific)
+        ids = selected_specific.as_list()
         _run_busy(
             "Locking the selection in…",
             lambda: approve_scout_selection(session.id, ids),
