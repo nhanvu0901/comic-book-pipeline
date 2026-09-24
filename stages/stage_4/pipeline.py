@@ -19,6 +19,7 @@ from config import (
     RESEMBLE_VOICE_UUID,
     TTS_PROVIDER,
 )
+from stages.user_errors import MissingInputError
 from ..review_gate import ensure_reviewed
 from .chunker import align_scenes_to_words, build_caption_chunks, words_from_dicts
 from .schema import TTSResult
@@ -151,7 +152,10 @@ def synthesize_project(
     root = PROJECTS_ROOT / project_name
     narration_path = root / "narration.json"
     if not narration_path.exists():
-        raise FileNotFoundError(f"narration.json missing: {narration_path}. Run Stage 3 first.")
+        raise MissingInputError(
+            f"No narration yet for {project_name}. Approve a script in Narration Script first "
+            "(python -m stages.stage_3 from a terminal)."
+        )
 
     narration = json.loads(narration_path.read_text())
     # Pace is chosen by MODE, not by caller convenience: a 45-second Short and a 19-minute

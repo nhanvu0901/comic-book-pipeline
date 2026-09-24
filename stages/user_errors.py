@@ -23,3 +23,8 @@ class NothingToDeleteError(UserFacingError, ValueError):
     """The folder a delete targets no longer exists — removed from another tab or on disk.
 
     Callers that only want the thing gone can treat this as success."""
+
+
+class MissingInputError(UserFacingError, FileNotFoundError):
+    """An earlier step's output is not on disk yet. The message names that step as the app
+    shows it (the code's stage numbers differ from the app's) plus the terminal command."""

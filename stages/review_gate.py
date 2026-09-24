@@ -47,6 +47,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from config import PROJECTS_ROOT
 from stages._arc import qa_item_chapters
+from stages.user_errors import MissingInputError
 
 # Default-ON boolean env, same idiom as shots.PANEL_ANCHOR_BIND.
 REVIEW_GATE = os.getenv("REVIEW_GATE", "1").strip().lower() not in ("0", "false", "no", "")
@@ -318,7 +319,8 @@ def ensure_reviewed(project, skip_flag: bool = False, *, log=print) -> None:
     if not state.get("approved"):
         raise SystemExit(
             f"[review-gate] BLOCKED: '{project}' is not approved.\n"
-            f"  1. Build the panel shortlist: in the app, Stage 5 (Review Beats) → Build candidates;\n"
+            f"  1. Build the panel shortlist: in the app, open Stage 5 (Review Beats) and press\n"
+            f"     Build candidates;\n"
             f"     from a terminal: python -m stages.review_gate --project {project} --build-candidates\n"
             f"  2. In Stage 5 (Review Beats), check the narration text + panel choices, and approve.\n"
             f"  (--skip-review no longer bypasses this — the gate is hard for all modes.)"
@@ -892,7 +894,10 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     match_k = 10**9 if cap is None else k
     narration_path = root / "narration.json"
     if not narration_path.exists():
-        raise FileNotFoundError(f"narration.json missing: {narration_path}. Run Stage 3 first.")
+        raise MissingInputError(
+            f"No narration yet for {slug}. Approve a script in Narration Script first "
+            "(python -m stages.stage_3 from a terminal)."
+        )
     narration = _load_json(narration_path)
     scenes = narration.get("scenes") or []
     mode = str(narration.get("mode") or "")
