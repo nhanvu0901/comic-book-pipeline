@@ -1,0 +1,118 @@
+{
+  "revision": 4,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "In despair, he creates a construct of his dead little sister, Ellie, to calm his mother.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5",
+        "https://dc.fandom.com/wiki/Eleanor_Stewart_(Prime_Earth)"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #5 (2024)",
+      "summary": "The most insane construct in the set: John creates a realistic dead-sister construct to comfort his dementia-stricken mother. This is a temporary, emotionally targeted construct that later becomes an ongoing autonomous presence in the run.",
+      "title": "Dead-sister construct Ellie",
+      "what_visibly_happens": "John manifests Ellie as a lifelike construct and presents her to his mother as a comforting companion.",
+      "id": "candidate-3"
+    },
+    {
+      "character_or_thing": "Precision sniper-rifle construct",
+      "claim_citation": {
+        "quote": "John Stewart decided to build a sniper rifle construct that was so precise and deadly that it only took one shot to thwart the threat from such a long distance.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Assisted/weapon construct. John forms a sniper rifle with enough precision to make a single, long-range disabling shot.",
+      "title": "Green Lantern Corps",
+      "what_visibly_happens": "He manifests a rifle, sights the target at extreme range, and fires one precise shot.",
+      "id": "r2-candidate-5"
+    },
+    {
+      "character_or_thing": "John Stewart's construct of an entire solar system",
+      "claim_citation": {
+        "quote": "Fueled by his regret, he was able to temporarily manifest the entire system as a construct in the hopes of bringing it back again.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://www.reddit.com/r/Greenlantern/comments/vhvp30/john_trying_to_recreate_xanshis_solar_system_and/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1988)",
+      "summary": "Full construct. John tries to recreate Xanshi's lost solar system out of regret, but he ultimately fails. This is one of his biggest 'power failed' moments, and it is more an attempted restoration than a completed feat.",
+      "title": "Cosmic Odyssey #2",
+      "what_visibly_happens": "John visibly manifests a huge solar-system-scale construct, but the attempt does not fully restore the system and fails.",
+      "id": "r4-candidate-1"
+    },
+    {
+      "character_or_thing": "John Stewart's giant self-construct used against Superman",
+      "claim_citation": {
+        "quote": "John constructed a green mastodonic construct of himself to fight his Kryptonian ally, pushing his boundaries to the limit.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern: Rebirth #6 (2004)",
+      "summary": "Full construct. John makes a giant version of himself to spar with Superman. It is an oversized combat construct, but it is not one of the 'failed power/rule' moments; Superman still beats it.",
+      "title": "Green Lantern: Rebirth #6",
+      "what_visibly_happens": "John forms a giant humanoid construct of himself and trades blows with Superman until Superman overpowers him.",
+      "id": "r4-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart's Earth-holding construct",
+      "claim_citation": {
+        "quote": "He used his ring to keep the earth from getting sucked into the sun by its gravity.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://www.reddit.com/r/whowouldwin/comments/3l515i/john_stewart_vs_guy_gardener/"
+      ],
+      "series_issue_year": "Adventures of Superman #618 (2003)",
+      "summary": "Assisted/temporary construct use. John helps hold Earth together against catastrophic gravity. It is a broad, world-scale stabilization feat rather than a specific object construct.",
+      "title": "Adventures of Superman #618",
+      "what_visibly_happens": "John visibly uses the ring to brace and stabilize Earth so it does not get pulled apart or into the sun.",
+      "id": "r4-candidate-3"
+    },
+    {
+      "character_or_thing": "John Stewart's Kryptonian tele-disruptor construct",
+      "claim_citation": {
+        "quote": "Zod claims it would take weeks to construct such a device since it was lost to the ages, but Stewart proved him otherwise by building it in mere minutes using his ring.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/John_Stewart_(Prime_Earth)"
+      ],
+      "series_issue_year": "Hal Jordan and the Green Lantern Corps #45 (2018)",
+      "summary": "Assisted construct. John reverse-engineers and rapidly builds an ancient alien device from blueprints. The source treats it as a speed-and-skill feat, not a broken power rule.",
+      "title": "Hal Jordan and the Green Lantern Corps #45",
+      "what_visibly_happens": "John rapidly assembles a functional alien tele-disruptor after studying the blueprints.",
+      "id": "r4-candidate-4"
+    },
+    {
+      "character_or_thing": "John Stewart's army of Marine constructs",
+      "claim_citation": {
+        "quote": "He relied on the power of his ring by creating a formidable armada of marines.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/Green_Lantern_(DC,_2021_series)_#1"
+      ],
+      "series_issue_year": "Green Lantern #1 (2021)",
+      "summary": "Full but temporary construct. John creates an entire squad/army of Marines, with weapons and ammunition, to fight Black Lantern-like enemies. This is a high-detail battlefield construct rather than a single object.",
+      "title": "Green Lantern #1",
+      "what_visibly_happens": "John manifests multiple Marine soldiers as constructs and directs them in combat.",
+      "id": "r4-candidate-5"
+    }
+  ]
+}

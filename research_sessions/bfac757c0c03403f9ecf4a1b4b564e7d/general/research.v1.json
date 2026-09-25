@@ -1,0 +1,80 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "character_or_thing": "John Stewart’s construct bubble that trapped Martian Manhunter",
+            "claim_citation": {
+              "quote": "John Stewart creates another with his ring and heads off to stop the aspect, but he encases the Manhunter with his power ring to prevent him from following.",
+              "url": "https://dc.fandom.com/wiki/Cosmic_Odyssey"
+            },
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Cosmic_Odyssey"
+            ],
+            "series_issue_year": "Cosmic Odyssey #2 (1988)",
+            "summary": "A partial construct, used as a temporary restraint. John tries to solve the Xanshi crisis alone and locks Martian Manhunter out of the fight, which contributes to the disaster.",
+            "title": "Cosmic Odyssey",
+            "what_visibly_happens": "John surrounds Martian Manhunter in a glowing green bubble-construct so he cannot follow him, then heads toward the bomb alone."
+          },
+          {
+            "character_or_thing": "John Stewart’s marine squad construct",
+            "claim_citation": {
+              "quote": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+              "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+            },
+            "evidence_urls": [
+              "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+            ],
+            "series_issue_year": "Green Lantern Vol. 4 #49 (2009)",
+            "summary": "A full-assisted combat construct. John manifests an entire squad of Marines to back him up against the Black Lanterns while dealing with Katma Tui’s return.",
+            "title": "Green Lantern",
+            "what_visibly_happens": "A lineup of green Marine constructs appears and fights beside John in the middle of the Black Lantern battle."
+          },
+          {
+            "character_or_thing": "John Stewart’s sniper rifle construct used to kill Mogo",
+            "claim_citation": {
+              "quote": "John then constructs a sniper rifle and prepares to fire a bullet into Mogo's core.",
+              "url": "https://dc.fandom.com/wiki/Green_Lantern_Corps_Vol_2_60"
+            },
+            "evidence_urls": [
+              "https://dc.fandom.com/wiki/Green_Lantern_Corps_Vol_2_60"
+            ],
+            "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+            "summary": "A temporary tactical construct with huge consequences. John uses the ring to build a sniper rifle and shoots into Mogo’s core to stop the corrupted rings.",
+            "title": "Green Lantern Corps",
+            "what_visibly_happens": "John forms a precision rifle construct, takes aim, and fires the shot that kills the living planet Mogo."
+          }
+        ],
+        "notes": "Used 6 distinct source pages from the retrieved context and returned 3 supported candidates. Per the master feedback, I did not re-propose the already-held Ellie dead-sister construct. I also excluded weaker or under-specified items where the retrieved context did not clearly support both an exact issue/year and the visible feat on the same sourced trail."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+          "title": "Green Lantern: 10 Essential John Stewart Comics",
+          "snippets": [
+            "# Green Lantern: 10 Essential John Stewart Comics\nThe fourth human Green Lantern introduced in the Green Lantern mythos was the former marine and architect John Stewart. As one of eight human Green Lanterns in the corps, John Stewart, despite his popularity in the *Justice League Unlimited* show, has often found himself taking the backseat to other Lanterns like Hal Jordan and Kyle Rayner. However, John has remained one of the most popular members of the Green Lantern mythos.\nOnce readers dig past the comics' surface level, it's clear that many great stories featuring John Stewart do exist, from compelling solo stories to adventures as one of the four corpsmen. Thanks to well-executed themes like regret, pride, fellowship, and justice, John Stewart has a great collection of comic storylines despite never having a proper solo run.\n## 10 John Stewart's Debut\nJohn's philosophy and unorthodox methods initially make Hal think that John is not fit for the Green Lantern Corps. Still, after the two work together to protect a US senator, Hal realizes that John's unusual style is not a problem but an asset.\n## 5 John Stewart Sees His Wife Again\nDC's Blackest Night event pitted the Green Lantern Corps against Nekron – the force of death who reanimated dead heroes to eliminate all living things from the universe. In *Green Lantern* Vol 4 #49, John goes up against an army of Black Lanterns, including his late wife, Katma Tui.\nJohn then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns. This encounter with Katma made John think about his advice and how being a Green Lantern doesn't build character; it reveals it.\n## 3 The Alpha Lanterns Arrest John Stewart\nBefore he can hand over the data, John breaks his neck, killing Kirrt while simultaneously saving thousands of Green Lanterns. Later in the storyline, in *Green Lantern Corps* Vol 3 #9, John, despite protests by Guy Gardner, is arrested by the Alpha Lanterns for the murder of Kirrt.\n## 2 John Stewart's New Origin\nA standard method by DC to retcon character origins is to give them a story in *DC Secret Origins*. John Stewart received his edition of the title in *DC Secret Origins* Vol 3 #9. In the issue, John is introduced as a young man in Detroit participating in protests with his mom. After life in the marine corps, John is contracted by Ferris Air to design a building on their property."
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Cosmic_Odyssey",
+          "title": "Cosmic Odyssey",
+          "snippets": [
+            "# Cosmic Odyssey\n**Cosmic Odyssey** was a four issue miniseries written by Jim Starlin with art by Mike Mignola. Darkseid and Highfather call on Earth's heroes to defeat a sentient Anti-Life Equation that threatens four planets.\n## Synopsis\nMetron of the New Gods has unwittingly unleashed a terrible threat to the entire universe. A sentient being of pure Anti-Life energy has forced four aspects of itself with the plan of collapsing the Milky Way galaxy by destroying any two of four specific planets. The resulting gravity disruption will cause a fundamental change in the physics of the universe that will allow the Anti-life being to consume it.\nA chosen few have been selected to defend each of the four planets: Superman and Orion are assigned to defend Thanagar; Lightray and Starfire are sent to Rann; Batman and Forager are assigned to Earth; Martian Manhunter and a John Stewart are sent to Xanshi.\nAfter the heroes are sent on their way, the mysterious Mr. Blood who was called from Earth with the other terran Heroes wonders aloud what his part in this quest will be, only to find out to his horror that he will once again be merged with Etrigan, the Demon.\nBatman returns to Earth with Forager and makes a quick call to an unknown person. He asks the person to watch Darkseid carefully as he doesn't trust him.\nOn Xanshi, there are weather control stations that are causing massive disturbances on a planetwide scale.\nTrouble for the quest begins on Xanshi, as the Martian Manhunter and John Stewart have their aspect catcher device destroyed by lightning. John Stewart creates another with his ring and heads off to stop the aspect, but he encases the Manhunter with his power ring to prevent him from following. John Stewart believes that he can stop the aspect all by himself.  The doomsday device was made of a yellow metal, rendering his ring useless. He's too late to stop the bomb, and the planet Xanshi is destroyed.\nThis failure leaves a deep mark in John's conscience, and Martian Manhunter is not willing to forgive him either.\nAs the other teams return to New Genesis, Batman and Forager have discovered the location of their aspect in Moosejaw, Arizona. They find that there are two hosts for the aspect and begin a desperate battle against them.\nDarkseid convinces the Demon to help him confront the Anti-Life being in its own Dimension. Hightfather does not want that course of action, but he arrives too late, along with Orion, to stop Darkseid's plans. Suddenyl, Doctor Fate, who was the one Batman called earlier, arrives at the scene and offers his help to travel to the Anti-Life's dimension.\nAs Darkseid stands helpless to stop his own destruction, Hightfather, Orion, and Doctor Fate arrive to help. The five of them form a unified front against the Anti-Life being. Doctor Fate destroys the dimension in which the Anti-Life existed knowing that even this would not truly stop the Anti-Life being as the fate of the Earth was still being decided.\nOn New Genesis the group is reunited but Darkseid is furious with Doctor Fate as he felt that he was treated as a puppet. John Stewart tries to commit suicide because of his failure to defend Xanshi but he cannot bring himself to do it, and the Martian Manhunter uses reverse psychology to bring John out of his suicidal thoughts.\n## Cosmic Odyssey\n\n### Universe\n\nNew Earth\n\n### Locations\n\nApokolips, Earth, New Genesis, Rann, Xanshi\n\n### Heroes\n\nAdam Strange, Batman, Doctor Fate, Etrigan, Green Lantern (John Stewart), Martian Manhunter, New Gods (Forager, Highfather, Lightray, Lonar, Metron, Orion), Starfire, Superman,\n### Collected\n\nCosmic Odyssey (Collected)\n\n### Creators\n\nJim Starlin · Mike Mignola"
+          ]
+        },
+        {
+          "url": "https://dc.fandom.com/wiki/Green_Lantern_Corps_Vol_2_60",
+          "title": "Green Lantern Corps (2006) #60",
+          "snippets": [
+            "- Nei Ruffino/Cover Artist\n- Clayton Crain/Cover Artist\n- Tony Bedard/Writer\n- Tyler Kirkham/Penciler\n- Matt Banning/Inker\n- Rod Reis/Colorist\n- Nei Ruffino/Colorist\n- Pat Brosseau/Letterer\n- Brian Cunningham/Editor\n- Darren Shan/Editor\n- Kyle Rayner (New Earth)/Appearances\n- John Stewart (New Earth)/Appearances\n- Green Lantern Corps (New Earth)/Appearances\n- Hannu (New Earth)/Appearances\n- Mogo (New Earth)/Appearances\n- Tomar-Tu (New Earth)/Appearances\n- Voz (New Earth)/Appearances\n- Sector 0/Appearances\n- Blue Lantern Ring/Appearances\n- Green Lantern Ring/Appearances\n- Indigo Lantern Ring/Appearances\n- War of the Green Lanterns\n- Comics\n- 2011\n- 2011, July\n- 2011, May (Publication)\n- Green Lantern Corps Vol 2\n- Modern Age\n- Synopsis Written\n- Brightest Day\n# Green Lantern Corps (2006) #60\n\"War of the Green Lanterns, Part Eight\": John and Kyle arrive at Mogo and discover that Mogo is sending rings to potential Green Lantern candidates. Realizing that these candidates will also be corrupted, John constructs a dome and encases all the rings. Then, John and Kyle discover a cave that\n*****Green Lantern Corps* (Volume 2) #60**** is an issue of the series *Green Lantern Corps* (Volume 2) with a cover date of July, 2011.\n## Synopsis for \"War of the Green Lanterns, Part Eight\"\nJohn and Kyle arrive at Mogo and discover that Mogo is sending rings to potential Green Lantern candidates. Realizing that these candidates will also be corrupted, John constructs a dome and encases all the rings. Then, John and Kyle discover a cave that leads to Mogo's core. Suddenly, the rings escape from the dome construct. Kyle believes that his blue ring can heal Mogo, so the two travel to Mogo's core.\nKyle uses his ring to construct an image of Pol, Voz's deceased lover. This frees her from the impurity, encouraging Kyle and John to continue. They arrive at Mogo's core, and Kyle generates an image of Bzzd, Mogo's former partner. Suddenly, Kyle's ring detects a Black Lantern impurity. John realizes that impurity was caused when Mogo absorbed the Black Lanterns to save Oa.\nKyle tries to purify Mogo, but the Black Lantern energy is too strong. Suddenly, several Lanterns attack them. John then hears Krona saying that the rings Mogo sent will create new Lanterns that will conquer the universe.\nEnraged, John taps into the Black Lantern energy and takes Kyle into space. John then constructs a sniper rifle and prepares to fire a bullet into Mogo's core. Realizing that this will kill Mogo, Kyle tries to talk John down. However, John refuses and fires the bullet, killing Mogo.\n## Appearing in \"War of the Green Lanterns, Part Eight\"\n**Featured Characters:**\n\n- Blue Lantern (Kyle Rayner)\n- Indigo Tribesman (John Stewart)\n- Categories:\n- Eddie Berganza/Executive Editor\n- Tyler Kirkham/Cover Artist\n- Matt Banning/Cover Artist\n- Nei Ruffino/Cover Artist\n- Clayton Crain/Cover Artist\n- Tony Bedard/Writer\n- Tyler Kirkham/Penciler\n- Matt Banning/Inker\n- Rod Reis/Colorist\n- Nei Ruffino/Colorist\n- Pat Brosseau/Letterer\n- Brian Cunningham/Editor\n- Darren Shan/Editor\n- Kyle Rayner (New Earth)/Appearances\n- John Stewart (New Earth)/Appearances"
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}

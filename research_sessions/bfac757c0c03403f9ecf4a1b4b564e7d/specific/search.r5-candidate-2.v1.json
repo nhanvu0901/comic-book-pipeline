@@ -1,0 +1,50 @@
+{
+  "api": "research",
+  "payload": {
+    "output": {
+      "content": {
+        "candidates": [
+          {
+            "comic_or_adaptation": "Comic",
+            "issue_year_matches_sources": "Partially matches. The issue is identified as Green Lantern (Volume 4) #49 with a Dec. 2009 publication/date listing on League of Comic Geeks, while DC Fandom lists the cover date as February 2010.",
+            "reprint_check": "Reprinted in Blackest Night: Green Lantern and Green Lantern John Stewart: A Celebration of 50 Years.",
+            "second_source_url": "https://dc.fandom.com/wiki/Green_Lantern_Vol_4_49",
+            "single_issue_or_multi": "Single issue / standalone issue entry; no evidence in the sources that this event spans multiple issues.",
+            "source_url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+            "subject_main_in_issue": "John Stewart",
+            "verbatim_sentence": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+            "verdict": "CONFIRMED",
+            "volume_and_year": "Green Lantern Vol. 4 #49 (2009)"
+          }
+        ],
+        "notes": "The exact event is supported by both sources. The CBR page provides the verbatim sentence describing John Stewart creating Marine constructs during the Black Lantern fight, and DC Fandom confirms the issue and identifies John Stewart as a main-story appearance. The publication year is not perfectly consistent across sources because one lists Dec. 2009 and another gives a Feb. 2010 cover date."
+      },
+      "content_type": "object",
+      "sources": [
+        {
+          "url": "https://dc.fandom.com/wiki/Green_Lantern_Vol_4_49",
+          "title": "Green Lantern Vol 4 49",
+          "snippets": [
+            "#  Green Lantern  (2005) #49 \n\n\"Semper Fi\": The synopsis for this issue has not yet been written.\n\nGreen Lantern (Volume 4) #49 is an issue of the series Green Lantern (Volume 4) with a cover date of February, 2010.   \n\n## Synopsis for \"Semper Fi\"\n\nThis article is a stub. You can help DC Database by expanding it.  \n---  \n\n## Appearing in \"Semper Fi\"\n\nFeatured Characters:\n\n  * Green Lantern (John Stewart) (Flashback and main story)\n\nSupporting Characters:\n\n  *   \n\nAntagonists:\n\n  * Black Lantern Corps \n    * Driq\n    * Katma Tui\n\nOther Characters:\n\n  *   \n\nLocations:\n\n  * Xanshi\n\nItems:\n\n  * Black Lantern Ring\n  * Green Lantern Power Battery\n  * Green Lantern Ring\n\nVehicles:\n\n  *   \n\n## Synopsis for \"Tales of the Black Lantern Corps: The Birth of Nekron\"\n\nThis article is a stub. You can help DC Database by expanding it.  \n---  \n\n## Appearing in \"Tales of the Black Lantern Corps: The Birth of Nekron\"\n\nFeatured Characters:\n\n  * The Atom (Ray Palmer)\n  * Mera\n\nSupporting Characters:\n\n  * Deadman\n\nAntagonists:\n\n  * Black Lantern Corps \n    * Animal Man\n    * Green Arrow\n    * Jean Loring\n    * Nekron\n    * Kid Flash\n    * Superboy\n    * Superman\n    * Wonder Woman\n\nOther Characters:\n\n  *   \n\nLocations:\n\n  *   \n\nItems:\n\n  *   \n\nVehicles:\n\n  *   \n\n## Notes\n\n  * \"Semper Fi\" was reprinted in: \n    * Blackest Night: Green Lantern\n    * Green Lantern John Stewart: A Celebration of 50 Years\n  * \"The Birth of Nekron\" was reprinted in Blackest Night: Tales of the Corps."
+          ]
+        },
+        {
+          "url": "https://leagueofcomicgeeks.com/comic/4413830/green-lantern-john-stewart-a-celebration-of-50-years-hc",
+          "title": "Green Lantern: John Stewart - A Celebration of 50 Years HC Reviews",
+          "snippets": [
+            "This volume includes Green Lantern Vol. 2 #87, #182, and #185, Green Lantern Vol. 3 #74 and #156, Green Lantern Vol. 4 #49, Green Lantern: Mosaic #18, and Justice League of America #110.\n\n#### Semper Fi\n\nGreen Lantern #49 · Dec 2009 · Story · 16 pages\n\n10\n\n### Creators\n\nWriter\n\nGeoff Johns\n\nArtist\n\nEd Benes\n\nPenciller\n\nMarcos Marz\n\nInker\n\nLuciana Del Negro\n\nColorist\n\nHi-Fi\n\nLetterer\n\nRob Leigh\n\nAssociate Editor\n\nAdam Schlagman\n\nEditor\n\nEddie Berganza\n\nExecutive Editor\n\nDan DiDio\n\n### Characters\n\nNew Earth, Post-Crisis\n\nMain\n\nGreen Lantern\n\nJohn Stewart\n\nSupporting\n\nBlack Lantern\n\nDriq\n\nSupporting\n\nBlack Lantern\n\nKatma Tui\n\nCameo\n\nConstruct\n\nGreen Lantern\n\nDriq"
+          ]
+        },
+        {
+          "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+          "title": "Green Lantern: 10 Essential John Stewart Comics",
+          "snippets": [
+            "##  5  John Stewart Sees His Wife Again\n\nDC's Blackest Night event pitted the Green Lantern Corps against Nekron – the force of death who reanimated dead heroes to eliminate all living things from the universe. In Green Lantern Vol 4 #49, John goes up against an army of Black Lanterns, including his late wife, Katma Tui. As emotions confront John, Katma, charged by Nekron, tells John the Black Lantern Corps is greater than him because it could do what he couldn't: save the victims of Xanshi.\n\nJohn then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns. This encounter with Katma made John think about his advice and how being a Green Lantern doesn't build character; it reveals it."
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "error": null
+}
