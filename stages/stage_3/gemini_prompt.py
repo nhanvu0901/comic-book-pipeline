@@ -318,8 +318,9 @@ def _qa_item_anchors(root: Path, items: list[dict], pages: list[dict]) -> list[i
             anchors.append(0)
             continue
         if downloaded[chapter] != url:
+            cites = f"now cites {url}" if url else "has no reader URL"
             problems.append(f"item {name}: chapter {chapter} on disk is {downloaded[chapter]}, "
-                            f"but the item now cites {url} — re-download (Step 2) and "
+                            f"but the item {cites} — re-download (Step 2) and "
                             "preprocess (Step 3)")
             anchors.append(0)
             continue
@@ -434,6 +435,13 @@ def parse_and_save_script(
     root = PROJECTS_ROOT / project_name
     comic_ctx, pages = load_inputs(project_name)
     story_pages = filter_story_pages(pages)
+    # Items created without a reader URL (the evidence gate found none) take the chapter
+    # downloaded for them, e.g. by Stage 2's "Download from URL(s)".
+    from stages.stage_1.answer_research import adopt_downloaded_reader_urls
+    adopted = adopt_downloaded_reader_urls(root)
+    if adopted:
+        log(f"[stage4-gemini] items {adopted} had no reader URL — using the chapters "
+            "downloaded for them")
     answer_ctx = _load_json(root / "answer_context.json")
     items = answer_ctx.get("items") or []
 

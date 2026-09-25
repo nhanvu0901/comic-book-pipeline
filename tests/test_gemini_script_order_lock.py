@@ -321,3 +321,60 @@ def test_prompt_numbers_items_in_download_order_and_forbids_reordering(tmp_path,
     assert "FINAL SCRIPT" in prompt
     stored = json.loads((tmp_path / name / "answer_context.json").read_text())
     assert "item_number" not in stored["items"][0]   # the prompt copy only
+
+
+# ── items with no reader URL take the chapter downloaded for them ────────────
+# Seen 2026-09-24: the evidence gate returned no reader URL (OpenRouter failed), so two
+# items were created with reader_url "" and the user downloaded all three chapters with
+# Stage 2's "Download from URL(s)" — which fills comic_context.json and the manifest,
+# not answer_context.json. The narration step then refused chapters 2 and 3 ("the item
+# now cites ") although they were exactly the comics of items 2 and 3.
+
+def _unresolved_items():
+    items = [dict(it) for it in ITEMS]
+    items[1]["reader_url"] = ""
+    items[2]["reader_url"] = ""
+    return items
+
+
+def test_script_places_on_chapters_downloaded_for_items_with_no_url(tmp_path, monkeypatch):
+    narration = _parse(tmp_path, monkeypatch, f"{HOOK}\n\n{P1}\n\n{P2}\n\n{P3}\n\n{OUTRO}",
+                       items=_unresolved_items())
+
+    assert [lab for _beat, lab in _body_chapters(tmp_path, narration)] == ["#1", "#2", "#3"]
+    answer = json.loads((tmp_path / "proj" / "answer_context.json").read_text())
+    assert [it["reader_url"] for it in answer["items"]] == URLS
+    assert answer["unresolved_reader_urls"] == []
+
+
+def test_adopting_download_urls_fills_only_empty_items_and_both_contexts(tmp_path, monkeypatch):
+    from stages.stage_1 import answer_research
+
+    _project(tmp_path, monkeypatch, items=_unresolved_items())
+    root = tmp_path / "proj"
+
+    assert answer_research.adopt_downloaded_reader_urls(root) == [2, 3]
+
+    answer = json.loads((root / "answer_context.json").read_text())
+    comic = json.loads((root / "comic_context.json").read_text())
+    assert [it["reader_url_status"] for it in answer["items"]] == ["ready"] * 3
+    assert comic["reader_urls"] == URLS and comic["unresolved_reader_urls"] == []
+    assert answer_research.adopt_downloaded_reader_urls(root) == []
+
+
+def test_a_download_that_does_not_match_the_item_count_is_not_adopted(tmp_path, monkeypatch):
+    """With fewer or more chapters than items, position no longer says which is which."""
+    from stages.stage_1 import answer_research
+
+    _project(tmp_path, monkeypatch, items=_unresolved_items(), chapters=(1, 2))
+
+    assert answer_research.adopt_downloaded_reader_urls(tmp_path / "proj") == []
+    answer = json.loads((tmp_path / "proj" / "answer_context.json").read_text())
+    assert [it["reader_url"] for it in answer["items"]][1:] == ["", ""]
+
+
+def test_an_item_citing_a_different_comic_is_still_refused(tmp_path, monkeypatch):
+    other = {1: URLS[0], 2: "https://batcave.biz/reader/9/99", 3: URLS[2]}
+    with pytest.raises(UserFacingError, match="item #2"):
+        _parse(tmp_path, monkeypatch, f"{HOOK}\n\n{P1}\n\n{P2}\n\n{P3}\n\n{OUTRO}",
+               manifest_urls=other)

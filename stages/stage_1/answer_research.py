@@ -28,6 +28,7 @@ from stages.stage_1.storage import save_comic_context, slugify
 from stages.stage_1.comicvine import verify_issue
 from utils.comic_scraper import discover_issues
 from config import get_project_dirs
+from utils.atomic_json import write_json_atomic
 
 # Items below this can't make a countdown listicle (design format spec: 3-6 items).
 _MIN_ITEMS = 3
@@ -747,6 +748,52 @@ def repair_reader_urls(
     answer_path.write_text(json.dumps(answer, indent=2, ensure_ascii=False), encoding="utf-8")
     comic_path.write_text(json.dumps(comic, indent=2, ensure_ascii=False), encoding="utf-8")
     return unresolved
+
+
+def adopt_downloaded_reader_urls(project_root: Path) -> list[int]:
+    """Give each item with no reader URL the URL of the chapter downloaded for it.
+
+    Download order is item order (item N = chapter N), so when the manifest holds exactly
+    one chapter per item, chapter N's reader URL is item N's comic. Stage 2's "Download
+    from URL(s)" writes only comic_context.json and the manifest; without this the items
+    kept an empty URL and the narration step refused chapters that were theirs. An item
+    that already cites a URL is never changed — a different URL is a real conflict, which
+    the narration step reports. Returns the ranks filled."""
+    root = Path(project_root)
+    answer_path, comic_path = root / "answer_context.json", root / "comic_context.json"
+    manifest_path = root / "raw_comic" / "manifest.json"
+    try:
+        answer = json.loads(answer_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    items = answer.get("items") if isinstance(answer, dict) else None
+    if not isinstance(items, list) or not items or not isinstance(manifest, list):
+        return []
+    chapters = {int(ch.get("chapter_index") or 0): str(ch.get("reader_url") or "").strip()
+                for ch in manifest if isinstance(ch, dict)}
+    if sorted(chapters) != list(range(1, len(items) + 1)):
+        return []   # not one chapter per item: position no longer says which is which
+    filled = []
+    for rank, item in enumerate(items, start=1):
+        if isinstance(item, dict) and not str(item.get("reader_url") or "").strip() \
+                and is_batcave_reader_url(chapters[rank]):
+            item["reader_url"] = chapters[rank]
+            filled.append(rank)
+    if not filled:
+        return []
+    unresolved = _unresolved_reader_items(items)
+    answer["unresolved_reader_urls"] = unresolved
+    write_json_atomic(answer_path, answer)
+    try:
+        comic = json.loads(comic_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        comic = None
+    if isinstance(comic, dict):
+        comic["reader_urls"] = [item.get("reader_url", "") for item in items]
+        comic["unresolved_reader_urls"] = unresolved
+        write_json_atomic(comic_path, comic)
+    return filled
 
 
 if __name__ == "__main__":

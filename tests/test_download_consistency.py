@@ -239,3 +239,33 @@ def test_url_mode_explains_a_link_that_is_not_a_series_page_and_an_empty_series(
     with pytest.raises(RuntimeError) as empty_saga:
         um.download_saga("p", "https://batcave.biz/1-some-series.html", progress=lambda m: None)
     assert isinstance(empty_saga.value, UserFacingError)
+
+
+def test_url_direct_download_into_a_qa_project_fills_its_items_missing_urls(tmp_path, monkeypatch):
+    """Download from URL(s) into a Q&A project wrote only comic_context.json and the
+    manifest, so the items created without a reader URL stayed "missing" and the
+    narration step refused the chapters it had just downloaded for them."""
+    import stages.stage_2.download as dl
+    import ui.bridge as bridge
+
+    monkeypatch.setattr(bridge, "PROJECTS_ROOT", tmp_path)
+    root = tmp_path / "p"
+    (root / "raw_comic").mkdir(parents=True)
+    (root / "comic_context.json").write_text("{}")
+    (root / "answer_context.json").write_text(json.dumps({"items": [
+        {"entity": "A", "reader_url": U1}, {"entity": "B", "reader_url": ""}]}))
+    manifest = root / "raw_comic" / "manifest.json"
+
+    def _download(project_name, urls, *, enrich, progress):
+        manifest.write_text(json.dumps([
+            {"chapter_index": n, "label": f"#{n}", "reader_url": u, "pages": []}
+            for n, u in enumerate(urls, start=1)]))
+
+    monkeypatch.setattr(um, "download_from_readers", _download)
+    monkeypatch.setattr(dl, "load_manifest", lambda name: json.loads(manifest.read_text()))
+
+    bridge.run_stage_download_from_url("p", f"{U1}\n{U2}", "", False, lambda m: None)
+
+    answer = json.loads((root / "answer_context.json").read_text())
+    assert [it["reader_url"] for it in answer["items"]] == [U1, U2]
+    assert answer["unresolved_reader_urls"] == []

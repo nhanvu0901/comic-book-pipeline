@@ -552,6 +552,7 @@ def run_stage_download_from_url(
             f"Mixed or unknown URL forms: {tokens!r}. "
             "Use either a single series URL (with --issues), or N reader URLs."
         )
+    _adopt_item_reader_urls(project_name, log)
     return load_manifest(project_name)
 
 
@@ -581,7 +582,19 @@ def run_stage_download_saga(
     else:
         raise ValueError(
             f"Saga mode needs ONE series URL or N reader URLs, got: {tokens!r}")
+    _adopt_item_reader_urls(project_name, log)
     return load_manifest(project_name)
+
+
+def _adopt_item_reader_urls(project_name: str, log: Callable[[str], None]) -> None:
+    """A URL-direct download into a Q&A project fills only comic_context.json and the
+    manifest; hand items that had no reader URL the chapter downloaded for them, so the
+    missing-reader panel and the narration step agree with what is on disk."""
+    from stages.stage_1.answer_research import adopt_downloaded_reader_urls
+
+    filled = adopt_downloaded_reader_urls(PROJECTS_ROOT / project_name)
+    if filled:
+        log(f"[download] Q&A items {filled} now cite the chapters just downloaded")
 
 
 def load_raw_pages(project_name: str) -> list[dict]:
