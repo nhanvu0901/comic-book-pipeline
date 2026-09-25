@@ -378,3 +378,49 @@ def test_an_item_citing_a_different_comic_is_still_refused(tmp_path, monkeypatch
     with pytest.raises(UserFacingError, match="item #2"):
         _parse(tmp_path, monkeypatch, f"{HOOK}\n\n{P1}\n\n{P2}\n\n{P3}\n\n{OUTRO}",
                manifest_urls=other)
+
+
+# ── a self-audit tail after the closing line is not script ───────────────────
+# Seen 2026-09-24 (Gemini): after the closing line came "**Body Word Count:** 201 words",
+# "**Joke Shape Audit:**" with bullets, then "**Fact Trace Table:**". Only the last was
+# recognised as the tail, so the audit became paragraphs 5 and 6 and the script was
+# refused as 6 paragraphs for 3 items.
+
+GEMINI_WITH_AUDIT = f"""FINAL SCRIPT
+
+**Hook 1:** {HOOK}
+**Hook 2:** Deadpool heals from everything except his own paperwork.
+**Hook 3:** Everyone envies the healing factor until they read the side effects.
+
+**[CHOSEN HOOK: Hook 1]** {HOOK}
+
+{P1}
+
+{P2}
+
+{P3}
+
+{OUTRO}
+
+**Body Word Count:** 131 words
+
+**Joke Shape Audit:**
+
+* **Paragraph 1:** The Deadpan Medical Review ("a piece of his memory goes").
+* **Paragraph 2:** The Bureaucratic Write-off ("the disease keeping him alive").
+* **Outro:** The Hyper-Specific Mundane Comparison.
+
+**Fact Trace Table:**
+
+* **Item 1 (Paragraph 1):** "Every time his brain takes a hit" (Item 1, Beat 1).
+"""
+
+
+def test_a_self_audit_after_the_closing_line_is_dropped(tmp_path, monkeypatch):
+    narration = _parse(tmp_path, monkeypatch, GEMINI_WITH_AUDIT)
+
+    assert [lab for _beat, lab in _body_chapters(tmp_path, narration)] == ["#1", "#2", "#3"]
+    texts = " ".join(s["text"] for s in narration["scenes"])
+    assert HOOK in texts and OUTRO in texts
+    for meta in ("Word Count", "Audit", "Deadpan Medical", "Fact Trace"):
+        assert meta not in texts, meta

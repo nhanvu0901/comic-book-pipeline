@@ -94,6 +94,12 @@ _RULE_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*$")
 _TAIL_RE = re.compile(
     r"^[\s#>(\[]*(?:word\s*count|fact[\s-]*trace|audit|sources|citations|references|notes)"
     r"\b[^.!?\n]*$", re.I)
+# A writer's self-check heading can name its section anywhere in a short line ("Body
+# Word Count: 201 words", "Joke Shape Audit:", "Fact Trace Table:"). Only unambiguous
+# audit words here — "sources"/"notes" can open a narration line, so they stay anchored
+# to the start in _TAIL_RE above.
+_AUDIT_WORD_RE = re.compile(
+    r"\b(?:word\s*count|fact[\s-]*trace|audit|self[\s-]*check|check\s*list|checklist)\b", re.I)
 _HOOK_OPTION_RE = re.compile(r"^\s*hook\s*(\d+)?\s*[:.)\-–—]\s*(.+)$", re.I)
 _CHOSEN_RE = re.compile(r"^\s*\[?\s*chosen\s+hook\b(.*)$", re.I)
 _OUTRO_LABEL_RE = re.compile(
@@ -109,6 +115,14 @@ _OPTION_REF_RE = re.compile(r"^(?:hook\s*)?(?:option\s*)?#?(\d+)\W*$", re.I)
 def _strip_emphasis(line: str) -> str:
     """Markdown emphasis never belongs in narration (TTS and captions would carry it)."""
     return line.replace(" ", " ").replace("*", "").replace("__", "").lstrip("> ").rstrip()
+
+
+def _is_audit_heading(clean: str) -> bool:
+    """A short heading with no sentence punctuation that names a self-check section. The
+    writer appends these after the closing line; nothing after one is script."""
+    words = clean.split()
+    return (0 < len(words) <= 8 and not re.search(r"[.!?\"”]\s*$", clean)
+            and bool(_AUDIT_WORD_RE.search(clean)))
 
 
 def _is_label_line(clean: str, raw: str, *, followed_by_text: bool) -> bool:
@@ -172,7 +186,7 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
         if not clean.strip():
             kept.append("")
             continue
-        if seen_content and _TAIL_RE.match(clean):
+        if seen_content and (_TAIL_RE.match(clean) or _is_audit_heading(clean)):
             break
         m = _CHOSEN_RE.match(clean)
         if m:
