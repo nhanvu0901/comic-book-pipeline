@@ -22,6 +22,7 @@ from ..bridge import (asset_src,
 )
 from ..clipboard import BLOCKED_HINT, copy_text
 from ..layout import log_list, primary_button, secondary_button, three_col
+from ..project_log import stage_log_path
 from ..state import AppState, load_state, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS,
@@ -81,7 +82,8 @@ def build(
 ) -> ft.Control:
     grid_ctl = ft.Container(expand=True)
 
-    lv, push_log = log_list(page)
+    lv, push_log = log_list(
+        page, log_path=lambda: stage_log_path(state.project_name, "stage2_download"))
     status_text = ft.Text("", color=TEXT_MUTED, size=12)
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     summary_text = ft.Text("", size=12, color=TEXT_MUTED)

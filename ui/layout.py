@@ -3,11 +3,13 @@ Shared layout primitives: the left stepper nav, the 3-column view shell,
 and status chips.
 """
 import asyncio
+from pathlib import Path
 from typing import Callable
 
 import flet as ft
 
 from .clipboard import BLOCKED_HINT, copy_text
+from .project_log import append_log
 from .state import AppState, PICKER_STAGE, STAGE_NAMES
 from .theme import (
     ACCENT, BG, BG_ELEVATED, BG_PANEL, BORDER, STATUS_DIRTY, STATUS_DONE,
@@ -203,13 +205,18 @@ def secondary_button(label: str, on_click=None, *, icon=None, disabled: bool = F
     )
 
 
-def log_list(page: ft.Page, max_lines: int = 300) -> tuple[ft.Control, Callable[[str], None]]:
+def log_list(
+    page: ft.Page, max_lines: int = 300, *, log_path: Callable[[], Path | None] | None = None,
+) -> tuple[ft.Control, Callable[[str], None]]:
     """
     Return (container, push_line). The container is a Stack with a scrollable
     ListView of log lines plus a small copy-all IconButton pinned to the top
     right corner. One click copies every visible line to the clipboard via
     Flet 0.84's `ft.Clipboard` service (the old `page.set_clipboard` was
     removed before 0.80).
+
+    log_path: returns the file to append every line to as well (see ui.project_log),
+    asked per line because the open project can change while the screen is up.
     """
     lv = ft.ListView(expand=True, spacing=1, padding=8, auto_scroll=True)
     lines_cache: list[str] = []
@@ -238,6 +245,8 @@ def log_list(page: ft.Page, max_lines: int = 300) -> tuple[ft.Control, Callable[
 
     def push(line: str) -> None:
         lines_cache.append(line)
+        if log_path is not None:
+            append_log(log_path(), line)
         stripped = line.strip()
         if not stripped or set(stripped) <= {"═", "─", "-", "="}:
             color, size, weight = TEXT_MUTED, 9, ft.FontWeight.W_300

@@ -30,6 +30,7 @@ from stages.stage_3.gemini_prompt import (
 )
 from stages.user_errors import UserFacingError
 from ..clipboard import BLOCKED_HINT, copy_text
+from ..project_log import append_log, load_last_script, save_last_script, stage_log_path
 from utils.clear_stage import clear_stage_3
 
 
@@ -71,6 +72,12 @@ def build(
     initial_text, initial_note = (
         saved_script_for_editor(state.project_name) if state.project_name else ("", "")
     )
+    if not initial_text and not initial_note and state.project_name:
+        # Nothing approved yet: offer the script last sent to Approve (a refused one
+        # otherwise existed only in the text box and was lost on reload).
+        initial_text = load_last_script(state.project_name)
+        if initial_text:
+            initial_note = "Restored the script you last tried to approve."
 
     # ── Center Column: Script Input & Controls ─────────────────────────────
     script_area = ft.TextField(
@@ -95,7 +102,8 @@ def build(
     counter = ft.Text("", size=11, color=TEXT_MUTED)
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     status_text = ft.Text(initial_note, color=WARN if initial_note else TEXT_MUTED, size=12)
-    lv, push_log = log_list(page)
+    lv, push_log = log_list(
+        page, log_path=lambda: stage_log_path(state.project_name, "stage4_narration"))
 
     n_items = _item_count(state.project_name)
 
@@ -241,6 +249,11 @@ def build(
             _show_snack("No project selected.")
             return
 
+        # Keep what was sent: the full script goes to the project's stage 4 log (not the
+        # on-screen one, it is too long) and is offered again after a reload.
+        save_last_script(state.project_name, raw_text)
+        append_log(stage_log_path(state.project_name, "stage4_narration"),
+                   "── Approve: script as pasted ──\n" + raw_text + "\n── end of script ──")
         running.visible = True
         status_text.value = "Parsing script & anchoring scenes…"
         status_text.color = WARN
