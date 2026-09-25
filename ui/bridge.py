@@ -831,7 +831,10 @@ def run_stage_4(
             voice_id=voice_id or None,
             model=model or None,
             provider=provider or None,
-            post_atempo=1.35,  # explicit: the UI must never fall back to a slower pace
+            # None: the pipeline takes the pace for the narration's format from config
+            # (POST_ATEMPO for Shorts, POST_ATEMPO_LONGFORM for longform), set per machine
+            # in .env. A hard-coded 1.35 here overrode both and ignored the server's .env.
+            post_atempo=None,
             force=True,
         )
     finally:
@@ -986,9 +989,9 @@ def render_scene_panel_path(project_name: str, scene: dict) -> str:
 
 def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     """Re-render the ACCEPTED recipe as SUBPROCESSES (cannot run in-process: the Stage 5
-    PANEL_* knobs are module-level constants read at import, and Stage 4 must use
-    atempo 1.35). Streams each subprocess's stdout+stderr to `log`.
-      A: stage_4 --force --atempo 1.35
+    PANEL_* knobs are module-level constants read at import). Streams each subprocess's
+    stdout+stderr to `log`.
+      A: stage_4 --force (reading pace from config for the narration's format)
       B (only if A exits 0): stage_5 --force with PANEL_RERANK=0 PANEL_COS_FLOOR=0.2
          PANEL_ANCHOR_BONUS=8 (and CLAUDE_SDK_MODEL unset).
     Returns the final.mp4 path on success; raises on a non-zero exit."""
@@ -1012,9 +1015,9 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
         if code != 0:
             raise RuntimeError(f"{cmd[2]} exited with code {code}")
 
-    # Step A — Stage 4 TTS at atempo 1.35 (Carl voice runs slow at the default).
-    _run([py, "-m", "stages.stage_4", "--project", project_name,
-          "--force", "--atempo", "1.35"], dict(os.environ))
+    # Step A — Stage 4 TTS. No --atempo: the pace comes from config by narration format,
+    # the same as the Synthesize button (a forced 1.35 here overrode the server's .env).
+    _run([py, "-m", "stages.stage_4", "--project", project_name, "--force"], dict(os.environ))
 
     # Step B — Stage 5 render with the proven panel knobs; drop CLAUDE_SDK_MODEL.
     env = {**os.environ, "PANEL_RERANK": "0", "PANEL_COS_FLOOR": "0.2",

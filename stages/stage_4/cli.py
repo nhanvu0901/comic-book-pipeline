@@ -31,10 +31,11 @@ def main():
     parser.add_argument("--project", required=True)
     parser.add_argument("--speed", type=float, default=1.0,
                         help="Cartesia speed 0.6-1.5 (capped near 1.2 in practice). Default 1.0.")
-    parser.add_argument("--atempo", type=float, default=POST_ATEMPO,
-                        help="ffmpeg atempo factor (preserves pitch). Default from config.POST_ATEMPO → "
-                             "~3.3 wps, the user-chosen snappy pace (the slow Carl voice "
-                             "needs it). 1.0 disables.")
+    parser.add_argument("--atempo", type=float, default=None,
+                        help="ffmpeg atempo factor (preserves pitch). Default: the pace for the "
+                             "narration's format from config — POST_ATEMPO for Shorts "
+                             f"(now {POST_ATEMPO}), POST_ATEMPO_LONGFORM for longform. "
+                             "1.0 disables.")
     parser.add_argument("--voice", default=None, help="Cartesia voice UUID (overrides default)")
     parser.add_argument("--model", default=None, help="Cartesia model id (overrides default sonic-2)")
     parser.add_argument("--emotion", default=None,
