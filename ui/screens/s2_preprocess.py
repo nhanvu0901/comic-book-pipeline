@@ -41,7 +41,8 @@ def build(
     def render_grid(pages: list[dict]):
         if not pages:
             grid_ctl.content = ft.Container(
-                content=ft.Text("No pages yet — click Run to start.",
+                content=ft.Text("No preprocessed pages yet. Download the comic in Download "
+                                "Comic, then click Run Preprocessing.",
                                 color=TEXT_MUTED, size=13),
                 alignment=ft.Alignment.CENTER, expand=True,
             )
@@ -66,7 +67,9 @@ def build(
                     expand=True,
                     runs_count=4,
                     max_extent=190,
-                    child_aspect_ratio=0.65,
+                    # Tall enough for the 200px thumbnail + label row + panel count at
+                    # the narrowest tile width; 0.65 clipped the "N panels" line.
+                    child_aspect_ratio=0.6,
                     spacing=10,
                     run_spacing=10,
                 ),
@@ -111,11 +114,8 @@ def build(
         )
         page.update()
 
-    # Load cached preprocessed if any
-    if state.project_name:
-        existing = load_preprocessed(state.project_name)
-        if existing:
-            render_grid(existing)
+    # Cached pages if any — otherwise the placeholder, not a blank pane.
+    render_grid(load_preprocessed(state.project_name) if state.project_name else [])
 
     async def _execute():
         if not state.project_name:
@@ -185,7 +185,7 @@ def build(
                      expand=True),
         ft.Container(
             content=ft.Column([
-                ft.Row([running, status_text], spacing=10),
+                ft.Row([running, ft.Container(status_text, expand=True)], spacing=10),
                 ft.Container(content=lv, height=140, border=ft.border.all(1, BORDER),
                              border_radius=6),
             ], spacing=8),

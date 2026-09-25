@@ -19,7 +19,7 @@ from ..bridge import (asset_src,
     page_numbers, panels_for_page, render_scene_panel_path, run_blocking,
     run_stage6_render, save_narration_edits,
 )
-from ..layout import log_list, primary_button, three_col
+from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED,
@@ -57,7 +57,7 @@ def build(
     on_state_change: Callable[[], None],
 ) -> ft.Control:
     if state.project_name and is_answer_project(state.project_name):
-        return _skipped_for_qa(state, on_go)
+        return _skipped_for_qa(page, state, on_go, on_state_change)
 
     narration = load_narration(state.project_name) if state.project_name else None
 
@@ -65,7 +65,7 @@ def build(
         center = ft.Container(
             content=ft.Column([
                 ft.Icon(ft.Icons.EDIT_NOTE, size=64, color=TEXT_MUTED),
-                ft.Text("No narration yet — run Stage 3-5 first.",
+                ft.Text("No narration yet — write and approve one in Narration Script first.",
                         size=13, color=TEXT_MUTED),
             ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             alignment=ft.Alignment.CENTER, expand=True,
@@ -182,7 +182,9 @@ def build(
             label="Page", value=str(start_page),
             options=[ft.dropdown.Option(str(p)) for p in pages],
             border_color=BORDER, focused_border_color=ACCENT, text_size=12,
-            on_change=_on_page_change, width=140,
+            # Dropdown's event is on_select (flet 0.84+); on_change raised TypeError and
+            # took the whole session down the moment the swap-panel dialog opened.
+            on_select=_on_page_change, width=140,
         )
         _rebuild_grid()
 
@@ -341,7 +343,7 @@ def build(
         ft.Container(content=cards, expand=True),
         ft.Container(
             content=ft.Column([
-                ft.Row([running, status_text], spacing=10),
+                ft.Row([running, ft.Container(status_text, expand=True)], spacing=10),
                 ft.Container(content=lv, height=110, border=ft.border.all(1, BORDER),
                              border_radius=6),
             ], spacing=8),
@@ -375,39 +377,96 @@ def build(
     )
 
 
-def _skipped_for_qa(state: AppState, on_go: Callable[[int], None]) -> ft.Control:
+def _skipped_for_qa(
+    page: ft.Page,
+    state: AppState,
+    on_go: Callable[[int], None],
+    on_state_change: Callable[[], None],
+) -> ft.Control:
     """Q&A (answer_research) projects render multiple panels per scene — this
-    single-panel-per-scene storyboard editor doesn't apply, so jump straight
-    to Final Video."""
+    single-panel-per-scene storyboard editor doesn't apply.
+    Here the user can trigger video assembly directly or jump straight to Final Video."""
+    from ..bridge import run_stage_5
+    from config import PROJECTS_ROOT
+
+    final_path = PROJECTS_ROOT / state.project_name / "final.mp4" if state.project_name else None
+    existing_video = bool(final_path and final_path.exists())
+
+    running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
+    status_text = ft.Text(
+        "final.mp4 is already rendered — click Continue to view." if existing_video
+        else "Click 'Render Video Now' to assemble final video.",
+        color=SUCCESS if existing_video else TEXT_MUTED, size=12,
+    )
+    lv, push_log = log_list(page)
+
     def _continue(_e=None):
         state.mark_approved(7)
         state.current_stage = 8
         save_state(state)
         on_go(8)
 
+    async def _execute_render(_e=None):
+        running.visible = True
+        status_text.value = "Rendering video with ffmpeg & Ken Burns…"
+        status_text.color = WARN
+        page.update()
+        try:
+            result_path = await run_blocking(run_stage_5, state.project_name, push_log)
+            running.visible = False
+            status_text.value = f"Rendered {Path(result_path).name} successfully! Redirecting to player…"
+            status_text.color = SUCCESS
+            state.mark_approved(7)
+            state.mark_approved(8)
+            state.current_stage = 8
+            save_state(state)
+            page.update()
+            on_go(8)
+        except (Exception, SystemExit) as exc:
+            running.visible = False
+            status_text.value = "Blocked by review gate — see log." if isinstance(exc, SystemExit) else "Video render failed — see log."
+            status_text.color = DANGER
+            push_log(str(exc) if isinstance(exc, SystemExit) else format_exception(exc))
+            page.update()
+
+    render_btn = primary_button(
+        "Render Video Now", lambda _e: page.run_task(_execute_render),
+        icon=ft.Icons.MOVIE_CREATION_OUTLINED,
+    )
+
     center = ft.Container(
         content=ft.Column([
-            ft.Icon(ft.Icons.FACT_CHECK_OUTLINED, size=64, color=TEXT_MUTED),
-            ft.Text("Skipped for Q&A — panel choices are made in Review Beats.",
-                    size=13, color=TEXT_MUTED),
-        ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Icon(ft.Icons.FACT_CHECK_OUTLINED, size=64, color=ACCENT if existing_video else TEXT_MUTED),
+            ft.Text("Q&A Mode: Multi-panel beats locked in Stage 5.",
+                    size=15, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+            ft.Text("Single-panel storyboard review is skipped for Q&A projects.",
+                    size=12, color=TEXT_MUTED),
+            ft.Container(height=10),
+            ft.Row([running, status_text], spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+            ft.Container(height=6),
+            ft.Container(content=lv, height=140, border=ft.border.all(1, BORDER),
+                         border_radius=6, width=600),
+        ], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         alignment=ft.Alignment.CENTER, expand=True,
     )
+
     right = ft.Column([
         ft.Text("STEP 7 OF 8", size=10, color=TEXT_MUTED),
-        ft.Text("Review & Edit", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+        ft.Text("Review & Edit (Q&A)", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
-            "Q&A projects render multiple panels per scene (sub-shots), so this "
-            "single-panel storyboard editor doesn't apply. Panel choices were "
-            "already made in Review Beats.",
+            "Q&A projects render multiple panels per scene (sub-shots), which were "
+            "already locked in Review Beats (Stage 5). You can start video rendering right here!",
             size=12, color=TEXT_MUTED,
         ),
-        ft.Container(height=14),
-        primary_button("Continue → Final Video", _continue, icon=ft.Icons.ARROW_FORWARD),
+        ft.Container(height=16),
+        render_btn,
+        ft.Container(height=8),
+        secondary_button("Continue → Final Video (Stage 8)", _continue, icon=ft.Icons.ARROW_FORWARD),
     ], spacing=8, expand=True)
+
     return three_col(center, right, state=state, on_go=on_go,
-                      header_title="Review & Edit",
-                      header_subtitle="Skipped for Q&A — panel choices are made in Review Beats.")
+                      header_title="Review & Edit — Video Render",
+                      header_subtitle="Q&A panel choices locked in Stage 5. Ready to assemble final video.")
 
 
 def _chip(label: str, color: str) -> ft.Control:

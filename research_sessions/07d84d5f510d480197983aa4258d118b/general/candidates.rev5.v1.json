@@ -1,0 +1,84 @@
+{
+  "revision": 5,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart creates a group of Marines as combat constructs",
+      "claim_citation": {
+        "quote": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      ],
+      "series_issue_year": "Green Lantern Vol. 4 #49 (2009)",
+      "summary": "Full construct feat: John manifests a squad of Marine constructs to fight with him. This is a tactical/assisted battlefield use of the ring rather than a permanent creation.",
+      "title": "Blackest Night Marine squad",
+      "what_visibly_happens": "John summons a whole Marine unit that joins the fight against the Black Lanterns.",
+      "id": "r3-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart fires a sniper-rifle construct into Mogo’s core",
+      "claim_citation": {
+        "quote": "John constructs a sniper rifle and fires a bullet into Mogo's core, killing the living planet and stopping the creation of corrupted rings.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Full construct feat: John builds a precise sniper rifle construct and uses it to deliver the finishing shot that kills Mogo. This is one of his most lethal and technically detailed constructs.",
+      "title": "The Mogo sniper shot",
+      "what_visibly_happens": "John manifests a sniper rifle, takes aim, and shoots a bullet straight into Mogo’s core.",
+      "id": "r3-candidate-3"
+    },
+    {
+      "character_or_thing": "John Stewart's construct bubble holding Martian Manhunter back",
+      "claim_citation": {
+        "quote": "John arrogantly accuses J'onn of holding him back, and he restrains the Martian in a bubble before leaving to stop the Aspect alone.",
+        "url": "https://www.comics.org/issue/45325/"
+      },
+      "evidence_urls": [
+        "https://www.comics.org/issue/45325/",
+        "https://dc.fandom.com/wiki/Cosmic_Odyssey_Vol_1_2"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1989)",
+      "summary": "A partial but clearly shown construct feat: John uses a Green Lantern bubble to immobilize Martian Manhunter during the Xanshi mission. This is an extreme tactical use of a construct, but it is not the biggest thing he attempted in the story.",
+      "title": "Cosmic Odyssey #2",
+      "what_visibly_happens": "John cages J'onn in a green bubble and leaves him behind so he can handle the threat alone.",
+      "id": "r5-candidate-1"
+    },
+    {
+      "character_or_thing": "John Stewart's attempt to recreate Xanshi's solar system as a construct",
+      "claim_citation": {
+        "quote": "Fueled by his regret, he was able to temporarily manifest the entire system as a construct in the hopes of bringing it back again.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://www.cbr.com/green-lantern-john-stewart-destroyed-planet/",
+        "https://www.comics.org/issue/45325/"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1989)",
+      "summary": "This is the most insane classic John Stewart construct attempt in the retrieved sources: he tries to restore an entire destroyed solar system, even if only temporarily and unsuccessfully. It is the biggest-scale construct discussed in the material and the clearest candidate for 'most insane.'",
+      "title": "Cosmic Odyssey #2",
+      "what_visibly_happens": "John tries to will a destroyed world-system back into existence, but the attempt fails and the catastrophe still stands.",
+      "id": "r5-candidate-4"
+    },
+    {
+      "character_or_thing": "John Stewart's fully functional Kryptonian tele-disruptor construct",
+      "claim_citation": {
+        "quote": "Zod claims it would take weeks to construct such a device since it was lost to the ages, but Stewart proved him otherwise by building it in mere minutes using his ring.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      ],
+      "series_issue_year": "Unspecified in retrieved source; cited by CBR as a John Stewart comics feat",
+      "summary": "A high-skill but not the biggest-scale construct: John rapidly builds an ancient alien device from blueprints. This is an assisted/temporary feat rather than a world-shaping one.",
+      "title": "John Stewart's tele-disruptor construct",
+      "what_visibly_happens": "John studies the blueprints and then manifests a working device in minutes.",
+      "id": "r5-candidate-5"
+    }
+  ]
+}

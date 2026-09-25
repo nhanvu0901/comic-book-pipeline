@@ -1,0 +1,28 @@
+{
+  "gates": [
+    {
+      "verdict": "inconclusive",
+      "reason": "OpenRouter request failed",
+      "evidence_urls": [],
+      "reader_url": null,
+      "flags": [],
+      "candidate_id": "candidate-1"
+    },
+    {
+      "verdict": "inconclusive",
+      "reason": "OpenRouter request failed",
+      "evidence_urls": [],
+      "reader_url": null,
+      "flags": [],
+      "candidate_id": "candidate-4"
+    },
+    {
+      "verdict": "inconclusive",
+      "reason": "OpenRouter request failed",
+      "evidence_urls": [],
+      "reader_url": null,
+      "flags": [],
+      "candidate_id": "candidate-6"
+    }
+  ]
+}

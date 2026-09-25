@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 from pathlib import Path
 
 from config import PROJECTS_ROOT
+from utils.fs_remove import remove_file, remove_tree
 
 
 def _project_dir(project_name: str) -> Path:
@@ -14,16 +14,18 @@ def _project_dir(project_name: str) -> Path:
     return project_dir
 
 
+# Both raise FileInUseError (readable, names the file) when something is still open,
+# rather than reporting a path as removed while part of it stays on disk.
 def _remove_tree(path: Path) -> Path | None:
     if path.exists():
-        shutil.rmtree(path, ignore_errors=True)
+        remove_tree(path)
         return path
     return None
 
 
 def _remove_file(path: Path) -> Path | None:
     if path.exists():
-        path.unlink(missing_ok=True)
+        remove_file(path)
         return path
     return None
 

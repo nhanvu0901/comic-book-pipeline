@@ -1,4 +1,7 @@
+import pytest
+
 from art_pipeline.sources import met
+from stages.user_errors import UserFacingError
 
 FIXTURE = {
     "objectID": 436535,
@@ -37,3 +40,10 @@ def test_parse_candidate_extracts_fields():
     assert c["artist"] == "Vincent van Gogh"
     assert c["object_url"].endswith("/436535")
     assert c["credit_line"].startswith("Purchase")
+
+
+def test_fetch_image_no_primary_image_is_user_facing(tmp_path):
+    meta = dict(FIXTURE, primaryImage="")
+    with pytest.raises(ValueError) as caught:
+        met.fetch_image(meta, tmp_path / "out.jpg")
+    assert isinstance(caught.value, UserFacingError)

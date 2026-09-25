@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from art_pipeline.config import ART_PROJECTS_ROOT
+from utils.atomic_json import write_json_atomic
 
 ART_ROOT: Path = ART_PROJECTS_ROOT
 
@@ -135,9 +136,7 @@ def save_narration_edits(project: str, narration: dict) -> None:
     """Persist scene-text edits; word_count is recomputed so Stage 4 pacing stays honest."""
     for s in narration.get("scenes") or []:
         s["word_count"] = len(str(s.get("text", "")).split())
-    p = _root(project) / "narration.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(narration, indent=2, ensure_ascii=False))
+    write_json_atomic(_root(project) / "narration.json", narration)
 
 
 def load_candidates() -> list[dict]:

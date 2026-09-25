@@ -1,7 +1,6 @@
 # art_ui/screens/a6_video.py
 """A6: final 9:16 render (comic Stage 5 with no-mirror/no-inpaint overrides) +
 the compliance youtube_description.txt for copy-paste."""
-import subprocess
 from pathlib import Path
 from typing import Callable
 
@@ -13,6 +12,7 @@ from ui.bridge import format_exception, run_blocking
 
 from .. import bridge
 from ..layout import art_shell, log_list, primary_button, secondary_button
+from ..open_path import open_path
 from ..state import ArtAppState, save_state
 
 
@@ -42,34 +42,43 @@ def build(page: ft.Page, state: ArtAppState, *,
         ], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
     async def _execute():
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
+        assemble_btn.disabled = True
         status.value = "Rendering with ffmpeg (no mirror, no inpaint)…"
         status.color = WARN
         page.update()
         try:
             result_path = await run_blocking(bridge.run_video, state.project_name, push_log)
+            p = Path(result_path)
+            size_mb = p.stat().st_size / (1024 * 1024)
+            status.value = f"Rendered {p.name} ({size_mb:.1f} MB)."
+            status.color = SUCCESS
+            _mount_video(p)
+            desc_text.value = bridge.load_youtube_description(state.project_name)
+            state.mark_approved(6)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
+            assemble_btn.disabled = False
             page.update()
-            return
-        running.visible = False
-        p = Path(result_path)
-        size_mb = p.stat().st_size / (1024 * 1024)
-        status.value = f"Rendered {p.name} ({size_mb:.1f} MB)."
-        status.color = SUCCESS
-        _mount_video(p)
-        desc_text.value = bridge.load_youtube_description(state.project_name)
-        state.mark_approved(6)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     def open_folder(_e):
-        if state.project_name:
-            subprocess.run(["open", str(bridge.ART_ROOT / state.project_name)], check=False)
+        if not state.project_name:
+            return
+        msg = open_path(bridge.ART_ROOT / state.project_name)
+        status.value = msg
+        status.color = SUCCESS if msg.startswith("Opening") else DANGER
+        page.update()
 
     def start_over(_e):
         state.reset()
@@ -90,12 +99,14 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    assemble_btn = primary_button("Assemble Video", lambda _e: page.run_task(_execute),
+                                  icon=ft.Icons.MOVIE_FILTER)
+
     right = ft.Column([
         ft.Text("STEP 6 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Container(height=8),
-        primary_button("Assemble Video", lambda _e: page.run_task(_execute),
-                       icon=ft.Icons.MOVIE_FILTER),
+        assemble_btn,
         ft.Container(height=8),
         secondary_button("Open Project Folder", open_folder, icon=ft.Icons.FOLDER_OPEN),
         ft.Container(height=16),

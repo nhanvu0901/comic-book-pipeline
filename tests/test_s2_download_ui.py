@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import flet as ft
 
@@ -120,6 +121,33 @@ def test_sidebar_stage_one_uses_the_same_return_flow_as_the_explicit_button(monk
     assert stages == [1]
     assert state.scout_session_id == "restored-session"
     assert state.current_stage == 1
+
+
+def test_with_no_project_loaded_stage_one_is_just_a_step_back(monkeypatch):
+    """After "+ New project", or while a research session has not made a project yet, the
+    sidebar still reaches Stage 2 — and its Stage 1 row answered "No project loaded —
+    cannot restore its Stage 1 research." and stayed put, so the sidebar had no way back.
+    With no project there is nothing to restore; both routes simply go back."""
+    page = FakePage()
+    state = AppState(project_name="", current_stage=2)
+    stages = []
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+
+    def _must_not_restore(_project):
+        raise AssertionError("there is no project to return to research")
+
+    monkeypatch.setattr(s2_download, "return_scout_project_to_research", _must_not_restore,
+                        raising=False)
+    root = s2_download.build(page, state, on_go=stages.append, on_state_change=lambda: None)
+
+    _sidebar_stage_one(root).on_click(None)
+    _run_task(page)
+    _return_button(root).on_click(None)
+    _run_task(page)
+
+    assert stages == [1, 1]
 
 
 def test_return_error_keeps_the_current_project_and_does_not_navigate(monkeypatch):
@@ -251,7 +279,10 @@ def test_missing_reader_panel_names_rank_entity_and_source_and_blocks_download(m
 
     field = _by_key(root, "missing-reader-2")
     download = _by_key(root, "stage1-download")
-    assert field.label == "#2 — Deadpool — Deadpool #3 (2008)"
+    # The item is named in full on the line above the field; the field's own label stays
+    # short (a label carrying the whole title overflowed the field and overprinted itself).
+    assert _by_key(root, "missing-reader-title-2").value == "#2 — Deadpool — Deadpool #3 (2008)"
+    assert field.label == "Reader URL for #2"
     assert download.disabled is True
     assert _by_key(root, "repair-reader-urls")
     assert not page.tasks
@@ -438,3 +469,88 @@ def test_url_direct_auto_derives_project_name_when_blank(monkeypatch):
     assert len(downloaded) == 1
     assert downloaded[0][0] == "comic_31569_223504"
     assert downloaded[0][2] is False  # enrich is False
+
+
+# ─── URL-direct download: the typed project name ────────────────────────────
+
+def _url_direct_screen(monkeypatch, tmp_path, state):
+    monkeypatch.setattr(ui_state, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    downloads = []
+
+    def _download(project, raw, issues, enrich, log):
+        downloads.append(project)
+        return []
+
+    monkeypatch.setattr(s2_download, "run_stage_download_from_url", _download)
+    page = FakePage()
+    root = s2_download.build(page, state, on_go=lambda _s: None, on_state_change=lambda: None)
+    fields = {c.label: c for c in _walk(root) if isinstance(c, ft.TextField)}
+    fields["Comic URL(s)"].value = "https://batcave.biz/reader/123/456"
+    return page, root, fields, downloads
+
+
+def test_a_typed_project_name_becomes_a_safe_folder_name(monkeypatch, tmp_path):
+    """Windows refuses ':' in a folder name, and the save ran before the handler's try —
+    so "Ms. Marvel: No Normal" made the button do nothing at all."""
+    state = AppState(project_name="", current_stage=2)
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+    fields["Project name (created if new)"].value = "Ms. Marvel: No Normal"
+
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+
+    assert downloads == ["ms_marvel_no_normal"]
+    assert state.project_name == "ms_marvel_no_normal"
+    assert fields["Project name (created if new)"].value == "ms_marvel_no_normal"
+    assert (tmp_path / "ms_marvel_no_normal" / "state.json").exists()
+
+
+def test_downloading_into_another_project_does_not_carry_this_ones_state(monkeypatch, tmp_path):
+    state = AppState(project_name="first-comic", current_stage=2,
+                     approved={"1": True, "4": True}, scout_session_id="first-session",
+                     pipeline_mode="explore_answer")
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+    fields["Project name (created if new)"].value = "second_comic"
+
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+
+    saved = json.loads((tmp_path / "second_comic" / "state.json").read_text())
+    assert saved["approved"] == {"2": True}
+    assert saved["scout_session_id"] == ""
+    assert saved["pipeline_mode"] == AppState().pipeline_mode
+
+
+def test_a_failed_save_is_reported_and_the_button_works_again(monkeypatch, tmp_path):
+    state = AppState(project_name="", current_stage=2)
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+    fields["Project name (created if new)"].value = "some_comic"
+
+    def _disk_full(_state):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(s2_download, "save_state", _disk_full)
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+    status = [c.value for c in _walk(root) if isinstance(c, ft.Text) and c.color]
+    assert any("Failed" in str(v) for v in status), status
+
+    monkeypatch.setattr(s2_download, "save_state", lambda _state: None)
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+    assert downloads == ["some_comic"]
+
+
+def test_a_name_that_is_already_a_folder_name_is_kept_whole(monkeypatch, tmp_path):
+    """Stage 1's slugify also cuts at 60 characters; applied to an existing longer slug it
+    would silently download into a new, truncated project."""
+    long_name = "a_series_slug_taken_from_its_batcave_url_that_runs_past_sixty_chars"
+    state = AppState(project_name=long_name, current_stage=2)
+    page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
+
+    _by_key(root, "download-from-url").on_click(None)
+    _run_task(page)
+
+    assert downloads == [long_name]

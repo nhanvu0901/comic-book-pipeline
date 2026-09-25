@@ -20,12 +20,15 @@ from ..bridge import (asset_src,
     return_scout_project_to_research, run_stage_download, run_stage_download_from_url,
     run_stage_download_saga,
 )
+from ..clipboard import BLOCKED_HINT, copy_text
 from ..layout import log_list, primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..project_log import stage_log_path
+from ..state import AppState, load_state, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS,
     TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from stages.stage_1.storage import project_folder_name
 from utils.clear_stage import clear_stage_2
 
 
@@ -79,7 +82,8 @@ def build(
 ) -> ft.Control:
     grid_ctl = ft.Container(expand=True)
 
-    lv, push_log = log_list(page)
+    lv, push_log = log_list(
+        page, log_path=lambda: stage_log_path(state.project_name, "stage2_download"))
     status_text = ft.Text("", color=TEXT_MUTED, size=12)
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     summary_text = ft.Text("", size=12, color=TEXT_MUTED)
@@ -137,11 +141,9 @@ def build(
             spacing=4, expand=True,
         )
 
-    # Load existing manifest if any
-    if state.project_name:
-        existing = load_raw_pages(state.project_name)
-        if existing:
-            render_grid(existing)
+    # Load existing manifest if any — and show the empty-state hint when there is none,
+    # instead of a blank centre column.
+    render_grid(load_raw_pages(state.project_name) if state.project_name else [])
 
     download_button = primary_button(
         "Download (from Stage 1)", lambda _e: None, icon=ft.Icons.DOWNLOAD,
@@ -166,11 +168,12 @@ def build(
         except Exception:
             pass
 
-    async def _async_copy(text: str):
-        try:
-            await clipboard.set(text)
-        except Exception:
-            pass
+    async def _async_copy(text: str, label_name: str = ""):
+        # Report the copy's REAL outcome — it runs after the click handler returns, so
+        # announcing success in the handler lied whenever the browser refused.
+        what = f"{label_name}: {text}" if label_name else text
+        _show_snack(f"Copied {what}" if await copy_text(clipboard, text)
+                    else f"Could not copy {label_name or 'text'} — {BLOCKED_HINT}.")
 
     def _show_snack(msg: str):
         try:
@@ -186,10 +189,9 @@ def build(
     def _copy_to_clipboard(text: str, label_name: str = ""):
         _ensure_clipboard()
         try:
-            page.run_task(_async_copy, text)
+            page.run_task(_async_copy, text, label_name)
         except Exception:
-            pass
-        _show_snack(f"Copied {label_name}: {text}" if label_name else f"Copied: {text}")
+            _show_snack(f"Could not copy {label_name or 'text'} — {BLOCKED_HINT}.")
 
     def _refresh_missing_panel(*, update: bool = False) -> None:
         rows = missing_readers[0]
@@ -220,9 +222,11 @@ def build(
                 source_comic = str(row.get("source_comic") or "Unknown comic")
                 field = reader_fields.get(rank)
                 if field is None:
+                    # The row above already names the item; a label carrying the whole
+                    # title overflowed the field and printed over itself.
                     field = ft.TextField(
                         key=f"missing-reader-{rank}",
-                        label=f"#{rank} — {entity} — {source_comic}",
+                        label=f"Reader URL for #{rank}",
                         value=str(row.get("reader_url") or ""),
                         hint_text="https://batcave.biz/reader/123/456",
                         border_color=BORDER,
@@ -234,8 +238,9 @@ def build(
 
                 title_to_copy = source_comic if source_comic and source_comic != "Unknown comic" else entity
                 copy_row = ft.Row([
-                    ft.Text(f"#{rank} {title_to_copy}", size=11, weight=ft.FontWeight.BOLD,
-                            color=TEXT_PRIMARY, selectable=True, expand=True),
+                    ft.Text(f"#{rank} — {entity} — {source_comic}", size=11,
+                            weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True,
+                            expand=True, key=f"missing-reader-title-{rank}"),
                     ft.IconButton(
                         icon=ft.Icons.CONTENT_COPY,
                         icon_size=14,
@@ -246,11 +251,19 @@ def build(
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
                 controls.append(ft.Column([copy_row, field], spacing=2))
             controls.append(repair_button)
-        missing_panel.controls = controls
         needs_stage_one_reapproval = (
             state.returned_scout_project == state.project_name
             and not state.is_approved(1)
         )
+        if needs_stage_one_reapproval:
+            # Say WHY the buttons below are disabled — greyed out with no reason reads
+            # as a broken screen.
+            controls.insert(0, ft.Text(
+                "This project was returned to research. Re-approve its selection in "
+                "Stage 1 before downloading or repairing URLs.",
+                key="needs-stage1-reapproval", size=11, color=WARN, selectable=True,
+            ))
+        missing_panel.controls = controls
         blocked = (bool(rows) or bool(reader_error[0]) or repair_busy[0]
                    or download_busy[0] or needs_stage_one_reapproval)
         download_button.disabled = blocked
@@ -392,9 +405,10 @@ def build(
         if return_busy[0] or download_busy[0] or repair_busy[0] or direct_download_busy[0]:
             return
         if not state.project_name:
-            status_text.value = "No project loaded — cannot restore its Stage 1 research."
-            status_text.color = DANGER
-            page.update()
+            # No project was made from this research yet (a new project, or a session
+            # resumed from the picker), so there is nothing to restore — just go back.
+            # Refusing here left the sidebar's Stage 1 row a dead end.
+            on_go(1)
             return
         # The first return already detached this project's session.  Stage 1
         # may now be showing either its candidate checklist or production
@@ -463,16 +477,18 @@ def build(
         hint_text="e.g. #1-3, #1,#3,#5  (leave blank for ALL)",
         border_color=BORDER, focused_border_color=ACCENT, text_size=12,
     )
+    # Short labels: a Switch label does not wrap, and the long ones were cut off at the
+    # rail's edge. The paragraph above the form explains what each one does.
     enrich_switch = ft.Switch(
-        label="Enrich context from wiki (slower, better narration)",
+        label="Enrich context from wiki",
         value=False, active_color=ACCENT,
     )
     saga_switch = ft.Switch(
-        label="Crossover saga — weave issues into ONE story (per-issue context)",
+        label="Crossover saga",
         value=False, active_color=ACCENT,
     )
     max_issues_field = ft.TextField(
-        label="Max issues (saga + series URL)",
+        label="Max saga issues",
         value="5", width=200,
         border_color=BORDER, focused_border_color=ACCENT, text_size=12,
     )
@@ -487,7 +503,8 @@ def build(
         if return_busy[0] or direct_download_busy[0]:
             return
         raw = (url_field.value or "").strip()
-        proj = (url_project_field.value or "").strip()
+        # The typed name becomes a folder (see project_folder_name).
+        proj = project_folder_name(url_project_field.value or "")
         if not raw:
             status_text.value = "Paste at least one URL first."
             status_text.color = DANGER
@@ -511,8 +528,11 @@ def build(
                 status_text.color = DANGER
                 page.update()
                 return
-        state.project_name = proj
-        save_state(state)
+        url_project_field.value = proj
+        if proj != state.project_name:
+            # Another project: its own saved state, or a blank one — never this one's
+            # approvals and research session written under the new name.
+            state.__dict__.update(load_state(proj).__dict__)
         direct_download_busy[0] = True
 
         running.visible = True
@@ -523,6 +543,7 @@ def build(
         page.update()
 
         try:
+            save_state(state)
             if saga_switch.value:
                 try:
                     max_iss = max(1, int((max_issues_field.value or "5").strip()))
@@ -604,7 +625,7 @@ def build(
         ),
         ft.Container(
             content=ft.Column([
-                ft.Row([running, status_text], spacing=10),
+                ft.Row([running, ft.Container(status_text, expand=True)], spacing=10),
                 ft.Container(
                     content=lv, height=140,
                     border=ft.border.all(1, BORDER), border_radius=6,
@@ -660,7 +681,7 @@ def build(
         )
 
     return_button = secondary_button(
-        "← Return to Stage 1 research", return_to_stage_one_click,
+        "Return to Stage 1 research", return_to_stage_one_click,
         icon=ft.Icons.ARROW_BACK,
     )
     return_button.key = "return-to-stage1"

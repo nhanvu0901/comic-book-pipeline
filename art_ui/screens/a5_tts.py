@@ -1,7 +1,6 @@
 # art_ui/screens/a5_tts.py
 """A5: Cartesia TTS via the art wrapper (comic Stage 4 reused; logs captured
 via print-redirect in art_ui.bridge)."""
-import subprocess
 from typing import Callable
 
 import flet as ft
@@ -11,6 +10,7 @@ from ui.bridge import format_exception, run_blocking
 
 from .. import bridge
 from ..layout import art_shell, log_list, primary_button, secondary_button
+from ..open_path import open_path
 from ..state import ArtAppState, save_state
 
 
@@ -25,32 +25,38 @@ def build(page: ft.Page, state: ArtAppState, *,
         status.value = "audio.wav exists — Synthesize re-generates it."
 
     async def _execute():
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
+        synth_btn.disabled = True
         status.value = "Synthesizing via Cartesia…"
         status.color = WARN
         page.update()
         try:
             result = await run_blocking(bridge.run_tts, state.project_name, push_log)
+            status.value = (f"Done: {result.get('audio_duration_seconds', 0)}s, "
+                            f"{len(result.get('word_timestamps') or [])} words.")
+            status.color = SUCCESS
+            state.mark_approved(5)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
+            synth_btn.disabled = False
             page.update()
-            return
-        running.visible = False
-        status.value = (f"Done: {result.get('audio_duration_seconds', 0)}s, "
-                        f"{len(result.get('word_timestamps') or [])} words.")
-        status.color = SUCCESS
-        state.mark_approved(5)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     def play(_e):
-        p = bridge.ART_ROOT / state.project_name / "audio.wav"
-        if p.exists():
-            subprocess.run(["open", str(p)], check=False)
+        msg = open_path(bridge.ART_ROOT / state.project_name / "audio.wav")
+        status.value = msg
+        status.color = SUCCESS if msg.startswith("Opening") else DANGER
+        page.update()
 
     center = ft.Column([
         ft.Container(
@@ -63,13 +69,15 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    synth_btn = primary_button("Synthesize", lambda _e: page.run_task(_execute), icon=ft.Icons.MIC)
+
     right = ft.Column([
         ft.Text("STEP 5 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("TTS Audio", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Cartesia voiceover + word timestamps (drives caption timing and cuts).",
                 size=12, color=TEXT_MUTED),
         ft.Container(height=12),
-        primary_button("Synthesize", lambda _e: page.run_task(_execute), icon=ft.Icons.MIC),
+        synth_btn,
         ft.Container(height=8),
         secondary_button("Play audio.wav", play, icon=ft.Icons.PLAY_CIRCLE),
         ft.Container(height=8),

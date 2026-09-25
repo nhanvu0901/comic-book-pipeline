@@ -1,0 +1,68 @@
+{
+  "revision": 8,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart creates a group of Marines as combat constructs",
+      "claim_citation": {
+        "quote": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      ],
+      "series_issue_year": "Green Lantern Vol. 4 #49 (2009)",
+      "summary": "Full construct feat: John manifests a squad of Marine constructs to fight with him. This is a tactical/assisted battlefield use of the ring rather than a permanent creation.",
+      "title": "Blackest Night Marine squad",
+      "what_visibly_happens": "John summons a whole Marine unit that joins the fight against the Black Lanterns.",
+      "id": "r3-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart fires a sniper-rifle construct into Mogo’s core",
+      "claim_citation": {
+        "quote": "John constructs a sniper rifle and fires a bullet into Mogo's core, killing the living planet and stopping the creation of corrupted rings.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Full construct feat: John builds a precise sniper rifle construct and uses it to deliver the finishing shot that kills Mogo. This is one of his most lethal and technically detailed constructs.",
+      "title": "The Mogo sniper shot",
+      "what_visibly_happens": "John manifests a sniper rifle, takes aim, and shoots a bullet straight into Mogo’s core.",
+      "id": "r3-candidate-3"
+    },
+    {
+      "character_or_thing": "Mosaic World’s city-linking infrastructure",
+      "claim_citation": {
+        "quote": "He has created a road linking each of the Mosaic's cities, and protects the planet's citizens from themselves and each other.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_Mosaic_Vol_1_1"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_Mosaic_Vol_1_1",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern: Mosaic #1 (1992)",
+      "summary": "A large-scale civic construct in the Mosaic era. This is more of a world-building/urban infrastructure feat than a weapon: John is described as having built a road connecting the transplanted cities of Mosaic and as acting as their protector.",
+      "title": "Green Lantern: Mosaic #1",
+      "what_visibly_happens": "John is shown as the administrator of Mosaic, with a road connecting the cities on Oa; he oversees the patchwork community rather than fighting with a small combat construct.",
+      "id": "r8-candidate-1"
+    },
+    {
+      "character_or_thing": "Ellie Stewart living construct",
+      "claim_citation": {
+        "quote": "John created a construct of Ellie to keep her company.",
+        "url": "https://dc.fandom.com/wiki/Eleanor_Stewart_(Prime_Earth)"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Eleanor_Stewart_(Prime_Earth)",
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_1"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #1 (2023)",
+      "summary": "A highly unusual personal construct: John recreates his dead sister Ellie as a living companion for their mother. This is the most emotionally bizarre and narratively ambitious construct in the set, because it functions like a person rather than a weapon.",
+      "title": "Green Lantern: War Journal #1",
+      "what_visibly_happens": "John brings Ellie back as a construct so she can keep his mother company.",
+      "id": "r8-candidate-3"
+    }
+  ]
+}

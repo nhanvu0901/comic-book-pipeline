@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import PROJECTS_ROOT
+from utils.ffmpeg_filter import filter_path
 from ..review_gate import ensure_reviewed
 from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
@@ -878,7 +879,7 @@ def _build_outro_card(out_path: Path, *, duration: float, logo: str | None,
             filters.append(f"[1:v]scale=360:-1[lg]")
             filters.append(f"[{base}][lg]overlay=(W-w)/2:(H-h)/2-200[bg]")
             base = "bg"
-        fontfile = str(font).replace("\\", "/")
+        fontfile = filter_path(font)   # D:/... needs its drive colon escaped too
         filters.append(
             f"[{base}]drawtext=fontfile='{fontfile}':text='{name}':"
             f"fontcolor=white:fontsize=96:x=(w-text_w)/2:y=h/2+120[t1]")

@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import config
+from utils.fs_remove import FileInUseError, open_file_under, retry_on_lock
 
 from .models import ResearchSession, ScoutMode, SessionState
 from .storage import SessionStore
@@ -186,12 +187,28 @@ def _stage_caches(project_root: Path) -> list[tuple[str, Path]]:
             if source.is_symlink() or not source.is_dir() or source.resolve().parent != project_root:
                 raise ValueError(f"Stage 2 cache {name!r} must be a real project subdirectory")
             destination = project_root / f".{name}.returning-{uuid4().hex}"
-            os.replace(source, destination)
+            _move_aside(project_root.name, source, destination)
             staged.append((name, destination))
     except Exception:
         _restore_staged(staged)
         raise
     return staged
+
+
+def _move_aside(project_name: str, source: Path, destination: Path) -> None:
+    """os.replace a cache folder, retrying brief Windows locks. Windows refuses to move a
+    folder while any file inside is open (a page thumbnail the browser is still loading,
+    antivirus scanning fresh downloads); name that file instead of a raw WinError."""
+    try:
+        retry_on_lock(lambda: os.replace(source, destination))
+    except PermissionError as exc:
+        open_file = open_file_under(source)
+        what = (f"'{open_file.name}' is still open in another program"
+                if open_file else (exc.strerror or str(exc)))
+        raise FileInUseError(
+            f"Could not return {project_name} to research: {what}. Close whatever is using "
+            "it and try again. Nothing was changed."
+        ) from exc
 
 
 def _restore_staged(staged: list[tuple[str, Path]]) -> None:

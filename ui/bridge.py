@@ -7,14 +7,15 @@ import json
 import os
 import queue
 import re
-import shutil
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from config import PROJECTS_ROOT, RESEARCH_SESSIONS_ROOT
+from stages.user_errors import NothingToDeleteError
 from utils.atomic_json import write_json_atomic   # re-exported: ui.state / ui.custom_image import it from here
+from utils.fs_remove import remove_tree
 
 
 def _quarantine_corrupt(path: Path, what: str) -> None:
@@ -93,17 +94,24 @@ def delete_project(name: str) -> None:
     outside PROJECTS_ROOT — a bad `name` (`..` traversal, an absolute path, or an
     embedded path separator) must never let rmtree touch something else on disk.
     state.json lives INSIDE the project dir (ui/state.py::state_path), so deleting
-    the directory is the whole job; nothing else needs cleaning up."""
+    the directory is the whole job; nothing else needs cleaning up.
+
+    A project that is already gone raises NothingToDeleteError. That check runs before
+    resolve(): on Windows resolving a path that does not exist can come back in another
+    form, and the containment test then misreported a stale picker row as an attempt to
+    delete outside PROJECTS_ROOT."""
     if not isinstance(name, str) or not name:
         raise ValueError(f"invalid project name: {name!r}")
     candidate = Path(name)
     if candidate.is_absolute() or len(candidate.parts) != 1:
         raise ValueError(f"invalid project name: {name!r}")
-    root = PROJECTS_ROOT.resolve()
-    target = (PROJECTS_ROOT / name).resolve()
-    if target.parent != root or not target.is_dir():
+    target = PROJECTS_ROOT / name
+    if not target.exists():
+        raise NothingToDeleteError(f"Project {name!r} no longer exists — it was already deleted.")
+    resolved = target.resolve()
+    if resolved.parent != PROJECTS_ROOT.resolve() or not resolved.is_dir():
         raise ValueError(f"refusing to delete outside PROJECTS_ROOT: {name!r}")
-    shutil.rmtree(target)
+    remove_tree(resolved)
 
 
 # ─── Stage 1: Research Scout bridge ────────────────────────────────────────
@@ -544,6 +552,7 @@ def run_stage_download_from_url(
             f"Mixed or unknown URL forms: {tokens!r}. "
             "Use either a single series URL (with --issues), or N reader URLs."
         )
+    _adopt_item_reader_urls(project_name, log)
     return load_manifest(project_name)
 
 
@@ -573,7 +582,19 @@ def run_stage_download_saga(
     else:
         raise ValueError(
             f"Saga mode needs ONE series URL or N reader URLs, got: {tokens!r}")
+    _adopt_item_reader_urls(project_name, log)
     return load_manifest(project_name)
+
+
+def _adopt_item_reader_urls(project_name: str, log: Callable[[str], None]) -> None:
+    """A URL-direct download into a Q&A project fills only comic_context.json and the
+    manifest; hand items that had no reader URL the chapter downloaded for them, so the
+    missing-reader panel and the narration step agree with what is on disk."""
+    from stages.stage_1.answer_research import adopt_downloaded_reader_urls
+
+    filled = adopt_downloaded_reader_urls(PROJECTS_ROOT / project_name)
+    if filled:
+        log(f"[download] Q&A items {filled} now cite the chapters just downloaded")
 
 
 def load_raw_pages(project_name: str) -> list[dict]:
@@ -795,6 +816,8 @@ def run_stage_4(
     voice_id: str | None,
     model: str | None,
     log: Callable[[str], None],
+    *,
+    provider: str | None = None,
 ) -> dict:
     from stages.stage_4.pipeline import synthesize_project
 
@@ -807,7 +830,11 @@ def run_stage_4(
             project_name,
             voice_id=voice_id or None,
             model=model or None,
-            post_atempo=1.35,  # explicit: the UI must never fall back to a slower pace
+            provider=provider or None,
+            # None: the pipeline takes the pace for the narration's format from config
+            # (POST_ATEMPO for Shorts, POST_ATEMPO_LONGFORM for longform), set per machine
+            # in .env. A hard-coded 1.35 here overrode both and ignored the server's .env.
+            post_atempo=None,
             force=True,
         )
     finally:
@@ -962,9 +989,9 @@ def render_scene_panel_path(project_name: str, scene: dict) -> str:
 
 def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     """Re-render the ACCEPTED recipe as SUBPROCESSES (cannot run in-process: the Stage 5
-    PANEL_* knobs are module-level constants read at import, and Stage 4 must use
-    atempo 1.35). Streams each subprocess's stdout+stderr to `log`.
-      A: stage_4 --force --atempo 1.35
+    PANEL_* knobs are module-level constants read at import). Streams each subprocess's
+    stdout+stderr to `log`.
+      A: stage_4 --force (reading pace from config for the narration's format)
       B (only if A exits 0): stage_5 --force with PANEL_RERANK=0 PANEL_COS_FLOOR=0.2
          PANEL_ANCHOR_BONUS=8 (and CLAUDE_SDK_MODEL unset).
     Returns the final.mp4 path on success; raises on a non-zero exit."""
@@ -988,9 +1015,9 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
         if code != 0:
             raise RuntimeError(f"{cmd[2]} exited with code {code}")
 
-    # Step A — Stage 4 TTS at atempo 1.35 (Carl voice runs slow at the default).
-    _run([py, "-m", "stages.stage_4", "--project", project_name,
-          "--force", "--atempo", "1.35"], dict(os.environ))
+    # Step A — Stage 4 TTS. No --atempo: the pace comes from config by narration format,
+    # the same as the Synthesize button (a forced 1.35 here overrode the server's .env).
+    _run([py, "-m", "stages.stage_4", "--project", project_name, "--force"], dict(os.environ))
 
     # Step B — Stage 5 render with the proven panel knobs; drop CLAUDE_SDK_MODEL.
     env = {**os.environ, "PANEL_RERANK": "0", "PANEL_COS_FLOOR": "0.2",
@@ -1007,12 +1034,13 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
 # ─── Error formatting ──────────────────────────────────────────────────────
 
 def format_exception(e: BaseException) -> str:
-    # ScoutUserError has already been written as complete user-facing copy.
-    # Ordinary ValueError remains diagnostic: it can be a real bug raised by a
-    # downstream stage and must retain its traceback for investigation.
+    # ScoutUserError and UserFacingError have already been written as complete
+    # user-facing copy. Ordinary ValueError remains diagnostic: it can be a real bug
+    # raised by a downstream stage and must retain its traceback for investigation.
     from stages.research_scout.errors import ScoutUserError
+    from stages.user_errors import UserFacingError
 
-    if isinstance(e, ScoutUserError):
+    if isinstance(e, (ScoutUserError, UserFacingError)):
         return str(e)
     tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
     return tb[-2000:]

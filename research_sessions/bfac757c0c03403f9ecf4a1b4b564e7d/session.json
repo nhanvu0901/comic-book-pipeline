@@ -1,0 +1,32 @@
+{
+  "id": "bfac757c0c03403f9ecf4a1b4b564e7d",
+  "mode": "qa",
+  "user_intent": "What is the most insane construct John Stewart ever tried to make with a Green Lantern ring?",
+  "state": "production_gates",
+  "revision": 5,
+  "selected_specific_candidate_ids": [
+    "candidate-3",
+    "r2-candidate-5",
+    "r5-candidate-2"
+  ],
+  "created_project": "what_is_the_most_insane_construct_john_stewart_ever_tried_to",
+  "feedback_log": [
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Dead-sister construct Ellie (Green Lantern: War Journal #5 (2024))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Dead-sister construct Ellie (Green Lantern: War Journal #5 (2024)); Green Lantern Corps (Green Lantern Corps Vol. 2 #60 (2011))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Dead-sister construct Ellie (Green Lantern: War Journal #5 (2024)); Green Lantern Corps (Green Lantern Corps Vol. 2 #60 (2011))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Dead-sister construct Ellie (Green Lantern: War Journal #5 (2024)); Green Lantern Corps (Green Lantern Corps Vol. 2 #60 (2011))."
+    }
+  ],
+  "kept_candidate_ids": []
+}

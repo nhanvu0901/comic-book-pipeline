@@ -82,7 +82,7 @@ def build(
     def _on_mode_change(_e):
         state.pipeline_mode = mode_dropdown.value or "narrate_1_comic"
 
-    mode_dropdown.on_change = _on_mode_change
+    mode_dropdown.on_select = _on_mode_change   # Dropdown has no on_change event
 
     prompt_field = ft.TextField(
         value=state.last_prompt,
@@ -608,7 +608,7 @@ def build(
             expand=True,
         ),
         ft.Container(
-            content=ft.Row([running, status_text], spacing=10),
+            content=ft.Row([running, ft.Container(status_text, expand=True)], spacing=10),
             padding=ft.padding.symmetric(horizontal=28, vertical=12),
         ),
     ], spacing=0, expand=True)

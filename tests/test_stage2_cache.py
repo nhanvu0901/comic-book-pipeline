@@ -36,8 +36,12 @@ def test_exact_match_is_fast_path_no_rekey(tmp_path):
 
 def test_ambiguous_duplicate_hash_is_not_guessed(tmp_path):
     # Two distinct pages (e.g. blank pages) hash identically.
-    _write(tmp_path, 10, "dead00", source_image="/img/ch01_page_10.jpg")
-    _write(tmp_path, 40, "dead00", source_image="/img/ch02_page_05.jpg")
+    # source_image is stored RESOLVED (pipeline writes str(path.resolve())), so build the
+    # fixture the same way — a bare "/img/..." resolves to "C:\\img\\..." on Windows.
+    page_10 = str((tmp_path / "img" / "ch01_page_10.jpg").resolve())
+    page_05 = str((tmp_path / "img" / "ch02_page_05.jpg").resolve())
+    _write(tmp_path, 10, "dead00", source_image=page_10)
+    _write(tmp_path, 40, "dead00", source_image=page_05)
 
     # No image_path to disambiguate → treated as a miss, nothing is touched.
     assert load_cached(tmp_path, 41, "dead00") is None
@@ -45,7 +49,7 @@ def test_ambiguous_duplicate_hash_is_not_guessed(tmp_path):
     assert cache_path(tmp_path, 40, "dead00").exists()
 
     # With the matching source_image, the correct one is picked and re-keyed.
-    result = load_cached(tmp_path, 41, "dead00", "/img/ch02_page_05.jpg")
+    result = load_cached(tmp_path, 41, "dead00", page_05)
     assert result is not None
     assert result["page_number"] == 41
     assert cache_path(tmp_path, 10, "dead00").exists()          # other page untouched

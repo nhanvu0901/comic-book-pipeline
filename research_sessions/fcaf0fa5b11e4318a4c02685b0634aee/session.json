@@ -1,0 +1,15 @@
+{
+  "id": "fcaf0fa5b11e4318a4c02685b0634aee",
+  "mode": "qa",
+  "user_intent": "Who has actually defeated Galactus in the comics since 2010, and how did they do it?",
+  "state": "candidate_review",
+  "revision": 1,
+  "selected_specific_candidate_ids": [
+    "candidate-1",
+    "candidate-4",
+    "candidate-6"
+  ],
+  "created_project": null,
+  "feedback_log": [],
+  "kept_candidate_ids": []
+}

@@ -2,6 +2,7 @@
 import json
 import pytest
 from art_pipeline import narrate
+from stages.user_errors import MissingInputError, UserFacingError
 
 # ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -215,3 +216,16 @@ def test_cap_facts_short_input():
     short_text = "Van Gogh painted this field. " * 100  # ~2800 chars
     result = narrate.cap_facts(short_text)
     assert result == short_text
+
+
+# ── write_narration guard ──────────────────────────────────────────────────
+
+def test_write_narration_without_regions_is_user_facing(tmp_path, monkeypatch):
+    """No preprocessed/page_*.json yet (Detect Regions never ran) must name the
+    sidebar step, not a code stage number, and reach the app as copy."""
+    monkeypatch.setattr(narrate, "get_art_project_path", lambda n: tmp_path)
+    (tmp_path / "art_context.json").write_text(json.dumps({"mode": "painting_deep_dive"}))
+    with pytest.raises(FileNotFoundError) as caught:
+        narrate.write_narration("p")
+    assert isinstance(caught.value, (MissingInputError, UserFacingError))
+    assert "Detect Regions" in str(caught.value)

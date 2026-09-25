@@ -9,6 +9,7 @@ from typing import Callable
 
 from config import (COLD_VIEWER_RETRY, PROJECTS_ROOT, TRANSPARENCY_RETRY,
                     get_project_dirs)
+from stages.user_errors import MissingInputError
 from .propose_modes import propose_modes as _propose_modes
 from .write_script import (write_script as _write_script, _load_direction,
                            _transparency_critic, _transparency_has_heavy,
@@ -30,7 +31,10 @@ def load_inputs(project_name: str) -> tuple[dict, list[dict]]:
 
     prep_dir = root / "preprocessed"
     if not prep_dir.exists():
-        raise FileNotFoundError(f"preprocessed/ missing: {prep_dir}. Run Stage 2 first.")
+        raise MissingInputError(
+            f"No preprocessed pages yet for {project_name}. Download the comic, then run "
+            "Preprocess Pages (python -m stages.stage_2 from a terminal)."
+        )
 
     pages: list[dict] = []
     for p in sorted(prep_dir.glob("page_*.json")):

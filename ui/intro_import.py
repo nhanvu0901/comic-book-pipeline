@@ -5,8 +5,9 @@ Master can open a Q&A Short with an image picked from disk (avif/jpg/png) instea
 of whatever comic panel the free matcher liked. This automates the by-hand inject
 already done for the Mjolnir / Batcave intros, as one call:
 
-  1. sips-convert the source to raw_comic/_intro_<slug>_p<N>.jpg (macOS built-in;
-     avif/heic/png → jpeg handled here).
+  1. convert the source to raw_comic/_intro_<slug>_p<N>.jpg with Pillow (jpg/png/
+     webp/avif → jpeg, on any OS); macOS `sips` is only a fallback for formats
+     Pillow can't open (e.g. HEIC).
   2. write preprocessed/page_<N>_<hash>.json — one full-image "story" panel,
      desc_verified, characters=[subject], content_hash = sha256[:16] of the jpg.
   3. prepend {"page":N,"panel":0,"score":101,"force_intro":true} to
@@ -21,8 +22,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 
 _INTRO_SCORE = 101  # above every real subject-panel score → sorts first in the intro
@@ -57,6 +61,48 @@ def _image_size(path: Path) -> tuple[int, int]:
         return 0, 0
 
 
+def _convert_to_jpeg(src_image: Path, out_jpg: Path) -> None:
+    """Convert `src_image` to a flat RGB JPEG at `out_jpg`, via Pillow — the image lib
+    already used everywhere else in the pipeline, so this works the same on the
+    Windows server as on a Mac. Transparent pixels (RGBA/LA/P) are composited onto
+    white rather than left the black a bare .convert("RGB") would produce, and EXIF
+    orientation is baked in so phone photos aren't sideways (nothing downstream
+    applies EXIF itself). Falls back to macOS `sips` only for formats Pillow can't
+    identify (e.g. HEIC); with no sips (Windows), that's a RuntimeError telling
+    Master to re-save the file first."""
+    try:
+        with Image.open(src_image) as im:
+            im = ImageOps.exif_transpose(im)
+            if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+                im = im.convert("RGBA")
+                flat = Image.new("RGB", im.size, (255, 255, 255))
+                flat.paste(im, mask=im.split()[-1])
+                im = flat
+            else:
+                im = im.convert("RGB")
+            im.save(out_jpg, "JPEG", quality=92)
+        return
+    except UnidentifiedImageError:
+        pass  # not a format Pillow knows — try the macOS fallback below
+
+    if shutil.which("sips") is None:
+        raise RuntimeError(
+            f"can't read {src_image.name} — save it as JPG or PNG first.")
+    try:
+        subprocess.run(
+            ["sips", "-s", "format", "jpeg", str(src_image), "--out", str(out_jpg)],
+            check=True, capture_output=True, text=True,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"can't read {src_image.name} — save it as JPG or PNG first.") from e
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"sips failed to convert {src_image.name}: {(e.stderr or '').strip()}") from e
+    if not out_jpg.exists():
+        raise RuntimeError(f"sips produced no output for {src_image.name}")
+
+
 def import_intro_image(
     project_root: Path,
     src_image: Path,
@@ -67,7 +113,7 @@ def import_intro_image(
     """Inject `src_image` as a full-image intro panel for the Q&A project at
     `project_root`. Returns the subject_panels.json entry that was written, plus the
     resolved jpg / page-json paths and the effective subject. Raises on any failure
-    (missing source, sips unavailable/failed) — the caller shows the message."""
+    (missing source, image unreadable) — the caller shows the message."""
     project_root = Path(project_root)
     src_image = Path(src_image)
     if not src_image.exists():
@@ -82,19 +128,9 @@ def import_intro_image(
     page_n = _next_page_number(prep)
     jpg = raw / f"_intro_{_slug(subject)}_p{page_n}.jpg"
 
-    # 1. convert → jpg (macOS sips; handles avif/heic/png → jpeg)
-    try:
-        subprocess.run(
-            ["sips", "-s", "format", "jpeg", str(src_image), "--out", str(jpg)],
-            check=True, capture_output=True, text=True,
-        )
-    except FileNotFoundError as e:
-        raise RuntimeError("`sips` not found — intro import needs macOS.") from e
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"sips failed to convert {src_image.name}: {(e.stderr or '').strip()}") from e
-    if not jpg.exists():
-        raise RuntimeError(f"sips produced no output for {src_image.name}")
+    # 1. convert → jpg (Pillow on every OS; sips is a macOS-only fallback — see
+    #    _convert_to_jpeg)
+    _convert_to_jpeg(src_image, jpg)
 
     content_hash = hashlib.sha256(jpg.read_bytes()).hexdigest()[:16]
     w, h = _image_size(jpg)

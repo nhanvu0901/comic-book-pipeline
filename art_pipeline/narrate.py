@@ -12,6 +12,7 @@ import json
 from config import CREATIVE_LLM_MODELS
 from stages.stage_3._llm import call_with_chain
 from stages.stage_3.schema import Narration, Scene
+from stages.user_errors import MissingInputError
 
 from ._json import extract_json as _extract_json
 from .visual_plan import assign_motions, parse_visual, save_plan, validate_variety
@@ -227,7 +228,10 @@ def write_narration(project_name: str, mode_key: str | None = None, *, log=print
     for p in sorted(prep.glob("page_*.json")):
         pages.append(json.loads(p.read_text()))
     if not pages:
-        raise FileNotFoundError(f"no preprocessed pages in {prep}. Run regions first.")
+        raise MissingInputError(
+            f"No regions detected yet for {project_name}. Run Detect Regions "
+            "first (python -m art_pipeline regions from a terminal)."
+        )
 
     system = _SYSTEM.format(scene_max=ART_SCENE_MAX_WORDS,
                             wmin=ART_TARGET_WORDS_MIN, wmax=ART_TARGET_WORDS_MAX)

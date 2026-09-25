@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Callable
 
 from config import get_project_dirs
+from stages._arc import qa_item_chapters
+from stages.user_errors import DownloadIncompleteError, SourceUrlError
 from utils.comic_scraper import scrape_issue_pages
 from .issue_resolver import resolve_chapters
 
@@ -83,7 +85,8 @@ def download_from_series(
     log = progress or print
     series_url = series_url.strip()
     if classify_url(series_url) != "series":
-        raise ValueError(f"Expected a batcave.biz series URL, got: {series_url}")
+        raise SourceUrlError(
+            f"Expected a batcave.biz series page (.../<number>-<name>.html), got: {series_url}")
 
     _news_id, slug = parse_series_slug(series_url)
     title_hint = slug_to_title(slug)
@@ -102,7 +105,9 @@ def download_from_series(
 
     chapters = resolve_chapters(series_url, issues)
     if not chapters:
-        raise RuntimeError(f"No chapters resolved for issues={issues!r} at {series_url}")
+        raise DownloadIncompleteError(
+            f"Found no issues matching {issues or 'all'!r} at {series_url}. Check the "
+            "series link and the issue numbers.")
     log(f"[url-mode] resolved {len(chapters)} chapter(s)")
 
     if enrich:
@@ -264,17 +269,15 @@ def download_readers_only(
     # Dedup exact-duplicate URLs (two answer items citing the SAME issue) so batcave
     # isn't scraped twice — but keep each unique URL's FIRST-OCCURRENCE rank as its
     # chapter label/index. A positional relabel after dropping a duplicate would shift
-    # every later chapter's "#N" and break the beat→item→panel-pool mapping downstream
-    # (review_gate._beat_source / explore_answer.build_answer_beats key on "#N" = item N).
+    # every later chapter's "#N" and break the beat→item→panel-pool mapping downstream.
+    # qa_item_chapters is the one shared rule; the narration step reads chapters back
+    # through it, so the two can never disagree.
     uniq: list[str] = []
     ranks: list[int] = []
-    seen: set[str] = set()
-    for rank, u in enumerate(urls, start=1):
-        if u in seen:
-            continue
-        seen.add(u)
-        uniq.append(u)
-        ranks.append(rank)
+    for rank, (u, chapter) in enumerate(zip(urls, qa_item_chapters(urls)), start=1):
+        if chapter == rank:
+            uniq.append(u)
+            ranks.append(rank)
     if len(uniq) < len(urls):
         log(f"[url-mode] {len(urls) - len(uniq)} duplicate reader URL(s) share a chapter — "
             f"labels keep first-occurrence ranks {ranks} (items citing the same issue share its panels)")
@@ -301,7 +304,8 @@ def download_saga(
     log = progress or print
     series_url = series_url.strip()
     if classify_url(series_url) != "series":
-        raise ValueError(f"Expected a batcave.biz series URL, got: {series_url}")
+        raise SourceUrlError(
+            f"Expected a batcave.biz series page (.../<number>-<name>.html), got: {series_url}")
 
     _news_id, slug = parse_series_slug(series_url)
     title_hint = slug_to_title(slug)
@@ -309,7 +313,8 @@ def download_saga(
 
     all_chapters = resolve_chapters(series_url, "")
     if not all_chapters:
-        raise RuntimeError(f"No chapters resolved at {series_url}")
+        raise DownloadIncompleteError(
+            f"Found no issues at {series_url}. Check that it is the series page.")
     chapters = all_chapters[: max(1, int(max_issues))]
     # normalize chapter_index to 1..N so page prefixes / issue mapping line up
     for i, ch in enumerate(chapters, start=1):
@@ -377,6 +382,21 @@ def download_saga_from_readers(
 
 
 # ─── Internals ──────────────────────────────────────────────────────────────
+
+
+def _previous_chapter_urls(manifest_path: Path) -> dict[int, str]:
+    """{chapter_index: reader_url} from the last manifest written here, or {}."""
+    try:
+        entries = json.loads(manifest_path.read_text())
+    except (OSError, ValueError):
+        return {}
+    out: dict[int, str] = {}
+    for entry in entries if isinstance(entries, list) else []:
+        try:
+            out[int(entry.get("chapter_index") or 0)] = str(entry.get("reader_url") or "").strip()
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return out
 
 
 def _ensure_project_root(project_name: str) -> Path:
@@ -628,8 +648,17 @@ def _run_downloads(
     chapters: list[dict],
     log: Callable[[str], None],
 ) -> dict:
-    """Shared download loop + manifest writer."""
+    """Shared download loop + manifest writer.
+
+    Every chapter must arrive: a chapter that raises or comes back with no pages is
+    collected and, once the others have been tried and the manifest written (so the
+    pages that did arrive stay cached for the retry), reported as DownloadIncompleteError.
+    It used to be logged and skipped while the run still reported success, and whatever
+    was meant to show that comic silently borrowed another chapter's pages."""
+    raw_dir = project_root / "raw_comic"
+    previous_urls = _previous_chapter_urls(raw_dir / "manifest.json")
     manifest: list[dict] = []
+    failures: list[str] = []
     total_pages = 0
     for pos, chapter in enumerate(chapters, start=1):
         # Honor the chapter's OWN chapter_index (falling back to list position).
@@ -640,6 +669,16 @@ def _run_downloads(
         # Saga/reader callers pass dense 1..N indices, so nothing changes for them.
         chapter_idx = int(chapter.get("chapter_index") or pos)
         log(f"[url-mode] ▶ {chapter['label']} ({chapter['reader_url']})")
+        # Cached pages are keyed only by the chNN_ prefix. When this chapter number
+        # held a DIFFERENT comic last time, those files are that comic's pages and the
+        # scraper would happily reuse them — drop them first.
+        previous = previous_urls.get(chapter_idx)
+        if previous and previous != chapter["reader_url"]:
+            stale = list(raw_dir.glob(f"ch{chapter_idx:02d}_page_*.jpg"))
+            for f in stale:
+                f.unlink(missing_ok=True)
+            log(f"[url-mode]   chapter {chapter_idx} held a different comic before "
+                f"({previous}) — dropped {len(stale)} cached page(s)")
         t0 = time.time()
         try:
             page_paths = scrape_issue_pages(
@@ -649,6 +688,11 @@ def _run_downloads(
             )
         except Exception as exc:
             log(f"[url-mode]   ✗ failed: {exc}")
+            failures.append(f"{chapter['label']} ({chapter['reader_url']}): {exc}")
+            continue
+        if not page_paths:
+            log("[url-mode]   ✗ no pages came back")
+            failures.append(f"{chapter['label']} ({chapter['reader_url']}): no pages came back")
             continue
         page_strs = [str(p) for p in page_paths]
         manifest.append({
@@ -660,10 +704,16 @@ def _run_downloads(
         total_pages += len(page_strs)
         log(f"[url-mode]   ✓ {len(page_strs)} pages in {time.time() - t0:.1f}s")
 
-    manifest_path = project_root / "raw_comic" / "manifest.json"
+    manifest_path = raw_dir / "manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
     log(f"[url-mode] done — {total_pages} pages across {len(manifest)} chapter(s)")
+    if failures:
+        raise DownloadIncompleteError(
+            f"Download incomplete — {len(failures)} of {len(chapters)} chapter(s) did not "
+            "arrive:\n  - " + "\n  - ".join(failures)
+            + "\nPages that did arrive are cached; run the download again to fetch the rest."
+        )
 
     return {
         "context_path": str(project_root / "comic_context.json"),

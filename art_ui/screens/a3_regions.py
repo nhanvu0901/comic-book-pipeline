@@ -69,29 +69,38 @@ def build(page: ft.Page, state: ArtAppState, *,
         status.value = "Regions already detected — Re-run (force) to redo."
 
     async def _execute(force: bool):
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
+        detect_btn.disabled = True
+        rerun_btn.disabled = True
         status.value = "Proposing regions (VLM chain)…"
         status.color = WARN
         page.update()
         try:
             pages = await run_blocking(bridge.run_regions, state.project_name, force, push_log)
+            # Tail is part of the try: a failure here must still clear the spinner
+            # and report, not leave the button spinning forever.
+            n = sum(len(p.get("panels") or []) for p in pages)
+            model = (pages or [{}])[0].get("vlm_model_used", "")
+            status.value = f"{n} region(s) via {model or 'grid-fallback'}."
+            status.color = SUCCESS if model and model != "grid-fallback" else WARN
+            _mount_previews()
+            state.mark_approved(3)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
+            detect_btn.disabled = False
+            rerun_btn.disabled = False
             page.update()
-            return
-        running.visible = False
-        n = sum(len(p.get("panels") or []) for p in pages)
-        model = (pages or [{}])[0].get("vlm_model_used", "")
-        status.value = f"{n} region(s) via {model or 'grid-fallback'}."
-        status.color = SUCCESS if model and model != "grid-fallback" else WARN
-        _mount_previews()
-        state.mark_approved(3)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     center = ft.Column([
         ft.Container(content=previews,
@@ -106,17 +115,20 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    detect_btn = primary_button("Detect Regions", lambda _e: page.run_task(_execute, False),
+                                icon=ft.Icons.CROP_FREE)
+    rerun_btn = secondary_button("Re-run (force)", lambda _e: page.run_task(_execute, True),
+                                 icon=ft.Icons.REFRESH)
+
     right = ft.Column([
         ft.Text("STEP 3 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Detect Regions", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("The narrator zooms into these. grid-fallback = VLM proposals were weak.",
                 size=12, color=TEXT_MUTED),
         ft.Container(height=12),
-        primary_button("Detect Regions", lambda _e: page.run_task(_execute, False),
-                       icon=ft.Icons.CROP_FREE),
+        detect_btn,
         ft.Container(height=8),
-        secondary_button("Re-run (force)", lambda _e: page.run_task(_execute, True),
-                         icon=ft.Icons.REFRESH),
+        rerun_btn,
         ft.Container(height=8),
         secondary_button("Next: Narration →", lambda _e: on_go(4),
                          icon=ft.Icons.ARROW_FORWARD),

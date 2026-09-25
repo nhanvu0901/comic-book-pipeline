@@ -1,0 +1,100 @@
+{
+  "revision": 4,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart creates a group of Marines as combat constructs",
+      "claim_citation": {
+        "quote": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      ],
+      "series_issue_year": "Green Lantern Vol. 4 #49 (2009)",
+      "summary": "Full construct feat: John manifests a squad of Marine constructs to fight with him. This is a tactical/assisted battlefield use of the ring rather than a permanent creation.",
+      "title": "Blackest Night Marine squad",
+      "what_visibly_happens": "John summons a whole Marine unit that joins the fight against the Black Lanterns.",
+      "id": "r3-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart fires a sniper-rifle construct into Mogo’s core",
+      "claim_citation": {
+        "quote": "John constructs a sniper rifle and fires a bullet into Mogo's core, killing the living planet and stopping the creation of corrupted rings.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Full construct feat: John builds a precise sniper rifle construct and uses it to deliver the finishing shot that kills Mogo. This is one of his most lethal and technically detailed constructs.",
+      "title": "The Mogo sniper shot",
+      "what_visibly_happens": "John manifests a sniper rifle, takes aim, and shoots a bullet straight into Mogo’s core.",
+      "id": "r3-candidate-3"
+    },
+    {
+      "character_or_thing": "John Stewart’s Xanshi-destruction bubble construct / failed rescue attempt",
+      "claim_citation": {
+        "quote": "In Cosmic Odyssey #2, John Stewart and Martian Manhunter find that the planet, Xanshi, has been infected by the Anti-Life Aspect.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+        "https://dc.fandom.com/wiki/Xanshi"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1988)",
+      "summary": "A partial construct-assisted feat: John traps Martian Manhunter in a construct bubble and pushes ahead alone, which leads into the disaster that wipes out Xanshi. This is one of John’s most infamous failures, not a successful save.",
+      "title": "Cosmic Odyssey",
+      "what_visibly_happens": "John creates a bubble construct around Martian Manhunter, then heads toward the yellow bomb; Xanshi is destroyed and the whole system is lost.",
+      "id": "r4-candidate-1"
+    },
+    {
+      "character_or_thing": "John Stewart’s Marine construct squad",
+      "claim_citation": {
+        "quote": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+        "url": "https://www.cbr.com/green-lantern-comics-every-john-stewart-fan-should-read/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-comics-every-john-stewart-fan-should-read/",
+        "https://dc.fandom.com/wiki/Green_Lantern_Vol_4_49"
+      ],
+      "series_issue_year": "Green Lantern Vol. 4 #49 (2009)",
+      "summary": "John manifests a whole squad of Marine constructs and uses them in battle against the Black Lanterns. Partial/assisted case: the construct is combat-support, not a reality rewrite.",
+      "title": "Blackest Night",
+      "what_visibly_happens": "John summons a full group of green Marine soldiers, and they fight beside him against the Black Lanterns.",
+      "id": "r4-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart’s sniper-rifle construct",
+      "claim_citation": {
+        "quote": "After Kyle's ring cannot purify Mogo, John constructs a sniper rifle and fires a bullet into Mogo's core, killing the living planet and stopping the creation of corrupted rings.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+        "https://dc.fandom.com/wiki/Green_Lantern_Corps_Vol_2_60"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "A precision assisted construct: John builds a sniper rifle and uses it to kill the corrupted living planet Mogo. This is one of his most lethal and technically specific constructs.",
+      "title": "War of the Green Lanterns / Mogo kill",
+      "what_visibly_happens": "John materializes a sniper rifle, takes aim at Mogo’s core, and fires the shot that ends the threat.",
+      "id": "r4-candidate-3"
+    },
+    {
+      "character_or_thing": "The Mosaic World patchwork-planet construct",
+      "claim_citation": {
+        "quote": "The series saw the beginning of John Stewart's brief tenure as a member of the Guardians of the Universe, which is a race of immortal beings who are responsible for the creation of the Green Lantern Corps.",
+        "url": "https://www.cbr.com/green-lantern-trivia-john-stewart/"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern_Vol_3_17",
+        "https://www.cbr.com/green-lantern-trivia-john-stewart/"
+      ],
+      "series_issue_year": "Green Lantern (Vol. 3) #17 (1991)",
+      "summary": "The most ambitious large-scale construct-related feat in the sourced material: John becomes the human guardian of Mosaic World, the patchwork of transplanted cities. This is a partial/assisted case because Appa Ali Apsa starts the project, but John inherits and sustains it.",
+      "title": "Mosaic",
+      "what_visibly_happens": "John helps hold together a world made from cities transplanted from multiple planets and becomes its administrator.",
+      "id": "r4-candidate-4"
+    }
+  ]
+}

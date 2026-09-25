@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from utils.fs_remove import FileInUseError, retry_on_lock
+
 
 def write_json_atomic(path: Path, doc: Any, *, indent: int = 2) -> Path:
     """Serialise `doc` to `path` atomically. Returns `path`.
@@ -35,7 +37,16 @@ def write_json_atomic(path: Path, doc: Any, *, indent: int = 2) -> Path:
             json.dump(doc, fh, indent=indent, ensure_ascii=False)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        try:
+            # On Windows the rename fails while another program has `path` open for a
+            # moment (antivirus, a sync client, an editor); locks.json is rewritten on
+            # every Review Beats click, so a brief hold must not lose the click.
+            retry_on_lock(lambda: os.replace(tmp, path), attempts=5, delay=0.2)
+        except PermissionError as exc:
+            raise FileInUseError(
+                f"Could not save {path.name}: it is open in another program. Close it and "
+                "try again."
+            ) from exc
     except BaseException:
         # BaseException, not Exception: a KeyboardInterrupt mid-write is exactly the
         # case this module exists for, and it must not leave .tmp litter behind.

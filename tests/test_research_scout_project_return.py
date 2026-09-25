@@ -1,6 +1,8 @@
 """Returning a downloaded Scout project to its existing Stage 1 session."""
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -335,3 +337,61 @@ def test_pending_return_marker_cannot_claim_a_recreated_project_with_the_same_sl
             sessions_root=tmp_path / "research-sessions",
         )
     assert (replacement / "raw_comic" / "manifest.json").read_text() == "new project"
+
+
+def test_a_page_held_open_during_return_is_named_and_nothing_changes(tmp_path, monkeypatch):
+    """Windows refuses to move a folder while a file in it is open — for example a page
+    thumbnail the browser is still loading. The return used to fail with a raw
+    WinError naming two internal paths."""
+    import utils.fs_remove as fs_remove
+    from stages.user_errors import UserFacingError
+
+    monkeypatch.setattr(fs_remove.time, "sleep", lambda _s: None)
+    store, session = _linked_session(tmp_path)
+    project = _project(tmp_path)
+    held = project / "raw_comic" / "page.jpg"
+    real_replace = os.replace
+
+    def _windows_like(src, dst):
+        if Path(src) in (project / "raw_comic", held):
+            raise PermissionError(32, "The process cannot access the file", str(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(project_return.os, "replace", _windows_like)
+
+    with pytest.raises(PermissionError) as caught:
+        return_project_to_research(
+            "thor-hammer", projects_root=tmp_path / "projects",
+            sessions_root=tmp_path / "research-sessions",
+        )
+
+    assert isinstance(caught.value, UserFacingError)
+    assert "'page.jpg' is still open" in str(caught.value)
+    assert (project / "raw_comic" / "page.jpg").exists()
+    assert (project / "preprocessed" / "page_001.json").exists()
+    assert store.load(session.id).state is SessionState.PRODUCTION_GATES
+
+
+def test_a_briefly_held_folder_is_retried_during_return(tmp_path, monkeypatch):
+    import utils.fs_remove as fs_remove
+
+    monkeypatch.setattr(fs_remove.time, "sleep", lambda _s: None)
+    _linked_session(tmp_path)
+    project = _project(tmp_path)
+    real_replace = os.replace
+    blocked = []
+
+    def _held_once(src, dst):
+        if Path(src) == project / "raw_comic" and not blocked:
+            blocked.append(src)
+            raise PermissionError(32, "The process cannot access the file", str(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(project_return.os, "replace", _held_once)
+
+    return_project_to_research(
+        "thor-hammer", projects_root=tmp_path / "projects",
+        sessions_root=tmp_path / "research-sessions",
+    )
+
+    assert blocked and not (project / "raw_comic").exists()

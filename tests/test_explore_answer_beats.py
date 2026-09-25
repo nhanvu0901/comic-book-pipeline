@@ -42,26 +42,38 @@ def test_build_answer_beats_order_and_function():
     assert beats[0].cause == "He healed through it."
 
 
-def test_surprise_order_resorts_but_chapter_follows_research_position():
-    """surprise_order re-sorts the NARRATION order, but the chapter-number
-    fallback must still key off each item's ORIGINAL research position — that's
-    the order Stage 2 actually downloaded the saga's issues in."""
+def test_beats_keep_the_download_order_even_when_items_carry_surprise_order():
+    """The download order is the order of everything: item N was downloaded as chapter N
+    and is narrated as beat N. A stray surprise_order field must not re-sort the beats."""
     comic_context = {"title": "Q?"}
     answer_context = {
         "items": [
-            {"entity": "A", "how_or_why": "a", "surprise_order": 2},  # orig idx 0 -> chapter 1
-            {"entity": "B", "how_or_why": "b", "surprise_order": 1},  # orig idx 1 -> chapter 2
+            {"entity": "A", "how_or_why": "a", "surprise_order": 2},
+            {"entity": "B", "how_or_why": "b", "surprise_order": 1},
         ]
     }
     story_pages = [_page(10, 1, 1), _page(20, 2, 1)]
 
     beats = build_answer_beats(comic_context, answer_context, story_pages)
 
-    assert [b.name for b in beats] == ["B", "A"]        # surprise_order 1 narrated first
-    assert beats[0].page_refs == [20]                    # B == orig idx 1 -> chapter 2 -> page 20
-    assert beats[1].page_refs == [10]                    # A == orig idx 0 -> chapter 1 -> page 10
+    assert [b.name for b in beats] == ["A", "B"]
+    assert beats[0].page_refs == [10]
+    assert beats[1].page_refs == [20]
     assert beats[0].function == "COLD_OPEN"
     assert beats[1].function == "LANDING"
+
+
+def test_beat_chapter_comes_from_the_items_own_urls():
+    """Two items citing one issue share its chapter, whatever comic_context says."""
+    u1, u2 = "https://batcave.biz/reader/1/11", "https://batcave.biz/reader/2/22"
+    answer_context = {"items": [
+        {"entity": "A", "how_or_why": "a", "reader_url": u1},
+        {"entity": "B", "how_or_why": "b", "reader_url": u2},
+        {"entity": "C", "how_or_why": "c", "reader_url": u1},
+    ]}
+    story_pages = [_page(10, 1, 1), _page(20, 2, 1)]
+    beats = build_answer_beats({"reader_urls": []}, answer_context, story_pages)
+    assert [b.page_refs for b in beats] == [[10], [20], [10]]
 
 
 def test_no_items_returns_empty():
@@ -76,7 +88,7 @@ def test_missing_chapter_pages_falls_back_to_page_zero():
 
 if __name__ == "__main__":
     test_build_answer_beats_order_and_function()
-    test_surprise_order_resorts_but_chapter_follows_research_position()
+    test_beats_keep_the_download_order_even_when_items_carry_surprise_order()
     test_no_items_returns_empty()
     test_missing_chapter_pages_falls_back_to_page_zero()
     print("ok")

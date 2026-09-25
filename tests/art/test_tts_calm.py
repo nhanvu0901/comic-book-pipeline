@@ -44,6 +44,40 @@ def test_synthesize_art_no_calm_is_plain(tmp_path, monkeypatch):
     assert calm_calls == []          # no frequency pass in plain mode
 
 
+def test_synthesize_art_restores_projects_root_after_success(tmp_path, monkeypatch):
+    """s4.PROJECTS_ROOT is a shared module attribute; leaving it pointed at
+    art_projects/ after we return makes the next comic TTS call in this process
+    read/write the wrong tree. Must come back to whatever it was before."""
+    monkeypatch.setattr(tts, "ART_PROJECTS_ROOT", tmp_path)
+    (tmp_path / "proj").mkdir()
+    import stages.stage_4.pipeline as s4
+    comic_root = Path("/comic/projects")  # stand-in for PROJECTS_ROOT before the call
+    monkeypatch.setattr(s4, "PROJECTS_ROOT", comic_root)
+    monkeypatch.setattr(s4, "synthesize_project", lambda name, **kw: "RESULT")
+
+    out = tts.synthesize_art("proj", calm=False)
+
+    assert out == "RESULT"
+    assert s4.PROJECTS_ROOT == comic_root
+
+
+def test_synthesize_art_restores_projects_root_after_raise(tmp_path, monkeypatch):
+    monkeypatch.setattr(tts, "ART_PROJECTS_ROOT", tmp_path)
+    (tmp_path / "proj").mkdir()
+    import stages.stage_4.pipeline as s4
+    comic_root = Path("/comic/projects")
+    monkeypatch.setattr(s4, "PROJECTS_ROOT", comic_root)
+
+    def _boom(name, **kw):
+        raise RuntimeError("synthesis failed")
+    monkeypatch.setattr(s4, "synthesize_project", _boom)
+
+    with pytest.raises(RuntimeError):
+        tts.synthesize_art("proj", calm=False)
+
+    assert s4.PROJECTS_ROOT == comic_root
+
+
 def test_synthesize_art_reuse_skips_calm(tmp_path, monkeypatch):
     monkeypatch.setattr(tts, "ART_PROJECTS_ROOT", tmp_path)
     proj = tmp_path / "proj"; proj.mkdir()

@@ -104,6 +104,10 @@ def format_for_vlm(summary: dict) -> str:
     if chars:
         lines.append("Characters:")
         for c in chars:
+            # A hand-edited context may list characters as plain names; take the name
+            # rather than crash preprocessing on str.get.
+            if not isinstance(c, dict):
+                c = {"name": str(c)}
             name = c.get("name", "")
             aliases = ", ".join(c.get("aliases") or [])
             role = c.get("role", "")

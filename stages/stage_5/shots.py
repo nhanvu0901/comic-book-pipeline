@@ -1307,12 +1307,15 @@ def _load_custom_image_vectors(project: str | None) -> dict:
 
 
 def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
-                         locked: dict[str, str], *, score_fn: Callable) -> dict[str, str]:
+                         locked: dict[str, str], *,
+                         panel_locked: set[str] | None = None,
+                         score_fn: Callable) -> dict[str, str]:
     """Pure greedy assignment: decide which BEAT each custom image lands on.
 
     `beats` = [(beat_key, text), ...] in story order. `images` = the custom_images.json
     "images" list (each a dict with at least "file"; may carry "desc"). `locked` =
     {beat_key: file} from Master's hand-locks (_custom_locks) — resolved DIRECTLY, no argmax.
+    `panel_locked` = set of beat_keys Master locked to comic panels, off-limits to argmax.
     `score_fn(beat_text, image_dict) -> float` scores every remaining (beat, image) pair
     (real caller: cosine on the image's VLM desc, SigLIP-vector fallback — see
     _score_custom_image; tests inject a stub for determinism, same idiom as this repo's
@@ -1333,7 +1336,7 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     # scipy.optimize.linear_sum_assignment only if that ever stops being true.
     """
     out: dict[str, str] = {}
-    claimed_beats: set[str] = set()
+    claimed_beats: set[str] = set(panel_locked or ())
     unlocked: list[dict] = []
     for img in images:
         f = img.get("file")
@@ -1392,29 +1395,30 @@ def _score_custom_image(beat_text: str, image: dict, *, project: str | None,
 
 def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
     """[(beat_key, text), ...] for every beat Master can lock a custom image to, in the SAME
-    beat_key scheme review_gate.build_candidates writes to locks.json ("intro" | "outro" |
-    "<scene_id>" | "<scene_id>:<frag_idx>" for a micro fragment) — so a lock written by the review
+    beat_key scheme review_gate writes to locks.json — so a lock written by the review
     UI and the argmax pool here always agree on identity."""
+    from ..review_gate import bookend_row_keys
     scenes = narration.get("scenes") or []
-    micro = str(narration.get("mode") or "") == "micro_moment"
     rows: list[tuple[str, str]] = []
     intro = next((s for s in scenes if s.get("is_intro")), None)
     outro = next((s for s in scenes if s.get("is_outro")), None)
     if intro is not None:
-        rows.append(("intro", str(intro.get("text", "") or "")))
+        for bk, _unit, txt in bookend_row_keys(intro, "intro"):
+            rows.append((bk, txt))
     for s in scenes:
         if s.get("is_intro") or s.get("is_outro"):
             continue
         sid = int(s.get("scene_id") or 0)
-        raw_beats = (s.get("visual_beats") or []) if micro else []
+        raw_beats = s.get("visual_beats") or []
         frags = [b for b in raw_beats if _vb_text(b)]
-        if micro and frags:
+        if frags:
             for fi, b in enumerate(frags):
                 rows.append((f"{sid}:{fi}", _vb_text(b)))
         else:
             rows.append((str(sid), str(s.get("text", "") or "")))
     if outro is not None:
-        rows.append(("outro", str(outro.get("text", "") or "")))
+        for bk, _unit, txt in bookend_row_keys(outro, "outro"):
+            rows.append((bk, txt))
     return rows
 
 
@@ -1439,7 +1443,12 @@ def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, st
             loaded_siglip = True
         return _score_custom_image(text, img, project=project, siglip_vecs=siglip_vecs)
 
-    by_key = assign_custom_images(beats, images, locked, score_fn=_score)
+    from ..review_gate import load_state as _load_review_state
+    _locks = (_load_review_state(project) or {}).get("locks") or {} if project else {}
+    panel_locked = {k for k, v in _locks.items()
+                    if isinstance(v, dict) and not v.get("custom_image")}
+
+    by_key = assign_custom_images(beats, images, locked, panel_locked=panel_locked, score_fn=_score)
     return {bk: str(root / f) for bk, f in by_key.items()}
 
 
@@ -1453,6 +1462,67 @@ def _fragment_text(narration: dict | None, sid: int, fi: int) -> str:
             v = vb[fi]
             return " ".join(str(v.get("text") if isinstance(v, dict) else v).split())
     return ""
+
+
+def _clean_tokens(text: str) -> list[str]:
+    import re
+    return [w.lower() for w in re.findall(r"\b[\w'-]+\b", str(text or ""))]
+
+
+def _longest_common_contiguous_run(a: list[str], b: list[str]) -> int:
+    """Length of the longest contiguous common token sequence between two token lists."""
+    if not a or not b:
+        return 0
+    m, n = len(a), len(b)
+    prev = [0] * (n + 1)
+    max_len = 0
+    for i in range(1, m + 1):
+        curr = [0] * (n + 1)
+        for j in range(1, n + 1):
+            if a[i - 1] == b[j - 1]:
+                curr[j] = prev[j - 1] + 1
+                if curr[j] > max_len:
+                    max_len = curr[j]
+            else:
+                curr[j] = 0
+        prev = curr
+    return max_len
+
+
+def _fragment_match_score(frag: str, cap: str) -> float:
+    """Calculate a match score between a narration fragment and a shot caption."""
+    f_tokens = _clean_tokens(frag)
+    c_tokens = _clean_tokens(cap)
+    if not f_tokens or not c_tokens:
+        return 0.0
+
+    f_str = " ".join(f_tokens)
+    c_str = " ".join(c_tokens)
+
+    # 1. Exact match
+    if f_str == c_str:
+        return 10000.0
+
+    # 2. Fragment is completely contained in caption (e.g. caption merged multiple visual beats)
+    if f_str in c_str:
+        return 8000.0 + len(f_tokens)
+
+    # 3. Caption is completely contained in fragment (e.g. visual beat was split across multiple captions)
+    if c_str in f_str:
+        return 6000.0 + len(c_tokens)
+
+    # 4. Longest contiguous common sequence of tokens
+    run = _longest_common_contiguous_run(f_tokens, c_tokens)
+    shared = len(set(f_tokens) & set(c_tokens))
+
+    if run >= 2:
+        r_cap = run / len(c_tokens)
+        r_frag = run / len(f_tokens)
+        return 1000.0 * r_cap + 500.0 * r_frag + 10.0 * run + shared
+    elif shared >= 2:
+        return 10.0 * shared
+
+    return 0.0
 
 
 def _shot_for_fragment(shots: list, idxs: list[int], frag: str) -> int | None:
@@ -1470,32 +1540,15 @@ def _shot_for_fragment(shots: list, idxs: list[int], frag: str) -> int | None:
     Matching on the words is immune to merging: merged or not, the shot that speaks the fragment
     is the shot that should carry its image. Longest-overlap wins so a fragment that is a prefix
     of another still resolves to the tighter caption."""
-    if not frag:
+    if not frag or not idxs:
         return None
-    best, best_len = None, 0
+    best, best_score = None, 0.0
     for i in idxs:
-        cap = " ".join(str(getattr(shots[i], "caption_text", "") or "").split())
-        if not cap:
-            continue
-        # the fragment is verbatim narration, so a merged caption CONTAINS it outright
-        if frag in cap and len(frag) > best_len:
-            best, best_len = i, len(frag)
-    if best is not None:
-        return best
-    # partial: the builder may have split a fragment across shots — take the caption sharing the
-    # longest leading run of words with it.
-    words = frag.split()
-    for i in idxs:
-        cap = " ".join(str(getattr(shots[i], "caption_text", "") or "").split())
-        run = 0
-        for w in words:
-            if w in cap:
-                run += 1
-            else:
-                break
-        if run > best_len:
-            best, best_len = i, run
-    return best if best_len >= 2 else None
+        cap = getattr(shots[i], "caption_text", "") or ""
+        score = _fragment_match_score(frag, cap)
+        if score > best_score:
+            best, best_score = i, score
+    return best if best_score >= 20.0 else None
 
 
 def _split_shot_at_fragment(shots: list, i: int, frag: str) -> int | None:
@@ -1508,10 +1561,20 @@ def _split_shot_at_fragment(shots: list, i: int, frag: str) -> int | None:
     first half may still be a normal panel shot. Returns None when the fragment is not a clean
     interior boundary, in which case the caller leaves the shot alone rather than mangling it."""
     import copy
+    import re
     sh = shots[i]
     cap = " ".join(str(getattr(sh, "caption_text", "") or "").split())
-    frag = " ".join(str(frag).split())
-    at = cap.find(frag)
+    frag_clean = " ".join(str(frag).split())
+    at = cap.find(frag_clean)
+    if at <= 0:
+        words = re.findall(r"\b[\w'-]+\b", frag_clean)
+        if words:
+            for n in range(min(3, len(words)), 0, -1):
+                phrase = " ".join(words[:n])
+                m = re.search(r"\b" + re.escape(phrase) + r"\b", cap, re.IGNORECASE)
+                if m and m.start() > 0:
+                    at = m.start()
+                    break
     if at <= 0:                      # not found, or the fragment already starts this shot
         return None
     head, tail = cap[:at].strip(), cap[at:].strip()
@@ -1601,6 +1664,13 @@ def _apply_custom_images_to_shots(shots: list, custom_map: dict[str, str],
                         print(f"[stage5] custom-image: split shot {hit} so beat {beat_key} keeps "
                               f"its own image (two fragments shared one shot)")
                         continue
+                    free_shots = [k for k in idxs if not getattr(shots[k], "custom_image", "")]
+                    if free_shots:
+                        target_k = min(free_shots, key=lambda k: abs(k - idxs[min(fi, len(idxs) - 1)]))
+                        shots[target_k].custom_image = abs_path
+                        print(f"[stage5] custom-image: beat {beat_key} collided on shot {hit} with an existing image; "
+                              f"assigned to available shot {target_k} in scene {sid} instead of dropping")
+                        continue
                     print(f"[stage5] custom-image: beat {beat_key} shares a shot with another "
                           f"custom image and could not be split — one image will not be seen")
                 shots[hit].custom_image = abs_path
@@ -1620,7 +1690,12 @@ def _apply_custom_images_to_shots(shots: list, custom_map: dict[str, str],
                       f"but it only has {len(idxs)} shot(s) — clamping to the last one so the "
                       f"image still appears (fragments were merged upstream)")
                 fi = len(idxs) - 1
-            shots[idxs[max(0, fi)]].custom_image = abs_path
+            target_idx = idxs[max(0, fi)]
+            if getattr(shots[target_idx], "custom_image", "") and getattr(shots[target_idx], "custom_image", "") != abs_path:
+                free_shots = [k for k in idxs if not getattr(shots[k], "custom_image", "")]
+                if free_shots:
+                    target_idx = min(free_shots, key=lambda k: abs(k - target_idx))
+            shots[target_idx].custom_image = abs_path
         else:
             for i in idxs:
                 shots[i].custom_image = abs_path
@@ -1878,7 +1953,8 @@ def _build_shots_per_chunk_locked(
     # order (scene lock first). A pure scene-lock project is byte-identical to before.
     locked_cands: dict[int, list] = {}
     for sid, sc in scenes_by_id.items():
-        if sc.get("is_intro") or sc.get("is_outro"):
+        _bfrags = [c for c in (sc.get("visual_beats") or []) if _vb_text(c)]
+        if (sc.get("is_intro") or sc.get("is_outro")) and len(_bfrags) <= 1:
             continue
         sid_prefix = f"{sid}:"
         lock_entries = [locks.get(str(sid))] + [
@@ -1890,6 +1966,8 @@ def _build_shots_per_chunk_locked(
                 if k not in keys:
                     keys.append(k)
         cands = [cand_by_key[k] for k in keys if k in cand_by_key]
+        if not cands and any(isinstance(le, dict) and le.get("custom_image") for le in lock_entries):
+            cands = [pool[0]] if pool else []
         if cands:
             locked_cands[sid] = cands
 
@@ -1972,7 +2050,8 @@ def _build_shots_per_chunk_locked(
             is_intro = bool(scene.get("is_intro"))
             is_outro = bool(scene.get("is_outro"))
             cands = locked_cands.get(sid)
-            if is_intro and intro_panels:
+            _bfrags = [c for c in (scene.get("visual_beats") or []) if _vb_text(c)]
+            if is_intro and intro_panels and len(_bfrags) <= 1:
                 # Multi-panel subject hook: split the intro beat into ≤N contiguous
                 # time-groups (K bounded by beat_dur/min like the body) and show a
                 # distinct top-ranked subject panel in each — a moving intro of the
@@ -2068,7 +2147,8 @@ def _build_shots_per_chunk_locked(
                         _key, panel, src, _tb = cands[0]
                     segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
                                  "text": text, "dur": max(0.0, dur),
-                                 "is_intro": is_intro, "is_outro": is_outro,
+                                 "is_intro": is_intro and (fi == 0),
+                                 "is_outro": is_outro and (fi == len(parts) - 1),
                                  # Bind the image to THIS fragment here, where we still know which
                                  # fragment it is. The alternative — letting
                                  # _apply_custom_images_to_shots find it later by ordinal index —

@@ -115,7 +115,8 @@ async def main(page: ft.Page):
             rows.append(ft.Container(
                 content=ft.Row([
                     ft.Icon(ft.Icons.FOLDER_OPEN, color=TEXT_MUTED, size=18),
-                    ft.Text(name, size=14, color=TEXT_PRIMARY),
+                    ft.Text(name, size=14, color=TEXT_PRIMARY, expand=True, no_wrap=True,
+                            overflow=ft.TextOverflow.ELLIPSIS, tooltip=name),
                 ], spacing=10),
                 padding=ft.padding.symmetric(horizontal=14, vertical=10),
                 border=ft.border.all(1, BORDER), border_radius=6,

@@ -19,9 +19,8 @@ from typing import Callable
 from config import PROJECTS_ROOT
 from .._claude_sdk import sdk_available, sdk_complete_vision
 
-# Same boolean-env idiom as PANEL_UNIQUE / PANEL_ANCHOR_BIND in shots.py.
-# "0"/"false"/"no" disables the whole checker.
-VERIFY_FRAMES = os.getenv("VERIFY_FRAMES", "1").strip().lower() not in ("0", "false", "no", "")
+# Master 2026-09-23: Default OFF (0) to eliminate slow post-render Claude Code CLI checks.
+VERIFY_FRAMES = os.getenv("VERIFY_FRAMES", "0").strip().lower() not in ("0", "false", "no", "")
 
 _SYSTEM = (
     "You are a QA judge for a comic-narration video. You are shown ONE frame extracted "

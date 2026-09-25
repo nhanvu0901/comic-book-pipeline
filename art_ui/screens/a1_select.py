@@ -27,7 +27,8 @@ _ALL_MODE_OPTIONS = [
 def build(page: ft.Page, state: ArtAppState, *,
           on_go: Callable[[int], None], on_state_change: Callable[[], None]) -> ft.Control:
     ids_tf = ft.TextField(
-        label="Met objectIDs (comma-separated)",
+        label="Met objectIDs",        # a longer label wrapped over the field's border
+        hint_text="comma-separated, e.g. 436575,437654",
         value=",".join(str(i) for i in state.object_ids),
         dense=True,
     )

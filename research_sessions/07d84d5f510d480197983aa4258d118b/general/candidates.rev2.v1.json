@@ -1,0 +1,37 @@
+{
+  "revision": 2,
+  "candidates": [
+    {
+      "character_or_thing": "Sacred Necropolis reconstruction",
+      "claim_citation": {
+        "quote": "In *Green Lantern: War Journal #11*, by Phillip Kennedy Johnson, Montos, Adriano Lucas, and Dave Sharpe, John's conflict with the Old God called Olgrun and his Radiant Dead eventually leads him to come into possession of the Dark Star Ring, which grants the wielder greater power than any other ring in existence.",
+        "url": "https://www.cbr.com/john-stewart-most-powerful-green-lantern-feats/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/john-stewart-most-powerful-green-lantern-feats/",
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_11"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #11 (2024)",
+      "summary": "John uses the Dark Star Ring to rebuild the long-destroyed Sacred Necropolis. This is a major full reconstruction feat, though it is a Dark Star Ring-assisted act rather than standard Green Lantern ring use.",
+      "title": "Rebuilding the Sacred Necropolis",
+      "what_visibly_happens": "The ruined Necropolis is rebuilt on-page as John reshapes the structure into a functional place that traps Olgrun and his realm inside.",
+      "id": "r2-candidate-3"
+    },
+    {
+      "character_or_thing": "Ellie and Shirley merged construct",
+      "claim_citation": {
+        "quote": "Ellie Stewart (Construct) (Merges with Shirley Stewart)",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_11"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_11",
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_12"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #11-12 (2024)",
+      "summary": "John’s construct work escalates from a living sister construct to a merged Ellie/Shirley state, blending construct and spirit/soul material. This is a temporary and assisted case, not a standard combat construct.",
+      "title": "Merged construct of Ellie Stewart and Shirley Stewart",
+      "what_visibly_happens": "Ellie’s construct is present and merges with Shirley Stewart, producing a surreal hybrid family-presence situation rather than a conventional weapon or vehicle construct.",
+      "id": "r2-candidate-4"
+    }
+  ]
+}

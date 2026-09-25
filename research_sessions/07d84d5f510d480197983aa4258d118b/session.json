@@ -1,0 +1,44 @@
+{
+  "id": "07d84d5f510d480197983aa4258d118b",
+  "mode": "qa",
+  "user_intent": "What is the most insane construct John Stewart ever tried to make with a Green Lantern ring?",
+  "state": "candidate_review",
+  "revision": 8,
+  "selected_specific_candidate_ids": [
+    "r3-candidate-2",
+    "r3-candidate-3",
+    "r8-candidate-3"
+  ],
+  "created_project": null,
+  "feedback_log": [
+    {
+      "state": "candidate_review",
+      "text": "search more"
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Rebuilding the Sacred Necropolis (Green Lantern: War Journal #11 (2024))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Blackest Night Marine squad (Green Lantern Vol. 4 #49 (2009)); The Mogo sniper shot (Green Lantern Corps Vol. 2 #60 (2011)). ALREADY TURNED DOWN, do not propose these again: Rebuilding the Sacred Necropolis (Green Lantern: War Journal #11 (2024))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Blackest Night Marine squad (Green Lantern Vol. 4 #49 (2009)); The Mogo sniper shot (Green Lantern Corps Vol. 2 #60 (2011))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Blackest Night Marine squad (Green Lantern Vol. 4 #49 (2009)); The Mogo sniper shot (Green Lantern Corps Vol. 2 #60 (2011))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Blackest Night Marine squad (Green Lantern Vol. 4 #49 (2009)); The Mogo sniper shot (Green Lantern Corps Vol. 2 #60 (2011))."
+    },
+    {
+      "state": "candidate_review",
+      "text": "Re-scouting this question: keep what is already confirmed and replace the rest. ALREADY HELD, do not propose these again: Blackest Night Marine squad (Green Lantern Vol. 4 #49 (2009)); The Mogo sniper shot (Green Lantern Corps Vol. 2 #60 (2011))."
+    }
+  ],
+  "kept_candidate_ids": []
+}

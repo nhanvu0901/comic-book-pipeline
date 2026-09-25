@@ -27,7 +27,7 @@ from PIL import Image
 from config import (CLUSTER_NAMER, VLM_BATCH_SIZE, VLM_EXTRACT, VLM_MODEL, VLM_PAGE_WORKERS,
                     get_project_dirs)
 from .._panel_index import DIALOG_TRUTH
-from .cache import image_hash, load_cached, save_cached
+from .cache import cache_path, image_hash, load_cached, save_cached
 from .panel_detect import assign_to_panels, detect_full
 from .schema import PanelInfo, PreprocessedPage, TextBlock
 from .vlm_extract import extract_page, extract_pages_batch, verify_page_descriptions
@@ -359,7 +359,9 @@ def _lms_kill_zombie_nodes(log: Callable[[str], None] = print) -> None:
             if rss_kb <= _ZOMBIE_RSS_FLOOR_KB:
                 continue
             try:
-                os.kill(pid, signal.SIGKILL)
+                # SIGKILL does not exist on Windows (where `ps -axo` is absent anyway and
+                # the sweep bails out above); fall back so the attribute lookup is portable.
+                os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
                 log(f"[lms] killed zombie node pid={pid} rss={rss_kb / 1_000_000:.1f}GB")
             except Exception as exc:
                 log(f"[lms] zombie kill pid={pid} failed ({type(exc).__name__}: {exc})")
@@ -485,6 +487,9 @@ def preprocess_project(
         cached = None if force_refresh else load_cached(project_root, pn, h, img_path, log=log)
         if cached is not None and cached.get("skip_reason") == "vlm_failure":
             cached = None  # invalidate prior failures so we retry with batch
+        if cached is not None and _refresh_cached_identity(cached, label=label, image_path=img_path):
+            save_cached(project_root, pn, h, cached)
+            log(f"[preprocess]   ↻ cache relabel p{pn:03d} → {label} ({img_path.name})")
         page_states.append({"pn": pn, "label": label, "img": img_path, "hash": h, "cached": cached})
 
     cached_count = sum(1 for s in page_states if s["cached"] is not None)
@@ -721,6 +726,7 @@ def preprocess_project(
         i = batch_end
 
     log(f"[preprocess] running_state final: {running_state[:200]}")
+    _prune_stale_page_cache(project_root, page_states, log=log)
     _reclassify_mid_doc_covers(results, project_root, log)
     _demote_credits_pages(results, project_root, log)
     _demote_backmatter_tail(results, project_root, log)
@@ -789,6 +795,44 @@ def preprocess_project(
         (log or print)(f"[subject-panels] skipped (error): {exc}")
 
     return results
+
+
+def _refresh_cached_identity(cached: dict, *, label: str, image_path: Path) -> bool:
+    """Point a cache hit at the page's CURRENT chapter; True when anything changed.
+
+    The cache is keyed by image content, so an image that moved to another chapter (the
+    item order changed, or a duplicate URL now files under a different item) is still a
+    hit — but its stored issue_label and source_image named the OLD chapter. Everything
+    downstream maps a page to its answer item through exactly those two fields (the chNN_
+    in source_image, the "#N" label), so a stale value put the page under the wrong item.
+    The expensive content (panels, descriptions, dialog) is unaffected and kept."""
+    source = str(Path(image_path).resolve())
+    if cached.get("issue_label") == label and cached.get("source_image") == source:
+        return False
+    cached["issue_label"] = label
+    cached["source_image"] = source
+    return True
+
+
+_PAGE_CACHE_RE = re.compile(r"^page_\d+_[0-9a-f]{16}\.json$")
+
+
+def _prune_stale_page_cache(project_root: Path, page_states: list[dict], *, log) -> int:
+    """Delete page JSONs that belong to no page of the current download; return the count.
+
+    Stage 3, the review gate and Stage 5 read EVERY preprocessed/page_*.json. A JSON left
+    by an earlier download (a comic since replaced, a chapter since shortened) showed up
+    as a phantom page — and one sharing a page_number with a real page could win the
+    by-number lookup and put another comic's panels under this item."""
+    keep = {cache_path(project_root, s["pn"], s["hash"]).name for s in page_states}
+    removed = 0
+    for f in (Path(project_root) / "preprocessed").glob("page_*.json"):
+        if _PAGE_CACHE_RE.match(f.name) and f.name not in keep:
+            f.unlink(missing_ok=True)
+            removed += 1
+    if removed:
+        log(f"[preprocess] removed {removed} cached page JSON(s) left by an earlier download")
+    return removed
 
 
 def _resolve_clusters_after_preprocess(

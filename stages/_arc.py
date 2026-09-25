@@ -22,6 +22,21 @@ def issue_index_of_page(page: dict) -> int:
     return int(m.group(1)) if m else 0
 
 
+def qa_item_chapters(reader_urls: list[str]) -> list[int]:
+    """Chapter index of each Q&A answer item, in item order.
+
+    The download order is the order of everything: item N is downloaded as chapter N.
+    Items citing the SAME reader URL share one download, filed under the first such
+    item's number — so [a, b, a] → [1, 2, 1]. Stage 2 (download_readers_only) and every
+    reader of the chapters (narration anchoring, review citations) use this one rule."""
+    first: dict[str, int] = {}
+    chapters: list[int] = []
+    for rank, url in enumerate(reader_urls, start=1):
+        url = str(url or "").strip()
+        chapters.append(first.setdefault(url, rank) if url else rank)
+    return chapters
+
+
 def allocate_beats_across_issues(
     total: int, n_issues: int, page_counts: list[int]
 ) -> dict[int, int]:

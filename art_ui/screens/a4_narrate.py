@@ -56,81 +56,96 @@ def build(page: ft.Page, state: ArtAppState, *,
     _mount_scenes()
 
     async def _ground():
+        if not state.project_name:
+            ground_status.value = "Pick or create an artwork first."
+            ground_status.color = DANGER
+            page.update()
+            return
         running.visible = True
+        ground_btn.disabled = True
         ground_status.value = "Gathering facts (Met + Wikipedia + SDK fallback)…"
         ground_status.color = WARN
         page.update()
         try:
             await run_blocking(bridge.run_ground, state.project_name, push_log)
+            _refresh_ground_status()
         except Exception as e:
-            running.visible = False
             ground_status.value = "Grounding failed/too thin — see log."
             ground_status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
+            ground_btn.disabled = False
             page.update()
-            return
-        running.visible = False
-        _refresh_ground_status()
-        page.update()
 
     async def _narrate():
+        if not state.project_name:
+            narrate_status.value = "Pick or create an artwork first."
+            narrate_status.color = DANGER
+            page.update()
+            return
         if not bridge.load_art_context(state.project_name):
             narrate_status.value = "Gather facts first."
             narrate_status.color = DANGER
             page.update()
             return
         running.visible = True
+        narrate_btn.disabled = True
         narrate_status.value = "Writing narration… (first run loads the embedding model)"
         narrate_status.color = WARN
         page.update()
         try:
             await run_blocking(bridge.run_narrate, state.project_name, state.mode, push_log)
+            narrate_status.color = SUCCESS
+            _mount_scenes()
+            state.mark_approved(4)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             narrate_status.value = "Failed — see log."
             narrate_status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
+            narrate_btn.disabled = False
             page.update()
-            return
-        running.visible = False
-        narrate_status.color = SUCCESS
-        _mount_scenes()
-        state.mark_approved(4)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     async def _hunt():
+        if not state.project_name:
+            visuals_status.value = "Pick or create an artwork first."
+            visuals_status.color = DANGER
+            page.update()
+            return
         if not bridge.load_art_narration(state.project_name):
             visuals_status.value = "Write narration first."
             visuals_status.color = DANGER
             page.update()
             return
         running.visible = True
+        hunt_btn.disabled = True
         visuals_status.value = "Hunting related images on the web (Claude SDK)…"
         visuals_status.color = WARN
         page.update()
         try:
             out = await run_blocking(bridge.run_hunt, state.project_name, True, push_log)
+            if out.get("skipped"):
+                visuals_status.value = "Already hunted — use force to redo."
+            else:
+                visuals_status.value = (f"{out.get('resolved', 0)}/{out.get('requested', 0)} "
+                                        f"related scene(s) got web images.")
+            visuals_status.color = SUCCESS
+            _mount_scenes()
+            state.mark_dirty(5)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             visuals_status.value = "Failed — see log."
             visuals_status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
+            hunt_btn.disabled = False
             page.update()
-            return
-        running.visible = False
-        if out.get("skipped"):
-            visuals_status.value = "Already hunted — use force to redo."
-        else:
-            visuals_status.value = (f"{out.get('resolved', 0)}/{out.get('requested', 0)} "
-                                    f"related scene(s) got web images.")
-        visuals_status.color = SUCCESS
-        _mount_scenes()
-        state.mark_dirty(5)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     def save_edits(_e):
         narration = bridge.load_art_narration(state.project_name)
@@ -141,12 +156,18 @@ def build(page: ft.Page, state: ArtAppState, *,
             tf = by_id.get(s.get("scene_id"))
             if tf is not None:
                 s["text"] = tf.value or ""
-        bridge.save_narration_edits(state.project_name, narration)
-        narrate_status.value = "Edits saved (word counts recomputed)."
-        narrate_status.color = SUCCESS
-        state.mark_dirty(5)
-        save_state(state)
-        page.update()
+        try:
+            bridge.save_narration_edits(state.project_name, narration)
+            narrate_status.value = "Edits saved (word counts recomputed)."
+            narrate_status.color = SUCCESS
+            state.mark_dirty(5)
+            save_state(state)
+        except Exception as e:
+            narrate_status.value = "Failed to save edits — see log."
+            narrate_status.color = DANGER
+            push_log(format_exception(e))
+        finally:
+            page.update()
 
     center = ft.Column([
         ft.Container(content=scenes_col,
@@ -163,19 +184,23 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    ground_btn = primary_button("1 · Gather Facts", lambda _e: page.run_task(_ground),
+                                icon=ft.Icons.FACT_CHECK)
+    narrate_btn = primary_button("2 · Write Narration", lambda _e: page.run_task(_narrate),
+                                 icon=ft.Icons.EDIT_NOTE)
+    hunt_btn = primary_button("3 · Hunt Visuals (SDK web)", lambda _e: page.run_task(_hunt),
+                              icon=ft.Icons.IMAGE_SEARCH)
+
     right = ft.Column([
         ft.Text("STEP 4 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Narration", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(f"mode: {state.mode}", size=12, color=TEXT_MUTED),
         ft.Container(height=12),
-        primary_button("1 · Gather Facts", lambda _e: page.run_task(_ground),
-                       icon=ft.Icons.FACT_CHECK),
+        ground_btn,
         ft.Container(height=8),
-        primary_button("2 · Write Narration", lambda _e: page.run_task(_narrate),
-                       icon=ft.Icons.EDIT_NOTE),
+        narrate_btn,
         ft.Container(height=8),
-        primary_button("3 · Hunt Visuals (SDK web)", lambda _e: page.run_task(_hunt),
-                       icon=ft.Icons.IMAGE_SEARCH),
+        hunt_btn,
         ft.Container(height=8),
         secondary_button("Save scene edits", save_edits, icon=ft.Icons.SAVE),
         ft.Container(height=8),

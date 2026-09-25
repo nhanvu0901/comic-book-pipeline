@@ -1,0 +1,83 @@
+{
+  "revision": 3,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "In despair, he creates a construct of his dead little sister, Ellie, to calm his mother.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5",
+        "https://dc.fandom.com/wiki/Eleanor_Stewart_(Prime_Earth)"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #5 (2024)",
+      "summary": "The most insane construct in the set: John creates a realistic dead-sister construct to comfort his dementia-stricken mother. This is a temporary, emotionally targeted construct that later becomes an ongoing autonomous presence in the run.",
+      "title": "Dead-sister construct Ellie",
+      "what_visibly_happens": "John manifests Ellie as a lifelike construct and presents her to his mother as a comforting companion.",
+      "id": "candidate-3"
+    },
+    {
+      "character_or_thing": "Precision sniper-rifle construct",
+      "claim_citation": {
+        "quote": "John Stewart decided to build a sniper rifle construct that was so precise and deadly that it only took one shot to thwart the threat from such a long distance.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Assisted/weapon construct. John forms a sniper rifle with enough precision to make a single, long-range disabling shot.",
+      "title": "Green Lantern Corps",
+      "what_visibly_happens": "He manifests a rifle, sights the target at extreme range, and fires one precise shot.",
+      "id": "r2-candidate-5"
+    },
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "The alternate Green Lantern immediately re-creates the old ghetto buildings, repairing them in the process.",
+        "url": "https://dc.fandom.com/wiki/Justice_League_of_America_Vol_1_110"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Justice_League_of_America_Vol_1_110"
+      ],
+      "series_issue_year": "Justice League of America #110 (1974)",
+      "summary": "A straightforward but still impressive full-block reconstruction: John rapidly rebuilds multiple destroyed buildings after the Key’s bomb damage. This is a completed, visible feat rather than a failed attempt.",
+      "title": "Rebuilds an entire damaged city block after the Key’s bombs",
+      "what_visibly_happens": "After the Key’s bombs destroy numerous buildings, John immediately restores the old ghetto buildings and repairs them on the spot.",
+      "id": "r3-candidate-1"
+    },
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "John constructs a sniper rifle and fires a bullet into Mogo's core, killing the living planet and stopping the creation of corrupted rings.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/",
+        "https://www.comics.org/issue/139339/"
+      ],
+      "series_issue_year": "Green Lantern Corps #60 (2011)",
+      "summary": "A brutally specialized construct: John builds a precision sniper rifle and uses it to kill a living planet. This is one of his most extreme and tactically elaborate construct uses, though it is not a failed attempt.",
+      "title": "Constructs a sniper rifle to kill Mogo",
+      "what_visibly_happens": "John forms a sniper rifle construct, aims into Mogo’s core, and fires the shot that kills the living planet.",
+      "id": "r3-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "John initially chooses Larfleeze's orange ring but is convinced by Hal to use Indigo-1's ring instead due to the debilitating effects of the orange ring on the wearer’s psyche.",
+        "url": "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "War of the Green Lanterns (2011)",
+      "summary": "This is a temporary, assisted power-use case rather than a pure John-built construct, so it is less of a construct feat than the others. It is included because the retrieved context supports John using borrowed ring power in a high-stakes failure/constraint scenario.",
+      "title": "Temporarily channels another Corps ring during War of the Green Lanterns",
+      "what_visibly_happens": "John takes up the Indigo ring after considering the Orange ring, then struggles to channel multiple Corps powers while fighting corrupted Lanterns and Mogo.",
+      "id": "r3-candidate-3"
+    }
+  ]
+}

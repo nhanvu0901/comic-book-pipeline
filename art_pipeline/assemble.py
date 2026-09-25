@@ -25,6 +25,8 @@ from stages.stage_5.pipeline import (
 )
 from stages.stage_5.schema import AssemblyResult, Shot
 from stages.stage_5.shots import render_shot
+from stages.user_errors import MissingInputError
+from utils.ffmpeg_filter import filter_path
 
 from . import config as C
 from .audio_fx import _resolve_ffmpeg
@@ -401,12 +403,14 @@ def _render_chapter_card(chapter_id: int, title: str, out_png: Path, *,
     title_txt.write_text(title)
     kicker_fs = max(12, int(h * 0.05))
     title_fs = max(20, int(h * 0.085))
-    font = C.ART_CARD_FONT.replace(":", r"\:")
+    # Both paths go through filter_path: only the font's colon used to be escaped, so on
+    # Windows the unescaped textfile path (C:\Users\...) broke the filterchain.
+    font = filter_path(C.ART_CARD_FONT)
     vf = (
         f"drawtext=fontfile='{font}':text='CHAPTER {chapter_id}':"
         f"fontcolor={C.ART_CARD_ACCENT}:fontsize={kicker_fs}:"
         f"x=(w-text_w)/2:y=h*0.40,"
-        f"drawtext=fontfile='{font}':textfile='{title_txt}':"
+        f"drawtext=fontfile='{font}':textfile='{filter_path(title_txt)}':"
         f"fontcolor=white:fontsize={title_fs}:x=(w-text_w)/2:y=h*0.48"
     )
     cmd = [ff, "-y", "-f", "lavfi", "-i", f"color=c={C.ART_CARD_BG}:s={w}x{h}",
@@ -514,7 +518,10 @@ def assemble_art_video(
     narration = json.loads((root / "narration.json").read_text())
     for req in ("audio.wav", "word_timestamps.json"):
         if not (root / req).exists():
-            raise FileNotFoundError(f"missing {req}: run tts first.")
+            raise MissingInputError(
+                f"No narrated audio yet for {project_name}. Run TTS Audio "
+                "first (python -m art_pipeline tts from a terminal)."
+            )
     word_timestamps = json.loads((root / "word_timestamps.json").read_text())
     audio_duration = _wav_duration(root / "audio.wav")
     timings_path = root / "scene_timings.json"

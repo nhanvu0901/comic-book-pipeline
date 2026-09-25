@@ -169,6 +169,75 @@ def test_approve_passes_the_three_current_ui_selections_to_the_workflow(tmp_path
     assert captured == {"session_id": session.id, "candidate_ids": ["a", "b", "c"]}
 
 
+def test_tick_order_is_the_video_order_and_each_tick_shows_its_number(tmp_path, monkeypatch):
+    """Item N is downloaded as chapter N and narrated as paragraph N, so the order the
+    items are ticked in is the order the video tells them — not the ids' alphabet."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-tick-order", mode=ScoutMode.QA, user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW,
+    )
+    store.save(session)
+    ids = ("candidate-2", "candidate-10", "candidate-1", "candidate-3")
+    store.write_artifact(
+        session.id, "general/candidates.v1.json",
+        {"candidates": [{"id": candidate_id, "title": candidate_id.upper()} for candidate_id in ids]},
+    )
+    captured = {}
+
+    def approve(session_id, candidate_ids=None):
+        captured["candidate_ids"] = candidate_ids
+        updated = store.load(session_id)
+        updated.selected_specific_candidate_ids = list(candidate_ids or [])
+        updated.state = SessionState.PRODUCTION_GATES
+        return store.save(updated)
+
+    monkeypatch.setattr(s1_research_scout, "approve_scout_selection", approve)
+    page, controls = _build(tmp_path, session)
+    for candidate_id in ("candidate-10", "candidate-3", "candidate-1", "candidate-2"):
+        _by_key(controls, f"select-{candidate_id}").on_change(_FakeEvent(True))
+    _by_key(controls, "select-candidate-3").on_change(_FakeEvent(False))   # later ticks move up
+
+    labels = {node.key: node.label for node in _walk(controls)
+              if isinstance(node, ft.Checkbox) and str(getattr(node, "key", "")).startswith("select-")}
+    assert labels == {"select-candidate-10": "#1", "select-candidate-1": "#2",
+                      "select-candidate-2": "#3", "select-candidate-3": "Select"}
+
+    _by_key(controls, "approve-selected").on_click(object())
+    _run_recorded_task(page)
+    assert captured["candidate_ids"] == ["candidate-10", "candidate-1", "candidate-2"]
+
+
+def test_bubbles_from_an_earlier_round_show_titles_not_raw_ids(tmp_path):
+    """A verify/approve bubble names candidates of the round it happened in; once a
+    re-run replaced that round, the current list no longer has them — the archive does."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-old-round-titles", mode=ScoutMode.QA, user_intent="Hulk questions",
+        state=SessionState.CANDIDATE_REVIEW, revision=2,
+    )
+    store.save(session)
+    store.append_audit(session.id, "candidates_verified", detail={
+        "candidate_ids": ["candidate-1"], "verdicts": {"candidate-1": "inconclusive"}})
+    store.append_audit(session.id, "selection_approved", detail={"candidate_ids": ["candidate-1"]})
+    store.write_artifact(session.id, "general/candidates.rev1.v1.json",
+                         {"candidates": [{"id": "candidate-1", "title": "Round One Title"}]})
+    store.write_artifact(session.id, "general/candidates.v1.json",
+                         {"candidates": [{"id": "r2-candidate-1", "title": "Round Two Title"}]})
+    _page, controls = _build(tmp_path, session)
+    text = _text_content(controls)
+    assert "Round One Title: INCONCLUSIVE" in text
+    assert "#1 Round One Title" in text
+    assert "candidate-1:" not in text
+
+
+def test_right_rail_scrolls_so_every_session_stays_reachable(tmp_path):
+    _page, controls = _build(tmp_path)
+    rails = [n for n in _walk(controls) if isinstance(n, ft.Column)
+             and any(isinstance(c, ft.Text) and c.value == "UNFINISHED SESSIONS" for c in n.controls)]
+    assert rails and rails[0].scroll == ft.ScrollMode.AUTO
+
+
 def test_resume_lists_unfinished_session_without_creating_project(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = store.create(ScoutMode.MICRO, "Hulk")
@@ -868,6 +937,51 @@ def test_cancelling_the_session_delete_dialog_leaves_the_session_on_disk(tmp_pat
     assert store.session_dir(session.id).exists()
 
 
+def test_deleting_a_session_that_is_already_gone_still_clears_the_screen(tmp_path):
+    """Deleted from the project picker in another tab meanwhile. The rail must end up
+    exactly where a normal delete leaves it, not keep a row that points at nothing."""
+    root = tmp_path / "research_sessions"
+    store = SessionStore(root)
+    session = store.create(ScoutMode.QA, "Who has beaten Superman in a fight?")
+    page, controls = _build(tmp_path, session)
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+    store.delete(session.id)
+
+    confirm = next(b for b in _buttons(page.dialogs[-1]) if _label(b) == "Delete")
+    confirm.on_click(object())
+
+    assert "No unfinished research sessions." in _text_content(controls)
+
+
+def test_a_session_delete_that_fails_says_why_on_screen(tmp_path, monkeypatch):
+    from utils.fs_remove import FileInUseError
+
+    root = tmp_path / "research_sessions"
+    store = SessionStore(root)
+    session = store.create(ScoutMode.QA, "Who has beaten Superman in a fight?")
+
+    def _in_use(*_a, **_k):
+        raise FileInUseError("Could not delete it: 'audit.jsonl' is still open in another program.")
+
+    monkeypatch.setattr(s1_research_scout, "delete_scout_session", _in_use)
+    page, controls = _build(tmp_path, session)
+    delete_icon = next(
+        node for node in _walk(controls)
+        if getattr(node, "key", None) == f"delete-session-{session.id}"
+    )
+    delete_icon.on_click(object())
+    confirm = next(b for b in _buttons(page.dialogs[-1]) if _label(b) == "Delete")
+
+    confirm.on_click(object())
+
+    assert "audit.jsonl" in _text_content(controls)
+    assert store.session_dir(session.id).exists()
+
+
 # ─── Per-card verification progress ─────────────────────────────────────────
 
 def _review_session(tmp_path, ids=("a", "b", "c")):
@@ -1190,3 +1304,79 @@ def test_unconfirmed_selection_offers_rescout_keeping_selected(tmp_path, monkeyp
     button.on_click(object())
     _run_recorded_task(page)
     assert calls == [("qa-keep-selected-inconclusive", ["a"])]
+
+
+def test_all_scout_text_is_selectable(tmp_path):
+    """Every text element in Stage 1 scout UI must have selectable=True so users can copy text."""
+    import ast
+    from pathlib import Path
+
+    # 1. AST check: ensure every ft.Text instantiation in s1_research_scout.py explicitly passes selectable=True
+    source_path = Path(s1_research_scout.__file__)
+    tree = ast.parse(source_path.read_text("utf-8"))
+
+    class TextAstVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.failures = []
+
+        def visit_Call(self, node):
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "Text":
+                selectable_kw = [kw for kw in node.keywords if kw.arg == "selectable"]
+                if not selectable_kw:
+                    self.failures.append(f"Line {node.lineno}: ft.Text is missing selectable=True")
+                elif not getattr(selectable_kw[0].value, "value", None) is True:
+                    self.failures.append(f"Line {node.lineno}: ft.Text has selectable != True")
+            self.generic_visit(node)
+
+    visitor = TextAstVisitor()
+    visitor.visit(tree)
+    assert not visitor.failures, "\n".join(visitor.failures)
+
+    # 2. Runtime check on rendered scout controls (center transcript & right rail, excluding the global nav stepper)
+    session = _reviewed_session(
+        tmp_path,
+        session_id="qa-selectable-test",
+        candidates=[{"id": "a", "title": "Comic Alpha", "summary": "Visual summary"}],
+        gates=[_gate("a", "confirmed")],
+        selected=["a"],
+    )
+    _page, controls = _build(tmp_path, session)
+
+    unselectable_texts = []
+    for scout_container in controls.controls[1:]:
+        for node in _walk(scout_container):
+            if isinstance(node, ft.Text):
+                if not getattr(node, "selectable", False):
+                    unselectable_texts.append(f"Unselectable text found: {node.value!r}")
+
+    assert not unselectable_texts, "\n".join(unselectable_texts)
+
+
+
+def test_create_project_turns_a_typed_title_into_a_safe_folder_name(tmp_path, monkeypatch):
+    """The slug field is free text. "Wolverine: Origins?" reached mkdir as-is, which
+    Windows refuses — the create failed with a raw OSError traceback."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-session-slug",
+        mode=ScoutMode.QA,
+        user_intent="Who has beaten Superman in a fight?",
+        state=SessionState.PRODUCTION_GATES,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    created = []
+    monkeypatch.setattr(s1_research_scout, "create_scout_project",
+                        lambda session_id, slug, override=False: created.append(slug) or slug)
+    # _finish_create_project saves state.json under PROJECTS_ROOT; keep it off the real one.
+    monkeypatch.setattr(s1_research_scout, "save_state", lambda _state: None)
+    page, controls = _build(tmp_path, session)
+    slug_field = next(n for n in _walk(controls) if getattr(n, "key", None) == "project-slug")
+    slug_field.value = "Wolverine: Origins?"
+
+    create = next(n for n in _walk(controls) if isinstance(n, ft.ElevatedButton)
+                  and getattr(n, "content", None) == "Create project")
+    create.on_click(object())
+    _run_recorded_task(page)
+
+    assert created == ["wolverine_origins"]

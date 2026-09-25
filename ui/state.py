@@ -6,7 +6,7 @@ Persisted to projects/<slug>/state.json. Loaded on app launch; autosaved
 after every stage transition.
 """
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,7 @@ from config import PROJECTS_ROOT
 PICKER_STAGE = 0
 
 STAGE_NAMES = {
-    1: "Identify Comic",
+    1: "Research Scout",
     2: "Download Comic",
     3: "Preprocess Pages",
     4: "Narration Script",
@@ -93,9 +93,12 @@ class AppState:
         self.returned_scout_project = self.project_name
         self.returned_scout_session_id = session_id
 
-    def reset(self) -> None:
-        self.approved = {}
-        self.dirty = {}
+    def start_new_project(self) -> None:
+        """Point this session at a blank Stage 1. Every field here belongs to one project,
+        so all of them go back to their defaults; nothing is saved, so the project the
+        session was on keeps its stages and approvals on disk."""
+        for f in fields(self):
+            setattr(self, f.name, f.default_factory() if f.default is MISSING else f.default)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

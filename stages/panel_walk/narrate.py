@@ -41,6 +41,7 @@ import re
 from typing import Callable
 
 from config import PROJECTS_ROOT
+from stages.user_errors import MissingInputError
 from ..stage_3._llm import call_with_chain
 from ..stage_3.schema import Narration, Scene
 
@@ -182,7 +183,10 @@ _OUTRO_WORDS_MIN, _OUTRO_WORDS_MAX = 90, 150
 def _load_pages(project: str) -> list[dict]:
     prep = PROJECTS_ROOT / project / "preprocessed"
     if not prep.exists():
-        raise FileNotFoundError(f"preprocessed/ missing: {prep}. Run Stage 2 first.")
+        raise MissingInputError(
+            f"No preprocessed pages yet for {project}. Download the comic, then run "
+            "Preprocess Pages (python -m stages.stage_2 from a terminal)."
+        )
     pages = []
     for f in sorted(prep.glob("page_*.json")):
         try:

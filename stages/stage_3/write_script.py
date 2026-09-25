@@ -3134,7 +3134,7 @@ def write_scenes(
     )
 
     log(f"[stage4]   write prompt: {len(user)} chars, {len(beats)} beats")
-    # Phase C uses CREATIVE_LLM_MODELS (Claude Sonnet primary) — sentence-length
+    # Phase C uses CREATIVE_LLM_MODELS — sentence-length
     # variance + storyteller voice are HARD for small models. Other phases keep
     # using LLM_MODELS via default call_with_chain behavior.
     chain = [model] if model else list(CREATIVE_LLM_MODELS)
@@ -3811,7 +3811,7 @@ def _parse_vtt_cues(vtt_path: Path) -> list[str]:
 def _load_few_shot_examples(n: int = 2, cap_words: int = 400) -> str:
     """Pick n .vtt files, extract FULL transcript (capped at cap_words for token
     budget), format as end-to-end channel-style demonstration. Strong creative
-    LLMs (Sonnet) absorb the full arc — voice, length variance, pronoun discipline,
+    LLMs absorb the full arc — voice, length variance, pronoun discipline,
     \"stating X\" attribution, the \"The comic is X\" outro — from these examples.
 
     Cached after first call. Deterministic via Random(42). Returns \"\" if

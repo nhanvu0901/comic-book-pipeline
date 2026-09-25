@@ -8,6 +8,7 @@ test_ui_project_picker.py (projects) and test_s1_research_scout_ui.py (sessions)
 
 No test here may delete anything real: every path is under tmp_path.
 """
+import stat
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 import ui.bridge as bridge
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.storage import SessionStore
+from stages.user_errors import NothingToDeleteError
 
 
 def _make_project(root: Path, name: str, *, files: dict[str, bytes] | None = None) -> Path:
@@ -96,6 +98,36 @@ def test_delete_project_refuses_a_missing_project_without_touching_the_root(
 
     with pytest.raises(ValueError):
         bridge.delete_project("does-not-exist")
+
+
+def test_a_missing_project_is_reported_as_already_deleted_not_as_outside_the_root(
+    tmp_path, monkeypatch,
+):
+    """A picker row can outlive its folder (another tab, Explorer). That used to fail as
+    "refusing to delete outside PROJECTS_ROOT" with a traceback — wrong on both counts.
+    It gets its own error so the picker can treat it as done."""
+    root = tmp_path / "projects"
+    root.mkdir()
+    monkeypatch.setattr(bridge, "PROJECTS_ROOT", root)
+
+    with pytest.raises(NothingToDeleteError) as caught:
+        bridge.delete_project("already-gone")
+
+    message = bridge.format_exception(caught.value)
+    assert "already-gone" in message and "already deleted" in message
+    assert "Traceback" not in message and "outside" not in message
+
+
+def test_delete_project_removes_read_only_files(tmp_path, monkeypatch):
+    """On Windows a read-only file makes a plain rmtree fail half way through."""
+    monkeypatch.setattr(bridge, "PROJECTS_ROOT", tmp_path)
+    proj = _make_project(tmp_path, "locked-down", files={"raw_comic/p1.jpg": b"x"})
+    for path in (proj / "raw_comic" / "p1.jpg", proj / "comic_context.json"):
+        path.chmod(stat.S_IREAD)
+
+    bridge.delete_project("locked-down")
+
+    assert not proj.exists()
 
 
 # ─── ui.bridge.describe_project ─────────────────────────────────────────────
@@ -190,6 +222,15 @@ def test_session_store_delete_refuses_an_id_containing_a_path_separator(tmp_path
         store.delete("sub/victim")
 
     assert victim.exists()
+
+
+def test_session_store_delete_reports_a_missing_session_as_already_deleted(tmp_path):
+    store = SessionStore(tmp_path)
+    session = store.create(ScoutMode.QA, "Hulk questions")
+    store.delete(session.id)
+
+    with pytest.raises(NothingToDeleteError):
+        store.delete(session.id)
 
 
 def test_delete_scout_session_bridge_wrapper_removes_the_session_directory(tmp_path):

@@ -1,0 +1,72 @@
+{
+  "revision": 1,
+  "candidates": [
+    {
+      "character_or_thing": "Thor",
+      "claim_citation": {
+        "quote": "When Galactus incredulously attempted to attack him, Thor sentenced him to death for the countless planets that he had destroyed and drained him of the Power Cosmic, leaving him on the brink of death.",
+        "url": "https://marvel.fandom.com/wiki/Thor_Vol_6_6"
+      },
+      "evidence_urls": [
+        "https://marvel.fandom.com/wiki/Thor_Vol_6_6",
+        "https://marvel.fandom.com/wiki/Galan_(Earth-616)",
+        "https://marvel.fandom.com/wiki/Black_Winter_(Sixth_Cosmos)_(Multiverse)"
+      ],
+      "series_issue_year": "Thor Vol 6 #6 (2020)",
+      "summary": "Direct kill, then used Galactus as a bomb. Thor stripped Galactus of the Power Cosmic and left him a desiccated husk before detonating him against the Black Winter.",
+      "title": "The Devourer King - Part Six: Herald of None",
+      "what_visibly_happens": "Thor blasts Galactus with divine lightning, drains him dry, crushes his chest with Mjolnir, then uses Galactus's dying body as a cosmic bomb to destroy the Black Winter.",
+      "id": "candidate-1"
+    },
+    {
+      "character_or_thing": "The Fantastic Four, Avengers, and allies",
+      "claim_citation": {
+        "quote": "Galactus was ultimately defeated when the Elemental Converter was destroyed by a gigantic Kitty Pryde, and Thor pushed the cosmic entity through a portal created by Reed Richards into the Negative Zone, with the intention that, since this version of the Zone was completely lifeless, Galactus would starve to death",
+        "url": "https://marvel.fandom.com/wiki/Galan_(Earth-616)"
+      },
+      "evidence_urls": [
+        "https://marvel.fandom.com/wiki/Cataclysm:_The_Ultimates%27_Last_Stand_Vol_1_5",
+        "https://marvel.fandom.com/wiki/Galan_(Earth-616)",
+        "https://marvel.fandom.com/wiki/Cataclysm"
+      ],
+      "series_issue_year": "Cataclysm: The Ultimates' Last Stand #5 (2014)",
+      "summary": "Assisted, team-based defeat. The heroes do not kill Galactus in the fight; they dump him into the Negative Zone so he will starve, which is an attempted lethal exile.",
+      "title": "Cataclysm: Conclusion",
+      "what_visibly_happens": "Kitty Pryde destroys the Elemental Converter, and Thor shoves Galactus through Reed Richards's portal into the lifeless Negative Zone.",
+      "id": "candidate-3"
+    },
+    {
+      "character_or_thing": "Squirrel Girl",
+      "claim_citation": {
+        "quote": "• The final showdown between Galactus and Squirrel Girl is here!",
+        "url": "https://marvel.fandom.com/wiki/Unbeatable_Squirrel_Girl_Vol_1_4"
+      },
+      "evidence_urls": [
+        "https://marvel.fandom.com/wiki/Unbeatable_Squirrel_Girl_Vol_1_4",
+        "https://marvel.fandom.com/wiki/Unbeatable_Squirrel_Girl_TPB_Vol_1_1:_Squirrel_Power"
+      ],
+      "series_issue_year": "Unbeatable Squirrel Girl Vol 1 #4 (2015)",
+      "summary": "Partial/assisted, nonlethal defeat. Squirrel Girl's 'win' is the book's Galactus showdown, but the source framing emphasizes it as a showdown rather than a kill; the broader run presents her as convincing him away from Earth rather than defeating him in straightforward combat.",
+      "title": "Galactus showdown",
+      "what_visibly_happens": "Squirrel Girl faces Galactus in the issue's final showdown and the story frames it as a battle of 'Power Cosmic' versus 'Power Chestnut.'",
+      "id": "candidate-4"
+    },
+    {
+      "character_or_thing": "King Thor / Thor",
+      "claim_citation": {
+        "quote": "When he was ready to finally devour Earth and kill the Goddesses of Thunder, Galactus was attacked by King Thor, who returned from deep space with All-Black the Necrosword, and was brutally defeated by him.",
+        "url": "https://marvel.fandom.com/wiki/Galan_(Earth-14412)"
+      },
+      "evidence_urls": [
+        "https://marvel.fandom.com/wiki/Galan_(Earth-14412)",
+        "https://www.leagueofcomicgeeks.com/character/11036/black-galactus-the-butcher-of-worlds",
+        "https://marvel.fandom.com/wiki/Mighty_Thor_Vol_1_700"
+      ],
+      "series_issue_year": "Mighty Thor Vol 1 #700 (2017)",
+      "summary": "Direct defeat in an alternate future. King Thor beats Galactus, and the aftermath turns Galactus into the Butcher of Worlds when the Necrosword manifests inside him.",
+      "title": "The Blood of the Norns",
+      "what_visibly_happens": "King Thor strikes Galactus down after returning with All-Black the Necrosword; Galactus is left defeated and later corrupted into Black Galactus.",
+      "id": "candidate-6"
+    }
+  ]
+}

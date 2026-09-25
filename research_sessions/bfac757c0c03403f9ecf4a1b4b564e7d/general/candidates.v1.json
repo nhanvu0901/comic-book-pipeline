@@ -1,0 +1,81 @@
+{
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "In despair, he creates a construct of his dead little sister, Ellie, to calm his mother.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5",
+        "https://dc.fandom.com/wiki/Eleanor_Stewart_(Prime_Earth)"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #5 (2024)",
+      "summary": "The most insane construct in the set: John creates a realistic dead-sister construct to comfort his dementia-stricken mother. This is a temporary, emotionally targeted construct that later becomes an ongoing autonomous presence in the run.",
+      "title": "Dead-sister construct Ellie",
+      "what_visibly_happens": "John manifests Ellie as a lifelike construct and presents her to his mother as a comforting companion.",
+      "id": "candidate-3"
+    },
+    {
+      "character_or_thing": "Precision sniper-rifle construct",
+      "claim_citation": {
+        "quote": "John Stewart decided to build a sniper rifle construct that was so precise and deadly that it only took one shot to thwart the threat from such a long distance.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Assisted/weapon construct. John forms a sniper rifle with enough precision to make a single, long-range disabling shot.",
+      "title": "Green Lantern Corps",
+      "what_visibly_happens": "He manifests a rifle, sights the target at extreme range, and fires one precise shot.",
+      "id": "r2-candidate-5"
+    },
+    {
+      "character_or_thing": "John Stewart’s construct bubble that trapped Martian Manhunter",
+      "claim_citation": {
+        "quote": "John Stewart creates another with his ring and heads off to stop the aspect, but he encases the Manhunter with his power ring to prevent him from following.",
+        "url": "https://dc.fandom.com/wiki/Cosmic_Odyssey"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Cosmic_Odyssey"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1988)",
+      "summary": "A partial construct, used as a temporary restraint. John tries to solve the Xanshi crisis alone and locks Martian Manhunter out of the fight, which contributes to the disaster.",
+      "title": "Cosmic Odyssey",
+      "what_visibly_happens": "John surrounds Martian Manhunter in a glowing green bubble-construct so he cannot follow him, then heads toward the bomb alone.",
+      "id": "r5-candidate-1"
+    },
+    {
+      "character_or_thing": "John Stewart’s marine squad construct",
+      "claim_citation": {
+        "quote": "John then uses his power to create a group of Marines, who fight alongside him against the Black Lanterns.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      ],
+      "series_issue_year": "Green Lantern Vol. 4 #49 (2009)",
+      "summary": "A full-assisted combat construct. John manifests an entire squad of Marines to back him up against the Black Lanterns while dealing with Katma Tui’s return.",
+      "title": "Green Lantern",
+      "what_visibly_happens": "A lineup of green Marine constructs appears and fights beside John in the middle of the Black Lantern battle.",
+      "id": "r5-candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart’s sniper rifle construct used to kill Mogo",
+      "claim_citation": {
+        "quote": "John then constructs a sniper rifle and prepares to fire a bullet into Mogo's core.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern_Corps_Vol_2_60"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern_Corps_Vol_2_60"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "A temporary tactical construct with huge consequences. John uses the ring to build a sniper rifle and shoots into Mogo’s core to stop the corrupted rings.",
+      "title": "Green Lantern Corps",
+      "what_visibly_happens": "John forms a precision rifle construct, takes aim, and fires the shot that kills the living planet Mogo.",
+      "id": "r5-candidate-3"
+    }
+  ]
+}

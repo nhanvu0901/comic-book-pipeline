@@ -10,6 +10,7 @@ import json
 from config import CREATIVE_LLM_MODELS
 from stages.stage_3._llm import call_with_chain
 from stages.stage_3.schema import Narration, Scene
+from stages.user_errors import MissingInputError
 
 from ._json import extract_json
 from .narrate import _hook_is_concrete, _starts_with_connective, region_catalog
@@ -349,7 +350,10 @@ def write_longform_narration(project_name: str, *, log=print) -> dict:
     pages = [json.loads(p.read_text())
              for p in sorted((root / "preprocessed").glob("page_*.json"))]
     if not pages:
-        raise FileNotFoundError("no preprocessed pages — run regions first")
+        raise MissingInputError(
+            f"No regions detected yet for {project_name}. Run Detect Regions "
+            "first (python -m art_pipeline regions from a terminal)."
+        )
 
     chapters = outline["chapters"]
     total = len(chapters)

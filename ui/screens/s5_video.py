@@ -6,7 +6,9 @@ player, lets the user open the output folder or re-run.
 """
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -14,13 +16,27 @@ import flet as ft
 from flet_video import Video, VideoMedia
 
 from config import PROJECTS_ROOT
-from ..bridge import format_exception, run_blocking, run_stage_5
+from ..bridge import asset_src, format_exception, run_blocking, run_stage_5
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..state import AppState, save_state
 from ..theme import (
     BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
 from utils.clear_stage import clear_stage_5
+
+
+def _has_desktop() -> bool:
+    """False for a Windows process in session 0 — the app started over SSH or as a
+    service. Nothing it opens can appear on screen, and the opener lingers for a minute."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        session = ctypes.c_ulong()
+        found = ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(session))
+    except Exception:
+        return True     # can't tell: try to open, as before
+    return not found or session.value != 0
 
 
 def build(
@@ -32,18 +48,22 @@ def build(
 ) -> ft.Control:
     final_path = PROJECTS_ROOT / state.project_name / "final.mp4" if state.project_name else None
     existing = final_path and final_path.exists()
+    if existing and not state.is_approved(8):
+        state.mark_approved(8)
+        save_state(state)
 
     video_slot = ft.Container(expand=True, alignment=ft.Alignment.CENTER)
     status_text = ft.Text(
-        "final.mp4 already exists — press Play below" if existing else "Click Assemble to build the video.",
-        color=TEXT_MUTED, size=12,
+        "final.mp4 ready — click Download or press Play below" if existing else "Click Assemble to build the video.",
+        color=TEXT_MUTED, size=12, selectable=True,
     )
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
     lv, push_log = log_list(page)
 
     def _mount_video(path: Path):
+        res_src = asset_src(path)
         v = Video(
-            playlist=[VideoMedia(resource=str(path))],
+            playlist=[VideoMedia(resource=res_src)],
             autoplay=False,
             show_controls=True,
             width=405,   # 9:16 at reasonable screen size
@@ -99,15 +119,33 @@ def build(
         if not state.project_name:
             return
         folder = PROJECTS_ROOT / state.project_name
+        if not _has_desktop():
+            status_text.value = (f"This server has no desktop session to open folders in "
+                                 f"(it was started over SSH or as a service). The project "
+                                 f"folder is at {folder}")
+            status_text.color = TEXT_MUTED
+            page.update()
+            return
+        # Start the opener, never wait on it: os.startfile did not return when the app ran
+        # without a desktop, freezing this handler; and explorer.exe exits 1 even on
+        # success, so its exit code says nothing either.
+        opener = {"win32": "explorer", "darwin": "open"}.get(sys.platform, "xdg-open")
         try:
-            subprocess.run(["open", str(folder)], check=False)
+            subprocess.Popen([opener, str(folder)])
         except Exception as e:
-            push_log(f"open failed: {e}")
+            status_text.value = f"Could not open the project folder ({e}). It is at {folder}"
+            status_text.color = DANGER
+        else:
+            # The window opens on the machine running the app — over the LAN that is the
+            # server, not this browser — so always say which folder, and where.
+            status_text.value = f"Opening on the server: {folder}"
+            status_text.color = TEXT_MUTED
+        page.update()
 
     def start_over(_e):
-        state.reset()
-        save_state(state)
-        on_state_change()
+        # A blank Stage 1 for the next project. This used to clear approvals and save —
+        # wiping the finished project's stages — and then reopen that same project.
+        state.start_new_project()
         on_go(1)
 
     def _show_snack(msg: str):
@@ -135,7 +173,7 @@ def build(
               if state.project_name else None)
         if fp and fp.exists():
             _mount_video(fp)
-            status_text.value = "final.mp4 already exists — press Play below"
+            status_text.value = "final.mp4 ready — click Download or press Play below"
         else:
             video_slot.content = ft.Container(
                 content=ft.Column([
@@ -152,7 +190,7 @@ def build(
     def open_clear_dialog(_e):
         dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Clear Stage 5 data"),
+            title=ft.Text("Clear render scratch"),
             content=ft.Text("Delete _stage5/ scratch (keeps final.mp4)?"),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
@@ -167,7 +205,7 @@ def build(
                      expand=True),
         ft.Container(
             content=ft.Column([
-                ft.Row([running, status_text], spacing=10),
+                ft.Row([running, ft.Container(status_text, expand=True)], spacing=10),
                 ft.Container(content=lv, height=120, border=ft.border.all(1, BORDER),
                              border_radius=6),
             ], spacing=8),
@@ -175,16 +213,48 @@ def build(
         ),
     ], spacing=0, expand=True)
 
-    right = ft.Column([
+    right_controls = [
         ft.Text("STEP 8 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
-            "1080×1920 9:16 H.264 MP4 with Ken Burns on panels, MrBeast-style "
-            "captions, and Cartesia audio.",
+            "1080×1920 9:16 H.264 MP4 with Ken Burns on panels and Chatterbox narration audio.",
             size=12, color=TEXT_MUTED,
         ),
         ft.Container(height=16),
-        primary_button("Assemble Video", assemble_click, icon=ft.Icons.MOVIE_FILTER),
+    ]
+
+    if existing and final_path:
+        size_mb = final_path.stat().st_size / (1024 * 1024)
+        dl_url = asset_src(final_path)
+
+        def _do_download(_e):
+            try:
+                page.run_task(page.launch_url, dl_url)
+            except Exception:
+                pass
+
+        right_controls.extend([
+            primary_button(
+                f"Download final.mp4 ({size_mb:.1f} MB)",
+                on_click=_do_download,
+                url=dl_url,
+                icon=ft.Icons.DOWNLOAD,
+            ),
+            ft.Container(height=4),
+            ft.TextButton(
+                "🔗 Open / Save final.mp4 in new tab",
+                url=dl_url,
+                style=ft.ButtonStyle(padding=ft.padding.all(0)),
+            ),
+            ft.Container(height=8),
+            secondary_button("Re-assemble Video", assemble_click, icon=ft.Icons.REFRESH),
+        ])
+    else:
+        right_controls.extend([
+            primary_button("Assemble Video", assemble_click, icon=ft.Icons.MOVIE_FILTER),
+        ])
+
+    right_controls.extend([
         ft.Container(height=8),
         secondary_button("Clear…", open_clear_dialog, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=8),
@@ -192,7 +262,9 @@ def build(
         ft.Container(height=20),
         ft.Text("WHEN YOU'RE DONE", size=10, color=TEXT_MUTED),
         secondary_button("Start a new project", start_over, icon=ft.Icons.ADD),
-    ], spacing=8, expand=True)
+    ])
+
+    right = ft.Column(right_controls, spacing=8, expand=True)
 
     return three_col(
         center, right, state=state, on_go=on_go,

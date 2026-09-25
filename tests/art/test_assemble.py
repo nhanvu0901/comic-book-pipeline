@@ -403,6 +403,19 @@ def test_overlay_chapter_cards_preserves_duration(tmp_path):
     assert abs(after - before) < 0.15      # zero drift (within one frame)
 
 
+def test_assemble_art_video_without_tts_is_user_facing(tmp_path, monkeypatch):
+    """No audio.wav/word_timestamps.json yet (TTS Audio never ran) must name the
+    sidebar step, not a code stage number, and reach the app as copy."""
+    import art_pipeline.assemble as A
+    from stages.user_errors import MissingInputError, UserFacingError
+    monkeypatch.setattr(A, "get_art_project_path", lambda n: tmp_path)
+    (tmp_path / "narration.json").write_text("{}")
+    with pytest.raises(FileNotFoundError) as caught:
+        A.assemble_art_video("p")
+    assert isinstance(caught.value, (MissingInputError, UserFacingError))
+    assert "TTS Audio" in str(caught.value)
+
+
 def test_overlay_no_op_without_boundaries(tmp_path):
     import art_pipeline.assemble as A
     from stages.stage_5.pipeline import _probe_duration

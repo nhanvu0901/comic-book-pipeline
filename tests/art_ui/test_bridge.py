@@ -1,4 +1,7 @@
 import json
+
+import pytest
+
 from art_ui import bridge
 
 
@@ -25,6 +28,29 @@ def test_save_narration_edits_recomputes_word_count(tmp_path, monkeypatch):
     bridge.save_narration_edits("p", narration)
     saved = json.loads((tmp_path / "p" / "narration.json").read_text())
     assert saved["scenes"][0]["word_count"] == 4
+
+
+def test_save_narration_edits_writes_atomically_on_json_dump_failure(tmp_path, monkeypatch):
+    """Same crash-safety as save_state: a mid-write failure must not corrupt a
+    narration.json that may hold hand-edited scene text. Patching json.dump (not
+    json.dumps) means a plain write_text — which never calls json.dump — would
+    silently ignore the injected failure and overwrite the file; only the atomic
+    writer's real code path is exercised here."""
+    monkeypatch.setattr(bridge, "ART_ROOT", tmp_path)
+    (tmp_path / "p").mkdir()
+    good = {"scenes": [{"scene_id": 1, "text": "kept safe"}]}
+    bridge.save_narration_edits("p", good)
+    before = (tmp_path / "p" / "narration.json").read_bytes()
+
+    import utils.atomic_json as atomic_json
+    monkeypatch.setattr(atomic_json.json, "dump",
+                        lambda *a, **k: (_ for _ in ()).throw(TypeError("mid-write failure")))
+
+    with pytest.raises(TypeError):
+        bridge.save_narration_edits("p", {"scenes": [{"scene_id": 1, "text": "new"}]})
+
+    assert (tmp_path / "p" / "narration.json").read_bytes() == before
+    assert not (tmp_path / "p" / "narration.json.tmp").exists()
 
 
 def test_run_hunt_delegates(monkeypatch):

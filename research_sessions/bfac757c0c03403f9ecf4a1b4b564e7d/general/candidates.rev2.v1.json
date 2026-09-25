@@ -1,0 +1,84 @@
+{
+  "revision": 2,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "In despair, he creates a construct of his dead little sister, Ellie, to calm his mother.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5",
+        "https://dc.fandom.com/wiki/Eleanor_Stewart_(Prime_Earth)"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #5 (2024)",
+      "summary": "The most insane construct in the set: John creates a realistic dead-sister construct to comfort his dementia-stricken mother. This is a temporary, emotionally targeted construct that later becomes an ongoing autonomous presence in the run.",
+      "title": "Dead-sister construct Ellie",
+      "what_visibly_happens": "John manifests Ellie as a lifelike construct and presents her to his mother as a comforting companion.",
+      "id": "candidate-3"
+    },
+    {
+      "character_or_thing": "Martian Manhunter containment bubble",
+      "claim_citation": {
+        "quote": "John Stewart and Martian Manhunter find that the planet, Xanshi, has been infected by the Anti-Life Aspect. After evading a volcanic eruption, John arrogantly blames Manhunter for holding him back, restraining him in a construct bubble.",
+        "url": "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)",
+        "https://dc.fandom.com/wiki/Xanshi"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1988)",
+      "summary": "Partial construct. John made an energy bubble to hold Martian Manhunter back so he could rush ahead alone; the attempt ended in catastrophe when Xanshi was destroyed.",
+      "title": "Cosmic Odyssey",
+      "what_visibly_happens": "He forms a glowing bubble around Martian Manhunter and pushes on without him, trying to handle the crisis by himself.",
+      "id": "r2-candidate-1"
+    },
+    {
+      "character_or_thing": "Kryptonite construct for the Thanagar vault",
+      "claim_citation": {
+        "quote": "John Stewart, thanks to his willpower-made ring, creates a construct with the properties of Kryptonite, substituting it with a special piece of Kryptonite which was carried inside the vault by two Dominators.",
+        "url": "https://dc.fandom.com/wiki/Justice_League_Vol_4_15"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Justice_League_Vol_4_15"
+      ],
+      "series_issue_year": "Justice League (2018) #15 (2019)",
+      "summary": "Assisted/temporary construct. John makes a counterfeit Kryptonite construct to fool security and get the team into the vault.",
+      "title": "Justice League: Escape from Hawkworld: Part Two",
+      "what_visibly_happens": "He creates a green Kryptonite-shaped construct that passes the vault’s security check.",
+      "id": "r2-candidate-2"
+    },
+    {
+      "character_or_thing": "Larger-than-life Superman construct",
+      "claim_citation": {
+        "quote": "During this scene, he comically beams a larger-than-life Superman to deflect the energy blasts off his chest as if they were bullets, and later uses a wrecking ball to pummel the rest of Kanjar Ro's forces.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://leagueofcomicgeeks.com/comic/6789170/green-lantern-war-journal-vol-2-the-builder-tp"
+      ],
+      "series_issue_year": "Green Lantern Corps #1 (2025)",
+      "summary": "Showy full construct. John creates a gigantic Superman-shaped construct as battlefield protection and then follows it with a wrecking-ball construct.",
+      "title": "Green Lantern Corps",
+      "what_visibly_happens": "A giant Superman-shaped projection appears in front of him to soak up incoming blasts, then a wrecking ball swings into the enemy line.",
+      "id": "r2-candidate-3"
+    },
+    {
+      "character_or_thing": "Precision sniper-rifle construct",
+      "claim_citation": {
+        "quote": "John Stewart decided to build a sniper rifle construct that was so precise and deadly that it only took one shot to thwart the threat from such a long distance.",
+        "url": "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-coolest-constructs-john-stewart-made/",
+        "https://dc.fandom.com/wiki/John_Stewart_(New_Earth)"
+      ],
+      "series_issue_year": "Green Lantern Corps Vol. 2 #60 (2011)",
+      "summary": "Assisted/weapon construct. John forms a sniper rifle with enough precision to make a single, long-range disabling shot.",
+      "title": "Green Lantern Corps",
+      "what_visibly_happens": "He manifests a rifle, sights the target at extreme range, and fires one precise shot.",
+      "id": "r2-candidate-5"
+    }
+  ]
+}

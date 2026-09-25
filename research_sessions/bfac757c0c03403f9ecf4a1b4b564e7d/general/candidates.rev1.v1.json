@@ -1,0 +1,51 @@
+{
+  "revision": 1,
+  "candidates": [
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "After evading a volcanic eruption, John arrogantly blames Manhunter for holding him back, restraining him in a construct bubble.",
+        "url": "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      },
+      "evidence_urls": [
+        "https://www.cbr.com/green-lantern-essential-john-stewart-comics/"
+      ],
+      "series_issue_year": "Cosmic Odyssey #2 (1988)",
+      "summary": "A temporary restraint construct: John traps Martian Manhunter inside a construct bubble during the Xanshi disaster sequence. This is an assisted/defensive use of the ring, not a sentient construct.",
+      "title": "Construct bubble used to hold Martian Manhunter",
+      "what_visibly_happens": "John forms a green bubble around Martian Manhunter to keep him from interfering while John approaches the yellow bomb.",
+      "id": "candidate-1"
+    },
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "John Stewart observes the varied creatures of Oa, describing his relationship to them and their quirks. He has created a road linking each of the Mosaic's cities, and protects the planet's citizens from themselves and each other.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_Mosaic_Vol_1_1"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_Mosaic_Vol_1_1"
+      ],
+      "series_issue_year": "Green Lantern: Mosaic #1 (1992)",
+      "summary": "A large-scale infrastructure construct: John makes a road connecting the cities of the Mosaic world. This is a stable, functional construct, but not autonomous.",
+      "title": "Road linking the Mosaic cities",
+      "what_visibly_happens": "John lays down a continuous road across Oa/Mosaic to connect the transplanted city-communities.",
+      "id": "candidate-2"
+    },
+    {
+      "character_or_thing": "John Stewart",
+      "claim_citation": {
+        "quote": "In despair, he creates a construct of his dead little sister, Ellie, to calm his mother.",
+        "url": "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5"
+      },
+      "evidence_urls": [
+        "https://dc.fandom.com/wiki/Green_Lantern:_War_Journal_Vol_1_5",
+        "https://dc.fandom.com/wiki/Eleanor_Stewart_(Prime_Earth)"
+      ],
+      "series_issue_year": "Green Lantern: War Journal #5 (2024)",
+      "summary": "The most insane construct in the set: John creates a realistic dead-sister construct to comfort his dementia-stricken mother. This is a temporary, emotionally targeted construct that later becomes an ongoing autonomous presence in the run.",
+      "title": "Dead-sister construct Ellie",
+      "what_visibly_happens": "John manifests Ellie as a lifelike construct and presents her to his mother as a comforting companion.",
+      "id": "candidate-3"
+    }
+  ]
+}

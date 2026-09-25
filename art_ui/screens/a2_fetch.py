@@ -34,7 +34,13 @@ def build(page: ft.Page, state: ArtAppState, *,
         status.value = "Already fetched — re-fetch reuses cached images."
 
     async def _execute():
+        if not state.project_name:
+            status.value = "Pick or create an artwork first."
+            status.color = DANGER
+            page.update()
+            return
         running.visible = True
+        fetch_btn.disabled = True
         status.value = "Fetching from The Met…"
         status.color = WARN
         page.update()
@@ -42,21 +48,23 @@ def build(page: ft.Page, state: ArtAppState, *,
             await run_blocking(bridge.run_fetch, state.project_name, state.object_ids,
                                state.mode, state.theme, push_log,
                                length=getattr(state, "length", "short"))
+            # The tail (mount/save/notify) is part of the try: a failure here (e.g. a
+            # Windows file lock on state.json) must still clear the spinner and report,
+            # not leave the button spinning forever.
+            status.value = "Fetched. Review the artwork below, then continue."
+            status.color = SUCCESS
+            _mount_thumbs()
+            state.mark_approved(2)
+            save_state(state)
+            on_state_change()
         except Exception as e:
-            running.visible = False
             status.value = "Failed — see log (non-CC0 artworks are refused)."
             status.color = DANGER
             push_log(format_exception(e))
+        finally:
+            running.visible = False
+            fetch_btn.disabled = False
             page.update()
-            return
-        running.visible = False
-        status.value = "Fetched. Review the artwork below, then continue."
-        status.color = SUCCESS
-        _mount_thumbs()
-        state.mark_approved(2)
-        save_state(state)
-        page.update()
-        on_state_change()
 
     center = ft.Column([
         ft.Container(content=ft.Column([thumbs], scroll=ft.ScrollMode.AUTO, expand=True),
@@ -71,13 +79,15 @@ def build(page: ft.Page, state: ArtAppState, *,
         ),
     ], spacing=0, expand=True)
 
+    fetch_btn = primary_button("Fetch", lambda _e: page.run_task(_execute), icon=ft.Icons.DOWNLOAD)
+
     right = ft.Column([
         ft.Text("STEP 2 OF 6", size=10, color=TEXT_MUTED),
         ft.Text("Fetch from Met", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(f"objectIDs: {', '.join(str(i) for i in state.object_ids)}\nmode: {state.mode}",
                 size=12, color=TEXT_MUTED),
         ft.Container(height=12),
-        primary_button("Fetch", lambda _e: page.run_task(_execute), icon=ft.Icons.DOWNLOAD),
+        fetch_btn,
         ft.Container(height=8),
         secondary_button("Next: Regions →", lambda _e: on_go(3), icon=ft.Icons.ARROW_FORWARD),
     ], spacing=8, expand=True)

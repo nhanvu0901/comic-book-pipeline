@@ -46,6 +46,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from config import PROJECTS_ROOT
+from stages._arc import qa_item_chapters
+from stages.user_errors import MissingInputError
 
 # Default-ON boolean env, same idiom as shots.PANEL_ANCHOR_BIND.
 REVIEW_GATE = os.getenv("REVIEW_GATE", "1").strip().lower() not in ("0", "false", "no", "")
@@ -317,16 +319,17 @@ def ensure_reviewed(project, skip_flag: bool = False, *, log=print) -> None:
     if not state.get("approved"):
         raise SystemExit(
             f"[review-gate] BLOCKED: '{project}' is not approved.\n"
-            f"  1. Build the panel shortlist:\n"
-            f"       python -m stages.review_gate --project {project} --build-candidates\n"
-            f"  2. Open the review UI, check the narration text + panel choices, and approve.\n"
+            f"  1. Build the panel shortlist: in the app, open Stage 5 (Review Beats) and press\n"
+            f"     Build candidates;\n"
+            f"     from a terminal: python -m stages.review_gate --project {project} --build-candidates\n"
+            f"  2. In Stage 5 (Review Beats), check the narration text + panel choices, and approve.\n"
             f"  (--skip-review no longer bypasses this — the gate is hard for all modes.)"
         )
     approved_sha, current_sha = state.get("narration_sha1"), narration_sha1(project)
     if approved_sha and current_sha and approved_sha != current_sha:
         raise SystemExit(
             f"[review-gate] BLOCKED: narration.json changed since '{project}' was approved "
-            f"(approval is stale). Re-review and re-approve in the UI."
+            f"(approval is stale). Re-review and re-approve in Stage 5 (Review Beats)."
         )
     log(f"[review-gate] '{project}' approved — proceeding")
 
@@ -368,7 +371,13 @@ def _beat_source(scene: dict, comic_ctx: dict, answer_ctx: dict, *, issue_label:
 
     Item lookup order: (1) the beat's issue_label "#N" → item N-1 (robust — survives a
     narration hand-edit that drops per-scene source_image), then (2) the saga page
-    filename's chapter index, then (3) fall back to the single comic_context source."""
+    filename's chapter index, then (3) fall back to the single comic_context source.
+
+    Two items citing the SAME issue share one chapter, so "#N" names only the first of
+    them. Under the fixed item order a body beat's beat_id IS its item number, so when
+    that item lives in this same chapter (qa_item_chapters, the rule the download used)
+    the beat_id picks the right one of the pair. A beat_id that points at another
+    chapter is ignored — it cannot be trusted, and the chapter is."""
     items = answer_ctx.get("items") or []
     if items:
         idx = None
@@ -377,6 +386,14 @@ def _beat_source(scene: dict, comic_ctx: dict, answer_ctx: dict, *, issue_label:
             idx = int(m.group(1))
         if not (idx and 1 <= idx <= len(items)):
             idx = _chapter_index(scene.get("source_image"))
+        try:
+            beat_item = int(scene.get("beat_id") or 0)
+        except (TypeError, ValueError):
+            beat_item = 0
+        if idx and 1 <= beat_item <= len(items):
+            chapters = qa_item_chapters([str(it.get("reader_url") or "") for it in items])
+            if chapters[beat_item - 1] == idx:
+                idx = beat_item
         if idx and 1 <= idx <= len(items):
             it = items[idx - 1]
             return {"title": it.get("source_comic", ""), "issue": str(it.get("source_year", "")),
@@ -877,7 +894,10 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     match_k = 10**9 if cap is None else k
     narration_path = root / "narration.json"
     if not narration_path.exists():
-        raise FileNotFoundError(f"narration.json missing: {narration_path}. Run Stage 3 first.")
+        raise MissingInputError(
+            f"No narration yet for {slug}. Approve a script in Narration Script first "
+            "(python -m stages.stage_3 from a terminal)."
+        )
     narration = _load_json(narration_path)
     scenes = narration.get("scenes") or []
     mode = str(narration.get("mode") or "")

@@ -20,6 +20,7 @@ import asyncio
 import datetime as dt
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -776,7 +777,7 @@ def build(
 
     # ─── Import external intro image ────────────────────────────────────────
     # Master can open a Q&A with an image from disk instead of a comic panel. The
-    # inject (sips → jpg + preprocessed page + subject_panels force_intro entry)
+    # inject (convert → jpg + preprocessed page + subject_panels force_intro entry)
     # lives in ui/intro_import.py (pure, tested); this screen only calls it and
     # renders the current imports as a strip above the beat cards.
     intro_list_col = ft.Column(spacing=8)
@@ -2107,6 +2108,21 @@ def build(
     )
 
 
+def _failure_reason(log_path: Path) -> str:
+    """The last line a failed build printed; for a crash, just the exception's message
+    ("pkg.SomeError: text" -> "text"). The app is used over the LAN, so a path to a log
+    file on the server tells the person at the browser nothing."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    match = re.match(r"^[A-Za-z_][\w.]*(?:Error|Exception|Exit): (.+)$", lines[-1])
+    return match.group(1) if match else lines[-1]
+
+
 def _empty_state(page: ft.Page, state: AppState, on_go, on_state_change) -> ft.Control:
     def _switch(name: str):
         state.project_name = name
@@ -2172,7 +2188,9 @@ def _empty_state(page: ft.Page, state: AppState, on_go, on_state_change) -> ft.C
             else:
                 build_btn.disabled = False
                 build_spinner.visible = False
-                build_status.value = f"Build failed (exit {proc.returncode}) — see {log_path}"
+                reason = _failure_reason(log_path)
+                build_status.value = (f"Build failed: {reason}" if reason
+                                      else f"Build failed (exit {proc.returncode}) — see {log_path}")
                 build_status.color = DANGER
                 page.update()
 
