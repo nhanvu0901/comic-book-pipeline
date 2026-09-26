@@ -83,6 +83,9 @@ def assemble_project(
         json.loads(caption_chunks_path.read_text()) if caption_chunks_path.exists() else []
     )
     pages_by_number = _load_preprocessed_pages(root)
+    if not pages_by_number:
+        log(f"[stage5] ⚠ no preprocessed pages found in {root / 'preprocessed'} — "
+            "shots depending on comic pages may fail if not using custom images")
 
     # Long-form renders LANDSCAPE and crops per TIER, not per panel. Both are no-ops for every
     # Short mode (set_output_frame returns the 1080x1920 default), so recap / micro_moment /
@@ -173,6 +176,12 @@ def assemble_project(
         if sp.exists() and not force:
             log(f"[stage5] reusing {sp.name}")
         else:
+            if not getattr(s, "custom_image", None) and (not s.source_image or not Path(s.source_image).is_file()):
+                raise RuntimeError(
+                    f"Shot {s.shot_id} has invalid source_image: {s.source_image!r}. "
+                    "Comic pages may not be downloaded or preprocessed. "
+                    "Please run download and preprocess stages first."
+                )
             render_shot(s, sp, work_dir=shots_dir / "_panels", progress=log,
                         corner_logo=corner_logo)
         shot_paths.append(sp)

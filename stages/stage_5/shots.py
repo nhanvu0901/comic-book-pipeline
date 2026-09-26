@@ -4598,9 +4598,9 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
     dominant cost and a panel is a fraction of the page (~5× faster). PERF (B):
     the cleaned result is cached by (source, bbox, text, mirror) so a panel shown
     across several shots/scenes is inpainted ONCE, then copied."""
+    if not source_image or not Path(source_image).is_file():
+        raise FileNotFoundError(f"source image missing or not a file: {source_image!r}")
     src = Path(source_image)
-    if not src.exists():
-        raise FileNotFoundError(f"source image missing: {src}")
 
     # Crop-window geometry ONCE (PIL header read is cheap) — shared by the cv2 and
     # PIL branches (the pad math was duplicated) and filled into geom_out even on a
