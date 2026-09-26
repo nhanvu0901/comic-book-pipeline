@@ -2,7 +2,8 @@
 """
 Inspect the latest project with a rendered video (final.mp4 or audio.wav),
 extract duration, narrative style, mood, and music state, then construct
-a precision-engineered prompt for Stable Audio 3 on Hugging Face.
+precision-engineered prompts for Stable Audio 3 on Hugging Face, including
+the signature Galactus Dark Drift Phonk style and Minimal Dark Cinematic style.
 """
 
 import argparse
@@ -37,7 +38,6 @@ def find_latest_project_local() -> Path | None:
 
 def get_remote_project_info() -> dict | None:
     """Fetch info from remote Windows winbox-lan if local is empty."""
-    # Find latest directory containing final.mp4 or audio.wav
     find_cmd = [
         "ssh", "winbox-lan",
         "powershell -NoProfile -Command \""
@@ -72,7 +72,7 @@ def get_remote_project_info() -> dict | None:
     return None
 
 
-def generate_stable_audio_prompt(info: dict) -> dict:
+def generate_stable_audio_prompts(info: dict) -> dict:
     music = info.get("music.json") or {}
     comic = info.get("comic_context.json") or {}
     narration = info.get("narration.json") or {}
@@ -85,93 +85,57 @@ def generate_stable_audio_prompt(info: dict) -> dict:
             word_count = sum(len(s.get("text", "").split()) for s in scenes)
             duration = round(word_count / wps, 2)
         else:
-            duration = 75.0
+            duration = 71.0
 
-    genre = music.get("genre") or "minimal dark cinematic"
-    minimax = music.get("minimax_state") or {}
-    meta = minimax.get("global_meta") or ""
-    arrangement = minimax.get("arrangement") or ""
-    
-    # Extract BPM and Key if present
-    bpm = 68
-    key = "C minor"
-    if "bpm is" in meta.lower():
-        try:
-            bpm_part = meta.lower().split("bpm is")[1].split(".")[0].strip()
-            bpm = int("".join(filter(str.isdigit, bpm_part)))
-        except Exception:
-            pass
-    if "key is" in meta.lower():
-        try:
-            key_part = meta.split("key is")[1].split(".")[0].strip()
-            key = key_part.rstrip(",")
-            if "scale is minor" in meta.lower() and "minor" not in key.lower():
-                key += " minor"
-        except Exception:
-            pass
+    target_duration_sec = int(round(duration))
+    topic = comic.get("title") or narration.get("title") or info.get("name")
 
-    # Extract primary instruments
-    instruments = []
-    text_blob = (meta + " " + arrangement).lower()
-    if "cello" in text_blob:
-        instruments.append("solo cello with deep mournful tone")
-    if "piano" in text_blob:
-        instruments.append("felt upright piano in low register")
-    if "synth" in text_blob:
-        instruments.append("dark evolving analog synth pads")
-    if "sub-bass" in text_blob:
-        instruments.append("deep cinematic sub-bass")
-    if "808" in text_blob or "kick" in text_blob:
-        instruments.append("sparse slow 808 heartbeat pulse")
-    if not instruments:
-        instruments = [
-            "deep atmospheric cello",
-            "felt upright piano",
-            "warm sub-bass",
-            "ambient synth drones",
-            "subtle cinematic percussion"
-        ]
-
-    # Mood & Atmospheric tags
-    moods = [
-        "cold introspective tension",
-        "brooding psychological atmosphere",
-        "cavernous wide soundstage",
-        "heavy analog saturation",
-        "long dark reverbs",
-        "slow emotional buildup",
-        "film score soundtrack"
-    ]
-
-    instruments_str = ", ".join(instruments)
-    moods_str = ", ".join(moods)
-
-    # Core prompt construction following Stable Audio 3 official prompting standards
-    positive_prompt = (
-        f"{genre.title()} score, {instruments_str}, {moods_str}, "
-        f"{bpm} BPM, {key}, dynamic range master, "
-        f"instrumental, no vocals, no singing, no speech"
+    # 1. Galactus Signature Style: Dark Aggressive Drift Phonk (140 BPM)
+    phonk_prompt = (
+        "A dark aggressive drift phonk instrumental at 140 BPM. "
+        "Heavy distorted 808 sub bass glides, menacing detuned cowbell lead melody, "
+        "fast rolling trap hi-hats, punchy kick drums, and dark cosmic synth atmospheres. "
+        "The track begins with an ominous space drone and eerie bells, building tension "
+        "before dropping into a relentless, high-energy phonk beat with thundering bass. "
+        "Epic, cinematic, triumphant, strictly instrumental, no vocals, high production quality, "
+        "clean punchy mix, wide stereo image."
     )
 
-    negative_prompt = (
+    phonk_short_prompt = (
+        "Dark cosmic drift phonk instrumental, 140 BPM, aggressive distorted 808 bass, "
+        "punchy trap drums, fast hi-hats, eerie detuned cowbell riff, cinematic cosmic tension, "
+        "epic climax, purely instrumental, no voices, polished studio production."
+    )
+
+    phonk_negative = (
+        "vocals, voice, singing, spoken words, speech, humming, choir, "
+        "muddy low-end, muffled mix, noisy distortion, low fidelity, out of tune"
+    )
+
+    # 2. Cinematic Score Style (Minimal Dark Cinematic - 68 BPM)
+    cinematic_prompt = (
+        "Minimal Dark Cinematic score, deep atmospheric cello, felt upright piano, "
+        "warm sub-bass, ambient synth drones, subtle cinematic percussion, "
+        "cold introspective tension, brooding psychological atmosphere, cavernous wide soundstage, "
+        "heavy analog saturation, long dark reverbs, slow emotional buildup, film score soundtrack, "
+        "68 BPM, C minor, dynamic range master, instrumental, no vocals, no singing, no speech"
+    )
+
+    cinematic_negative = (
         "vocals, singing, human voice, speech, spoken word, choir, vocal chops, acapella, "
         "talking, whispering, distortion, clipping, muffled, low quality, noise, harsh frequencies"
     )
 
-    target_duration_sec = int(round(duration))
-
     return {
         "project_name": info.get("name") or "latest_project",
-        "topic": comic.get("title") or narration.get("title") or info.get("name"),
+        "topic": topic,
         "target_duration_seconds": target_duration_sec,
         "exact_duration_float": round(duration, 2),
-        "bpm": bpm,
-        "key": key,
-        "genre": genre,
-        "positive_prompt": positive_prompt,
-        "negative_prompt": negative_prompt,
-        "recommended_steps": 8,
-        "recommended_cfg": 1.0,
+        "phonk_prompt": phonk_prompt,
+        "phonk_short_prompt": phonk_short_prompt,
+        "phonk_negative": phonk_negative,
+        "cinematic_prompt": cinematic_prompt,
+        "cinematic_negative": cinematic_negative,
         "huggingface_space_url": "https://huggingface.co/spaces/stabilityai/stable-audio-3"
     }
 
@@ -208,30 +172,35 @@ def main():
                         pass
 
     if not project_info:
-        # Check remote Windows machine
         project_info = get_remote_project_info()
 
     if not project_info or not project_info.get("name"):
         sys.stderr.write("Error: Could not find any project with final.mp4 or audio.wav.\n")
         sys.exit(1)
 
-    result = generate_stable_audio_prompt(project_info)
+    result = generate_stable_audio_prompts(project_info)
 
     print("=" * 76)
-    print(f"🎵 STABLE AUDIO 3 MUSIC PROMPT FOR: {result['project_name']}")
+    print(f"🎵 STABLE AUDIO 3 MUSIC PROMPTS FOR: {result['project_name']}")
     print(f"🎯 Target Duration: {result['target_duration_seconds']}s (exact: {result['exact_duration_float']}s)")
-    print(f"🎹 Tempo & Key: {result['bpm']} BPM · {result['key']}")
-    print(f"🎼 Genre: {result['genre']}")
     print("=" * 76)
-    print("\n👉 [POSITIVE PROMPT] (Copy & paste to Prompt field in Hugging Face):")
-    print(result["positive_prompt"])
-    print("\n👉 [NEGATIVE PROMPT] (Copy & paste to Negative Prompt field in Hugging Face):")
-    print(result["negative_prompt"])
-    print("\n⚙️ [RECOMMENDED HUGGING FACE SETTINGS]:")
-    print(f"• Duration: {result['target_duration_seconds']} seconds (drag slider to {result['target_duration_seconds']}s)")
-    print(f"• Steps: {result['recommended_steps']} (or default 8)")
-    print(f"• CFG Scale: {result['recommended_cfg']} (or up to 7.0 for strict prompt adherence)")
-    print(f"• Hugging Face Space: {result['huggingface_space_url']}")
+    print("\n🔥 [STYLE 1: GALACTUS SIGNATURE - DARK AGGRESSIVE DRIFT PHONK (140 BPM)]")
+    print("👉 Positive Prompt (Full):")
+    print(result["phonk_prompt"])
+    print("\n👉 Positive Prompt (Short & Punchy):")
+    print(result["phonk_short_prompt"])
+    print("\n👉 Negative Prompt:")
+    print(result["phonk_negative"])
+    print("\n⚙️ Settings: Duration: " + str(result['target_duration_seconds']) + "s | Steps: 50 | CFG: 7.0 - 8.0")
+    print("-" * 76)
+    print("\n🎻 [STYLE 2: MINIMAL DARK CINEMATIC - BROODING CELLO & PIANO (68 BPM)]")
+    print("👉 Positive Prompt:")
+    print(result["cinematic_prompt"])
+    print("\n👉 Negative Prompt:")
+    print(result["cinematic_negative"])
+    print("\n⚙️ Settings: Duration: " + str(result['target_duration_seconds']) + "s | Steps: 8-12 | CFG: 1.0 - 7.0")
+    print("=" * 76)
+    print(f"🔗 Hugging Face Space: {result['huggingface_space_url']}")
     print("=" * 76)
 
 

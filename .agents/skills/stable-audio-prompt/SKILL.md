@@ -36,16 +36,26 @@ Script sẽ tự động:
 Stable Audio 3 là mô hình sinh âm thanh khuếch tán (latent diffusion) chất lượng cao nhất hiện nay của Stability AI. Để tạo nhạc nền không lời (instrumental) khớp hoàn hảo với video, prompt phải tuân theo cấu trúc sau:
 
 ### Cấu trúc Positive Prompt chuẩn:
+
+#### Phong cách 1: Galactus Signature Style (Dark Aggressive Drift Phonk — 140 BPM)
+Dành cho video hành động, đấu trí, sức mạnh áp đảo (như video Galactus hay John Stewart):
 ```text
-[Genre / Sub-genre], [Lead & Rhythm Instruments], [Atmospheric & Spatial FX], [Mood / Emotional Arc], [BPM], [Key / Scale], [Mastering / Production Quality], instrumental, no vocals, no singing, no speech
+A dark aggressive drift phonk instrumental at 140 BPM. Heavy distorted 808 sub bass glides, menacing detuned cowbell lead melody, fast rolling trap hi-hats, punchy kick drums, and dark cosmic synth atmospheres. The track begins with an ominous space drone and eerie bells, building tension before dropping into a relentless, high-energy phonk beat with thundering bass. Epic, cinematic, triumphant, strictly instrumental, no vocals, high production quality, clean punchy mix, wide stereo image.
 ```
-* **Bắt buộc có:** Cụm từ khóa `instrumental, no vocals, no singing, no speech` ở cuối prompt.
-* **Quy tắc nhạc cụ:** Liệt kê rõ texture (âm sắc) của từng nhạc cụ thay vì chỉ ghi tên chung (ví dụ: `solo cello with deep mournful tone`, `felt upright piano in low register`, `warm analog sub-bass`).
-* **Tránh từ ngữ gợi ý giọng hát:** Tuyệt đối không dùng các từ như `soulful`, `choir`, `chanting`, `diva`, `ballad` vì model dễ tự ý chèn giọng người.
+*(Bản rút gọn - Short & Punchy):*
+```text
+Dark cosmic drift phonk instrumental, 140 BPM, aggressive distorted 808 bass, punchy trap drums, fast hi-hats, eerie detuned cowbell riff, cinematic cosmic tension, epic climax, purely instrumental, no voices, polished studio production.
+```
+
+#### Phong cách 2: Minimal Dark Cinematic (Brooding Cello & Piano — 68 BPM)
+Dành cho video tâm lý, suy ngẫm sâu, không khí u tối:
+```text
+Minimal Dark Cinematic score, deep atmospheric cello, felt upright piano, warm sub-bass, ambient synth drones, subtle cinematic percussion, cold introspective tension, brooding psychological atmosphere, cavernous wide soundstage, heavy analog saturation, long dark reverbs, slow emotional buildup, film score soundtrack, 68 BPM, C minor, dynamic range master, instrumental, no vocals, no singing, no speech
+```
 
 ### Cấu trúc Negative Prompt chuẩn:
 ```text
-vocals, singing, human voice, speech, spoken word, choir, vocal chops, acapella, talking, whispering, distortion, clipping, muffled, low quality, noise, harsh frequencies
+vocals, voice, singing, spoken words, speech, humming, choir, muddy low-end, muffled mix, noisy distortion, low fidelity, out of tune
 ```
 
 ---
