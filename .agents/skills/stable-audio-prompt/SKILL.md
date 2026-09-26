@@ -35,27 +35,27 @@ Script sẽ tự động:
 
 Stable Audio 3 là mô hình sinh âm thanh khuếch tán (latent diffusion) chất lượng cao nhất hiện nay của Stability AI. Để tạo nhạc nền không lời (instrumental) khớp hoàn hảo với video, prompt phải tuân theo cấu trúc sau:
 
-### Cấu trúc Positive Prompt chuẩn:
+### Cấu trúc Positive Prompt chuẩn (No Intro — Instant Hook):
 
 #### Phong cách 1: Galactus Signature Style (Dark Aggressive Drift Phonk — 140 BPM)
 Dành cho video hành động, đấu trí, sức mạnh áp đảo (như video Galactus hay John Stewart):
 ```text
-A dark aggressive drift phonk instrumental at 140 BPM. Heavy distorted 808 sub bass glides, menacing detuned cowbell lead melody, fast rolling trap hi-hats, punchy kick drums, and dark cosmic synth atmospheres. The track begins with an ominous space drone and eerie bells, building tension before dropping into a relentless, high-energy phonk beat with thundering bass. Epic, cinematic, triumphant, strictly instrumental, no vocals, high production quality, clean punchy mix, wide stereo image.
+A dark aggressive drift phonk instrumental at 140 BPM. Instant start directly into the main hook from second 0, zero intro, no buildup, no ambient fade-in. Menacing detuned cowbell lead hook riff and heavy distorted 808 sub bass glides hitting immediately on the first beat. Fast rolling trap hi-hats, punchy kick drums, and dark cosmic synth stabs driving non-stop high energy throughout. Relentless continuous hook loop, pure aggressive momentum. Epic, cinematic, triumphant, strictly instrumental, no vocals, high production quality, clean punchy mix, wide stereo image.
 ```
 *(Bản rút gọn - Short & Punchy):*
 ```text
-Dark cosmic drift phonk instrumental, 140 BPM, aggressive distorted 808 bass, punchy trap drums, fast hi-hats, eerie detuned cowbell riff, cinematic cosmic tension, epic climax, purely instrumental, no voices, polished studio production.
+Instant drop dark cosmic drift phonk instrumental, 140 BPM. Zero intro, straight into the main hook from 0:00. Aggressive distorted 808 bass, punchy trap drums, fast hi-hats, iconic detuned cowbell hook riff playing immediately, maximum energy, no buildup, purely instrumental, no voices, polished studio production.
 ```
 
 #### Phong cách 2: Minimal Dark Cinematic (Brooding Cello & Piano — 68 BPM)
 Dành cho video tâm lý, suy ngẫm sâu, không khí u tối:
 ```text
-Minimal Dark Cinematic score, deep atmospheric cello, felt upright piano, warm sub-bass, ambient synth drones, subtle cinematic percussion, cold introspective tension, brooding psychological atmosphere, cavernous wide soundstage, heavy analog saturation, long dark reverbs, slow emotional buildup, film score soundtrack, 68 BPM, C minor, dynamic range master, instrumental, no vocals, no singing, no speech
+Minimal Dark Cinematic score, 68 BPM, C minor. Instant start with the full main theme from second 0, zero intro, no slow buildup. Deep atmospheric cello lead melody and felt upright piano chords playing immediately on beat one. Warm sub-bass pulse, continuous subtle cinematic percussion, cold introspective tension, brooding psychological atmosphere, cavernous wide soundstage, heavy analog saturation, long dark reverbs, film score soundtrack, dynamic range master, instrumental, no vocals, no singing, no speech.
 ```
 
 ### Cấu trúc Negative Prompt chuẩn:
 ```text
-vocals, voice, singing, spoken words, speech, humming, choir, muddy low-end, muffled mix, noisy distortion, low fidelity, out of tune
+intro, buildup, slow start, gradual rise, ambient intro, silence at beginning, fade-in, prelude, vocals, voice, singing, spoken words, speech, humming, choir, muddy low-end, muffled mix, noisy distortion, low fidelity, out of tune
 ```
 
 ---
