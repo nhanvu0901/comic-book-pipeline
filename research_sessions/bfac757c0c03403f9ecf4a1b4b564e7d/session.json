@@ -2,14 +2,14 @@
   "id": "bfac757c0c03403f9ecf4a1b4b564e7d",
   "mode": "qa",
   "user_intent": "What is the most insane construct John Stewart ever tried to make with a Green Lantern ring?",
-  "state": "production_gates",
+  "state": "candidate_review",
   "revision": 5,
   "selected_specific_candidate_ids": [
     "candidate-3",
     "r2-candidate-5",
     "r5-candidate-2"
   ],
-  "created_project": "what_is_the_most_insane_construct_john_stewart_ever_tried_to",
+  "created_project": null,
   "feedback_log": [
     {
       "state": "candidate_review",
