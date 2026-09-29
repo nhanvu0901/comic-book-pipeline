@@ -576,7 +576,7 @@ def main() -> None:
     d.add_argument("--effort", default="standard")
     m = sub.add_parser("micro", help="scout single MOMENTS for micro_moment mode")
     m.add_argument("--effort", default="deep")
-    m.add_argument("--years", default="2010 or later, strongly preferring the last two years",
+    m.add_argument("--years", default="2010 or later, strongly preferring this year",
                    help='publication window phrasing, e.g. "in 2025 or 2026"')
     e = sub.add_parser("enumerate")
     e.add_argument("--question", required=True)

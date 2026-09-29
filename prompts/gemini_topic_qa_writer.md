@@ -1,93 +1,37 @@
-GEMINI PROMPT — Q&A NARRATION WRITER (Gen-Z voice), GROUNDED
+# GEMINI PROMPT — GROUNDED COMIC Q&A WRITER
 
-Run settings: Gemini 3.1 Pro. Temperature 1.0 (default — do not lower it).
-Google Search grounding ON. Thinking level HIGH. Runs in two turns: let it
-finish PHASE 1, then reply WRITE.
+Run settings: Gemini 3.1 Pro or Gemini 3.5 Flash. Google Search grounding ON
+for PHASE 1. This prompt runs in two turns. First send the input below. Wait
+for PHASE 1 to finish, then reply WRITE.
 
 Operator note: after reviewing the audit, paste only the spoken lines under
 FINAL SCRIPT into the Stage 3 UI. Its preview counter includes any audit text
 you paste, even though the importer removes that text.
 
-You write the narration for a roughly 40–55-second YouTube Short that answers one
-comic-book question. I paste the finished text straight into my video pipeline.
-This job runs in two phases. Do not start PHASE 2 until I type WRITE.
+TOPIC / THEME QUESTION: <paste the exact question>
+ITEMS: <paste JSON items in the intended video order>
+PREVIOUS SCRIPTS (optional): <paste the last 2–3 scripts or leave blank>
 
-THE QUESTION:
-{{QUESTION}}
+You are writing one English YouTube Short that answers the theme question
+for somebody who knows the famous characters but may not know these issues.
+Verify first. Write only after I reply WRITE. Keep the supplied item order
+because the comic images already follow it.
 
-THE SCOUT JSON — one object per answer item:
-```json
-{{SCOUT_JSON}}
-```
+PHASE 1 — GROUND EACH ITEM:
+For each item in ITEMS, output:
+* Series, Issue, Year
+* Format & Checks: Confirm it's from a comic (not a show, game, or movie) and note any event or crossover it belongs to.
+* Beat 1 (Setup): the situation, in one sentence.
+   * Citation: source name (Tier) - URL
+   * Verbatim Quote: an exact quote from that source that supports this beat.
+* Beat 2 (Payoff): the construct and what it does, in one sentence.
+   * Citation: source name (Tier) - URL
+   * Verbatim Quote: an exact quote from that source that supports this beat.
+SOURCE TIERS: Tier 1 = the comic itself or the publisher. Tier 2 = established comic news and review sites. Tier 3 = fan wikis and forums (backup only, and flag it).
+QUOTE RULE: The quote has to back up the beat. If a detail in the beat isn't in the quote, cut the detail or find a better quote. If a beat can't be verified, mark it UNVERIFIED and leave it out of the script.
+Stop after Phase 1 and end with: "(PHASE 1 complete. Reply WRITE to generate PHASE 2.)"
 
-Read each object like this:
-item_number -> the item's fixed position. Your script keeps this order.
-entity -> who or what the item is about
-source_comic / source_year -> the item's comic (already volume-checked)
-how_or_why -> what happened and why it answers the question — your first beat
-drawable_moment -> the moment the picture for this item shows
-relationships / stakes_why -> who these people are to each other and why it matters (when present)
-verification_note -> where the research found it; open those sources first
-reader_url -> pipeline data, never narrated
-
-Every item goes in the video, in item_number order. Never skip, merge or reorder
-one: the comic pages are already downloaded in this order and each paragraph of
-your script is matched to its item by position. If an item cannot be grounded,
-that is a stop condition below — write NO INFO and name the item.
-
-That gives you ONE beat per item. You still need 2-3, so search only for the
-missing setup/payoff beats. And open the sources in verification_note once: if
-they do not say what how_or_why claims, treat the beat as unsourced.
-
-PHASE 1 — GROUND EACH ITEM
-
-The scout proved each item exists. That is not the same as knowing enough to
-narrate it. Each item gets 40 to 60 words of screen time, and if you only have
-the one-line summary above, the other fifty words come from your own memory.
-That is where invented feats get in, and they always get in through the middle
-of an item — the detail nobody thinks to check.
-
-Source tiers
-
-| Tier | Sources | May it establish a beat? |
-| --- | --- | --- |
-| 1 | the scanned page; a panel-by-panel breakdown showing images; publisher preview pages | Yes, alone |
-| 2 | Marvel/DC Fandom issue synopsis; League of Comic Geeks; a professional review written at release (CBR, AIPT, Newsarama, ComicsBeat, Polygon) | Yes, if two agree |
-| 3 | Reddit, Quora, forums, tweets, YouTube titles or descriptions, listicles, uncited fan wikis, anything AI-written | Never |
-
-For every answer item, collect
-
-  - 2 to 3 beats, each one plain sentence, each with its own Tier 1 or 2 URL
-    and a verbatim quote from that source. One beat is the setup, one is the
-    payoff.
-  - Volume + year confirmed against a source. Series get relaunched under
-    identical titles; Vol. 5 attributed to Vol. 6 ships and never gets caught.
-  - Comic or adaptation? If the beat is really from a film, game, or animated
-    version, say so and flag the item.
-
-Three things that are claims, not facts
-
-1.  Outcome does not imply choreography. The source says he survived. You have
-    "he survives". You do not have "he takes the blast head-on and walks out of
-    the crater" unless a source says the crater.
-2.  State of mind is a claim. Laughing, terrified, unbothered, smug — only if a
-    source names it. Otherwise it is yours, and you may not have it.
-3.  Numbers are claims. No durations, counts, distances, or power levels unless
-    quoted.
-
-Stop conditions — write NO INFO and stop
-- Any item has fewer than 2 sourced beats.
-- Any item's payoff — the thing that makes it an answer to the question — is
-  Tier 3 only.
-- Two Tier 2 sources contradict each other on what happened, with no Tier 1
-  tiebreak. Name which item failed and which condition tripped. I would rather
-  swap one item than ship a script with a hole in the middle of it.
-
-PHASE 1 output
-
-Then stop and wait.
-
-PHASE 2 — WRITE THE SHORT (only after I type WRITE)
+PHASE 2 — WRITE (only after I reply WRITE):
 
 The deliverable is an ENGLISH voiceover artifact. Write every hook and every
 spoken line in English; do not translate it into the language of my messages
@@ -105,8 +49,8 @@ emotion, distance, number, relationship, or consequence. An item about a
 different comic is a separate case: do not write "later", "meanwhile",
 "then", or "after that" between items unless the sheet explicitly says those
 events happened in that order. Use "First", "Next", or "Last" only when the
-listener needs orientation. If an item lacks a sourced payoff, answer NO INFO
-and name the item.
+listener needs orientation. If an item is UNVERIFIED or lacks a sourced payoff, answer NO INFO
+and name the item; each supplied item needs one script paragraph.
 An invented alternative is still an invented fact. Do not say that someone
 "didn't fight", "could have built" something else, "never used" an ability,
 or did an action "without" another action unless the sheet verifies both.
@@ -120,7 +64,8 @@ Before writing, silently make one four-part card per item:
 2. PROBLEM: the sourced situation that made the character use it.
 3. MECHANISM: what the thing actually did.
 4. RESULT: what changed because of it.
-Use only slots the sheet supports. Do not pad an empty slot. Each item should
+Use only slots supported by Beat 1 or Beat 2 and their quoted evidence.
+Do not pad an empty slot. Each item should
 move from its specific answer or problem to a new result. If the result is
 the funny part, say it plainly and stop. The comic supplies the punchline.
 
@@ -184,8 +129,8 @@ Aim for about 110–160 spoken words including the hook at this pipeline's
 2.9-word-per-second estimate. The fact sheet decides the length: a short,
 dense script is better than filling to a number. If the verified beats
 cannot carry the target, return NO INFO; do not invent detail.
-The Phase 1 mention of 40–60 words per item is a research warning, not a
-spoken-word quota.
+Phase 1 records two beats per item. If Beat 2 gives only the construct
+without a verified effect, do not invent the effect to fill the paragraph.
 
 Read the result aloud. Remove any sentence that merely repeats the theme,
 announces that a twist is coming, or tells the viewer how to feel. Compare
