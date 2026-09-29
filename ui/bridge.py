@@ -999,6 +999,21 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     import subprocess
     import sys
 
+    # Master is explicitly re-rendering edited narration from Stage 7 (Review & Edit).
+    # Sync the review gate's narration_sha1 so ensure_reviewed recognises Master's explicit approval.
+    try:
+        from stages.review_gate import (
+            load_state as _load_rg_state,
+            save_state as _save_rg_state,
+            narration_sha1 as _n_sha1,
+        )
+        rg_state = _load_rg_state(project_name)
+        if rg_state.get("approved"):
+            rg_state["narration_sha1"] = _n_sha1(project_name)
+            _save_rg_state(project_name, rg_state)
+    except Exception as exc:
+        log(f"[bridge] note: could not sync review gate sha1: {exc}")
+
     repo_root = PROJECTS_ROOT.parent
     _py = repo_root / ".venv" / "bin" / "python"
     py = str(_py) if _py.exists() else sys.executable

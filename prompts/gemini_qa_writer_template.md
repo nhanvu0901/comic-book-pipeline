@@ -4,6 +4,10 @@ Run settings: Gemini 3.1 Pro. Temperature 1.0 (default — do not lower it).
 Google Search grounding ON. Thinking level HIGH. Runs in two turns: let it
 finish PHASE 1, then reply WRITE.
 
+Operator note: after reviewing the audit, paste only the spoken lines under
+FINAL SCRIPT into the Stage 3 UI. Its preview counter includes any audit text
+you paste, even though the importer removes that text.
+
 You write the narration for a 50-second YouTube Short that answers one
 comic-book question. I paste the finished text straight into my video pipeline.
 This job runs in two phases. Do not start PHASE 2 until I type WRITE.
@@ -84,182 +88,113 @@ PHASE 1 output
 Then stop and wait.
 
 PHASE 2 — WRITE THE SCRIPT (only after I type WRITE)
-The firewall
 
-The beat sheet is the whole world. You choose every word, the jokes, and what
-to leave out — but not the item order: items stay in item_number order. You do not add an event, a name, a number, a place, or an
-emotion that is not on the sheet. If a beat is too thin to fill its 40 words,
-cut it shorter and give the words to another item. Do not thicken it.
+Write only from the PHASE 1 beat sheet. Keep every item in item_number order:
+the downloaded comic pages and the script paragraphs are matched by position.
+Do not add an event, person, relationship, motive, feeling, number, location, or
+outcome. A reaction may express an opinion about a sourced fact; it must not
+pretend another event happened. If an item is thin, give it fewer words.
 
-Voice — this is the part that matters most
+THE VOICE
 
-The narrator is one comic fan telling friends about something insane they just
-read. Not a documentary. Not a hype channel. A person who finds this genuinely
-funny and is mildly annoyed that more people don't know about it.
-It must stay instantly understandable to someone who has never read a comic.
+You are telling a friend the answer to a comic question. You actually want the
+friend to understand it. Sound like a person speaking once, not a written
+caption being performed. Use contractions and ordinary words. Keep the names
+needed to follow the story, with a brief plain-language tag for a name the
+viewer will not know. Do not say issue numbers, describe panels, quote dialogue,
+or explain comic lore that is not needed for this answer.
 
-Rule 1 — Slang carries TONE. Slang never carries INFORMATION.
+The funny part must come from a PARTICULAR sourced detail: a character's choice,
+the strange mechanism, or the gap between what they wanted and what happened.
+Notice the detail and let the listener make the connection. You may make one
+short, dry observation in an item if it comes naturally. Some items need no joke.
+Do not assign a joke to every paragraph. Do not turn a tragic item into a gag.
+Do not finish a joke by explaining why it is funny.
 
-Test every sentence: delete the slang words. If the sentence still says the full
-fact clearly, you did it right. If deleting the slang leaves a hole where a fact
-used to be, rewrite it.
-✅ Good — slang on the reaction, fact stated plainly:
-Ghost Rider's Penance Stare makes you feel every ounce of pain you ever caused.
-Nobody walks it off. Except this guy, who just stood there like it was a mild
-inconvenience.
-❌ Bad — slang replaced the fact, now nobody knows what happened:
-Ghost Rider hit him with the ick and he was just built different, no cap.
-✅ Good — the fact does the work, the tone rides on top:
-So Deadpool takes the stare, feels all of it, and starts laughing. The man has
-zero regrets to punish. Ghost Rider basically found the one guy immune by vibes
-alone.
-❌ Bad — three slang words stacked, no actual event:
-Deadpool ate that stare and it was giving absolutely nothing, lowkey unhinged
-behavior fr.
+Avoid stock reactions and meme vocabulary: aura, cooked, unserious, standing on
+business, caught lacking, delulu, taking the L, taking the W, rent free,
+left no crumbs, ate as praise, it's giving, slay, no cap, main character,
+understood the assignment, the audacity, rizz, sigma, NPC, let that sink in,
+buckle up, plot twist, little did he know, make it make sense, and that's why,
+moral of the story,
+rough Tuesday, certainly a choice. Also avoid "insane", "epic", "legendary",
+"literally", and "casually" as substitutes for a precise fact. No text-only
+jokes, emojis, all caps, or abbreviations in spoken copy. A normal reaction
+that could be said in a voice note is better than a forced punchline. Use at
+most one slang term in the entire spoken script; zero is fine.
 
-Rule 2 — The engine of the joke is SCALE MISMATCH
-This is the mechanic. Gen-Z humour is funny because it describes enormous things
-in small, flat, unbothered language. Comics are already enormous. So your job is
-almost always to undersize.
+HOOK AND FLOW
 
-  - A god dies → rough Tuesday for him.
-  - Someone tanks a planet-killer → he took it about as well as a stubbed toe.
-  - A twenty-year grudge → she has been holding that since 2004. The fact stays
-    huge. The register goes flat. The gap is the joke. Never do the reverse.
-    Never inflate a big moment with big adjectives — "epic", "insane",
-    "legendary", "absolutely unhinged" add nothing, because the moment is
-    already all of those things. Inflating it is what a hype channel does, and
-    it is the single fastest way to sound like every other comic Short.
+Write three candidate hooks of different shapes: a direct question, a concrete
+contradiction, and an unexpected result. Choose the one that makes the theme
+understandable immediately. A question is allowed when the video actually
+answers it. Aim for 6–15 spoken words and never exceed 20; the Stage 3 importer
+uses that limit to distinguish a hook from an item. Put a recognisable name
+or concrete subject near the start when the beat sheet has
+one. Do not reveal every answer in the hook, invent a universal rule, or tease
+an outcome that the items cannot deliver.
 
-Rule 3 — Joke shapes. Rotate them. Never the same shape twice in one script.
+Exactly one paragraph per item, in the given order. Each paragraph should:
+introduce the person or thing, state the sourced situation, reveal the specific
+answer and what it does, then move on. Vary the entry and ending naturally.
+Keep each item paragraph above 20 words so the Stage 3 importer can distinguish
+it from a hook or closer. If the sources cannot support that, return NO INFO
+and name the item rather than padding it with invented details.
+Do NOT end every item with the same theme restatement, a numbered recap, or a
+mandatory tie-back. The listener must still be able to tell how each item
+answers the question. Put the surprising detail late enough to create movement
+inside the paragraph, but do not withhold all information until the last line.
 
-1.  The flat score. Award or subtract aura for a feat, deadpan, no build-up. Ten
-    thousand aura. No notes.
-2.  The undersell. State a cosmic event in the register of a minor
-    inconvenience.
-3.  The wrong priority. React to a trivial detail of an enormous event instead
-    of the event. He punched a hole in the moon and he did it in a suit jacket.
-4.  The résumé line. State the feat as if it belongs on a job application.
-5.  The exhausted narrator. Treat the behaviour as a recurring annoyance. He
-    does this. This is a thing he does.
-6.  The abrupt stop. Fact, reaction, then a three-word sentence that just ends.
-    Man's cooked.
+The last spoken line should give the final item's answer or consequence.
+Add a separate closer only if it changes the meaning or lands a real thought;
+if used, keep it under 20 words. Never add a generic summary, a call to action,
+or a decorative loop. No forced past-to-present tense shift. Vary sentence
+length as a person would, and read each sentence aloud. If it needs a second
+breath, simplify it.
 
-Rule 4 — Casual language needs MORE precision, not less
+LENGTH
 
-One wrong word and the whole script reads as an adult impersonating a teenager,
-and the audience writes off the channel, not the sentence. If you are not
-certain a term is currently in use and used the way you think it is, write
-plain English instead. Plain English is never cringe. Wrong slang always is.
+Target about 140–160 spoken words including the hook for a roughly 50-second
+Short in this pipeline. Use the actual narrator's measured pace if known. The
+Phase 1 reference to 40–60 words per item is a research warning, not a
+Phase 2 word quota. With more items, make each one leaner; do not rush
+200-plus words through 50 seconds to satisfy a
+per-item quota. If the verified information cannot fit, say that the list needs
+a longer video rather than fabricating connective tissue.
 
-Slang density
+SELF-CHECK BEFORE OUTPUT
 
-About one slang beat every three or four sentences. Never two in a row. Not
-every line. Wall-to-wall slang reads as try-hard and stops being funny by second
-fifteen. The joke lands because the plain sentences around it set it up.
+For every factual clause, identify its item and setup/payoff beat. A sentence
+with two factual clauses may need two beat references. A non-factual reaction is allowed, but
+label it REACTION and check that it asserts no new event or state of mind.
+Check that the script answers the question without a final explanatory recap.
+Compare the hooks, observations, openings, and ending with PREVIOUS SCRIPTS if
+provided; replace repeated wording. Remove any line that sounds like a title,
+a template, or a second narrator explaining the first one.
 
-Where the humour goes
+OUTPUT (English only)
 
-Put it in the reaction to the fact, never in the fact. State what happened in
-clean plain words, then react to it. That is the whole trick.
+HOOK OPTIONS
+1. <hook>
+2. <hook>
+3. <hook>
+CHOSEN HOOK: <number>
 
-Word list — current as of 2026, treat it as expiring
-
-Safe to use: cooked, aura / aura points / aura farming, caught lacking, crash
-out / crashing out, glazing, standing on business, mid, ate, left no crumbs,
-delulu, rent free, took the W, took the L, menace, unserious, the ick, -maxxing.
-Dead — never use: yeet, on fleek, sksksk, bae, lit, based, fr fr, skibidi, "no
-cap" used sincerely, "slay" used sincerely, "rizz" in narration, "it's giving",
-"built different", "understood the assignment", written-out reactions like
-"skull" or "I'm dead".
-
-The insight still has to land
-
-The joke rides on top of the insight. It never replaces it. Every item still
-needs its plainly stated why this should have been impossible — that sentence is
-the reason the video exists. If you cut the explanation to make room for a joke,
-you have made a worse video.
-
-Banned
-
-  - Inflating a big moment with big adjectives.
-  - Two slang beats in consecutive sentences, or three slang terms in one
-    sentence.
-  - Slang inside the fact clause.
-  - Slang on a character's name or a comic title.
-  - Explaining the joke afterwards.
-  - "You won't believe", "wait for it", "here's the crazy part" — filler, cut
-    it.
-  - Rhetorical questions to the viewer. Just tell them the thing.
-  - The narrator talking about himself or addressing the viewer directly.
-
-Content rules
-
-1.  One event per sentence. Two things happening in one sentence is the number
-    one reason a viewer gets lost at speed.
-2.  Only say what a comic panel can SHOW. Every line gets matched to a drawn
-    panel. "He felt conflicted about his past" is unusable — there is no panel
-    of that. "He drops the gun and walks out" is usable.
-3.  Name famous characters, do not describe them. Write "Deadpool", not "the
-    wisecracking merc with a mouth". Never stack adjectives on a name.
-4.  Zero lore assumed. If an item needs backstory, give it in ONE short clause,
-    not a sentence. Someone who has never opened a comic must follow every line.
-5.  Do not name issue numbers in the spoken text. They kill pace. I have them
-    separately.
-6.  No spoiler in the hook. The hook promises; the body pays off.
-
-THE HOOK — the highest-leverage line in the script
-
-The 3-second window is measured, not a vibe. The 2026 Shorts benchmark is
-holding above 80% of viewers at 3 seconds; a sharp drop there means the hook
-failed structurally, and average-percentage-viewed under 50% is treated as a
-broken hook rather than a bad topic. At narration pace, 3 seconds is about 9
-words. Your old limit of 26 words was two to three times too long. A 26-word
-hook finishes around second eight, five seconds after the audience already
-decided.
-
-Hard shape
-
-  - 14 words maximum. One sentence, or two very short clauses.
-  - The famous subject is inside the first 3 words. The subject is the only
-    anchor the viewer gets.
-  - A-tier names only in the hook. The deep-cut answer characters stay in the
-    body.
-  - A statement. Never a question.
-  - Establish the constant, imply the exception. (E.g. Nobody survives Ghost
-    Rider's Penance Stare. Three people did.)
-  - One promise, not two.
-  - Do not name the answers.
-  - Do not overpromise.
-
-Structure
-
-  - Body: exactly ONE paragraph per answer item, in item_number order (item 1
-    first). The order is fixed — it was chosen before the pages were downloaded
-    (most surprising item last), and each paragraph is matched to its item by
-    position. Never merge two items, split one item across two paragraphs, or
-    skip one.
-  - Each item: who → what they did → why it should have been impossible.
-  - Roughly 40 to 60 words per item.
-  - Close the loop with a separate one-line closing paragraph that brings back
-    the hook's key word or its opposite, short, concise, deadpan.
-
-PHASE 2 output:
-Write the script from the PHASE 1 beat sheet. The body should land around 170 to 215 words.
-The hook is 14 words maximum, a statement not a question.
-Write three hooks and pick the best one.
-Then write a line that says exactly FINAL SCRIPT, and under it the finished
-script in this shape — nothing else, no labels, no headings, no notes after it:
+FACT TRACE
+<For every spoken sentence: first few words | item number + setup/payoff beat, or
+ REACTION. If a reaction contains an unsupported claim, revise the script.>
+SPOKEN WORD COUNT: <number>
 
 FINAL SCRIPT
-<the chosen hook, one line>
+<chosen hook, on its own line>
 
 <item 1 paragraph>
 
 <item 2 paragraph>
 
-<... one paragraph per item, in item_number order ...>
+<one paragraph per remaining item, in item_number order>
 
-<the closing line>
+<optional final line only if it earns its place>
 
-Write your entire response in English.
+Put FINAL SCRIPT last, with no audit or notes after it. Write the narration,
+hooks, and audit in English even if my WRITE message is in another language.
