@@ -10,10 +10,13 @@ ANGLE: {angle}
 
 Use the supplied digest as prior context. Return candidates that center on one
 clear visual event with a setup and payoff, naming the exact series, issue, and
-year. Include source URLs, a concise description of what is visibly shown, and
-`claim_citation`: {{"url": "...", "quote": "..."}}. The quote must be a
-verbatim sentence from that retrieved URL that supports this moment's exact
-issue/year and visible claim. Do not turn a vague character fact or a
+year. The moment MUST be from the CURRENT YEAR or LATE PREVIOUS YEAR (the newest
+ongoing runs and freshly released single issues around the time of this research);
+strictly reject back-issues and older storylines unless USER INTENT explicitly
+requests a past year. Include source URLs, a concise description of what is
+visibly shown, and `claim_citation`: {{"url": "...", "quote": "..."}}. The quote
+must be a verbatim sentence from that retrieved URL that supports this moment's
+exact issue/year and visible claim. Do not turn a vague character fact or a
 multi-issue arc into a moment.
 
 SCOUTED DIGEST:

@@ -9,8 +9,9 @@ Spawn agent `moment-scout` (Agent tool, subagent_type: "moment-scout") — KHÔN
 
 Prompt cho agent phải nhắc đủ:
 1. Dedup/ban: `comic_candidates.csv` (produced/rejected/banned), `qa_question_banlist.md` (section Produced), `ls projects/`. Moment KHÁC từ issue đã produce chỉ nhận khi panel sẽ khác hẳn.
-2. Gates: EMOTIONAL PARADOX GATE trong MỘT CẢNH (constant-bị-phá; cấm tả-thực thuần, cấm off-universe, cấm niche-only — số đo kênh nhà: tả-thực 19-1100v, off-universe 517v), fan-quoted có URL, 1 issue scrapable batcave, cảnh nhiều panel (subject main/near-main), meaning-in-one-sentence.
-3. Title draft: NGẮN, khẳng định thẳng cú lật, meme-flip OK, không em-dash chain, không tên series nội bộ (bài học Bane "One Bad Day" 180v).
-4. Output: bảng ranked ≤5 + command (stage_2 → set `target_moment` trong comic_context.json → `stages.stage_3 --mode micro-moment`). KHÔNG ghi file.
+2. LATEST RELEASES RULE (BẮT BUỘC): Chỉ scout các issue/ongoing runs MỚI NHẤT xung quanh thời điểm scout (năm hiện tại hoặc late previous year, các issue vừa phát hành trong vài tháng qua). TUYỆT ĐỐI LOẠI BỎ truyện cũ từ 2024 trở về trước trừ khi Master có yêu cầu riêng. Khi web search phải chủ động kèm năm hiện tại hoặc các cụm "latest issues", "new comic releases", "ongoing run".
+3. Gates: EMOTIONAL PARADOX GATE trong MỘT CẢNH (constant-bị-phá; cấm tả-thực thuần, cấm off-universe, cấm niche-only — số đo kênh nhà: tả-thực 19-1100v, off-universe 517v), fan-quoted có URL, 1 issue scrapable batcave, cảnh nhiều panel (subject main/near-main), meaning-in-one-sentence.
+4. Title draft: NGẮN, khẳng định thẳng cú lật, meme-flip OK, không em-dash chain, không tên series nội bộ (bài học Bane "One Bad Day" 180v).
+5. Output: bảng ranked ≤5 + command (stage_2 → set `target_moment` trong comic_context.json → `stages.stage_3 --mode micro-moment`). KHÔNG ghi file.
 
 Sau khi agent về: trình bảng, khuyến nghị 1 pick, chờ Master chọn. Produce xong → move comic vào CSV produced-banned.

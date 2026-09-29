@@ -3,15 +3,17 @@
 Find {count} DIFFERENT comic-book MICRO MOMENTS. Each one is a single drawn
 beat inside a SINGLE issue — not a plot, not a crossover, not a character arc.
 Each must be VISUALLY dramatic (something a reader SEES happen on the page),
-star a widely-known character, and be published 2010 or later, strongly
-preferring the last two years.
+star a widely-known character, and be published in the CURRENT YEAR or
+LATE PREVIOUS YEAR (the newest ongoing runs and freshly released single issues
+around the time of this research). Strongly prioritize the latest releases.
 
 The strongest micro moment breaks a CONSTANT — the one thing everyone 'knows'
 about that character — inside that single scene. Name the constant for each.
 
-REJECT: talking-heads scenes, moments that need prior lore to follow, whole
-storylines, solicitations or previews for unpublished issues, and anything
-where you cannot give the exact series, issue number and year.
+REJECT: issues published before the current or previous year (strictly avoid
+older back-issues), talking-heads scenes, moments that need prior lore to
+follow, whole storylines, solicitations or previews for unpublished issues,
+and anything where you cannot give the exact series, issue number and year.
 
 Work exactly ONE moment per ANGLE below, in the order the angles are listed,
 and return the candidates in that same order. Copy the angle you worked
