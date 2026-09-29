@@ -383,6 +383,11 @@ def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
             f"and be published {years}.\n"
             "The strongest micro moment breaks a CONSTANT — the one thing everyone 'knows' "
             "about that character — inside that single scene. Name the constant.\n"
+            "Detail requirements: Write a rich 2-3 sentence overview for 'moment', an "
+            "elaborate step-by-step visual breakdown in 'what_visibly_happens' (at least 3-5 "
+            "sentences describing what characters are drawn doing, their physical actions, "
+            "expressions, panels, and the visual payoff so the reader can vividly visualize "
+            "the artwork), and 2-3 sentences in 'why_it_lands'. Never write a brief one-line synopsis.\n"
             "REJECT: talking-heads scenes, moments that need prior lore to follow, whole "
             "storylines, solicitations or previews for unpublished issues, and anything "
             "where you cannot give the exact series, issue number and year.\n"
@@ -410,10 +415,10 @@ def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
     lines = ["# MICRO MOMENTS — candidates for Master\n"]
     for c in kept:
         lines += [f"## {c.get('character')} — {c.get('series_issue_year')}",
-                  f"- moment: {str(c.get('moment', ''))[:300]}",
+                  f"- moment: {str(c.get('moment', ''))}",
                   f"- constant broken: {c.get('constant_broken', '')}",
-                  f"- what is SEEN: {str(c.get('what_visibly_happens', ''))[:300]}",
-                  f"- why it lands: {str(c.get('why_it_lands', ''))[:300]}",
+                  f"- what is SEEN: {str(c.get('what_visibly_happens', ''))}",
+                  f"- why it lands: {str(c.get('why_it_lands', ''))}",
                   f"- evidence: {' '.join(c.get('evidence_urls') or [])}", ""]
     dropped = [c for c in rows if c.get("_dropped_as_burned")]
     if dropped:
