@@ -486,10 +486,10 @@ def _split_free_script(raw_text: str) -> tuple[str, list[str], str]:
 def _qa_item_anchors(root: Path, items: list[dict], pages: list[dict], *, allow_pending: bool = True) -> list[int]:
     """First page of each item's own chapter, in item order — or ScriptMappingError
     naming every item whose comic is not (or no longer) the one on disk.
-    If allow_pending is True and comics are not yet downloaded at all (no manifest and no pages),
-    returns placeholder anchors [1, ...] so narration can be drafted in Stage 2 before downloading."""
+    If allow_pending is True, missing source files use placeholder page 1
+    so narration can be drafted in Stage 2 before download/preprocessing is complete."""
     manifest = _load_json(root / "raw_comic" / "manifest.json", default=[])
-    if allow_pending and not manifest and not pages:
+    if allow_pending and (not manifest or not pages):
         return [1] * len(items)
 
     downloaded = {int(m.get("chapter_index") or 0): str(m.get("reader_url") or "").strip()
@@ -516,8 +516,11 @@ def _qa_item_anchors(root: Path, items: list[dict], pages: list[dict], *, allow_
         every = [int(p.get("page_number") or 0) for p in chapter_pages]
         anchor = min((pn for pn in story if pn), default=0) or min((pn for pn in every if pn), default=0)
         if not anchor:
-            problems.append(f"item {name}: no preprocessed pages for chapter {chapter} — "
-                            "run preprocessing (Stage 4)")
+            if allow_pending:
+                anchor = 1
+            else:
+                problems.append(f"item {name}: no preprocessed pages for chapter {chapter} — "
+                                "run preprocessing (Stage 4)")
         anchors.append(anchor)
     if problems:
         raise ScriptMappingError(
@@ -601,6 +604,29 @@ def _scene(scene_id: int, text: str, page_ref: int, beat_id: int, *,
     }
 
 
+def _load_script_inputs(project_name: str) -> tuple[dict, list[dict]]:
+    """Load project context and any pages already available for a Stage 2 script draft.
+
+    Page preprocessing happens in Stage 4, so an absent or empty preprocessed/
+    directory is a valid state here. Re-anchoring still uses strict load_inputs().
+    """
+    root = PROJECTS_ROOT / project_name
+    ctx_path = root / "comic_context.json"
+    if not ctx_path.exists():
+        raise FileNotFoundError(f"comic_context.json missing: {ctx_path}")
+    comic_ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+
+    pages: list[dict] = []
+    for page_path in sorted((root / "preprocessed").glob("page_*.json")):
+        try:
+            page = json.loads(page_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(page, dict):
+            pages.append(page)
+    return comic_ctx, pages
+
+
 def parse_and_save_script(
     project_name: str,
     raw_text: str,
@@ -620,7 +646,7 @@ def parse_and_save_script(
         raise ScriptMappingError("Narration text is empty.")
 
     root = PROJECTS_ROOT / project_name
-    comic_ctx, pages = load_inputs(project_name)
+    comic_ctx, pages = _load_script_inputs(project_name)
     story_pages = filter_story_pages(pages)
     # Items created without a reader URL (the evidence gate found none) take the chapter
     # downloaded for them, e.g. by Stage 2's "Download from URL(s)".

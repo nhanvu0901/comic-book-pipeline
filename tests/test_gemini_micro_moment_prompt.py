@@ -51,6 +51,44 @@ def test_micro_moment_prompt_generation(tmp_path, monkeypatch):
     assert "CONFIRMED" in prompt_text
 
 
+def test_micro_moment_script_can_be_approved_before_pages_exist(tmp_path, monkeypatch):
+    """Stage 2 must save a draft before Download and Preprocess create any page files."""
+    monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
+    import stages.stage_3.pipeline as pl
+    monkeypatch.setattr(pl, "PROJECTS_ROOT", tmp_path)
+    project = tmp_path / "micro_before_download"
+    project.mkdir()
+    (project / "comic_context.json").write_text(
+        json.dumps({"title": "A comic moment", "pipeline_mode": "micro_moment"}),
+        encoding="utf-8",
+    )
+
+    narration = gp.parse_and_save_script(
+        "micro_before_download",
+        "A hero stops the machine.\n\nThe machine starts to fall, and the hero holds it long enough for everyone to leave. The hero then lets it go.",
+        log=lambda _message: None,
+    )
+
+    assert (project / "narration.json").exists()
+    assert narration["scenes"]
+    assert {scene["page_ref"] for scene in narration["scenes"]} == {1}
+
+    prep = project / "preprocessed"
+    prep.mkdir()
+    for number in (2, 3, 4):
+        (prep / f"page_{number:03d}.json").write_text(json.dumps({
+            "page_number": number, "is_story_page": True,
+        }), encoding="utf-8")
+
+    assert gp.reanchor_narration_to_pages("micro_before_download", log=lambda _message: None)
+    updated = json.loads((project / "narration.json").read_text(encoding="utf-8"))
+    assert updated["scenes"][0]["page_ref"] == 2
+    assert all(scene["page_ref"] > 1 for scene in updated["scenes"])
+    assert [beat["page_refs"] for beat in updated["beats"]] == [
+        [scene["page_ref"]] for scene in updated["scenes"]
+    ]
+
+
 def test_micro_moment_reanchor_narration(tmp_path, monkeypatch):
     """Ensure reanchor_narration_to_pages spreads beats across preprocessed story pages."""
     monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
