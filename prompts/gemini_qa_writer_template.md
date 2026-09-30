@@ -132,11 +132,17 @@ the first item makes the next item feel like a new video. You may use the
 number of supplied items as the list count, but do not imply these are all
 the examples in comic history or the objectively strangest ever. A hook
 like "What were the strangest things X made?" is too generic on its own;
-add the concrete first example. One candidate may be a question; the
-others can be statements. For a SINGLE item, name its odd construct or
-result without promising a list. Reject a hook built from an imaginary
-alternative ("instead of fighting", "when he could have made a shield").
-Choose the one a stranger understands quickly and that item 1 pays off.
+add the concrete first example. Try distinct supported openings: a direct
+question, a plain fact, or a short "After..." situation when that situation
+is on the fact sheet. There is no required winner among these forms. For a
+SINGLE item, name its odd construct or result without promising a list.
+Reject a hook built from an imaginary alternative ("instead of fighting",
+"when he could have made a shield") or an assumed comic rule the sheet
+does not verify. Choose the one a stranger understands quickly and that
+item 1 pays off. The hook must carry the same answer-theme promise as THE
+QUESTION, with item 1's concrete unusual example; a hook that could headline
+another comic question is too broad. The first body sentence must add a different sourced
+situation, cause, or mechanism; it cannot say the hook again in new words.
 Aim for 6–15 words; 20 is the hard
 maximum for the Stage 3 importer. Do not claim an unsourced general rule or
 call anything "insane", "epic", or "unbelievable" in place of detail.
@@ -151,6 +157,11 @@ a mechanism or consequence, not on a second description of how surprising
 the item is. The final paragraph ends on the final item's result; there is
 no separate recap or outro. Keep each item paragraph over 20 words so the
 Stage 3 importer does not mistake it for a closing line.
+Read the hook and the first two sentences together as an opening chain.
+The hook gives the specific promise; the next sentence changes the situation,
+names a sourced obstacle, or explains the cause; the next moves toward the
+item 1 result. Each sentence must add a distinct sourced fact. If two adjacent lines
+make the same point, remove one and use a different verified beat.
 Start consecutive items from different facts when the sheet permits: one
 may start with the answer, another with the problem, another with its
 strange mechanism. Compare the first five words of each item paragraph;
@@ -170,7 +181,7 @@ action would otherwise be confusing. Do not read issue numbers, dialogue,
 panel descriptions, title text, emojis, or formatting aloud.
 
 HUMOR
-Default to zero narrator jokes. In the 34 reference transcripts, the comic's
+Default to zero narrator jokes. In the analyzed reference transcripts, the comic's
 choice or consequence usually does the work. If ONE truly specific dry
 reaction makes a verified detail clearer or sharper, it may be included
 after the fact, never instead of the fact. Do not write a reaction because
@@ -212,6 +223,7 @@ S1 | <first few words> | Item <n>, Beat <n> [and additional IDs if needed]
 S2 | ...
 <one row per spoken sentence; REACTION only for a fact-free opinion>
 UNSUPPORTED FACTS: none
+OPENING CHAIN: <hook promise> -> <new item 1 fact and Beat ID> -> <next item 1 movement and Beat ID>
 
 FINAL SCRIPT
 <chosen hook>

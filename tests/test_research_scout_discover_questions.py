@@ -234,6 +234,9 @@ def test_micro_mode_uses_the_micro_discover_prompt_qa_uses_the_qa_one(tmp_path):
     assert "LIST of 3 or more separate moments" in qa_client.seen_prompt
     assert "LIST of 3 or more separate moments" not in micro_client.seen_prompt
     assert "MICRO MOMENT" in micro_client.seen_prompt
+    assert "turning_point" in micro_client.seen_schema["properties"]["candidates"]["items"]["properties"]
+    assert "specific action or reveal" in micro_client.seen_prompt
+    assert "CURRENT YEAR" not in micro_client.seen_prompt
     assert "MICRO MOMENT" not in qa_client.seen_prompt
 
 

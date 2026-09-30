@@ -12,9 +12,11 @@ DIGEST:
 CANDIDATE:
 {candidate}
 
-Find the synopsis or review TEXT describing what is visibly shown on the page.
-Return the VERBATIM sentence and the URL you found it on, plus a second
-independent source when one exists.
+Find source text for this candidate's setup, specific action or reveal, and
+direct consequence in the named issue. Return verbatim sentences and URLs;
+add a second independent source when one exists. Separate what the source
+states from what the scout inferred. A review's abstract phrase such as
+"battle of truths" does not establish a physical action or a tactic.
 
 State plainly:
 - Is this from the COMIC, or from a film / TV / game adaptation?
@@ -22,6 +24,9 @@ State plainly:
 - Is the named subject the one the moment happens to?
 - Is this series a REPRINT magazine? If so, name the original US issue.
 - Does the issue number and year in the candidate match the sources?
+- What exact action, decision, or admission changes the scene, and which source
+  sentence supports it? Is the consequence in that same scene or narrow
+  sequence?
 
 Never treat publisher solicitation copy as evidence. A moment that is inferred,
 belongs to another issue, or cannot be grounded in a retrieved source is

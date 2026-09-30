@@ -139,6 +139,16 @@ def test_assemble_prompt_contains_unit_sentence_and_digest_at_end():
     assert text.rstrip().endswith("DIGEST-CONTENT")
 
 
+def test_micro_planner_prompt_uses_reference_turn_without_changing_qa():
+    plan = _plan(unit="one comic moment", cardinality="options")
+    qa = assemble_prompt(plan, "digest", user_intent="find a moment")
+    micro = assemble_prompt(plan, "digest", user_intent="find a moment", mode="micro")
+    assert "specific action or reveal" in micro
+    assert "setup" in micro and "consequence" in micro
+    assert "specific action or reveal" not in qa
+    assert qa == assemble_prompt(plan, "digest", user_intent="find a moment", mode="qa")
+
+
 @pytest.mark.parametrize("cardinality,expected_snippet", [
     ("exhaustive", "Sweep EVERY retrieved source"),
     ("options", "genuinely supported options"),

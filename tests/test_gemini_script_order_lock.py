@@ -397,6 +397,8 @@ def test_prompt_numbers_items_in_download_order_and_forbids_reordering(tmp_path,
     assert "most surprising answer goes LAST" not in prompt
     assert "skip any item" not in prompt
     assert "FINAL SCRIPT" in prompt
+    assert "OPENING CHAIN" in prompt
+    assert "same answer-theme promise" in prompt
     stored = json.loads((tmp_path / name / "answer_context.json").read_text())
     assert "item_number" not in stored["items"][0]   # the prompt copy only
 

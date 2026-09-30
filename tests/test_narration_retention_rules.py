@@ -19,12 +19,11 @@ def _sc(text: str) -> dict:
 
 
 # ── hook band: single source of truth, teaser distinct from body hook ──────────────
-def test_intro_band_is_named_and_short_enough_to_protect_the_length_band():
-    # VARIANT-PROFILE REGISTER (2026-07-27): the teaser is now a bare question echoing
-    # the title ("Who is Deadpool 2099?" = 4w, "How did Absolute Superman become
-    # unstoppable?" = 7w), so the band is 4-9 — still prepended ON TOP of the body
-    # budget, still well under the body cold-open hook's ceiling.
-    assert (_INTRO_MIN_WORDS, _INTRO_MAX_WORDS) == (4, 9)
+def test_intro_band_allows_a_concrete_first_event_without_blowing_duration():
+    # Spoken openings in the local reference sample include short questions,
+    # concrete statements, and "After ..." setups. The latter need more than 9
+    # words while the recap must still fit the finished-audio duration budget.
+    assert (_INTRO_MIN_WORDS, _INTRO_MAX_WORDS) == (4, 14)
     assert (_HOOK_MIN_WORDS, _HOOK_MAX_WORDS) == (8, 26)
     assert _INTRO_MAX_WORDS < _HOOK_MAX_WORDS
     # Read the rate from the module, never a literal: it tracks config.POST_ATEMPO (3.24 at
@@ -38,15 +37,23 @@ def test_intro_band_is_named_and_short_enough_to_protect_the_length_band():
 
 
 def test_variant_question_teasers_classify_and_fit_the_band():
-    # Rule 1 (rewritten 2026-07-27): the teaser is ONE bare question naming the subject.
-    # Each of the three allowed forms must classify as interrogative (the "?" branch of
-    # _classify_hook) and fit the 4-9 word band. Verbatim shapes from the measured hits.
+    # Identity and transformation stories can still use a short question when
+    # that question makes a specific promise about the subject.
     for teaser in (
         "Who is Deadpool 2099?",
         "How powerful is Cyclops 2099?",
         "How did Absolute Superman become unstoppable?",
     ):
         assert _classify_hook(teaser) == "interrogative", teaser
+        assert _classify_hook(teaser) in _ALLOWED_HOOK_ARCHETYPES, teaser
+        assert _INTRO_MIN_WORDS <= len(teaser.split()) <= _INTRO_MAX_WORDS, teaser
+
+
+def test_concrete_statement_and_after_setup_fit_the_intro_band():
+    for teaser in (
+        "Batman and Harley Quinn sleep together.",
+        "After some kids hire Deadpool to kill Santa Claus, things get worse.",
+    ):
         assert _classify_hook(teaser) in _ALLOWED_HOOK_ARCHETYPES, teaser
         assert _INTRO_MIN_WORDS <= len(teaser.split()) <= _INTRO_MAX_WORDS, teaser
 

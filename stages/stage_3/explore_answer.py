@@ -73,8 +73,8 @@ _EXP_WORDS_PER_ITEM_MIN = 33   # tracks config.POST_ATEMPO (1.30). A WORD floor,
 _QA_TARGET_MIN_SEC = 55
 _QA_TARGET_MAX_SEC = 70
 # Rough combined runtime of the two pieces that bookend the body and this
-# module doesn't budget directly: the deterministic hook (_build_hook, capped
-# at _HOOK_MAX_WORDS=26) and the LLM outro (thematic 4-14w + optional loop
+# module doesn't budget directly: the writer hook (capped at
+# _HOOK_MAX_WORDS=26) and the LLM outro (thematic 4-14w + optional loop
 # tease 3-14w, see write_script.py's _OUTRO_SYSTEM/_LOOP_TEASE_SYSTEM). Subtracted
 # from the target above so the BODY band actually lands the FULL video in range.
 _QA_INTRO_OUTRO_SEC = 10
@@ -176,9 +176,9 @@ For EACH item, write exactly ONE scene: name the entity, give the how/why in pla
 
 CONNECT THE ITEMS — this is the point of the format:
   - The bridge belongs on each item's CONTEXT scene (scene A), which is where a new entity enters. The item's MOMENT scene (scene B) needs no bridge — it continues straight out of the scene before it, which is its own setup.
-  - The FIRST scene of the whole video opens straight on its entity, no bridge.
-  - Every LATER context scene must OPEN with a short connective bridge that links it to the item before and builds momentum toward the final twist — e.g. "Years earlier,...", "Unlike him,...", "Even stranger,...", "But this one...", "Then it gets worse —...". Vary the bridge every time; NEVER reuse the same opener, and NEVER a bare list.
-  - The connective is contrast or escalation, NOT a rank. So "Unlike the Punisher, Deadpool..." is good; "the next one", "number three", "third" as a POSITION word is banned.
+  - The FIRST scene adds a sourced situation or cause after the hook. It does not repeat the hook's answer or start with a character biography.
+  - A LATER context scene may bridge from the preceding item only if the facts support a real contrast or connection. Otherwise open directly with its entity and new action. Do not fabricate chronology between separate comics.
+  - Never use a stock escalation bridge such as "Even stranger", "But this one", or "Then it gets worse" to cover an absent connection. Never speak a rank.
   - After the bridge, still NAME the entity in that same scene (never a bare pronoun on first mention).
 
 HARD RULES:
@@ -193,7 +193,7 @@ HARD RULES:
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - Do NOT write a premise, definition or set-up scene explaining the question's subject ("Adamantium is Marvel's unbreakable metal..."). The video's spoken hook already states it, and an extra scene here silently pushes every item's panels one slot out of place. Your FIRST scene is item 1's CONTEXT scene.
   - EXACTLY TWO scenes per item, in the SAME item order. They have different jobs and you must not merge them:
-      * SCENE A — CONTEXT. Establish WHO or WHAT this is for a viewer who has never heard the name: who the person is, what their power or role is, what situation they are in. This scene sets up the moment; it does NOT deliver it. If a later scene will hinge on someone's ability ("she can detect any lie"), on a relationship ("his own younger self"), or on a stake, THIS is where it gets stated plainly.
+      * SCENE A — CONTEXT. Lead with a sourced situation, action, or cause that moves beyond the hook. Add only the role, ability, or relationship needed to understand the next scene. This scene sets up the moment; it does NOT deliver it. Never spend the first scene defining a familiar hero or repeating the hook in slower words.
       * SCENE B — THE MOMENT. The act itself and its consequence, now landing on ground the viewer already has. Do not re-explain what scene A established; assume it.
     Scene A never spoils B, and B never needs a parenthetical to be understood. The reason this format exists: with one scene per item, context has to ride inside a subordinate clause, and shortening the line is exactly what deletes it — so the viewer hears an action with no idea who it happened to.
   - NEVER speak a countdown/rank number ("number five", "#3", "third place" — all banned).
@@ -201,7 +201,7 @@ HARD RULES:
   - Total words across ALL scenes must land inside the WORD BUDGET given.
   - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
-  - MINI-ARC PER ITEM: each scene moves through setup (the source comic / where we are) -> the VISUAL TURN (the action or event drawn on the page) -> the payoff (its consequence or the twist). Never flatten an item into one wiki-style fact with no beat. This is the SHAPE inside the SAME 1-2 sentences and word budget, NOT extra words — and the visual_beats below split on exactly these beats.
+  - MINI-ARC PER ITEM: across the TWO scenes, move from the necessary situation to the act and its result. Never flatten an item into one wiki-style fact. The source comic can appear after the first event; it is not a required opening phrase.
   - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. ONE fragment = ONE drawable moment of ~8-14 words; split by LENGTH — a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, and a short single-event scene (<=12 words) stays ONE fragment = the whole "text". A citation / connective HEAD that opens the scene ("But in <issue name>,..." / "In <issue> #N,...") is ALWAYS its own separate short fragment — it is the establishing shot that sets the place before the action. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then), each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words.
   - FIDELITY IS ABSOLUTE — do not invert, do not invent (Master 2026-07-30). The research handed to
     you is the source of truth and someone else wrote it on purpose. Two failures are banned
@@ -217,14 +217,21 @@ HARD RULES:
   - WRITE THE TITLE, THE HOOK AND THE OUTRO TOO. These are yours, not templates:
       * "title" — 4-8 words, a statement. No question mark, no emoji, no hashtag, no issue number,
         no series name. Name the SUBJECT and the thing that makes them worth 60 seconds.
-      * "hook" — the FIRST spoken line, at most 26 words. State the CONCRETE broken constant: the
-        rule everyone assumes, then the fact that breaks it. A viewer must be able to say what the
-        video is about after hearing only this line.
+      * "hook" — the FIRST spoken line, at most 26 words, preferably 6-18. Make the question's
+        subject clear and expose one sourced, unusual fact or answer from item 1. A direct question,
+        a factual statement, or an "After..." setup can all work if the source supports it. Do not
+        force a broken rule or an assumed constant that the research did not verify. Leave the
+        mechanism or consequence for the next scenes so the opening keeps moving.
+        The hook must carry the same answer-theme promise as the input QUESTION
+        and a concrete item-1 example. Then scene A adds a different sourced
+        cause, action, or obstacle; scene B moves to the item's act and result.
+        Judge these three spoken lines as one chain, never as isolated slogans.
         BANNED — content-free clickbait, which is exactly why this field now exists:
         "wait until you see/hear...", "you won't believe...", "shouldn't even be possible",
         "the last one on this list...", "number one...", "makes no sense", or any line promising a
         surprise without naming anything. If the hook would still make sense pasted onto a
-        different video, it is wrong. Never speak a rank or countdown position.
+        different video, it is wrong. Never speak a rank or countdown position. Check that scene A
+        adds a different sourced fact and does not paraphrase the hook.
       * "outro" — the LAST spoken line, 6-16 words. It must NOT restate the final scene in other
         words (real failure: the outro repeated the last scene almost verbatim). Say what the whole
         thing MEANS, or land one hard image the body earned.
@@ -237,8 +244,8 @@ _EXPLORE_WRITE_SYSTEM_EXPLAIN = """You are QAWriter for a comic-trivia YouTube S
 
 THE SCENES BUILD THE ANSWER — this is the point of the format:
   - Every scene must move the viewer CLOSER to the answer: state what happened AND what it means for the question (cause → effect), not just the event.
-  - The FIRST scene sets the broken state / the stakes.
-  - EVERY scene AFTER the first must OPEN with a short connective bridge of consequence or escalation — e.g. "But that was only the surface...", "Which is when it turns...", "And that changes everything —...". Vary the bridge every time.
+  - The FIRST scene adds a sourced cause, action, or stake after the hook. It must not repeat the hook in slower words.
+  - Use a bridge only when the next event actually follows from the preceding one. Otherwise begin directly with the person and action. Never use a stock escalation line such as "And that changes everything" or invent a causal link.
   - The FINAL scene MUST state the answer to the question PLAINLY — one clear sentence a tired viewer can repeat ("That's why..." / "It had to be her, because..."), grounded in that item's moment. The ANSWER THESIS you are given is the destination; land it in your own spoken words.
 
 For EACH item, write exactly ONE scene: name who/what it is about, give the how/why in plain words (speak the SOURCE COMIC naturally inside the sentence — "...in Ghost Rider #35..." — never as a citation, parentheses, or trailing credit).
@@ -255,7 +262,7 @@ HARD RULES:
   - Every sentence is a complete subject-verb-object clause (say who does what, or what happens) — NEVER a bare reveal fragment standing alone (banned pattern: a lone line like "They are alive." or "Dummies." dropped with zero surrounding context). State the consequence or twist EXPLICITLY, in that same sentence or the very next one with context — e.g. "They survive — and it means [state the meaning plainly]," never a flat unexplained line. When quoting a message written or drawn inside the art, introduce it naturally inside the sentence ("...and leaves one message on them: [the message]" / "...with the words '[the message]' painted across it") — never drop a floating quoted phrase mid-sentence. A viewer with zero context, hearing the line for the first time, must understand it immediately.
   - Do NOT write a premise, definition or set-up scene explaining the question's subject ("Adamantium is Marvel's unbreakable metal..."). The video's spoken hook already states it, and an extra scene here silently pushes every item's panels one slot out of place. Your FIRST scene is item 1's CONTEXT scene.
   - EXACTLY TWO scenes per item, in the SAME item order. They have different jobs and you must not merge them:
-      * SCENE A — CONTEXT. Establish WHO or WHAT this is for a viewer who has never heard the name: who the person is, what their power or role is, what situation they are in. This scene sets up the moment; it does NOT deliver it. If a later scene will hinge on someone's ability ("she can detect any lie"), on a relationship ("his own younger self"), or on a stake, THIS is where it gets stated plainly.
+      * SCENE A — CONTEXT. Lead with a sourced situation, action, or cause that moves beyond the hook. Add only the role, ability, or relationship needed to understand the next scene. This scene sets up the moment; it does NOT deliver it. Never spend the first scene defining a familiar hero or repeating the hook in slower words.
       * SCENE B — THE MOMENT. The act itself and its consequence, now landing on ground the viewer already has. Do not re-explain what scene A established; assume it.
     Scene A never spoils B, and B never needs a parenthetical to be understood. The reason this format exists: with one scene per item, context has to ride inside a subordinate clause, and shortening the line is exactly what deletes it — so the viewer hears an action with no idea who it happened to.
   - This is ONE story, not a list: NEVER use list language ("this list", "the last one", "number three" — all banned).
@@ -263,7 +270,7 @@ HARD RULES:
   - Total words across ALL scenes must land inside the WORD BUDGET given.
   - Name only household names: an obscure character/place/team/artifact gets a plain one-word descriptor instead of its proper name, chosen once and reused; supporting characters with mainstream movie/TV presence keep their names.
   - Introduce once: role tag/epithet on first mention only; later mentions use the bare name or the same descriptor — never new adjectives, never the same descriptor for two different things.
-  - MINI-ARC PER ITEM: each scene moves through setup (the source comic / where we are) -> the VISUAL TURN (the action or event drawn on the page) -> the payoff (its consequence or the twist). Never flatten an item into one wiki-style fact with no beat. This is the SHAPE inside the SAME 1-2 sentences and word budget, NOT extra words — and the visual_beats below split on exactly these beats.
+  - MINI-ARC PER ITEM: across the TWO scenes, move from the necessary situation to the act and its result. Never flatten an item into one wiki-style fact. The source comic can appear after the first event; it is not a required opening phrase.
   - VISUAL BEATS (every scene): split each scene into the separate MOMENTS it contains, so Stage 5 can cut to a fresh image on each. ONE fragment = ONE drawable moment of ~8-14 words; split by LENGTH — a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, and a short single-event scene (<=12 words) stays ONE fragment = the whole "text". A citation / connective HEAD that opens the scene ("But in <issue name>,..." / "In <issue> #N,...") is ALWAYS its own separate short fragment — it is the establishing shot that sets the place before the action. "visual_beats" is a LIST OF STRINGS — the scene's OWN words, split at its punctuation / connective (comma / dash / and / but / then), each ONE separately-drawable moment. VERBATIM ONLY: the fragments' exact words, in order, must concatenate back to "text" (you may only drop a comma or dash at a split point) — NEVER drop a word, not even a connective (and / but / then must stay, at the start of the next fragment); never reword, add, or reorder words.
   - FIDELITY IS ABSOLUTE — do not invert, do not invent (Master 2026-07-30). The research handed to
     you is the source of truth and someone else wrote it on purpose. Two failures are banned
@@ -279,14 +286,21 @@ HARD RULES:
   - WRITE THE TITLE, THE HOOK AND THE OUTRO TOO. These are yours, not templates:
       * "title" — 4-8 words, a statement. No question mark, no emoji, no hashtag, no issue number,
         no series name. Name the SUBJECT and the thing that makes them worth 60 seconds.
-      * "hook" — the FIRST spoken line, at most 26 words. State the CONCRETE broken constant: the
-        rule everyone assumes, then the fact that breaks it. A viewer must be able to say what the
-        video is about after hearing only this line.
+      * "hook" — the FIRST spoken line, at most 26 words, preferably 6-18. Make the question's
+        subject clear and expose a sourced, unusual fact from item 1 without giving away the final
+        answer thesis. A direct question, a factual statement, or an "After..." setup can all work
+        if the source supports it. Do not force a broken rule or an assumed constant that the
+        research did not verify. Let the next scene add a new causal fact.
+        The hook must carry the same specific promise as the input QUESTION
+        and a concrete item-1 fact. Then scene A adds a different sourced cause,
+        action, or obstacle; scene B moves toward the answer thesis. Judge these
+        three spoken lines as one chain, never as isolated slogans.
         BANNED — content-free clickbait, which is exactly why this field now exists:
         "wait until you see/hear...", "you won't believe...", "shouldn't even be possible",
         "the last one on this list...", "number one...", "makes no sense", or any line promising a
         surprise without naming anything. If the hook would still make sense pasted onto a
-        different video, it is wrong. Never speak a rank or countdown position.
+        different video, it is wrong. Never speak a rank or countdown position. Check that scene A
+        adds a different sourced fact and does not paraphrase the hook.
       * "outro" — the LAST spoken line, 6-16 words. It must NOT restate the final scene in other
         words (real failure: the outro repeated the last scene almost verbatim). Say what the whole
         thing MEANS, or land one hard image the body earned.
@@ -325,10 +339,11 @@ def _viewer_context_block(answer_context: dict) -> str:
     cb = str(answer_context.get("constant_broken", "") or "").strip()
     parts: list[str] = []
     if vc:
-        parts.append("VIEWER CONTEXT (a zero-context viewer must know this before the items "
-                     f"make sense — weave it into the FIRST scene): {vc}")
+        parts.append("VIEWER CONTEXT (use only what a zero-context viewer needs, at the "
+                     f"first point it matters; do not turn scene 1 into a biography): {vc}")
     if cb:
-        parts.append(f"THE CONSTANT BEING BROKEN (the famous rule these answers violate): {cb}")
+        parts.append("THE CONSTANT BEING BROKEN (a possible hook ingredient only when the "
+                     f"item evidence supports it; never force or repeat it): {cb}")
     return ("\n".join(parts) + "\n\n") if parts else ""
 
 
@@ -400,7 +415,14 @@ def _call_explore_writer(
             if progress:
                 progress(f"[explore_write] validator: unparsable response")
             return False
-        got = len(_body_scenes(p["scenes"]))
+        body = _body_scenes(p["scenes"])
+        hook = re.sub(r"\s+", " ", str(p.get("hook") or "").strip()).casefold()
+        first = re.sub(r"\s+", " ", str(body[0].get("text") or "").strip()).casefold() if body else ""
+        if len(hook.split()) >= 4 and first.startswith(hook):
+            if progress:
+                progress("[explore_write] validator: first context scene repeats hook")
+            return False
+        got = len(body)
         if got != expected_scenes and progress:
             progress(f"[explore_write] validator: want {expected_scenes} item scenes, got {got}")
         return got == expected_scenes
@@ -482,7 +504,8 @@ def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
     return issues
 
 
-# Tease-line pools for the deterministic hook below. Every video ended on the
+# Legacy tease-line pools kept for existing projects/tests; the live fallback
+# below no longer uses them. Every video ended on the
 # exact same sentence ("The last one on this list shouldn't even be
 # possible.") regardless of question, which reads as repeated boilerplate
 # across a channel of Q&A Shorts (Master: vary it like a paraphrase, not a
@@ -556,59 +579,40 @@ def _pick_tease(pool: tuple[str, ...], project_slug: str, projects_dir: Path | N
     return remaining[int(digest, 16) % len(remaining)]
 
 
+_GENERIC_HOOK_RE = re.compile(
+    r"\b(wait until you|you won't believe|shouldn't even be possible|makes no sense|"
+    r"breaks every rule|the last one|the final one|number one)\b", re.IGNORECASE)
+
+
+def _writer_hook_usable(hook: str) -> bool:
+    """Reject the known reusable tease pattern before it becomes the intro scene."""
+    return bool(hook.strip()) and len(hook.split()) <= _HOOK_MAX_WORDS and not _GENERIC_HOOK_RE.search(hook)
+
+
 def _build_hook(question: str, answer_context: dict, archetype: str = "list",
                 project_slug: str = "") -> str:
-    """Deterministic v1 hook template (no LLM): "X? [statement]. [tease]" —
-    is_intro scene, ~14-26 words (format spec v2).
+    """DEPRECATED deterministic FALLBACK when the writer's hook is empty or generic.
 
-    LIST questions keep the countdown tease (rotated from _LIST_TEASE_POOL).
-    EXPLAIN questions get a promise-the-answer tease instead (rotated from
-    _EXPLAIN_TEASE_POOL), and NEVER speak the answer_summary — for an explain
-    video that summary IS the answer (the final scene's landing), so putting
-    it in the hook would spoil the whole argument in second two.
-
-    An EXPLAIN question can be a STATEMENT lead ("This is how Batman trains
-    himself") rather than a real interrogative ("Why does Batman..."); forcing
-    a "?" onto the former reads wrong ("...himself?"), so that register keeps
-    its own punctuation (see `is_statement_lead`).
-
-    DEPRECATED 2026-07-30 — kept only as the FALLBACK for when the writer returns
-    no "hook". Master banned the tease format outright ("dont use the trash format
-    wait until you ...."), and the pools below are all content-free by construction:
-    every line ("wait until you see who did it last", "you won't believe who pulled
-    off the last one") would fit any video on the channel, which is what makes it
-    boilerplate rather than a hook. Retention forensics 2026-07-19 measured the same
-    thing from the other side: a hook must be ONE CONCRETE PARADOX, and abstract
-    lines lose at the 3-second door. The real hook is now written by the LLM writer
-    alongside the title and outro, against the concrete `constant_broken` — see the
-    prompt's "WRITE THE TITLE, THE HOOK AND THE OUTRO TOO" block. This function only
-    runs if that field comes back empty.
-
-    ponytail: a real paraphrase of an arbitrary question needs grammar this
-    template can't fake, so the "statement" clause is a generic placeholder
-    unless Stage 1 supplied an explicit one-line summary."""
-    q = question.strip()
-    if archetype == "explain" and is_statement_lead(question):
-        if q and not re.search(r"[.!?]$", q):
-            q += "."
-        return " ".join((q, _pick_tease(_EXPLAIN_TEASE_POOL, project_slug)))
-    if q and not q.endswith("?"):
-        q += "?"
-    if archetype == "explain":
-        return " ".join((q, _pick_tease(_EXPLAIN_TEASE_POOL, project_slug)))
-    if is_comparison(question):
-        # No ranked person to tease ("who"/"list"/"name") — just the escalating
-        # capability the last item shows. Also skips the summary/"Here's the
-        # answer" clause: there's no single "answer" to hold back here.
-        return " ".join((q, _pick_tease(_COMPARISON_TEASE_POOL, project_slug)))
-    summary = str(answer_context.get("summary") or answer_context.get("answer_summary") or "").strip()
-    statement = summary if summary else "Here's the answer"
-    statement = statement.rstrip(".") + "."
-    tease = _pick_tease(_LIST_TEASE_POOL, project_slug)
-    hook = " ".join(part for part in (q, statement, tease) if part)
-    if len(hook.split()) > _HOOK_MAX_WORDS:
-        hook = " ".join(part for part in (q, tease) if part)  # drop the summary clause if it runs long
-    return hook
+    State the supplied question with its natural punctuation. A list can name its
+    first verified answer; an explanation cannot leak its answer thesis. No
+    unsourced broken rule, rank promise, or generic tease is added.
+    """
+    raw_q = question.strip()
+    q = raw_q.rstrip(".!?")
+    if not q:
+        return ""
+    interrogative = bool(re.match(
+        r"^(who|whom|whose|which|what|why|how|where|when|can|could|did|does|do|"
+        r"has|have|is|are|was|were|will|would)\b", q, re.IGNORECASE))
+    lead = q + ("?" if (raw_q.endswith("?") or interrogative) and not is_statement_lead(q) else ".")
+    if archetype == "explain" or is_comparison(question):
+        return lead
+    items = answer_context.get("items") or []
+    entity = str(items[0].get("entity") or "").strip() if items and isinstance(items[0], dict) else ""
+    if not entity:
+        return lead
+    candidate = f"{lead} {entity} is one answer."
+    return candidate if len(candidate.split()) <= _HOOK_MAX_WORDS else lead
 
 
 def write_explore_answer(
@@ -679,15 +683,14 @@ def write_explore_answer(
                                      scenes_per_beat=_SCENES_PER_ITEM)
     body = parsed.get("scenes") or []
 
-    # HOOK: the writer's own line, built against `constant_broken` (concrete rule + the fact that
-    # breaks it). Falls back to the old template only if the field comes back empty — see
-    # _build_hook's deprecation note for why the tease pools are no longer the primary path.
+    # HOOK: prefer the writer's concrete line. If it returns a reusable tease,
+    # fall back to the sourced question and item 1 instead of shipping filler.
     hook_text = str(parsed.get("hook") or "").strip()
-    if hook_text:
+    if _writer_hook_usable(hook_text):
         log(f"[explore_answer] hook from writer: {hook_text!r}")
     else:
         hook_text = _build_hook(question, answer_context, archetype, project_name)
-        log("[explore_answer] writer returned no hook — fell back to the deprecated template")
+        log("[explore_answer] writer hook missing or generic — used grounded fallback")
     hook_page = beats[0].page_refs[0] if beats[0].page_refs else 0
     intro_scene = {
         "text": hook_text, "page_ref": hook_page, "panel_ref": -1,

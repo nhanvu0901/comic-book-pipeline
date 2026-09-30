@@ -187,7 +187,8 @@ class ScoutWorkflow:
             # Planner path — feedback already reached the planner input above,
             # so it must NOT be folded into the prompt a second time here.
             prompt_text = planner_module.assemble_prompt(
-                plan, self.digest, user_intent=session.user_intent
+                plan, self.digest, user_intent=session.user_intent,
+                mode=session.mode.value,
             )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
             schema = planner_module.compile_schema(plan)

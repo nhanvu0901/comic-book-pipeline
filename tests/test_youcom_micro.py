@@ -48,7 +48,7 @@ def _resp(*cands):
 def _cand(series, moment="a thing happens", char="Hulk"):
     return {"moment": moment, "character": char, "series_issue_year": series,
             "what_visibly_happens": "x", "why_it_lands": "y",
-            "constant_broken": "z", "evidence_urls": ["https://aiptcomics.com/x"]}
+            "turning_point": "z", "evidence_urls": ["https://aiptcomics.com/x"]}
 
 
 def test_a_burned_series_is_dropped(tmp_path, monkeypatch):
@@ -79,16 +79,16 @@ def test_the_report_names_what_is_still_unverified(tmp_path, monkeypatch):
     assert "coverage" in report.lower()
 
 
-def test_the_schema_demands_the_broken_constant(tmp_path, monkeypatch):
-    """A micro moment without a broken constant is just a nice panel — that gate is what
-    separates this mode from 'find me a cool page'."""
+def test_the_schema_demands_a_concrete_turning_point(tmp_path, monkeypatch):
+    """Reference moments turn on an action or reveal; breaking a famous rule is optional."""
     got = {}
     monkeypatch.setattr(Y, "build_scouted_digest", lambda: "")
     monkeypatch.setattr(Y, "_call_logged",
                         lambda k, p, e, schema, o, t: got.update(schema=schema) or {})
     Y.run_micro("k", tmp_path, "deep", "2010 or later")
     props = got["schema"]["properties"]["candidates"]["items"]["properties"]
-    assert "constant_broken" in props and "series_issue_year" in props
+    assert "turning_point" in props and "series_issue_year" in props
+    assert "constant_broken" not in props
 
 
 # ─── series-level burn check ─────────────────────────────────────────────────

@@ -231,6 +231,8 @@ def _candidate_card(
     ]
     if candidate.get("series_issue_year"):
         details.append(ft.Text(str(candidate["series_issue_year"]), size=11, weight=ft.FontWeight.W_500, color=TEXT_PRIMARY, selectable=True))
+    if candidate.get("turning_point"):
+        details.append(ft.Text(f"Turning point: {candidate['turning_point']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
     if candidate.get("constant_broken"):
         details.append(ft.Text(f"Constant broken: {candidate['constant_broken']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
     what_visibly_happens = str(candidate.get("what_visibly_happens") or "").strip()
@@ -750,6 +752,8 @@ def build(
                 meta_parts.append(f"Issue: {entry['series_issue_year']}")
             if meta_parts:
                 entry_details.append(ft.Text(" • ".join(meta_parts), size=11, weight=ft.FontWeight.W_500, color=ACCENT, selectable=True))
+            if entry.get("turning_point"):
+                entry_details.append(ft.Text(f"Turning point: {entry['turning_point']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
             if entry.get("constant_broken"):
                 entry_details.append(ft.Text(f"Constant broken: {entry['constant_broken']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
             if entry.get("what_visibly_happens"):

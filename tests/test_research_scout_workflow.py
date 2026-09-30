@@ -567,6 +567,20 @@ def test_planner_path_puts_extra_field_and_rank_reason_in_schema_and_prompt(tmp_
     assert "most brutal" in prompt
 
 
+def test_micro_planner_path_keeps_the_turning_point_policy(tmp_path):
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=_FakeYouCom(),
+        planner=lambda *_: ResearchPlan(
+            unit="one scene", cardinality="options", ranking="",
+            research_prompt="Find memorable comics.",
+        ),
+    )
+    session = workflow.start(ScoutMode.MICRO, "new Hulk moment")
+    workflow.run_general(session.id)
+    assert "specific action or reveal" in workflow.client.seen_prompt
+    assert "one scene or tightly connected sequence" in workflow.client.seen_prompt
+
+
 def test_general_plan_artifact_records_planner_source(tmp_path):
     stub = _stub_planner()
     workflow = ScoutWorkflow(

@@ -42,6 +42,7 @@ from .write_script import (
     _anchor_scenes_to_beats,
     _beat_anchor,
     _extract_json,
+    _intro_overlaps,
     _lint_you_quota,
     _to_narration,
     _HOOK_STOPWORDS,
@@ -63,7 +64,7 @@ from .write_script import (
 _MICRO_WORDS_MIN = int(os.getenv("MICRO_WORDS_MIN", "120"))   # ~35s at 3.4 wps
 _MICRO_WORDS_MAX = int(os.getenv("MICRO_WORDS_MAX", "320"))   # ~94s at 3.4 wps
 _MICRO_SCENE_MAX_WORDS = 40     # a scene = one paratactic chained sentence (or a short single-event one)
-_MICRO_HOOK_MIN_WORDS = 10
+_MICRO_HOOK_MIN_WORDS = 6
 _MICRO_HOOK_MAX_WORDS = 24
 # A body scene at/under this length is one visual moment anyway — no lint even with
 # no visual_beats (held panel for a short sentence is not the bug).
@@ -120,8 +121,8 @@ def _moment_match_score(beat: Beat, tgt_tokens: set[str], page_hints: set[int]) 
 
 def _peak_index(beats: list[Beat], target_moment: str) -> int:
     """Index of the beat that best matches the described moment (the "peak").
-    Shared by window selection and by `_window_block` (which marks it for the
-    writer, so the past->present tense shift lands on the right beat)."""
+    Shared by window selection and `_window_block`, which marks the event the
+    narration needs to pay off."""
     tgt = _content_tokens(target_moment)
     hints = _page_hints(target_moment)
     return max(range(len(beats)), key=lambda i: (_moment_match_score(beats[i], tgt, hints), -i))
@@ -569,39 +570,50 @@ def _wrap_resolution_reference(reference: str) -> str:
             f'verbatim, retell with NAMED characters: "{reference[:220]}"')
 
 
-_MICRO_WRITE_SYSTEM = """You are MicroNarrator. You write ONE 35-60 second YouTube Short, documentary style, told plainly for a viewer with ZERO context.
+_MICRO_WRITE_SYSTEM = """You are MicroNarrator. You write ONE 35-60 second YouTube Short in the voice of a comic reader telling a friend what happened, plainly, for a viewer with ZERO context.
 
 TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY given below — the background plot, its meaning, and the key story moments. It is NOT a description of the comic art. Write what HAPPENS and WHY, the way you would tell a friend the story out loud. NEVER describe the artwork: no "a man with...", no "a figure holding...", no "we see", no "in this panel/frame", no colours / poses / lighting / camera for their own sake. Every scene's SUBJECT must be a story character doing a story action — if a line would only make sense to someone staring at the page, rewrite it as the plain STORY EVENT it stands for.
 
-THE ONE JOB — a micro_moment exists to ANSWER the single question its hook makes a viewer ask.
-The hook states a striking outcome; the viewer instantly wonders WHY / HOW did that happen, and SO
-WHAT. Every scene you write exists ONLY to answer that: the context that makes the moment matter
+THE ONE JOB — a micro_moment gives the viewer one concrete reason to keep listening.
+The hook names an odd action, a surprising situation, or a specific question this
+moment can answer. The first body line must move the story forward, not repeat the
+hook in different words. Treat hook and the first two body lines as one chain:
+specific title/moment promise -> a different sourced cause, action, obstacle,
+mechanism or consequence -> another verified change toward the answer. If the
+source has only one usable fact, write less rather than fabricate a third step.
+Do not force the final reveal early; make the unusual situation clear early.
+Every scene exists to explain the situation:
+the context that makes the moment matter
 (what happened, who was wronged, what is at stake), the moment itself, and what it means. Before
 writing, name that question in your head, then make the arc resolve it. A beat that only serves the
 question gets a full scene; a beat that is side-detail gets the BAREST bridge clause (or a few
 words) — never a paragraph of its own. Weight your words toward the beats that answer WHY/HOW.
-  Generic shape: hook "[hero] made [foe] break down." Viewer asks "why would that ever happen?"
+  Possible shape: hook "[hero] made [foe] break down." Viewer asks "why would that ever happen?"
   Arc answers: who got hurt / what is at stake -> the moment it breaks the foe -> what it reveals.
 
 You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short LABEL plus which page(s) it is on, with the ★ PEAK beat marked (the moment itself). The label + page tell you WHICH story event this scene covers and in what order — they are a SPINE, not wording. Take the actual words from the STORY sources above; never copy a beat label verbatim (labels can be rough or carry names a newcomer wouldn't know). Write EXACTLY ONE scene per beat, in the SAME order, PLUS a separate hook line.
 
-  HOOK (separate field, NOT a scene): ONE statement — NEVER a question — that restates the given
-  title as a CONCRETE TWIST taken from THIS story. The winning shape is a specific reversal: the
-  character does one shocking, concrete thing — then the impossible / opposite turn. That hidden
-  contradiction IS the hook; it makes the viewer NEED the answer, so lead with it. (This SHARPENS
-  the old "don't force a paradox" note: a paradox that is the story's REAL reversal is exactly
-  right — only a disconnected, invented riddle is banned.)
+  HOOK (separate field, NOT a scene): Draft three different openings silently,
+  then choose the one the sourced beats can actually repay. The hook must carry
+  the same concrete person-and-event promise as the title/target_moment, so a
+  listener knows which story began. Try (1) the odd act
+  or result first, (2) a short, specific setup that puts the character in an
+  unusual situation, and (3) a direct question about that same concrete event.
+  A question is allowed if it names the actual puzzle; "Why did he do that?"
+  is too vague. A reversal is useful only when the sources establish BOTH sides.
+  Do not force every story into a paradox or reveal the whole payoff in the hook.
+  The hook should usually take 6-15 spoken words, with a 24-word ceiling.
     - CONCRETE, NEVER ABSTRACT. Anchor on something that visibly HAPPENS and a stranger can
       picture. BANNED are vague/poetic hooks with nothing to see: "whether it was worth it", "it
       cost him everything", "she planned every second", "the truth about who he really is". If you
       can't picture the moment, rewrite it as the concrete event.
-    - NAME THE MAIN CHARACTER FIRST. Open on the household-name character the moment is about, in
-      the first sentence. If the lead is NOT a household name, open on their plain role + the twist
-      ("a small-town cop", "their leader") — never make the viewer learn a strange name at second one.
-    - It must be the story's REAL twist (from the sources) — never an invented paradox. Restating
-      the title's concrete outcome is always safe; sharpening it into the real reversal is better.
-    ✓ title "[hero] finally walked away from [foe]" -> hook "[hero] walks away from [foe] the moment he's already won — and the reason is darker than it looks."
-    ✗ "Why did [hero] walk away?"  (a question — that is the Q&A format, not this one)
+    - Name the known character or a clear role in the FIRST sentence, where it
+      helps a new viewer understand the event. Do not cram a name into the first
+      three words or make the listener learn several unfamiliar names at once.
+    - The hook must be a real source-backed part of this moment, never an invented
+      paradox, generic superlative, or promise of a twist the script never shows.
+    ✓ verified act: "[hero] walks away from [foe]."
+    ✓ question about that act: "Why did [hero] walk away from [foe]?"
     ✗ "It was the choice that cost him everything."  (abstract — nothing to picture)
 
   KEEP IT SIMPLE — this is ONE moment, not a plot recap:
@@ -653,15 +665,13 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
       single interpretive line for the ENDING thesis only.
 
   SCENES (one per beat, in order) — PARATACTIC chained sentences, documentary voice:
-    - Each sentence chains 2-3 events with and / but / then / after / while (do NOT
-      write one flat isolated event per sentence) — third person, plain B2
-      vocabulary, NO hype-slang.
+    - Give each sentence one useful development. Join related events with and /
+      but / then / after / while only when the source supports their connection.
+      Mix short and medium sentences; third person, plain B2 vocabulary, NO hype-slang.
         ✓ "[hero] corners them at the docks, and [foe] smashes through the wall to reach him."
         ✗ "[hero] corners them. [foe] smashes through the wall."  (choppy, not chained)
-    - TENSE SHIFT: PAST TENSE for lead-in/context beats (documentary retrospective).
-      At the ★ PEAK beat, switch decisively to PRESENT TENSE and stay present
-      through the rest of the scenes — the tense shift itself IS the emotional
-      turn, so land it exactly on that beat, not before or after.
+    - Keep time and tense easy to follow. A deliberate tense shift is optional;
+      never change tense just to manufacture a turn that the facts do not contain.
     - ANTI-FRAGMENT: every sentence stays a complete subject+verb clause (or chain
       of clauses) — never a bare, unconnected noun-phrase reveal dropped with no
       connective ("They are alive." sitting alone with nothing chaining it in).
@@ -676,23 +686,22 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
         ✓ "Eddie shouts a mocking goodbye as he leaps."
         ✗ any quotation marks around a character's own words, however short or dramatic.
       Keep the narration 100% narrator-voice.
-    - Scene 1 gives the MINIMUM setup a zero-context viewer needs — who this is,
-      where we are.
+    - Scene 1 adds a NEW sourced fact after the hook: the necessary setup, the
+      first reaction to the odd event, or its mechanism. Never paraphrase the hook
+      or start a separate lore lecture. A setup-led hook can leave the result for
+      a later beat, as long as the viewer already understands the unusual situation.
 
-  ENDING — the LAST line is THE LOOP. It must be SHORT, QUOTABLE, and CLOSE THE HOOK: bring back
-  the hook's key word (or its exact contradiction) in the final line, so the end snaps shut on the
-  opening and the viewer loops the Short. A soft, vague inward fade with no punch is the losing
-  shape — never end on one.
-    ✓ hook turns on "his real name" -> the last line returns to that exact phrase (third person,
-      narrator voice, no quotation marks) so it echoes the opening — short, quotable, closes the loop.
-    ✗ "he asks his reflection if he is a bad person"  (soft murmur — no quote, no loop)
+  ENDING — stop on the strongest sourced result or detail. A verbal echo of the
+  hook is optional when it comes naturally from that result; do not add a line
+  merely to repeat a hook word or bait a replay.
   Pick ONE style for the LAST scene and declare it in "ending_style":
-    - "thesis": ONE sentence stating what the moment MEANS, mirrored onto the character — and
-      echoing the hook's key word.
+    - "thesis": ONE sentence stating what the verified moment MEANS, when the
+      story sources support that interpretation.
     - "hardcut": the last scene IS the payoff/mic-drop line itself — your own
       narration line, never a character's quoted words — no separate meaning
       line, no landing, the video cuts off right on it.
-    - "question": ONE open question that baits a comment (curiosity — never "subscribe").
+    - "question": ONE specific question raised by the verified result (never a
+      generic comment prompt or "subscribe").
 
   VISUAL BEATS (every scene) — split each scene into the 2-3 separate MOMENTS it contains, so
   Stage 5 can cut to a fresh image on each. You do NOT pick pages or panels — the pipeline maps
@@ -715,7 +724,7 @@ HARD RULES:
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"hook": "<statement hook, not a question>", "ending_style": "thesis|hardcut|question", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>"], "connective": null, "beat_id": <id>}, ...]}"""
+{"hook": "<specific source-backed opening>", "ending_style": "thesis|hardcut|question", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>"], "connective": null, "beat_id": <id>}, ...]}"""
 
 
 def _window_block(window: list[Beat], peak_idx: int) -> str:
@@ -728,7 +737,7 @@ def _window_block(window: list[Beat], peak_idx: int) -> str:
     for i, b in enumerate(window):
         pg = f" (page{'s' if len(b.page_refs) > 1 else ''} {', '.join(map(str, b.page_refs))})" \
             if b.page_refs else ""
-        mark = " ★ PEAK (the described moment — tense shift lands here)" if i == peak_idx else ""
+        mark = " ★ PEAK (the described moment)" if i == peak_idx else ""
         lines.append(f"{b.id}.{mark} {b.function}{pg}: {b.name}")
     return "\n".join(lines)
 
@@ -1130,8 +1139,8 @@ def _call_micro_writer(
     sources_block = _story_sources_block(comic_context)
     context_block = _story_context_block(comic_context)
     user = (
-        f"TITLE (mirror this in the hook — restate/paraphrase it, name the character "
-        f"in sentence 1): {title}\n"
+        f"TITLE (keep its subject and concrete promise; do not simply repeat its "
+        f"wording, and do not promise an unsourced outcome): {title}\n"
         f"THE MOMENT TO TELL (do not stray beyond it): {target_moment}\n\n"
         f"{fix_block}"
         f"{clarity_fixes}"
@@ -1190,7 +1199,8 @@ def _validate_micro_scenes(
     dialog_lines: list[str] | None = None,
     dialog_entries: list[tuple[int, str, str]] | None = None,
 ) -> list[str]:
-    """hook is a statement in band that names a character up front, one scene per
+    """Hook is a concrete opening in band that names a character in its first
+    sentence, with one scene per
     beat, per-scene cap, TOTAL word band, and a declared ending_style (thesis /
     hardcut / question — all three are valid, none are lint-penalized against the
     others). Feeds the bounded retry loop in write_micro_moment(); this function
@@ -1220,16 +1230,16 @@ def _validate_micro_scenes(
     issues: list[str] = []
     hook = (hook or "").strip()
     hw = len(hook.split())
-    if hook.endswith("?"):
-        issues.append("micro hook is a question — use a STATEMENT that mirrors the title "
-                      "(a question is the Q&A format, not micro_moment)")
     if not (_MICRO_HOOK_MIN_WORDS <= hw <= _MICRO_HOOK_MAX_WORDS):
         issues.append(f"micro hook is {hw}w (want {_MICRO_HOOK_MIN_WORDS}-{_MICRO_HOOK_MAX_WORDS})")
     names = {c.strip().lower() for b in beats for c in (b.characters_active or [])
              if len(c.strip()) >= 3}
     if names and not any(n in _first_sentence(hook).lower() for n in names):
         issues.append("micro hook: name a character from the moment in the FIRST "
-                      "sentence (mirror-of-title register)")
+                      "sentence so the event has a clear subject")
+    if scenes and _intro_overlaps(hook, str(scenes[0].get("text", ""))):
+        issues.append("micro opening repeats the hook in scene 1 — start with the "
+                      "next sourced fact or choose a different hook angle")
     if len(scenes) != len(beats):
         issues.append(f"expected {len(beats)} scenes, got {len(scenes)}")
     total = hw

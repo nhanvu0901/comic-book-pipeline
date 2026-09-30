@@ -157,6 +157,38 @@ _INVARIANT_RULES = (
     "in the summary."
 )
 
+_MICRO_INVARIANT_RULES = (
+    "Rules:\n"
+    "- Cite only URLs you actually retrieved — never invent a source.\n"
+    "- Bind every candidate to one claim_citation URL and a verbatim sentence "
+    "from that retrieved page supporting the decisive action or admission. "
+    "Establish exact series, issue, and year from that page's metadata or "
+    "another retrieved source; do not pretend the quote states missing details.\n"
+    "- Name the exact series, volume when needed, issue number, and year; "
+    "never guess missing identity details.\n"
+    "- Describe only sourced page actions or spoken revelations, not inferred "
+    "motives or invented choreography.\n"
+    "- Real published comic events only."
+)
+
+# Applies only to micro research. The planner's free-form research_prompt can
+# omit a useful story turn; this contract must still reach the research call.
+# QA assembly remains byte-for-byte the previous path.
+_MICRO_SCOUT_RULES = (
+    "Micro-moment selection:\n"
+    "- One candidate is one scene or tightly connected sequence in one "
+    "published issue, suitable for a 35–50 second Short. A long recap may "
+    "suggest a lead; extract only one self-contained turn.\n"
+    "- Give the setup, the specific action or reveal that changes the "
+    "situation, and its direct consequence. Name who acts or speaks. Reject "
+    "abstract claims such as tactical patience without a sourced action.\n"
+    "- A broken character rule, current release, loud spectacle, second famous "
+    "name, and low YouTube coverage are ranking bonuses, not mandatory gates. "
+    "Honor any date window explicitly requested by the user.\n"
+    "- Keep summary and what_visibly_happens focused on the same scene. Do not "
+    "invent motives, panel order, choreography, or consequences from another issue."
+)
+
 # Research breadth is driven by source coverage, never a candidate floor.  The
 # API cannot enforce array minima, and a candidate minimum made the model split
 # one article into invented entries.  This is deliberately modest: it tells the
@@ -187,7 +219,9 @@ _CARDINALITY_BLOCKS: dict[str, str] = {
 }
 
 
-def assemble_prompt(plan: ResearchPlan, digest: str, *, user_intent: str = "") -> str:
+def assemble_prompt(
+    plan: ResearchPlan, digest: str, *, user_intent: str = "", mode: str = ""
+) -> str:
     """Deterministic prompt assembly — pure code, no LLM call.
 
     Order: invariant rules, the user's unchanged request, the unit sentence,
@@ -196,7 +230,7 @@ def assemble_prompt(plan: ResearchPlan, digest: str, *, user_intent: str = "") -
     """
 
     sections = [
-        _INVARIANT_RULES,
+        _MICRO_INVARIANT_RULES if mode == "micro" else _INVARIANT_RULES,
     ]
     if user_intent:
         sections.append(
@@ -213,6 +247,8 @@ def assemble_prompt(plan: ResearchPlan, digest: str, *, user_intent: str = "") -
             f"Order candidates by {plan.ranking}, best first, and justify "
             "each position in rank_reason."
         )
+    if mode == "micro":
+        sections.append(_MICRO_SCOUT_RULES)
     sections.append(plan.research_prompt)
     sections.append(f"SCOUTED DIGEST:\n{digest}")
     return "\n\n".join(sections)

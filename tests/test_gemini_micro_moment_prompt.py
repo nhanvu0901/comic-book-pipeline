@@ -49,6 +49,11 @@ def test_micro_moment_prompt_generation(tmp_path, monkeypatch):
     assert "Batman is trapped in a collapsing vault" in prompt_text
     assert "The twist ending redefines Annika's motives completely." in prompt_text
     assert "CONFIRMED" in prompt_text
+    assert "HOOK AND FIRST BEAT" in prompt_text
+    assert "A question is allowed" in " ".join(prompt_text.split())
+    assert "OPENING CHAIN" in prompt_text
+    assert "same concrete person-and-event promise" in prompt_text
+    assert "NEXT FACT" in prompt_text
 
 
 def test_micro_moment_script_can_be_approved_before_pages_exist(tmp_path, monkeypatch):

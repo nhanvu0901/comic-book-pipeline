@@ -313,19 +313,17 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned → {report}")
 
 
-# ─── MICRO — one scene, one issue (the other mode) ───────────────────────────────
+# ─── MICRO — one causal turn, one issue (the other mode) ─────────────────────────
 # DISCOVER's whole premise is a question whose answer spans 3+ DIFFERENT comics. A micro
-# moment is the exact opposite: ONE drawn beat inside ONE issue. So it needs its own plan —
+# moment is the exact opposite: ONE narrow sequence inside ONE issue. So it needs its own plan —
 # reusing discover's prompt returns listicles, which is what a one-off run outside the repo
 # produced before this landed.
 MICRO_ANGLES = [
-    "an A-list hero doing something shockingly out of character in a single panel sequence "
-    "fans keep sharing",
-    "a famously unbeatable character humiliated or broken in one scene readers called the "
-    "most brutal page of the year",
-    "a villain doing something so unexpected that reviewers singled out that one page",
-    "scenes fans call 'peak' or 'insane' — one specific issue, one specific page, never a "
-    "whole storyline",
+    "a small act by a famous character with a surprising direct consequence",
+    "an apparent defeat reversed by a specific action or earlier preparation",
+    "an enemy or rival making an unexpected choice to help someone",
+    "a personal choice or admission that changes an ongoing confrontation",
+    "a secret or identity reveal that reverses who has the advantage",
 ]
 
 _MICRO_PROPS = {
@@ -334,7 +332,7 @@ _MICRO_PROPS = {
     "series_issue_year": {"type": "string"},
     "what_visibly_happens": {"type": "string"},
     "why_it_lands": {"type": "string"},
-    "constant_broken": {"type": "string"},     # the thing everyone "knows" about them
+    "turning_point": {"type": "string"},  # the exact action or reveal that changes the scene
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
 }
 
@@ -377,20 +375,22 @@ def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
     for i, angle in enumerate(MICRO_ANGLES, 1):
         prompt = (
             f"{digest}\n\n=== TASK ===\n"
-            "Find ONE comic-book MICRO MOMENT: a single drawn beat inside a SINGLE issue — "
-            "not a plot, not a crossover, not a character arc. It must be VISUALLY dramatic "
-            "(something a reader SEES happen on the page), star a widely-known character, "
-            f"and be published {years}.\n"
-            "The strongest micro moment breaks a CONSTANT — the one thing everyone 'knows' "
-            "about that character — inside that single scene. Name the constant.\n"
-            "Detail requirements: Write a rich 2-3 sentence overview for 'moment', an "
-            "elaborate step-by-step visual breakdown in 'what_visibly_happens' (at least 3-5 "
-            "sentences describing what characters are drawn doing, their physical actions, "
-            "expressions, panels, and the visual payoff so the reader can vividly visualize "
-            "the artwork), and 2-3 sentences in 'why_it_lands'. Never write a brief one-line synopsis.\n"
-            "REJECT: talking-heads scenes, moments that need prior lore to follow, whole "
-            "storylines, solicitations or previews for unpublished issues, and anything "
-            "where you cannot give the exact series, issue number and year.\n"
+            "Find ONE comic-book MICRO MOMENT: one scene or tightly connected sequence "
+            "inside a SINGLE issue, not a whole plot, crossover, or character arc. Prefer "
+            "a recognizable subject and a zero-lore setup. Respect the requested publication "
+            f"window: {years}.\n"
+            "The story needs a specific action or reveal that changes the opening situation "
+            "and has a direct consequence. Name the actor and exact turning_point; a broken "
+            "character rule and visual spectacle are bonuses, not gates. Quiet decisions and "
+            "spoken admissions qualify when their effect is sourced.\n"
+            "In moment give setup, turn, and consequence in 2-3 plain sentences. In "
+            "what_visibly_happens name only source-grounded actions needed to locate the "
+            "scene; do not invent panel order, expressions, motive, or choreography. In "
+            "why_it_lands explain how the turn changes the viewer's first reading.\n"
+            "REJECT: listicles, scenes without a concrete turn, moments needing multiple "
+            "issues for their payoff, abstract claims like 'controls the tempo', adaptation-only "
+            "events, unpublished solicitations, and anything without exact series, volume "
+            "when needed, issue number, and year.\n"
             f"Angle for THIS search: {angle}."
         )
         print(f"[micro {i}/{len(MICRO_ANGLES)}] {angle[:60]}…", flush=True)
@@ -416,7 +416,7 @@ def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
     for c in kept:
         lines += [f"## {c.get('character')} — {c.get('series_issue_year')}",
                   f"- moment: {str(c.get('moment', ''))}",
-                  f"- constant broken: {c.get('constant_broken', '')}",
+                  f"- turning point: {c.get('turning_point', '')}",
                   f"- what is SEEN: {str(c.get('what_visibly_happens', ''))}",
                   f"- why it lands: {str(c.get('why_it_lands', ''))}",
                   f"- evidence: {' '.join(c.get('evidence_urls') or [])}", ""]

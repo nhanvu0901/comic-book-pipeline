@@ -178,11 +178,30 @@ def test_micro_band_rejects_under_floor():
     assert any("micro band" in i for i in issues), issues
 
 
-def test_micro_hook_must_not_be_a_question():
+def test_micro_hook_can_be_a_specific_question():
     beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3)]
     q = "Why did the Punisher make Juggernaut throw up in their brawl here?"
     issues = mm._validate_micro_scenes(q, _scenes(36, 36, 36), beats, "thesis")
-    assert any("question" in i for i in issues), issues
+    assert not any("hook is a question" in i for i in issues), issues
+
+
+def test_micro_hook_accepts_a_short_specific_action():
+    beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3)]
+    hook = "Batman gave the Penguin his own heart."
+    issues = mm._validate_micro_scenes(hook, _scenes(36, 36, 36), beats, "thesis")
+    assert not any("micro hook is" in i and "w (want" in i for i in issues), issues
+
+
+def test_micro_first_scene_must_advance_past_the_hook():
+    beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3)]
+    hook = "Batman gives the Penguin his own heart after their last fight."
+    scenes = [
+        {"text": "Batman gives the Penguin his own heart after their last fight."},
+        {"text": "The surgeon explains how the transplant works."},
+        {"text": "The Penguin wakes up and learns who saved him."},
+    ]
+    issues = mm._validate_micro_scenes(hook, scenes, beats, "hardcut")
+    assert any("opening repeats" in issue for issue in issues), issues
 
 
 # ── (d) hook mirrors the title: statement + names a character in sentence 1 ──
@@ -302,23 +321,22 @@ def test_micro_write_system_forbids_quoting_dialogue():
     assert "quote-fidelity" not in low
 
 
-# ── RULE 1 (retention): hook is a CONCRETE twist, abstract/poetic hooks banned ──
-def test_micro_write_system_hook_is_concrete_twist_bans_abstract():
+# ── Opening: concrete promise, supported reveal order, abstract hooks banned ──
+def test_micro_write_system_hook_is_concrete_and_source_backed():
     low = mm._MICRO_WRITE_SYSTEM.lower()
-    assert "concrete twist" in low                 # winning shape is a concrete reversal
-    assert "concrete, never abstract" in low       # the abstract ban is explicit
-    assert "she planned every second" in low       # a named banned abstract example
-    # reconciled with the old "don't force a paradox" note — the story's REAL reversal is wanted,
-    # only a disconnected invented riddle is banned
-    assert "invented riddle is banned" in low
+    assert "concrete, never abstract" in low
+    assert "she planned every second" in low
+    assert "title/target_moment" in low
+    assert "do not force the final reveal early" in low
+    assert "different sourced cause" in low
 
 
-# ── RULE 2 (retention): last line is a SHORT, quotable loop back to the hook ────
-def test_micro_write_system_outro_is_quotable_loop():
+# ── Landing: finish on sourced detail without a forced loop ────
+def test_micro_write_system_outro_is_sourced_landing():
     low = mm._MICRO_WRITE_SYSTEM.lower()
-    assert "the last line is the loop" in low
-    assert "quotable" in low
-    assert "close the hook" in low
+    assert "stop on the strongest sourced result or detail" in low
+    assert "verbal echo of the" in low
+    assert "do not add a line" in low
 
 
 # ── STORY-FIRST input builder (2026-07-16): story sources IN, panel prose OUT ──

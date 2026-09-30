@@ -160,9 +160,7 @@ def test_write_explore_answer_explain_statement_lead_routes_to_explain_contract(
     assert captured["system"] == ea._EXPLORE_WRITE_SYSTEM_EXPLAIN
 
     hook = nar.scenes[0].text
-    assert hook.startswith("This is how Batman trains himself.")
-    assert "himself?" not in hook
-    assert any(hook.endswith(t) for t in ea._EXPLAIN_TEASE_POOL)
+    assert hook == "This is how Batman trains himself."
 
 
 def test_missing_answer_context_raises(monkeypatch):
@@ -321,16 +319,13 @@ def test_validate_explore_scenes_is_fragment_count_agnostic(monkeypatch):
 
 
 def test_build_hook_by_archetype():
-    ctx = {"answer_summary": "Because only the dead woman could let him go."}
-    h_list = ea._build_hook("Who survived X", ctx, "list", "proj-a")
+    ctx = {"items": [{"entity": "Wolverine"}],
+           "answer_summary": "Because only the dead woman could let him go."}
+    h_list = ea._build_hook("Who survived Ghost Rider's Penance Stare", ctx, "list", "proj-a")
     h_explain = ea._build_hook("Why did the Phoenix choose a broken host", ctx, "explain", "proj-a")
-    # tease is one of the pool's rotated variants, not a fixed sentence
-    assert any(h_list.endswith(t) for t in ea._LIST_TEASE_POOL)
-    assert any(h_explain.endswith(t) for t in ea._EXPLAIN_TEASE_POOL)
-    assert "list" not in h_explain  # no list language on explain hooks
-    # explain hook must NOT spoil the thesis (the answer lands at the END)
+    assert h_list == "Who survived Ghost Rider's Penance Stare? Wolverine is one answer."
+    assert h_explain == "Why did the Phoenix choose a broken host?"
     assert "dead woman" not in h_explain
-    assert h_explain.startswith("Why did the Phoenix choose a broken host?")
 
 
 def test_build_hook_statement_lead_keeps_statement_register():
@@ -338,28 +333,18 @@ def test_build_hook_statement_lead_keeps_statement_register():
     # question — forcing a "?" onto it ("...himself?") reads wrong.
     ctx = {"answer_summary": "Because the ritual is really a punishment."}
     h = ea._build_hook("This is how Batman trains himself", ctx, "explain", "proj-a")
-    assert h.startswith("This is how Batman trains himself.")
-    assert "himself?" not in h
-    assert any(h.endswith(t) for t in ea._EXPLAIN_TEASE_POOL)
+    assert h == "This is how Batman trains himself."
     # thesis never leaks into the hook (same guarantee as the interrogative case)
     assert "punishment" not in h
 
     # a real interrogative explain question is untouched by the statement branch
     h2 = ea._build_hook("Why does Batman always work alone", ctx, "explain", "proj-a")
-    assert h2.startswith("Why does Batman always work alone?")
+    assert h2 == "Why does Batman always work alone?"
 
 
-def test_build_hook_tease_rotation_is_deterministic_per_project():
-    ctx = {"answer_summary": "x"}
-    # same project slug -> same tease, every call (retries must reproduce it)
-    a1 = ea._build_hook("Who survived X", ctx, "list", "project-alpha")
-    a2 = ea._build_hook("Who survived X", ctx, "list", "project-alpha")
-    assert a1 == a2
-    # across many different slugs, more than one pool variant gets picked
-    # (pool has 6 entries; a run of 12 distinct slugs landing on just 1 is
-    # astronomically unlikely with a uniform hash)
-    picks = {ea._pick_tease(ea._LIST_TEASE_POOL, f"project-{i}") for i in range(12)}
-    assert len(picks) > 1
+def test_build_hook_fallback_does_not_invent_an_answer_when_item_is_missing():
+    assert ea._build_hook("Who survived the Penance Stare", {}, "list", "project-alpha") == \
+        "Who survived the Penance Stare?"
 
 
 def test_build_hook_comparison_shape_skips_list_language():
@@ -373,15 +358,12 @@ def test_build_hook_comparison_shape_skips_list_language():
     assert "list" not in low
     assert "name" not in low
     assert "here's the answer" not in low
-    assert any(h.endswith(t) for t in ea._COMPARISON_TEASE_POOL)
+    assert h == "Things Carnage Can Do That Venom Can't."
 
     # ordinary list questions are untouched (same tease pool, same behavior)
     h2 = ea._build_hook("Which Villains Have Actually Defeated Mephisto",
-                         {"answer_summary": "three villains"}, "list", "meph-x")
-    assert any(h2.endswith(t) for t in ea._LIST_TEASE_POOL)
-    assert "three villains" in h2
-    picks_explain = {ea._pick_tease(ea._EXPLAIN_TEASE_POOL, f"project-{i}") for i in range(12)}
-    assert len(picks_explain) > 1
+                         {"items": [{"entity": "Doctor Doom"}]}, "list", "meph-x")
+    assert h2 == "Which Villains Have Actually Defeated Mephisto? Doctor Doom is one answer."
 
 
 # ─── Seconds-targeted band (2026-07-08: was a flat n_items*(22..46) multiply
@@ -476,6 +458,7 @@ def test_both_prompts_demand_title_hook_outro_in_the_return_shape():
         assert '"title": "..."' in prompt
         assert '"hook": "..."' in prompt
         assert '"outro": "..."' in prompt
+        assert "three spoken lines as one chain" in prompt
 
 
 def test_both_prompts_forbid_inverting_or_inventing_facts():
@@ -497,10 +480,58 @@ def test_outro_rule_forbids_restating_the_final_scene():
 
 
 def test_build_hook_is_now_only_the_fallback():
-    """_build_hook still works (it is the fallback when the writer returns no hook) but its
-    docstring must say so, or someone will assume the tease pools are still the live path."""
+    """A missing writer hook gets a grounded question and item 1, never a generic tease."""
     assert "DEPRECATED" in ea._build_hook.__doc__
     assert "FALLBACK" in ea._build_hook.__doc__
-    # still functional — a fallback that raises is worse than a flat hook
-    h = ea._build_hook("Who survived X", {"answer_summary": "s"}, "list", "p")
-    assert h and h.endswith(tuple(ea._LIST_TEASE_POOL))
+    h = ea._build_hook("Who survived X", {"items": [{"entity": "Wolverine"}]}, "list", "p")
+    assert h == "Who survived X? Wolverine is one answer."
+
+
+def test_writer_hook_drops_content_free_tease_but_keeps_a_specific_question(monkeypatch, project_dir):
+    """The actual intro scene must not ship a generic hook when the writer ignores its prompt."""
+    original = _fake_writer_call
+
+    def writer_with_generic_hook(**kwargs):
+        raw, model = original(**kwargs)
+        data = json.loads(raw)
+        data["hook"] = "Wait until you see who did it last."
+        return json.dumps(data), model
+
+    monkeypatch.setattr(ea, "call_with_chain", writer_with_generic_hook)
+    monkeypatch.setattr(ws, "call_with_chain", _raising_call)
+    comic_context = {"title": "Who survived Ghost Rider's Penance Stare?", "is_arc": True}
+    pages = [_page(1, 1, 1), _page(3, 2, 1), _page(5, 3, 1)]
+
+    nar = ws.write_script(comic_context, pages, "explore_answer",
+                          debug_dump={"project": _PROJECT})
+
+    assert nar.scenes[0].text == \
+        "Who survived Ghost Rider's Penance Stare? Wolverine is one answer."
+
+
+def test_writer_rejects_exact_hook_repeated_as_first_context_scene(monkeypatch):
+    """A duplicate opening wastes the handoff even if scene count is correct."""
+    items = [{"entity": "Wolverine", "how_or_why": "His healing closes the damage.",
+              "source_comic": "X-Men Legacy #1"}]
+    beats = ea.build_answer_beats({}, {"items": items}, [])
+    hook = "Wolverine survives Ghost Rider's stare."
+    repeated = {"hook": hook, "scenes": [
+        {"text": hook + " He does not die.", "beat_id": 1},
+        {"text": "His healing closes the damage.", "beat_id": 1},
+    ]}
+    moving = {"hook": hook, "scenes": [
+        {"text": "Ghost Rider's stare hits Wolverine.", "beat_id": 1},
+        {"text": "His healing closes the damage.", "beat_id": 1},
+    ]}
+
+    def choose_nonrepeating(**kwargs):
+        validate = kwargs["validator"]
+        assert not validate(json.dumps(repeated))
+        assert validate(json.dumps(moving))
+        return json.dumps(moving), "fake-writer-model"
+
+    monkeypatch.setattr(ea, "call_with_chain", choose_nonrepeating)
+    written, _ = ea._call_explore_writer(
+        beats, items, "Who survived Ghost Rider's Penance Stare?",
+        model=None, progress=None, debug_dump={})
+    assert written["scenes"][0]["text"] == "Ghost Rider's stare hits Wolverine."
