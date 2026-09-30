@@ -244,6 +244,61 @@ def test_new_general_round_rejects_a_bound_url_absent_from_returned_sources(mock
     ]
 
 
+def test_micro_exact_issue_intent_rejects_validly_cited_wrong_comics(mock_workflow):
+    issues = [
+        ("right", "Amazing X-Men #2 (2014)"),
+        ("other-series", "Batman: Knightfight #1 (2026)"),
+        ("other-number", "Amazing X-Men #3 (2014)"),
+        ("no-issue", "Amazing X-Men"),
+    ]
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [
+                {
+                    "id": key, "title": key, "series_issue_year": issue,
+                    "claim_citation": {
+                        "url": f"https://source.test/{key}", "quote": f"Evidence for {key}.",
+                    },
+                }
+                for key, issue in issues
+            ]},
+            "sources": [{"url": f"https://source.test/{key}"} for key, _ in issues],
+        }
+    }
+    intent = "Find a micro moment in Amazing X-Men #2 (2014)."
+    session = mock_workflow.start(ScoutMode.MICRO, intent)
+    mock_workflow.run_general(session.id)
+
+    candidates = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json"
+    ).read_text(encoding="utf-8"))["candidates"]
+    validation = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidate_validation.rev1.v1.json"
+    ).read_text(encoding="utf-8"))
+
+    assert [candidate["id"] for candidate in candidates] == ["right"]
+    assert [item["candidate_id"] for item in validation["rejected"]] == [
+        "other-series", "other-number", "no-issue",
+    ]
+    assert all("Amazing X-Men #2" in item["reason"] for item in validation["rejected"])
+    assert "Batman: Knightfight #1" in validation["rejected"][0]["reason"]
+
+
+def test_planner_prompt_keeps_the_original_user_intent_even_when_plan_drifts(tmp_path):
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=_FakeYouCom(),
+        planner=lambda *_: ResearchPlan(
+            unit="one scene", cardinality="options", ranking="", extra_fields=[],
+            research_prompt="Find a moment in Batman: Knightfight #1.",
+        ),
+    )
+    intent = "Find a micro moment in Amazing X-Men #2 (2014)."
+    session = workflow.start(ScoutMode.MICRO, intent)
+    workflow.run_general(session.id)
+
+    assert f"USER INTENT: {intent}" in workflow.client.seen_prompt
+
+
 def test_candidates_must_exist_before_they_can_be_verified(mock_workflow):
     session = mock_workflow.start(ScoutMode.MICRO, "new Hulk moment")
 

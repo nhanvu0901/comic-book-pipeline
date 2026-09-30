@@ -746,6 +746,57 @@ def test_picking_a_question_fills_the_box_and_leaves_the_batch_on_screen(
     # either one firing here is the regression this whole flow exists to prevent.
 
 
+def test_picking_a_micro_moment_keeps_its_issue_metadata_in_research_intent(
+    tmp_path, monkeypatch,
+):
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[[{
+            "moment": "Cyclops faces Darkchild in a duel of truths.",
+            "series_issue_year": "Amazing X-Men #2 (2025)",
+            "character": "Cyclops",
+            "angle": _ANGLES[0],
+        }]],
+    )
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+
+    _by_key(controls, "discovered-questions").on_change(_FakeEvent("0"))
+
+    assert "Cyclops faces Darkchild" in _intent_field(controls).value
+    assert "Amazing X-Men #2 (2025)" in _intent_field(controls).value
+
+
+def test_micro_review_explains_when_research_returns_a_different_issue(tmp_path):
+    from stages.research_scout.issue_identity import micro_issue_rejection_reason
+
+    store = SessionStore(tmp_path / "research_sessions")
+    session = store.create(ScoutMode.MICRO, "Amazing X-Men #2: Cyclops faces Darkchild")
+    session.state = SessionState.CANDIDATE_REVIEW
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": []})
+    reason = micro_issue_rejection_reason(session.user_intent, {
+        "series_issue_year": "DC K.O.: Knightfight #1 (2026)",
+    })
+    store.append_audit(session.id, "general_research_completed", detail={
+        "revision": session.revision,
+        "candidate_validation_rejections": [{
+            "candidate_id": "candidate-1",
+            "reason": reason,
+        }],
+    })
+
+    _page, controls = _build(tmp_path, session)
+
+    shown = _text_content(controls)
+    assert "No matching candidates" in shown
+    assert "Expected Amazing X-Men #2" in shown
+    assert "Knightfight" in shown
+
+
 def test_rerolling_costs_one_call_and_excludes_every_question_already_offered(
     tmp_path, monkeypatch,
 ):

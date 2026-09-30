@@ -17,6 +17,7 @@ from stages.stage_1.storage import save_comic_context
 
 from .evidence import GateFlag
 from .errors import ScoutUserError
+from .issue_identity import micro_issue_rejection_reason
 from .models import ResearchSession, ScoutMode, SessionState
 from .storage import SessionStore
 
@@ -27,9 +28,11 @@ class _GateArtifact:
     is_collection: bool
 
 
-# A defect in the artifact, not an opinion about the research: there is nothing
-# here for a human to overrule, so override cannot reach these.
-_NOT_OVERRIDABLE = frozenset({GateFlag.DUPLICATE, GateFlag.MALFORMED_OUTPUT})
+# These are structural defects or a proven mismatch with the selected issue.
+# A confirmation override cannot turn another comic into the requested one.
+_NOT_OVERRIDABLE = frozenset({
+    GateFlag.DUPLICATE, GateFlag.MALFORMED_OUTPUT, GateFlag.TARGET_ISSUE_MISMATCH,
+})
 
 
 @dataclass(frozen=True)
@@ -66,7 +69,7 @@ def can_override_production_gates(
     """Whether this session has only human-overridable production failures.
 
     Reuse the factory's production evaluator so the UI cannot offer consent for
-    an artifact defect that project creation will always refuse.  A malformed or
+    an artifact defect or a candidate from another issue. A malformed or
     missing artifact has no trustworthy verdict to override, so it stays hidden.
     """
     try:
@@ -134,15 +137,24 @@ def _evaluate(
 
         if not _has_exact_issue_and_year(candidate):
             flags.append(GateFlag.EXACT_ISSUE_REQUIRED)
-        if session.mode is ScoutMode.MICRO and not _has_visual_event(candidate):
-            flags.append(GateFlag.NO_VISUAL_EVENT)
+        issue_reason = None
+        if session.mode is ScoutMode.MICRO:
+            if not _has_visual_event(candidate):
+                flags.append(GateFlag.NO_VISUAL_EVENT)
+            issue_reason = micro_issue_rejection_reason(session.user_intent, candidate)
+            if issue_reason:
+                flags.append(GateFlag.TARGET_ISSUE_MISMATCH)
+
+        gate_reason = str(gate.get("reason", "") or "")
+        if issue_reason:
+            gate_reason = f"{issue_reason}; {gate_reason}" if gate_reason else issue_reason
 
         reports.append(_CandidateVerdict(
             candidate_id=candidate_id,
             label=_label(candidate_id, candidate),
             flags=_unique_flags(flags),
             verdict=verdict,
-            reason=str(gate.get("reason", "") or ""),
+            reason=gate_reason,
             model_flags=model_flags,
         ))
     return reports
@@ -181,8 +193,7 @@ def create_project_from_session(
     ``override`` waves through the soft gates — an unconfirmed verdict, a model
     flag, a missing issue number — after the user has explicitly confirmed
     them, and is recorded in the audit. It can never wave through a duplicate
-    selection or a gate that could not be assigned: those are defects in the
-    artifact rather than judgements about the research.
+    selection, an issue mismatch, or a gate that could not be assigned.
     """
 
     store = SessionStore(config.RESEARCH_SESSIONS_ROOT)

@@ -187,19 +187,27 @@ _CARDINALITY_BLOCKS: dict[str, str] = {
 }
 
 
-def assemble_prompt(plan: ResearchPlan, digest: str) -> str:
+def assemble_prompt(plan: ResearchPlan, digest: str, *, user_intent: str = "") -> str:
     """Deterministic prompt assembly — pure code, no LLM call.
 
-    Order: invariant rules, the unit sentence, the cardinality block, the
-    ranking block (only when plan.ranking is set), the plan's own
-    research_prompt, then the digest.
+    Order: invariant rules, the user's unchanged request, the unit sentence,
+    the cardinality block, the ranking block (only when plan.ranking is set),
+    the plan's own research_prompt, then the digest.
     """
 
     sections = [
         _INVARIANT_RULES,
+    ]
+    if user_intent:
+        sections.append(
+            f"USER INTENT: {user_intent}\n"
+            "The user intent is authoritative. Keep the requested comic, issue, "
+            "and scope even if the planner instruction or digest suggests another."
+        )
+    sections.extend([
         f"One candidate per {plan.unit} — never merge entries.",
         _CARDINALITY_BLOCKS[plan.cardinality],
-    ]
+    ])
     if plan.ranking.strip():
         sections.append(
             f"Order candidates by {plan.ranking}, best first, and justify "

@@ -241,6 +241,27 @@ def test_new_bound_citation_that_cannot_be_fetched_is_inconclusive_without_model
     assert "could not be retrieved" in written["gates"][0]["reason"]
 
 
+def test_retrieved_youcom_snippet_can_verify_a_quote_when_reader_fails(
+    monkeypatch, workflow,
+):
+    _stub_fetcher(monkeypatch, {})
+    original = workflow.client.verify_response
+    workflow.client.verify_response = {
+        "output": {
+            "content": original,
+            "sources": [{
+                "url": _CANDIDATE["claim_citation"]["url"],
+                "snippets": [_CANDIDATE["claim_citation"]["quote"]],
+            }],
+        },
+    }
+
+    seen = _gate(monkeypatch, workflow)
+
+    assert "Shuri's scan shows necrotic cells multiplying." in seen["prompt"]
+    assert "COULD NOT FETCH" not in seen["prompt"].split("[1] ")[1].split("[2] ")[0]
+
+
 def test_at_most_three_cited_urls_are_fetched_for_one_candidate(monkeypatch, tmp_path):
     greedy = dict(
         _CANDIDATE,

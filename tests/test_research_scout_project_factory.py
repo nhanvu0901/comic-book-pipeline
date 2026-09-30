@@ -53,12 +53,12 @@ def _gate(candidate_id, *, reader_url=None, verdict="confirmed", flags=None):
     }
 
 
-def _session(tmp_path, mode, candidates, gates):
+def _session(tmp_path, mode, candidates, gates, *, intent="Which heroes did this?"):
     store = SessionStore(tmp_path / "research-sessions")
     session = ResearchSession(
         id=f"{mode.value}-session",
         mode=mode,
-        user_intent="Which heroes did this?",
+        user_intent=intent,
         state=SessionState.PRODUCTION_GATES,
         selected_specific_candidate_ids=[candidate["id"] for candidate in candidates],
     )
@@ -80,6 +80,32 @@ def test_micro_factory_writes_target_moment_without_changing_stage_contract(tmp_
     assert context["series_issue_year"] == candidate["series_issue_year"]
     assert context["issue"] == candidate["series_issue_year"]
     assert context["reader_url"] == candidate["reader_url"]
+
+
+def test_micro_factory_refuses_an_old_off_topic_candidate_even_with_override(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _candidate("wrong", mode=ScoutMode.MICRO)
+    session = _session(
+        tmp_path, ScoutMode.MICRO, [candidate], [_gate("wrong")],
+        intent="Amazing X-Men #2: Cyclops faces Darkchild.",
+    )
+
+    assert not factory.can_override_production_gates(session, root=tmp_path / "research-sessions")
+    with pytest.raises(ValueError, match="target_issue_mismatch"):
+        factory.create_project_from_session(session.id, "wrong-comic", override=True)
+    assert not (tmp_path / "projects" / "wrong-comic").exists()
+
+
+def test_micro_factory_accepts_the_exact_requested_issue(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _candidate("right", mode=ScoutMode.MICRO)
+    candidate["series_issue_year"] = "Amazing X-Men #2 (2025)"
+    session = _session(
+        tmp_path, ScoutMode.MICRO, [candidate], [_gate("right")],
+        intent="In Amazing X-Men #2, Cyclops faces Darkchild.",
+    )
+
+    assert factory.create_project_from_session(session.id, "right-comic") == "right-comic"
 
 
 def test_qa_factory_requires_three_confirmed_reader_urls(tmp_path, monkeypatch):

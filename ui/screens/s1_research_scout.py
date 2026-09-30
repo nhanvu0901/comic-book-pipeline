@@ -434,6 +434,18 @@ def _discovered_text(entry: dict) -> str:
     return str(entry.get("question") or entry.get("moment") or "").strip()
 
 
+def _discovered_intent(entry: dict, mode: ScoutMode) -> str:
+    """Keep a micro card's issue when its prose omits that separate field."""
+
+    text = _discovered_text(entry)
+    if mode is not ScoutMode.MICRO:
+        return text
+    issue = str(entry.get("series_issue_year") or "").strip()
+    if issue and issue.casefold() not in text.casefold():
+        return f"{text}\nComic: {issue}"
+    return text
+
+
 def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
     """Tier A of the empty-intent fallback, shown for free before any research
     round runs. Master 2026-08-22: Send-with-empty-box must not silently spend
@@ -637,6 +649,16 @@ def build(
             if session.state is SessionState.CANDIDATE_REVIEW
             else _general_collapsed_lines(session, candidates)
         )
+        if not candidates:
+            rejected = detail.get("candidate_validation_rejections") or []
+            notes: list[ft.Control] = [ft.Text(
+                "No matching candidates. Try feedback to research the same moment again.",
+                size=12, color=WARN, selectable=True,
+            )]
+            for item in rejected[:3]:
+                if isinstance(item, dict) and item.get("reason"):
+                    notes.append(ft.Text(str(item["reason"]), size=11, color=WARN, selectable=True))
+            content = ft.Column([*notes, content], spacing=6)
         plan_summary = detail.get("plan_summary")
         if not plan_summary:
             return _scout_bubble(content)
@@ -923,7 +945,7 @@ def build(
         except (TypeError, ValueError, IndexError):
             return
         discovered_pick[0] = raw
-        intent_field.value = _discovered_text(entry)
+        intent_field.value = _discovered_intent(entry, ScoutMode(mode_group.value))
         _render_full()
 
     def _show_discovered(batch) -> None:

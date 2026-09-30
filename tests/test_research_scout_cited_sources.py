@@ -326,7 +326,7 @@ def test_a_candidate_that_cited_nothing_says_that_too():
     assert json.dumps(_SEARCH, ensure_ascii=False) in evidence
 
 
-def test_extract_sources_from_payload_extracts_snippets_and_candidate_quote():
+def test_extract_sources_from_payload_never_promotes_candidate_quote_to_source():
     payload = {
         "output": {
             "sources": [
@@ -350,11 +350,9 @@ def test_extract_sources_from_payload_extracts_snippets_and_candidate_quote():
     }
 
     fetched = cs.extract_sources_from_payload(payload, candidate)
-    assert len(fetched) == 3
+    assert len(fetched) == 2
     assert fetched[0].url == "https://marvel.fandom.com/wiki/Issue_1"
     assert fetched[0].text == "Snippet line 1\n\nSnippet line 2"
     assert fetched[1].url == "https://marvel.fandom.com/wiki/Issue_2"
     assert fetched[1].text == "Description only"
-    assert fetched[2].url == "https://dc.fandom.com/wiki/Issue_3"
-    assert fetched[2].text == "Direct quote from candidate"
-
+    assert all(source.url != "https://dc.fandom.com/wiki/Issue_3" for source in fetched)

@@ -13,6 +13,7 @@ from typing import Any, Callable
 import config
 
 from . import cited_sources
+from .issue_identity import micro_issue_rejection_reason
 from . import openrouter_gate
 from . import planner as planner_module
 from .errors import ScoutUserError
@@ -185,7 +186,9 @@ class ScoutWorkflow:
         else:
             # Planner path — feedback already reached the planner input above,
             # so it must NOT be folded into the prompt a second time here.
-            prompt_text = planner_module.assemble_prompt(plan, self.digest)
+            prompt_text = planner_module.assemble_prompt(
+                plan, self.digest, user_intent=session.user_intent
+            )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
             schema = planner_module.compile_schema(plan)
             plan_record = {"source": "planner", **plan.model_dump(mode="json")}
@@ -211,6 +214,8 @@ class ScoutWorkflow:
         candidates, validation = _validate_new_general_candidates(
             candidates,
             returned_sources,
+            mode=session.mode,
+            user_intent=session.user_intent,
             protected_fingerprints={
                 cited_sources.citation_fingerprint(citation)
                 for candidate in kept
@@ -791,47 +796,49 @@ class ScoutWorkflow:
             effort=config.YOUCOM_VERIFY_EFFORT,
         )
         raw_search_payload = _raw_payload(raw)
-        # Sequentially, inside this one worker: verify_selected already runs the
-        # candidates in parallel and a pool nested here would multiply out.
-        # BƯỚC 1: Tải văn bản qua Jina Reader (Tạm thời bỏ qua / skipped for now)
-        # fetched = cited_sources.fetch_cited_sources(candidate)
-        # Thay vào đó, trích xuất trực tiếp các sources và snippets đã được You.com crawl về
-        fetched = cited_sources.extract_sources_from_payload(raw_search_payload, candidate)
-        # BƯỚC 2: So khớp câu trích dẫn cơ học (Tạm thời bỏ qua / skipped for now)
-        # bound = cited_sources.claim_citation(candidate)
-        # if "claim_citation" in candidate:
-        #     if bound is None:
-        #         return (
-        #             EvidenceGate(
-        #                 verdict="inconclusive",
-        #                 reason="claim_citation is missing or malformed",
-        #             ),
-        #             _raw_record(raw),
-        #             "",
-        #         )
-        #     bound_source = next(
-        #         (source for source in fetched if cited_sources.canonical_url(source.url)
-        #          == cited_sources.canonical_url(bound.url)),
-        #         None,
-        #     )
-        #     if bound_source is None or not bound_source.ok:
-        #         return (
-        #             EvidenceGate(
-        #                 verdict="inconclusive",
-        #                 reason="bound citation could not be retrieved",
-        #             ),
-        #             _raw_record(raw),
-        #             "",
-        #         )
-        #     if not cited_sources.quote_matches_source(bound, bound_source):
-        #         return (
-        #             EvidenceGate(
-        #                 verdict="inconclusive",
-        #                 reason="bound quote does not occur in retrieved source text",
-        #             ),
-        #             _raw_record(raw),
-        #             "",
-        #         )
+        # Verification runs in parallel across candidates, so fetch this one's
+        # citations sequentially. A You.com snippet is a safe fallback only when
+        # it comes from the same URL and actually contains the bound quote.
+        fetched = cited_sources.fetch_cited_sources(candidate)
+        bound = cited_sources.claim_citation(candidate)
+        if "claim_citation" in candidate:
+            if bound is None:
+                return (
+                    EvidenceGate(verdict="inconclusive", reason="claim_citation is missing or malformed"),
+                    _raw_record(raw),
+                    "",
+                )
+            bound_index = next(
+                (index for index, source in enumerate(fetched)
+                 if cited_sources.canonical_url(source.url)
+                 == cited_sources.canonical_url(bound.url)),
+                None,
+            )
+            bound_source = fetched[bound_index] if bound_index is not None else None
+            if bound_source is None or not cited_sources.quote_matches_source(bound, bound_source):
+                from_research = next(
+                    (source for source in cited_sources.extract_sources_from_payload(raw_search_payload)
+                     if cited_sources.quote_matches_source(bound, source)),
+                    None,
+                )
+                if from_research is not None and bound_index is not None:
+                    fetched[bound_index] = from_research
+                    bound_source = from_research
+            if bound_source is None or not bound_source.ok:
+                return (
+                    EvidenceGate(verdict="inconclusive", reason="bound citation could not be retrieved"),
+                    _raw_record(raw),
+                    "",
+                )
+            if not cited_sources.quote_matches_source(bound, bound_source):
+                return (
+                    EvidenceGate(
+                        verdict="inconclusive",
+                        reason="bound quote does not occur in retrieved source text",
+                    ),
+                    _raw_record(raw),
+                    "",
+                )
         prompt = bundle.render(
             "evidence_gate",
             user_intent=intent,
@@ -967,14 +974,16 @@ def _validate_new_general_candidates(
     candidates: Sequence[dict[str, Any]],
     returned_sources: set[str],
     *,
+    mode: ScoutMode,
+    user_intent: str,
     protected_fingerprints: set[tuple[str, str]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Screen only a freshly produced general batch before it reaches review.
 
     The strict API schema is a request, not a trust boundary. This makes a
-    missing/invented binding visible in a durable artifact and rejects only
-    exact canonical-source+quote duplicates; different quotes from one real
-    page remain legitimate support for different candidates.
+    missing/invented binding visible in a durable artifact. Exact micro issue
+    requests also reject another series or issue, even when that other result
+    has a valid citation. Different quotes from one real page remain distinct.
     """
 
     accepted: list[dict[str, Any]] = []
@@ -990,6 +999,11 @@ def _validate_new_general_candidates(
         if not fingerprint[0] or fingerprint[0] not in returned_sources:
             rejected.append({"candidate_id": candidate_id, "reason": "claim_citation_url_not_returned"})
             continue
+        if mode is ScoutMode.MICRO:
+            issue_reason = micro_issue_rejection_reason(user_intent, candidate)
+            if issue_reason is not None:
+                rejected.append({"candidate_id": candidate_id, "reason": issue_reason})
+                continue
         if fingerprint in seen:
             rejected.append({"candidate_id": candidate_id, "reason": "duplicate_claim_citation"})
             continue
