@@ -31,7 +31,7 @@ verification_note -> where the research found it; open those sources first
 reader_url -> pipeline data, never narrated
 
 Every item goes in the video, in item_number order. Never skip, merge or reorder
-one: the comic pages are already downloaded in this order and each paragraph of
+one: the comic items are structured in this order and each paragraph of
 your script is matched to its item by position. If an item cannot be grounded,
 that is a stop condition below — write NO INFO and name the item.
 

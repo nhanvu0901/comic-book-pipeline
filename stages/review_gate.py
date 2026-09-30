@@ -898,7 +898,13 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
             f"No narration yet for {slug}. Approve a script in Narration Script first "
             "(python -m stages.stage_3 from a terminal)."
         )
-    narration = _load_json(narration_path)
+    try:
+        from stages.stage_3.gemini_prompt import reanchor_narration_to_pages
+        reanchor_narration_to_pages(slug, log=log)
+        narration = _load_json(narration_path)
+    except Exception as _reanchor_err:
+        log(f"[build_candidates] reanchor note: {_reanchor_err}")
+
     scenes = narration.get("scenes") or []
     mode = str(narration.get("mode") or "")
     story = [s for s in scenes if not (s.get("is_intro") or s.get("is_outro"))]

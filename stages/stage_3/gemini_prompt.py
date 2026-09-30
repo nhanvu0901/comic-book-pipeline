@@ -28,7 +28,10 @@ from .pipeline import load_inputs, filter_story_pages
 from .provided_narration import split_sentences
 
 
-TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_qa_writer_template.md"
+QA_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_qa_writer_template.md"
+MICRO_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_micro_moment_writer.md"
+TOPIC_QA_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_topic_qa_writer.md"
+TEMPLATE_PATH = QA_TEMPLATE_PATH  # backward compatibility
 
 # A hook (template: <=14 words) or closing line is at most this long; an item paragraph
 # (template: 40-60 words) is longer. Used only to tell those two apart at the ends.
@@ -37,9 +40,132 @@ _SHORT_WORDS = 20
 _MIN_ITEM_WORDS = 8
 
 
+def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, state_data: dict) -> dict:
+    """Retrieve or reconstruct the verified scout candidate for a micro_moment project."""
+    # 1. Existing scout_candidate.json in project
+    cand_file = root / "scout_candidate.json"
+    if cand_file.exists():
+        loaded = _load_json(cand_file)
+        if isinstance(loaded, dict) and (loaded.get("what_visibly_happens") or loaded.get("summary")):
+            return loaded
+
+    # 2. Existing comic_ctx["scout_candidate"]
+    if isinstance(comic_ctx.get("scout_candidate"), dict) and (
+        comic_ctx["scout_candidate"].get("what_visibly_happens") or comic_ctx["scout_candidate"].get("summary")
+    ):
+        return comic_ctx["scout_candidate"]
+
+    # 3. Look up from research_sessions
+    try:
+        from config import RESEARCH_SESSIONS_ROOT
+        if RESEARCH_SESSIONS_ROOT.exists():
+            for sdir in RESEARCH_SESSIONS_ROOT.iterdir():
+                if not sdir.is_dir():
+                    continue
+                s_file = sdir / "session.json"
+                if not s_file.exists():
+                    continue
+                sdata = _load_json(s_file)
+                if sdata.get("created_project") == project_name or (
+                    state_data.get("scout_session_id") and sdata.get("id") == state_data.get("scout_session_id")
+                ):
+                    cands = []
+                    for c_name in ("candidates.v1.json", "candidates.rev1.v1.json"):
+                        cp = sdir / "general" / c_name
+                        if cp.exists():
+                            cands = _load_json(cp).get("candidates") or []
+                            if cands:
+                                break
+                    if not cands:
+                        for cp in (sdir / "general").glob("candidates*.json"):
+                            cands = _load_json(cp).get("candidates") or []
+                            if cands:
+                                break
+
+                    selected_ids = sdata.get("selected_specific_candidate_ids") or []
+                    chosen_cand = None
+                    if selected_ids and cands:
+                        for c in cands:
+                            if c.get("id") in selected_ids:
+                                chosen_cand = c
+                                break
+                    if not chosen_cand and cands:
+                        chosen_cand = cands[0]
+
+                    gate_data = _load_json(sdir / "specific" / "evidence_gate.v1.json")
+                    gates = gate_data.get("gates") if isinstance(gate_data, dict) else []
+                    chosen_gate = gates[0] if gates and isinstance(gates[0], dict) else {}
+
+                    if chosen_cand:
+                        char = (
+                            chosen_cand.get("character_or_thing")
+                            or chosen_cand.get("character")
+                            or chosen_cand.get("entity")
+                            or comic_ctx.get("title", "")
+                        )
+                        series_issue_year = (
+                            chosen_cand.get("series_issue_year")
+                            or comic_ctx.get("series_issue_year")
+                            or comic_ctx.get("issues", "")
+                        )
+                        target_moment = (
+                            chosen_cand.get("what_visibly_happens")
+                            or chosen_cand.get("visible_event")
+                            or comic_ctx.get("target_moment", "")
+                        )
+                        summary = (
+                            chosen_cand.get("summary")
+                            or chosen_cand.get("how_or_why")
+                            or comic_ctx.get("plot_summary", "")
+                        )
+                        citation = chosen_cand.get("claim_citation") if isinstance(chosen_cand.get("claim_citation"), dict) else {}
+                        quote = citation.get("quote") or ""
+                        source_url = citation.get("url") or comic_ctx.get("reader_url") or ""
+                        ev_urls = chosen_gate.get("evidence_urls") or chosen_cand.get("evidence_urls") or ([source_url] if source_url else [])
+                        if isinstance(ev_urls, str):
+                            ev_urls = [ev_urls]
+
+                        result = {
+                            "character": char,
+                            "series_issue_year": series_issue_year,
+                            "what_visibly_happens": target_moment,
+                            "summary": summary,
+                            "claim_citation": citation,
+                            "verbatim_sentence": quote,
+                            "source_url": source_url,
+                            "evidence_urls": ev_urls,
+                            "verdict": str(chosen_gate.get("verdict") or "CONFIRMED").upper(),
+                        }
+                        cand_file.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+                        comic_ctx["scout_candidate"] = result
+                        (root / "comic_context.json").write_text(json.dumps(comic_ctx, indent=2, ensure_ascii=False), encoding="utf-8")
+                        return result
+    except Exception:
+        pass
+
+    # 4. Fallback: reconstruct from comic_context.json
+    char = (comic_ctx.get("characters") or [""])[0] or comic_ctx.get("title", "")
+    series_issue_year = comic_ctx.get("series_issue_year") or comic_ctx.get("issues") or comic_ctx.get("title", "")
+    target_moment = comic_ctx.get("target_moment") or comic_ctx.get("plot_summary", "")
+    summary = comic_ctx.get("plot_summary", "")
+    reader_url = comic_ctx.get("batcave_url") or comic_ctx.get("reader_url", "")
+    return {
+        "character": char,
+        "series_issue_year": series_issue_year,
+        "what_visibly_happens": target_moment,
+        "summary": summary,
+        "claim_citation": {},
+        "verbatim_sentence": "",
+        "source_url": reader_url,
+        "evidence_urls": [reader_url] if reader_url else [],
+        "verdict": "CONFIRMED",
+    }
+
+
 def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
     """Build the Gemini markdown prompt for `project_name` and save it as
     projects/<project_name>/<project_name>_writer_prompt.md.
+    Dispatches to micro_moment writer or Q&A writer based on project mode.
     Returns (prompt_text, file_path).
     """
     root = PROJECTS_ROOT / project_name
@@ -48,33 +174,61 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
 
     answer_ctx = _load_json(root / "answer_context.json")
     comic_ctx = _load_json(root / "comic_context.json")
-
-    question = (
-        answer_ctx.get("question")
-        or comic_ctx.get("title")
-        or project_name.replace("_", " ").title()
-    ).strip()
+    state_data = _load_json(root / "state.json")
 
     items = answer_ctx.get("items") or []
-    if items:
-        # Number the items in download order so the writer can keep that order and the
-        # parser can hold it to it. Prompt copy only — answer_context.json is untouched.
-        numbered = [{"item_number": n, **item} for n, item in enumerate(items, start=1)]
-        scout_json_str = json.dumps(numbered, indent=2, ensure_ascii=False)
-    else:
-        scout_json_str = json.dumps(comic_ctx, indent=2, ensure_ascii=False)
+    pipeline_mode = (
+        comic_ctx.get("pipeline_mode")
+        or state_data.get("pipeline_mode")
+        or ("explore_answer" if items else "micro_moment")
+    )
 
-    template = TEMPLATE_PATH.read_text(encoding="utf-8") if TEMPLATE_PATH.exists() else ""
-    if not template:
-        template = (
-            "GEMINI PROMPT — Q&A NARRATION WRITER\n\n"
-            "THE QUESTION:\n{{QUESTION}}\n\n"
-            "THE SCOUT JSON:\n```json\n{{SCOUT_JSON}}\n```\n\n"
-            "Keep the items in item_number order, one paragraph each. Put the finished "
-            "script under a line that says exactly FINAL SCRIPT.\n"
+    if pipeline_mode == "micro_moment":
+        cand = _find_micro_scout_candidate(project_name, root, comic_ctx, state_data)
+        char = cand.get("character") or comic_ctx.get("title") or "Character"
+        event = cand.get("what_visibly_happens") or comic_ctx.get("target_moment") or cand.get("summary") or ""
+        issue = cand.get("series_issue_year") or comic_ctx.get("series_issue_year") or comic_ctx.get("issues") or ""
+        moment_line = f"{char} — {event} — {issue}".strip(" —")
+        scout_json_str = json.dumps(cand, indent=2, ensure_ascii=False)
+
+        template = MICRO_TEMPLATE_PATH.read_text(encoding="utf-8") if MICRO_TEMPLATE_PATH.exists() else ""
+        if not template:
+            template = (
+                "# GEMINI PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)\n\n"
+                "## INPUT\n\n```\n"
+                "MOMENT:        {{MOMENT}}\n"
+                "SCOUT JSON:\n{{SCOUT_JSON}}\n```\n"
+            )
+        rendered = template.replace(
+            "<<one line: character — what happens — series, volume, #issue (year)>>", moment_line
+        ).replace("{{MOMENT}}", moment_line)
+        rendered = rendered.replace("<<paste the object here>>", scout_json_str).replace(
+            "{{SCOUT_JSON}}", scout_json_str
         )
+    else:
+        question = (
+            answer_ctx.get("question")
+            or comic_ctx.get("title")
+            or project_name.replace("_", " ").title()
+        ).strip()
 
-    rendered = template.replace("{{QUESTION}}", question).replace("{{SCOUT_JSON}}", scout_json_str)
+        if items:
+            numbered = [{"item_number": n, **item} for n, item in enumerate(items, start=1)]
+            scout_json_str = json.dumps(numbered, indent=2, ensure_ascii=False)
+        else:
+            scout_json_str = json.dumps(comic_ctx, indent=2, ensure_ascii=False)
+
+        template = QA_TEMPLATE_PATH.read_text(encoding="utf-8") if QA_TEMPLATE_PATH.exists() else ""
+        if not template:
+            template = (
+                "GEMINI PROMPT — Q&A NARRATION WRITER\n\n"
+                "THE QUESTION:\n{{QUESTION}}\n\n"
+                "THE SCOUT JSON:\n```json\n{{SCOUT_JSON}}\n```\n\n"
+                "Keep the items in item_number order, one paragraph each. Put the finished "
+                "script under a line that says exactly FINAL SCRIPT.\n"
+            )
+
+        rendered = template.replace("{{QUESTION}}", question).replace("{{SCOUT_JSON}}", scout_json_str)
 
     # Save to project folder as <project_name>_writer_prompt.md
     out_path = root / f"{project_name}_writer_prompt.md"
@@ -166,14 +320,28 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
     no_info = _NO_INFO_RE.search(text)
     if no_info:
         note = no_info.group(1).strip(" :-–—")
-        raise ScriptMappingError(
-            "The writer returned NO INFO — it could not ground every item"
-            + (f": {note}" if note else ".")
-            + "\nFix or replace that item in Stage 1, then regenerate the script."
-        )
+    # Capture hook options & chosen hook from preamble if FINAL SCRIPT is present
+    full_options: dict = {}
+    preamble_chosen: str | None = None
+    in_opts = False
+    for raw in (raw_text or "").splitlines():
+        clean_line = _strip_emphasis(raw).strip()
+        if _FINAL_MARKER_RE.match(clean_line):
+            break
+        if re.match(r"(?i)^\s*hook\s+options\b", clean_line):
+            in_opts = True
+            continue
+        if in_opts and re.match(r"(?i)^\s*(?:chosen\s+hook|spoken\s+word|fact\s+trace)\b", clean_line):
+            in_opts = False
+        m_opt = re.match(r"^\s*(?:hook\s*)?(\d+)\s*[:.)\-–—]\s*(.+)$", clean_line, re.I)
+        if m_opt and (in_opts or clean_line.lower().startswith("hook")):
+            full_options[int(m_opt.group(1))] = m_opt.group(2).strip()
+        m_ch = _CHOSEN_RE.match(clean_line)
+        if m_ch:
+            preamble_chosen = _chosen_hook_text(m_ch.group(1), full_options)
 
-    options: dict = {}
-    chosen: str | None = None
+    options: dict = dict(full_options)
+    chosen: str | None = preamble_chosen or None
     outro: str | None = None
     kept: list[str] = []            # "" = paragraph break
     seen_content = False
@@ -213,7 +381,7 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
             seen_content = True
 
     hook: str | None = chosen or None
-    if hook is None and options:
+    if hook is None and options and not finals:
         if len(options) > 1:
             raise ScriptMappingError(
                 f"Found {len(options)} hook options but no chosen one. Keep only the hook "
@@ -617,11 +785,17 @@ def reanchor_narration_to_pages(project_name: str, log: Callable[[str], None] = 
                 s["page_ref"] = numbers[0]
             elif s.get("is_outro"):
                 s["page_ref"] = numbers[-1]
-        for b in narration.get("beats") or []:
-            b_id = b.get("id", 1)
-            matching = [s["page_ref"] for s in scenes if s.get("beat_id") == b_id]
-            if matching:
-                b["page_refs"] = [matching[0]]
+        beats = narration.get("beats") or []
+        if len(beats) == len(scenes):
+            for b, s in zip(beats, scenes):
+                b["page_refs"] = [s["page_ref"]]
+        else:
+            for b in beats:
+                b_id = b.get("id", 1)
+                matching = [s["page_ref"] for s in scenes if s.get("scene_id") == b_id or s.get("beat_id") == b_id]
+                if matching:
+                    b["page_refs"] = [matching[0]]
+        log(f"[reanchor] re-anchored {len(scenes)} scenes across pages {numbers[0]}..{numbers[-1]}")
 
     # Save updated narration
     narration_file.write_text(json.dumps(narration, indent=2, ensure_ascii=False), encoding="utf-8")

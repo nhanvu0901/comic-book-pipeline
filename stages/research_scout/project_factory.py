@@ -437,6 +437,7 @@ def _create_micro_project(
     series = _series_from_issue(exact_issue) or _first_text(candidate, "title", "series")
     year = _first_text(candidate, "source_year") or _year(candidate)
     target_moment = _first_text(candidate, "visible_event", "what_visibly_happens", "moment")
+    char_name = _first_text(candidate, "character_or_thing", "character", "entity", "title") or series
     base_context = {
         "status": "ready",
         "pipeline_mode": "micro_moment",
@@ -445,13 +446,33 @@ def _create_micro_project(
         "issues": exact_issue,
         "year": year,
         "publisher": "",
-        "characters": [_first_text(candidate, "character", "entity")],
+        "characters": [char_name],
         "reader_url": reader_url,
         "batcave_url": reader_url,
         "plot_summary": _first_text(candidate, "summary", "how_or_why", "visible_event"),
     }
     context_path = Path(save_comic_context(base_context, project_slug, get_project_dirs))
     context = json.loads(context_path.read_text(encoding="utf-8"))
+
+    citation = candidate.get("claim_citation") if isinstance(candidate.get("claim_citation"), dict) else {}
+    quote = citation.get("quote") or ""
+    source_url = citation.get("url") or reader_url
+    ev_urls = gate.get("evidence_urls") or candidate.get("evidence_urls") or ([source_url] if source_url else [])
+    if isinstance(ev_urls, str):
+        ev_urls = [ev_urls]
+
+    scout_candidate = {
+        "character": char_name,
+        "series_issue_year": exact_issue,
+        "what_visibly_happens": target_moment,
+        "summary": _first_text(candidate, "summary", "how_or_why", "visible_event"),
+        "claim_citation": citation,
+        "verbatim_sentence": quote,
+        "source_url": source_url,
+        "evidence_urls": ev_urls,
+        "verdict": str(gate.get("verdict") or "CONFIRMED").upper(),
+    }
+
     context.update(
         {
             "target_moment": target_moment,
@@ -461,9 +482,14 @@ def _create_micro_project(
             "year": year,
             "reader_url": reader_url,
             "batcave_url": reader_url,
+            "scout_candidate": scout_candidate,
         }
     )
     context_path.write_text(json.dumps(context, indent=2, ensure_ascii=False), encoding="utf-8")
+    project_root = context_path.parent
+    (project_root / "scout_candidate.json").write_text(
+        json.dumps(scout_candidate, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _first_text(data: Mapping[str, Any], *keys: str) -> str:
