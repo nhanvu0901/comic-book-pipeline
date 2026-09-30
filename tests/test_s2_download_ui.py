@@ -508,7 +508,7 @@ def test_a_typed_project_name_becomes_a_safe_folder_name(monkeypatch, tmp_path):
 
 
 def test_downloading_into_another_project_does_not_carry_this_ones_state(monkeypatch, tmp_path):
-    state = AppState(project_name="first-comic", current_stage=2,
+    state = AppState(project_name="first-comic", current_stage=3,
                      approved={"1": True, "4": True}, scout_session_id="first-session",
                      pipeline_mode="explore_answer")
     page, root, fields, downloads = _url_direct_screen(monkeypatch, tmp_path, state)
@@ -518,7 +518,7 @@ def test_downloading_into_another_project_does_not_carry_this_ones_state(monkeyp
     _run_task(page)
 
     saved = json.loads((tmp_path / "second_comic" / "state.json").read_text())
-    assert saved["approved"] == {"2": True}
+    assert saved["approved"] == {"3": True}
     assert saved["scout_session_id"] == ""
     assert saved["pipeline_mode"] == AppState().pipeline_mode
 

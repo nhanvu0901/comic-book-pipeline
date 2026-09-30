@@ -336,8 +336,8 @@ def build(
                 return
 
             render_grid(manifest)
-            state.mark_approved(2)
-            state.current_stage = max(state.current_stage, 3)
+            state.mark_approved(3)
+            state.current_stage = max(state.current_stage, 4)
             save_state(state)
 
             running.visible = False
@@ -566,8 +566,8 @@ def build(
             page.update()
         else:
             render_grid(manifest)
-            state.mark_approved(2)
-            state.current_stage = max(state.current_stage, 3)
+            state.mark_approved(3)
+            state.current_stage = max(state.current_stage, 4)
             save_state(state)
 
             running.visible = False
@@ -611,10 +611,10 @@ def build(
     def approve_and_go(_e):
         if return_busy[0]:
             return
-        state.mark_approved(2)
-        state.current_stage = 3
+        state.mark_approved(3)
+        state.current_stage = 4
         save_state(state)
-        on_go(3)
+        on_go(4)
 
     # Center column
     center = ft.Column([
@@ -687,7 +687,7 @@ def build(
     return_button.key = "return-to-stage1"
 
     right = ft.Column([
-        ft.Text("STEP 2 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 3 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Download Comic", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Downloads comic pages from batcave.biz using the URL found in Stage 1. "
@@ -725,14 +725,14 @@ def build(
         dl_url_button,
 
         ft.Container(height=14),
-        primary_button("Continue to Stage 3 →", approve_and_go,
-                       disabled=not state.is_approved(2) or bool(missing_readers[0])
+        primary_button("Continue to Stage 4 →", approve_and_go,
+                       disabled=not state.is_approved(3) or bool(missing_readers[0])
                                 or bool(reader_error[0])),
     ], spacing=8, expand=True, scroll=ft.ScrollMode.AUTO)
 
     return three_col(
         center, right, state=state, on_go=guarded_go,
-        header_title="Download Comic",
+        header_title="Step 3: Download Comic",
         header_subtitle="Scrape comic pages from batcave.biz before preprocessing.",
     )
 

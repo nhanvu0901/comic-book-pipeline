@@ -238,7 +238,7 @@ def build(
         _update_counter()
         page.update()
 
-    # ── Approve and Continue (Stage 4 -> Stage 5) ──────────────────────────
+    # ── Approve and Continue (Stage 2 -> Stage 3) ──────────────────────────
     async def approve_and_go(_e):
         raw_text = (script_area.value or "").strip()
         if not raw_text:
@@ -274,10 +274,10 @@ def build(
             status_text.color = SUCCESS
             page.update()
 
-            state.mark_approved(4)
-            state.current_stage = 5
+            state.mark_approved(2)
+            state.current_stage = 3
             save_state(state)
-            on_go(5)
+            on_go(3)
         except Exception as exc:
             running.visible = False
             # A mapping refusal leads with its own first line (what is wrong); the log
@@ -339,7 +339,7 @@ def build(
             pass
 
     right = ft.Column([
-        ft.Text("STEP 4 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 2 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Narration Script", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Gemini-First Narration (0% Claude):\n"
@@ -362,7 +362,7 @@ def build(
 
     return three_col(
         center, right, state=state, on_go=on_go,
-        header_title="Step 4: Narration Script",
+        header_title="Step 2: Narration Script",
         header_subtitle="Export context to your Gemini account, then paste the written script below.",
     )
 

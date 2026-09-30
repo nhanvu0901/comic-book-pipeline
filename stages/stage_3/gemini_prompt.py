@@ -315,10 +315,15 @@ def _split_free_script(raw_text: str) -> tuple[str, list[str], str]:
 # ─── items ↔ downloaded chapters ────────────────────────────────────────────
 
 
-def _qa_item_anchors(root: Path, items: list[dict], pages: list[dict]) -> list[int]:
+def _qa_item_anchors(root: Path, items: list[dict], pages: list[dict], *, allow_pending: bool = True) -> list[int]:
     """First page of each item's own chapter, in item order — or ScriptMappingError
-    naming every item whose comic is not (or no longer) the one on disk."""
+    naming every item whose comic is not (or no longer) the one on disk.
+    If allow_pending is True and comics are not yet downloaded at all (no manifest and no pages),
+    returns placeholder anchors [1, ...] so narration can be drafted in Stage 2 before downloading."""
     manifest = _load_json(root / "raw_comic" / "manifest.json", default=[])
+    if allow_pending and not manifest and not pages:
+        return [1] * len(items)
+
     downloaded = {int(m.get("chapter_index") or 0): str(m.get("reader_url") or "").strip()
                   for m in manifest if isinstance(m, dict)}
     urls = [str(it.get("reader_url") or "").strip() for it in items]
@@ -328,14 +333,14 @@ def _qa_item_anchors(root: Path, items: list[dict], pages: list[dict]) -> list[i
         name = f"#{n} {item.get('entity') or item.get('source_comic') or ''}".strip()
         if chapter not in downloaded:
             problems.append(f"item {name}: its comic ({url or 'no reader URL'}) was not "
-                            "downloaded — run the download (Step 2) again")
+                            "downloaded — run Download Comic (Stage 3)")
             anchors.append(0)
             continue
         if downloaded[chapter] != url:
             cites = f"now cites {url}" if url else "has no reader URL"
             problems.append(f"item {name}: chapter {chapter} on disk is {downloaded[chapter]}, "
-                            f"but the item {cites} — re-download (Step 2) and "
-                            "preprocess (Step 3)")
+                            f"but the item {cites} — re-download (Stage 3) and "
+                            "preprocess (Stage 4)")
             anchors.append(0)
             continue
         chapter_pages = [p for p in pages if issue_index_of_page(p) == chapter]
@@ -344,7 +349,7 @@ def _qa_item_anchors(root: Path, items: list[dict], pages: list[dict]) -> list[i
         anchor = min((pn for pn in story if pn), default=0) or min((pn for pn in every if pn), default=0)
         if not anchor:
             problems.append(f"item {name}: no preprocessed pages for chapter {chapter} — "
-                            "run preprocessing (Step 3)")
+                            "run preprocessing (Stage 4)")
         anchors.append(anchor)
     if problems:
         raise ScriptMappingError(
@@ -557,3 +562,70 @@ def _load_json(path: Path, default=None):
     except (OSError, ValueError):
         return {} if default is None else default
     return data if isinstance(data, (dict, list)) else ({} if default is None else default)
+
+
+def reanchor_narration_to_pages(project_name: str, log: Callable[[str], None] = print) -> bool:
+    """Re-anchor an existing narration.json to preprocessed pages once comics are downloaded & preprocessed.
+    Called after Stage 4 Preprocess Pages completes, or upon entering Stage 5 Review Beats."""
+    root = PROJECTS_ROOT / project_name
+    narration_file = root / "narration.json"
+    if not narration_file.exists():
+        return False
+    narration = _load_json(narration_file)
+    scenes = narration.get("scenes") or []
+    if not scenes:
+        return False
+
+    comic_ctx, pages = load_inputs(project_name)
+    if not pages:
+        return False
+
+    answer_ctx = _load_json(root / "answer_context.json")
+    items = answer_ctx.get("items") or []
+
+    if items:
+        try:
+            anchors = _qa_item_anchors(root, items, pages, allow_pending=False)
+        except Exception as e:
+            log(f"[reanchor] cannot re-anchor items: {e}")
+            return False
+
+        for s in scenes:
+            if s.get("is_intro"):
+                s["page_ref"] = anchors[0]
+            elif s.get("is_outro"):
+                s["page_ref"] = anchors[-1]
+            else:
+                beat_id = s.get("beat_id", 1)
+                idx = max(0, min(int(beat_id) - 1, len(anchors) - 1))
+                s["page_ref"] = anchors[idx]
+
+        beats = narration.get("beats") or []
+        for n, (b, anchor) in enumerate(zip(beats, anchors), start=1):
+            b["page_refs"] = [anchor]
+
+        log(f"[reanchor] re-anchored {len(scenes)} scenes to pages {', '.join(str(a) for a in anchors)}")
+    else:
+        story_pages = filter_story_pages(pages)
+        numbers = [int(p.get("page_number") or 1) for p in story_pages] or [1]
+        body_scenes = [s for s in scenes if not s.get("is_intro") and not s.get("is_outro")]
+        for idx, s in enumerate(body_scenes):
+            page_ref = numbers[min(int(idx / max(len(body_scenes), 1) * len(numbers)), len(numbers) - 1)]
+            s["page_ref"] = page_ref
+        for s in scenes:
+            if s.get("is_intro"):
+                s["page_ref"] = numbers[0]
+            elif s.get("is_outro"):
+                s["page_ref"] = numbers[-1]
+        for b in narration.get("beats") or []:
+            b_id = b.get("id", 1)
+            matching = [s["page_ref"] for s in scenes if s.get("beat_id") == b_id]
+            if matching:
+                b["page_refs"] = [matching[0]]
+
+    # Save updated narration
+    narration_file.write_text(json.dumps(narration, indent=2, ensure_ascii=False), encoding="utf-8")
+    narration_tts = root / "narration.tts.sha256"
+    raw_spoken = " ".join(str(s.get("text") or "").strip() for s in scenes)
+    narration_tts.write_text(hashlib.sha256(raw_spoken.encode("utf-8")).hexdigest())
+    return True
