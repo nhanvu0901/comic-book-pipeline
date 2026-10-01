@@ -345,7 +345,7 @@ CHOSEN HOOK: <number>
 FINAL SCRIPT
 <chosen hook>
 
-<story, in one or two natural paragraphs; stop at the strongest verified detail>
+<story, in one or two natural paragraphs; end on how it ends when AFTERMATH exists, otherwise on the strongest verified detail>
 
 SPOKEN WORD COUNT: <actual number>
 

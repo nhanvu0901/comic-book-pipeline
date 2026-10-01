@@ -165,6 +165,18 @@ def test_micro_output_block_audits_aftermath_and_open_loops():
     assert any(line.strip() == "OPEN LOOPS: none" for line in after_script)
 
 
+def test_micro_output_block_story_placeholder_follows_the_ending_rule():
+    """The OUTPUT block is the last thing the writer reads before it writes, and its story
+    placeholder said "stop at the strongest verified detail": the rule the ending section
+    replaced (end on the verified outcome when AFTERMATH exists)."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    output = _flat(prompt.split("OUTPUT EXACTLY", 1)[1])
+
+    assert "stop at the strongest verified detail" not in output
+    assert ("<story, in one or two natural paragraphs; end on how it ends when AFTERMATH "
+            "exists, otherwise on the strongest verified detail>") in output
+
+
 def test_qa_template_ends_every_item_on_what_happened():
     """The same rule for Q&A: an item paragraph may not end on a hint it never explains."""
     qa = gp.QA_TEMPLATE_PATH.read_text(encoding="utf-8")
