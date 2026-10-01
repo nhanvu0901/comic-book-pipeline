@@ -11,8 +11,6 @@ sentences that only share a topic or a template score low. A paraphrase that sha
 few words does not score high either, so it is not caught here — the said-lines
 block in the chapter prompt (the earlier chapters' sentences, see narrate_longform)
 is what steers the writer away from those."""
-import json
-
 from config import CREATIVE_LLM_MODELS
 from stages.stage_3._llm import call_with_chain
 from utils.lexical_sim import seq_ratio

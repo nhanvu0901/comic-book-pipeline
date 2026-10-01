@@ -679,7 +679,7 @@ def _page_sorted_candidates(sub_pages: dict) -> list[dict]:
 def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     """List every panel of each review ROW's issue, page-sorted, and write review/candidates.json
     + thumbs. Master picks panels by eye in the review UI, so nothing is scored or ranked: every
-    candidate carries score 0.0 and no embed backend or vision call is involved.
+    candidate carries score 0.0.
 
     A review ROW is one thing Master approves a panel for — mode-aware (Master 2026-07-14):
       • recap / Q&A  — one row PER STORY SCENE (unit "scene", beat_key str(scene_id)); the old
@@ -841,7 +841,7 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
         groups.setdefault("" if is_bookend else _pool_issue_of(r["scene"]), []).append(r)
 
     # Every row lists EVERY panel of its group's pages, page-sorted: Master picks by eye, so
-    # nothing is ranked (score 0.0) and no embed backend / vision call is involved.
+    # nothing is ranked (score 0.0).
     for issue_label, group_rows in groups.items():
         sub_pages = (
             {pn: p for pn, p in pages_by_number.items()

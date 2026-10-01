@@ -5,7 +5,7 @@ Only meaningful for answer_research projects (keyed by the caller on
 comic_context.plot_source == "answer_research"): Master locks 2-5 panels per beat in the review
 UI, and this step distributes the beat's sentences across them. Recap comics never call it.
 
-Master already chose the panels by eye, so nothing here scores or embeds anything: the beat's
+Master already chose the panels by eye, so nothing here scores anything: the beat's
 locked panels are handed to its sentences ROUND-ROBIN — distinct panels across the first
 len(panels) sentences, then cycling. A beat with no resolvable candidate panel gets null
 page/panel for every sentence, and the render then reuses the previous panel.

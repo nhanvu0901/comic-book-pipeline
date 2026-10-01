@@ -7,8 +7,10 @@ Two independent pieces (funnel wiring / panel selection is a separate task, Phan
   - derive_money_target(): one small LLM call over a free OpenRouter chain (NOT the
     shared FREE_MODEL/SDK-gated stages.stage_3._llm.call_with_chain — this funnel
     step deliberately stays independent of that global switch) that picks the
-    character/object/event that should headline the funnel, plus a natural-language
-    query_text for downstream embedding search.
+    character/object/event that should headline the funnel, plus a one-sentence query_text
+    describing the moment visually. query_text is kept on money_target for reference only:
+    the funnel's VLM confirm works off money_event and its OCR recall off money_character /
+    money_object.
   - ocr_money_hits(): pure lexical scoring, no network — which panels' OCR/dialog/sfx
     text literally mention the money_object/money_character.
 """

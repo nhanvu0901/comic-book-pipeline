@@ -253,8 +253,9 @@ def _process_single_page_group(
 # Description↔bbox verify gate (crop + look ground-truth check — see vlm_extract.
 # verify_page_descriptions). Master 2026-07-24: DEFAULT OFF — panels are now hand-picked in
 # review, so VLM descriptions no longer decide the panel, and the extra VLM round-trip per page
-# is dead cost. DESC_VERIFY=1 re-enables the gate (pages then carry desc_verified / the anchor-
-# trust path in shots.py reactivates). Off = every page treated as trusted (old-project parity).
+# is dead cost. DESC_VERIFY=1 re-enables the gate: a page that fails it is re-described once and
+# keeps desc_verified=False if it still fails. The flag is a diagnostic in the page JSON; no
+# stage reads it back. Off = the check is skipped and no flag is written.
 DESC_VERIFY = os.getenv("DESC_VERIFY", "0").strip().lower() not in ("0", "false", "no", "")
 
 # Coverage guard: flag story pages where Magi's panel boxes cover suspiciously little of
@@ -1435,11 +1436,13 @@ def _apply_dialog_truth_gate(page_dict: dict, *, log: Callable[[str], None] = pr
     """Feature B: flag panels whose VLM `text` does NOT match Magi's pixel OCR ground truth.
     The batch VLM fabricates dialog from story flow (real case: doom-rocket-raccoon p28
     panel 1 — pixels read 'SO NOW WHAT DO WE DO?' but the VLM wrote 'WE'VE REACHED THE BIG
-    BANG'), which mis-grounds Stage 3/5. Deterministic
+    BANG'). Deterministic
     (stdlib difflib, no network): for each panel that has BOTH a VLM transcription and Magi
     OCR, take the best-pair SequenceMatcher ratio; below _DIALOG_MISMATCH_RATIO sets the
-    panel-level `dialog_mismatch = True` (contract consumed by Stage 5 _panel_untrusted;
-    absent = trusted). Flag-only — never rewrites/removes the VLM dialog content."""
+    panel-level `dialog_mismatch = True` (absent = no mismatch found). The flag is a
+    diagnostic in the page JSON: no stage reads it back, because the dialog readers already
+    take the OCR over the VLM text (see _panel_index.DIALOG_TRUTH). Flag-only — never
+    rewrites/removes the VLM dialog content."""
     if not DIALOG_TRUTH or page_dict.get("page_type") not in ("cover", "story"):
         return page_dict
     pn = page_dict.get("page_number", "?")
