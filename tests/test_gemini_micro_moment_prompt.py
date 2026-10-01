@@ -122,6 +122,22 @@ def test_micro_template_marks_a_search_snippet_quote_and_forbids_a_url_never_see
             < beat_section.index(rule))
 
 
+def test_micro_template_says_what_to_write_when_a_search_result_shows_only_the_site():
+    """The search tool behind the writer lists a source as a site name over an opaque redirect
+    link. Told never to write a URL it did not see and never to shorten one to a bare domain, the
+    writer built a plausible path instead: 3 invented addresses in the agy re-test, where the
+    template without the rule had produced one invented path and two bare domains. It is now
+    told what to write when the address is not shown."""
+    phase1 = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8").split(
+        "# PHASE 2 — WRITE THE SHORT", 1)[0]
+    flat = _flat(phase1)
+
+    assert ("If a search result names only the site, write the URL as (address not shown: "
+            "<site name>); never build a path yourself.") in flat
+    assert ("... URL: an address you opened or saw listed; if only the site name was shown, "
+            "(address not shown: <site name>)") in flat
+
+
 def test_micro_template_never_ends_on_a_teaser_and_tells_how_it_ends():
     """A reviewer's reaction to a twist the review withheld ("a shocking twist I never saw
     coming") was rewritten by the scout as an event and became the script's last line. The

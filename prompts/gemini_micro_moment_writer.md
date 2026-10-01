@@ -85,7 +85,9 @@ snippet or summary, write the quote as "<text>" (SNIPPET): it is not
 verbatim, and the beat stays unconfirmed. Never write a URL you did not
 open or see listed in a search result, and never shorten one to a bare
 domain. A SNIPPET beat may still be used, but list it under GAPS so the
-producer checks it before publishing.
+producer checks it before publishing. If a search result names only the
+site, write the URL as (address not shown: <site name>); never build a
+path yourself.
 
 - "Wolverine walks into the pool" is a beat.
 - "Wolverine, exhausted and grieving, walks into the pool" is a beat plus two
@@ -176,6 +178,7 @@ B3 | AFTERMATH: <what the act leads to or how the scene ends, if supported> | Ti
 B4 | CONTEXT: <what set this up, if supported> | Tier <n> | <URL> | "<verbatim quote>"
 ... other context or effects actually supported
 ... only as many as the sources truly support
+... URL: an address you opened or saw listed; if only the site name was shown, (address not shown: <site name>)
 
 STORY FRAME | <B ID(s) for the immediate situation and why it leads to this moment, or UNKNOWN; state the gap>
 AFTERMATH | <B ID(s) for what the moment leads to and how it ends, or UNKNOWN; state the gap>
