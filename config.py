@@ -150,12 +150,13 @@ VLM_EXTRACT = os.getenv("VLM_EXTRACT", "0").strip().lower() not in ("0", "false"
 
 # Master 2026-08-13: the VLM pass that NAMES Magi's character clusters is DISABLED via this
 # knob, NOT deleted — same treatment as VLM_EXTRACT above. It is dead cost: reference-counted
-# by hand, cluster_to_name.json is loaded in two places, threaded through six signatures in
-# stage_5/shots.py, and lands in _match_panels(), which never reads the argument. Nothing maps
-# a cluster id to a name anywhere else either — speaker_cluster_id appears only inside Stage 2,
-# and Stage 3 never touches clusters. So the names reach no render decision, while the pass
-# itself costs ~8 VLM calls per project and was measured naming ALL 8 clusters "Hulk" on
-# hulk-smash-asteroid — a book whose dialogue is largely the Leader's.
+# by hand, cluster_to_name.json is loaded in one place (stage_5/pipeline.py), threaded through
+# five signatures in stage_5/shots.py, and lands in _match_panels(), which never reads the
+# argument. The review gate does not read it either: build_candidates lists every panel of the
+# issue page-sorted. Nothing maps a cluster id to a name anywhere else — speaker_cluster_id
+# appears only inside Stage 2, and Stage 3 never touches clusters. So the names reach no render
+# decision, while the pass itself costs ~8 VLM calls per project and was measured naming ALL 8
+# clusters "Hulk" on hulk-smash-asteroid — a book whose dialogue is largely the Leader's.
 # CLUSTER_NAMER=1 restores it byte-for-byte.
 CLUSTER_NAMER = os.getenv("CLUSTER_NAMER", "0").strip().lower() not in ("0", "false", "no", "")
 
@@ -276,7 +277,7 @@ LOGIC_CRITIC_MIN_BEATS = int(os.getenv("LOGIC_CRITIC_MIN_BEATS", "9"))
 # character dropped in with no role clause), (2) a subplot that dilutes the core point,
 # (3) an overstuffed 3+-event run-on sentence, (4) an off-focus scene. Default behavior
 # is FLAG + LOG only — it never rewrites or blocks (Master still reviews the panel sheet).
-# Soft: never raises; skips on any LLM failure (offline/no-embed safe).
+# Soft: never raises; skips on any LLM failure (offline safe).
 TRANSPARENCY_CRITIC = os.getenv("TRANSPARENCY_CRITIC", "true").lower() in ("true", "1", "yes")
 # When on AND heavy flags remain (undefined char / subplot / off-target), re-run the
 # writer ONCE and keep whichever draft has fewer flags. Default OFF so current single-pass
@@ -333,78 +334,6 @@ BEAT_SPLIT_MODELS: list[str] = [
 # no panel (e.g. the Batman Who Laughs) are handled without manual fixes. Advisory only —
 # never deletes beats; degrades to today's behavior when off or on any failure.
 ENABLE_STORY_ARCHITECT = os.getenv("ENABLE_STORY_ARCHITECT", "true").lower() in ("true", "1", "yes")
-
-# ─── Embeddings (Azure OpenAI, OpenAI-compatible) ───────────────────────────
-# Panel↔narration semantic matching (Stage 3 grounding + Stage 5 panel pick).
-# When AZURE_OPENAI_EMBEDDING_API_KEY + _ENDPOINT are set, stages/_embedding.py
-# uses Azure text-embedding-3-large; otherwise it degrades to the local
-# sentence-transformer (mxbai), and finally to None (callers handle gracefully).
-AZURE_OPENAI_EMBEDDING_API_KEY = os.getenv("AZURE_OPENAI_EMBEDDING_API_KEY", "").strip().strip('"')
-AZURE_OPENAI_EMBEDDING_ENDPOINT = os.getenv("AZURE_OPENAI_EMBEDDING_ENDPOINT", "").strip().strip('"')
-AZURE_OPENAI_EMBEDDING_MODEL_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_NAME", "text-embedding-3-large").strip().strip('"')
-AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL_API_VERSION", "2023-05-15").strip().strip('"')
-# A placeholder like "<your-...-here>" counts as unset.
-# ─── Gemini embedding (preferred when set; used while Azure endpoint is blocked) ──
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip().strip('"')
-GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
-
-# ─── Embedding backend switch (easy toggle Google ↔ local Qwen ↔ …) ──────────
-# EMBED_BACKEND picks the embedding backend explicitly:
-#   "auto"   (default) → Gemini (if GEMINI_API_KEY) → Azure → local mxbai
-#   "google"/"gemini"  → force Gemini
-#   "qwen"/"openai"    → tiered chain (see EMBED_PRIMARY below): OpenRouter
-#                        `qwen/qwen3-embedding-8b` API (cheap/fast/0 RAM, PRIMARY
-#                        since 2026-07-17) → local LM Studio (:1234, model
-#                        `text-embedding-qwen3-embedding-8b`, real 4096-dim qwen —
-#                        verified 2026-06-29, NOT the 768-dim nomic fallback) →
-#                        llama.cpp (:1235, manually-started last resort).
-#   "azure"            → force Azure ·  "local" → force local mxbai
-EMBED_BACKEND = os.getenv("EMBED_BACKEND", "auto").strip().lower()
-EMBED_OPENAI_URL = os.getenv("EMBED_OPENAI_URL", "http://127.0.0.1:1234/v1/embeddings").strip()
-EMBED_OPENAI_MODEL = os.getenv("EMBED_OPENAI_MODEL", "text-embedding-qwen3-embedding-8b").strip()
-EMBED_OPENAI_DIM = int(os.getenv("EMBED_OPENAI_DIM", "4096"))
-# Which tier goes first within the "qwen"/"openai" backend: "openrouter" (default,
-# cloud API — no local RAM/server needed) or "local" (LM Studio :1234 first, e.g.
-# no OPENROUTER_API_KEY or a session that wants to keep calls offline). llama.cpp
-# (:1235) is always the last-resort tier regardless of this knob.
-EMBED_PRIMARY = os.getenv("EMBED_PRIMARY", "openrouter").strip().lower()
-EMBED_OPENROUTER_MODEL = os.getenv("EMBED_OPENROUTER_MODEL", "qwen/qwen3-embedding-8b").strip()
-EMBED_LLAMACPP_URL = os.getenv("EMBED_LLAMACPP_URL", "http://127.0.0.1:1235/v1/embeddings").strip()
-
-# ─── Qdrant vector store (panel↔narration matching) ─────────────────────────
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:8069")
-
-# ─── Panel TEXT-embed master switch (Master 2026-07-24) ──────────────────────
-# The workflow now picks panels BY HAND in the Review Beats UI (hard gate, all modes),
-# so the Qwen 4096-dim panel TEXT index + Qdrant text collection + cosine ranking no
-# longer decide which panel renders. PANEL_TEXT_EMBED=0 (DEFAULT, OFF) turns that whole
-# dead machinery off: Stage 2 skips building the panel text index (no embedding API /
-# no `panels__<slug>` collection), review_gate.build_candidates lists ALL panels
-# page-sorted (no vector query), and Stage 5 assigns unlocked scenes DETERMINISTICALLY
-# (first panel of the beat's page_ref). Re-enable the old cosine pipeline with
-# PANEL_TEXT_EMBED=1. NOTE: the SigLIP IMAGE index (panels_img__) is separate and stays
-# on — it is local, cheap, and feeds custom-image argmax placement.
-PANEL_TEXT_EMBED = os.getenv("PANEL_TEXT_EMBED", "0").strip().lower() not in ("0", "false", "no", "")
-
-
-# ─── Stage 3 vector beat-grounding master switch (Master 2026-07-27) ─────────
-# Same manual-first reasoning as PANEL_TEXT_EMBED above: Stage 3's embed pass only
-# produces vector page_ref/panel_ref PINS for beat↔panel grounding, and hand-picked
-# panels + the review-lock hard gate overwrite those pins before anything renders.
-# So it is pure cost — and on 2026-07-27 it was worse than free: an OpenRouter embed
-# call blocked a recap run for 31 minutes inside an SSL read (urlopen(timeout=) bounds
-# each socket op, not the whole request, so a trickling server never trips it).
-# DEFAULT ON (= skip embedding). STAGE3_NO_EMBED=0 restores the old vector grounding.
-# Read through this helper, never as a module constant: stage_3/cli.py sets the env var
-# AFTER config import when --no-embed is passed, so a constant would miss it.
-def stage3_no_embed() -> bool:
-    """True when Stage 3 should skip every embedding call (default)."""
-    return os.getenv("STAGE3_NO_EMBED", "1").strip().lower() not in ("0", "false", "no", "")
-
-
-def _azure_embed_ready() -> bool:
-    k, e = AZURE_OPENAI_EMBEDDING_API_KEY, AZURE_OPENAI_EMBEDDING_ENDPOINT
-    return bool(k) and bool(e) and not k.startswith("<") and not e.startswith("<")
 
 # ─── Stage 5: Video assembly ────────────────────────────────────────────────
 # Crossfade dissolve between SCENES. XFADE_TRANSITION="cut" (default) bypasses the
