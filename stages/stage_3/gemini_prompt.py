@@ -226,6 +226,9 @@ _FINAL_MARKER_RE = re.compile(r"(?mi)^[\W_]*FINAL\s+SCRIPT[\W_]*$")
 _NO_INFO_RE = re.compile(r"(?m)^[\W_]*NO\s+INFO\b(.*)$")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s")
 _RULE_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*$")
+# A code fence (``` or ~~~, with or without a language tag) wraps a reply when the writer prints
+# its answer as a block. It is formatting, never narration: it separates paragraphs like a rule.
+_FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})\s*[\w+.-]*\s*$")
 _TAIL_RE = re.compile(
     r"^[\s#>(\[]*(?:word\s*count|fact[\s-]*trace|audit|sources|citations|references|notes)"
     r"\b[^.!?\n]*$", re.I)
@@ -251,6 +254,9 @@ _LABEL_WORD_RE = re.compile(
     r"hooks?|outro|closing|intro|loop)\b", re.I)
 _LIST_MARKER_RE = re.compile(r"^\s*(?:[-•–]\s+|\d{1,2}[.)]\s+|\[#?\d{1,2}\]\s*|#\d{1,2}[:.)]?\s+)")
 _ITEM_PREFIX_RE = re.compile(r"^\s*(?:item|answer)\s*#?\d+\s*[:.)\-–—]\s*", re.I)
+# "Story: ..." / "Script: ..." in front of the first words of a paragraph: a label the writer
+# printed, not something to be read aloud. Only a colon or dash counts, and only with text after it.
+_BODY_LABEL_RE = re.compile(r"^\s*(?:story|body|script|narration|voice-?over)\s*[:\-–—]\s+(?=\S)", re.I)
 _OPTION_REF_RE = re.compile(r"^(?:hook\s*)?(?:option\s*)?#?(\d+)\W*$", re.I)
 
 
@@ -331,6 +337,7 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
     options: dict = dict(full_options)
     chosen: str | None = preamble_chosen or None
     outro: str | None = None
+    labelled_hooks: list[str] = []  # "Hook: ..." lines printed inside the FINAL SCRIPT block itself
     kept: list[str] = []            # "" = paragraph break
     seen_content = False
     lines = text.splitlines()
@@ -338,7 +345,7 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
         clean = _strip_emphasis(raw)
         if seen_content and _AUDIT_LABEL_RE.match(clean):
             break
-        if _HEADING_RE.match(raw) or _RULE_RE.match(raw):
+        if _HEADING_RE.match(raw) or _RULE_RE.match(raw) or _FENCE_RE.match(raw):
             kept.append("")
             continue
         if not clean.strip():
@@ -354,6 +361,8 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
         m = _HOOK_OPTION_RE.match(clean)
         if m:
             options[int(m.group(1)) if m.group(1) else 0] = m.group(2).strip()
+            if finals:
+                labelled_hooks.append(m.group(2).strip())
             kept.append("")
             continue
         m = _OUTRO_LABEL_RE.match(clean)
@@ -365,12 +374,16 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
         if _is_label_line(clean, raw, followed_by_text=followed):
             kept.append("")
             continue
-        line = _ITEM_PREFIX_RE.sub("", _LIST_MARKER_RE.sub("", clean)).strip()
+        line = _BODY_LABEL_RE.sub("", _ITEM_PREFIX_RE.sub("", _LIST_MARKER_RE.sub("", clean))).strip()
         if line:
             kept.append(line)
             seen_content = True
 
     hook: str | None = chosen or None
+    if hook is None and len(labelled_hooks) == 1:
+        # The writer printed "Hook: ..." under FINAL SCRIPT instead of the hook alone on its line:
+        # that line IS the hook. Dropping it would leave the narration without its opening.
+        hook = labelled_hooks[0]
     if hook is None and options and not finals:
         if len(options) > 1:
             raise ScriptMappingError(

@@ -362,3 +362,68 @@ SPOKEN WORD COUNT: 87
     spoken = " ".join(scene["text"] for scene in narration["scenes"])
     for audit in AUDIT_WORDS:
         assert audit not in spoken, audit
+
+
+# ── a looser reply than the template's exact shape still reads as hook + story ─
+# Seen 2026-10-01 while loosening the template (the writer no longer has to print every audit line
+# or the exact block shape): replies come in shapes the reader only half knew. A code fence closing
+# straight after the story was read as the last words of the narration, a "Hook:" label under
+# FINAL SCRIPT made the hook vanish, and a "Story:" label was spoken. The reader only needs a
+# recognisable FINAL SCRIPT block, in whatever dress.
+
+LOOSE_BODY = ("Dr. Cornelius is attempting to create new super-soldiers. To prevent this, Wolverine "
+              "slashes open the reserves of liquid adamantium. The liquid encases him, leading to "
+              "his death by suffocation.")
+LOOSE_HOOK = "After losing his healing factor, Wolverine dies inside an adamantium cocoon."
+
+
+@pytest.mark.parametrize("raw", [
+    f"```\nFINAL SCRIPT\n{LOOSE_HOOK}\n\n{LOOSE_BODY}\n```\n",
+    f"FINAL SCRIPT\n```\n{LOOSE_HOOK}\n\n{LOOSE_BODY}\n```\n\nSPOKEN WORD COUNT: 41\n",
+    f"FINAL SCRIPT\n```text\n{LOOSE_HOOK}\n\n{LOOSE_BODY}\n```\n",
+    f"FINAL SCRIPT\n~~~\n{LOOSE_HOOK}\n\n{LOOSE_BODY}\n~~~\n",
+], ids=["fence closes the reply", "script fenced, audit after", "language-tagged fence", "tilde fence"])
+def test_a_code_fence_around_the_script_is_not_narration(raw):
+    assert gp._split_free_script(raw) == (LOOSE_HOOK, [LOOSE_BODY], "")
+
+
+@pytest.mark.parametrize("raw", [
+    f"FINAL SCRIPT\nHook: {LOOSE_HOOK}\n\n{LOOSE_BODY}\n",
+    f"FINAL SCRIPT\n**Hook:** {LOOSE_HOOK}\n\n**Story:** {LOOSE_BODY}\n",
+    f"FINAL SCRIPT\n\n### Hook\n{LOOSE_HOOK}\n\n### Story\n{LOOSE_BODY}\n",
+    f"Hook: {LOOSE_HOOK}\n\nScript: {LOOSE_BODY}\n",
+], ids=["Hook label", "Hook and Story labels", "headings", "no FINAL SCRIPT marker"])
+def test_a_labelled_hook_and_story_read_as_hook_and_story(raw):
+    """The hook line is the hook, and a label in front of the story is not spoken."""
+    assert gp._split_free_script(raw) == (LOOSE_HOOK, [LOOSE_BODY], "")
+
+
+def test_the_hook_survives_a_labelled_line_when_the_options_were_printed_above():
+    raw = (f"HOOK OPTIONS\n1. {LOOSE_HOOK}\n2. Another opening for the same story.\nCHOSEN HOOK: 1\n\n"
+           f"FINAL SCRIPT\nHook: {LOOSE_HOOK}\n\n{LOOSE_BODY}\n")
+    assert gp._split_free_script(raw) == (LOOSE_HOOK, [LOOSE_BODY], "")
+
+
+def test_a_script_with_no_audit_lines_at_all_becomes_narration(tmp_path, monkeypatch):
+    """Nothing but the hook and the story: no word count, trace or checks. That is a complete reply."""
+    name = _micro_project(tmp_path, monkeypatch)
+
+    narration = gp.parse_and_save_script(name, f"```\nFINAL SCRIPT\n{LOOSE_HOOK}\n\n{LOOSE_BODY}\n```",
+                                         log=lambda *_: None)
+
+    texts = [scene["text"] for scene in narration["scenes"]]
+    assert texts[0] == LOOSE_HOOK and narration["hook"] == LOOSE_HOOK
+    assert len(texts) == 4                                  # the hook plus the three story sentences
+    assert not any("`" in text for text in texts)
+    assert [scene["is_intro"] for scene in narration["scenes"]] == [True, False, False, False]
+
+
+@pytest.mark.parametrize("sentence", [
+    "Story time was over before the sun came up.",
+    "Body armor cracked under the blow.",
+    "Script pages burned in the fire.",
+])
+def test_a_sentence_that_merely_starts_with_a_label_word_is_kept(sentence):
+    """Only "Story:" / "Script:" with a colon or dash and text after it is a label."""
+    assert gp._split_free_script(f"FINAL SCRIPT\n{LOOSE_HOOK}\n\n{sentence} Then he ran.") == (
+        LOOSE_HOOK, [f"{sentence} Then he ran."], "")
