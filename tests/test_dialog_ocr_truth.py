@@ -1,23 +1,22 @@
 """Feature B — Magi OCR as dialog ground truth.
 
-Part 1 (embedding): stages._panel_index.panel_embed_text prefers a panel's Magi `ocr`
-over the VLM-fabricated `text`.
+Part 1 (review tile): stages.review_gate._panel_dialog_str, the dialog string the review UI shows
+under each candidate panel, prefers a panel's Magi `ocr` over the VLM-fabricated `text`.
 Part 2 (flag): stages.stage_2.pipeline._apply_dialog_truth_gate sets panel-level
 `dialog_mismatch=True` when the VLM `text` does not match the Magi OCR.
 
 Pure logic — no network, fake page dicts. The real failure this guards: doom-rocket-
 raccoon p28 panel 1 pixels read "SO NOW WHAT DO WE DO?" but the VLM wrote "WE'VE REACHED
-THE BIG BANG", poisoning the panel embedding + Stage-3/5 grounding.
+THE BIG BANG", which would put the invented line on the tile Master picks panels from.
 """
-import stages._panel_index as pidx
-from stages._panel_index import panel_embed_text
+from stages.review_gate import _panel_dialog_str
 import stages.stage_2.pipeline as pipe
 from stages.stage_2.pipeline import _apply_dialog_truth_gate
 
 
-# ── Part 1: panel_embed_text prefers Magi OCR ────────────────────────────────
+# ── Part 1: the review tile's dialog string prefers Magi OCR ──────────────────
 
-def test_embed_prefers_ocr_over_vlm_text():
+def test_dialog_prefers_ocr_over_vlm_text():
     panel = {
         "index": 1, "description": "Two figures in a cosmic void",
         "characters": ["Doctor Doom", "Rocket Raccoon"], "dominant_emotion": "tense",
@@ -27,24 +26,24 @@ def test_embed_prefers_ocr_over_vlm_text():
             {"text": "", "ocr": "WE WAIT. FOR REVELATION."},
         ],
     }
-    out = panel_embed_text(panel)
-    assert "SO NOW WHAT DO WE DO?" in out and "WE WAIT. FOR REVELATION." in out
-    assert "BIG BANG" not in out            # the fabricated VLM text must NOT embed
+    out = _panel_dialog_str(panel, None)
+    assert out == "SO NOW WHAT DO WE DO? WE WAIT. FOR REVELATION."
+    assert "BIG BANG" not in out            # the fabricated VLM text must NOT be shown
 
 
-def test_embed_falls_back_to_vlm_text_when_no_ocr():
+def test_dialog_falls_back_to_vlm_text_when_no_ocr():
     # Old cached page: dialog blocks carry no `ocr` key → behave exactly as before.
     panel = {"index": 0, "description": "Hulk smashes", "characters": ["Hulk"],
              "dominant_emotion": "rage", "dialog": [{"text": "PUNY GOD", "type": "speech"}]}
-    assert panel_embed_text(panel) == "Hulk smashes — Hulk — rage — PUNY GOD"
+    assert _panel_dialog_str(panel, None) == "PUNY GOD"
 
 
-def test_embed_ocr_preference_respects_kill_switch(monkeypatch):
-    monkeypatch.setattr(pidx, "DIALOG_TRUTH", False)
-    panel = {"index": 0, "description": "d", "characters": [], "dominant_emotion": "",
-             "dialog": [{"text": "VLM LINE", "ocr": "OCR LINE"}]}
-    # DIALOG_TRUTH off → embed uses the VLM `text`, not the OCR.
-    assert panel_embed_text(panel) == "d — VLM LINE"
+def test_dialog_reads_the_old_flat_text_blocks_too():
+    # Old schema: no nested dialog, the page-level text_blocks point at the panel by index.
+    panel = {"index": 2}
+    page_tb = [{"panel_index": 2, "text": "VLM LINE", "ocr": "OCR LINE"},
+               {"panel_index": 3, "text": "elsewhere", "ocr": "ELSEWHERE"}]
+    assert _panel_dialog_str(panel, page_tb) == "OCR LINE"
 
 
 # ── Part 2: _apply_dialog_truth_gate flags fabricated dialog ─────────────────
