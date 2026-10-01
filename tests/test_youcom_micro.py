@@ -91,6 +91,21 @@ def test_the_schema_demands_a_concrete_turning_point(tmp_path, monkeypatch):
     assert "constant_broken" not in props
 
 
+def test_default_micro_cli_window_filters_old_candidates(tmp_path, monkeypatch):
+    from datetime import date
+
+    year = date.today().year
+    monkeypatch.setattr(Y, "build_scouted_digest", lambda: "")
+    monkeypatch.setattr(Y, "_call_logged", lambda *a, **k: _resp(
+        _cand("Hero #1 (2014)"), _cand(f"Hero #2 ({year})")
+    ))
+    Y.run_micro("k", tmp_path, "deep")
+    report = (tmp_path / "micro_report.md").read_text(encoding="utf-8")
+    assert f"## Hulk — Hero #2 ({year})" in report
+    assert "## Hulk — Hero #1 (2014)" not in report
+    assert "outside_recent_micro_window" in report
+
+
 # ─── series-level burn check ─────────────────────────────────────────────────
 
 def test_series_burn_check_catches_a_sibling_issue():

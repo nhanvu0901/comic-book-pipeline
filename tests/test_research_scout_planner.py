@@ -339,3 +339,15 @@ def test_the_options_cardinality_keeps_variety_without_demanding_volume():
     assert f"about {planner.DISTINCT_SOURCE_TARGET} distinct source pages" in text
     assert "no candidate minimum" in text
     assert "never pad" in text
+
+
+def test_planner_gets_recent_default_only_for_micro():
+    from datetime import date
+
+    micro = planner._user_message("Find a moment", [], "micro")
+    qa = planner._user_message("Find a question", [], "qa")
+    assert str(date.today().year) in micro
+    assert "RECENT MICRO DEFAULT" in planner._request_body("test", micro)["messages"][1]["content"]
+    assert "recently published issues" in planner._request_body("test", micro)["messages"][0]["content"]
+    assert "RECENT MICRO DEFAULT" not in qa
+    assert planner._request_body("test", qa)["messages"][0]["content"] == planner._SYSTEM_PROMPT

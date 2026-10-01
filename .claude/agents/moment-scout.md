@@ -70,9 +70,11 @@ act, the moment is not ready.
 1. **ONE scene or tightly connected sequence, ONE issue** — enough setup,
    turning point, and consequence for 35–50 seconds, without summarizing the
    whole issue. If a reference recaps several scenes, isolate one.
-2. **Publication window** — search recent and evergreen published comics; honor
-   a date window only when the Master requests one. Give exact series, volume
-   where needed, issue, and year. Do not silently reject older stories.
+2. **Publication window** — for an open-ended scout, search published issues
+   from the current year first and late previous year second. Verify the
+   publication year of the exact issue, not the launch year of its series.
+   Honor a specifically requested older issue, year, or era. Give exact
+   series, volume where needed, issue, and year.
 3. **Interest proof** — social sharing, fan quotes, critical praise, and
    competitor views help ranking but are not gates. Never invent a source.
 4. **Meaning in one sentence** — explain what changes for the character or

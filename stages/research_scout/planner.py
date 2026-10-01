@@ -182,9 +182,11 @@ _MICRO_SCOUT_RULES = (
     "- Give the setup, the specific action or reveal that changes the "
     "situation, and its direct consequence. Name who acts or speaks. Reject "
     "abstract claims such as tactical patience without a sourced action.\n"
-    "- A broken character rule, current release, loud spectacle, second famous "
-    "name, and low YouTube coverage are ranking bonuses, not mandatory gates. "
-    "Honor any date window explicitly requested by the user.\n"
+    "- For an open-ended scout, prefer published issues from the current year "
+    "and then the previous year; the workflow appends the live year window. "
+    "Honor an explicitly requested older issue, year, or era. A broken "
+    "character rule, loud spectacle, second famous name, and low YouTube "
+    "coverage are ranking bonuses, not mandatory gates.\n"
     "- Keep summary and what_visibly_happens focused on the same scene. Do not "
     "invent motives, panel order, choreography, or consequences from another issue."
 )
@@ -371,6 +373,9 @@ def make_plan(user_intent: str, feedback_notes: list[str], mode: str) -> Researc
 
 def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str:
     parts = [str(user_intent), f"MODE HINT: {mode}"]
+    if mode == "micro":
+        from .micro_recency import recent_micro_instruction
+        parts.append(recent_micro_instruction())
     notes = [str(note) for note in feedback_notes if str(note).strip()]
     if notes:
         parts.append(
@@ -382,10 +387,17 @@ def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str
 
 
 def _request_body(model: str, user_message: str) -> dict[str, Any]:
+    system_prompt = _SYSTEM_PROMPT
+    if "MODE HINT: micro" in user_message:
+        system_prompt += (
+            "\nFor micro mode only, the channel's default scope is recently "
+            "published issues. Honor the live year window in the user message; "
+            "an explicitly requested older issue, year, or era overrides it."
+        )
     return {
         "model": model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         "response_format": {

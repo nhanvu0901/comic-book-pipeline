@@ -331,6 +331,14 @@ def test_micro_write_system_hook_is_concrete_and_source_backed():
     assert "different sourced cause" in low
 
 
+def test_micro_write_system_uses_story_frame_before_mechanism():
+    low = mm._MICRO_WRITE_SYSTEM.lower()
+    assert "immediate story frame" in low
+    assert "active conflict or goal" in low
+    assert "replace repetition" in low
+    assert "do not add a scene" in low
+
+
 # ── Landing: finish on sourced detail without a forced loop ────
 def test_micro_write_system_outro_is_sourced_landing():
     low = mm._MICRO_WRITE_SYSTEM.lower()

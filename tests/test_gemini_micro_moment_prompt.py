@@ -53,7 +53,19 @@ def test_micro_moment_prompt_generation(tmp_path, monkeypatch):
     assert "A question is allowed" in " ".join(prompt_text.split())
     assert "OPENING CHAIN" in prompt_text
     assert "same concrete person-and-event promise" in prompt_text
-    assert "NEXT FACT" in prompt_text
+    assert "STORY FRAME if verified" in prompt_text
+
+
+def test_micro_prompt_requires_verified_story_frame_without_padding():
+    """A stunt alone must not be mistaken for the situation that led to it."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    phase1, phase2 = prompt.split("# PHASE 2 — WRITE THE SHORT", 1)
+    assert "STORY FRAME" in phase1
+    assert "what immediate conflict or goal is active" in " ".join(phase1.split())
+    assert "STORY FRAME CHECK" in phase2
+    assert "replace repetition" in phase2
+    assert "adding a verified story frame does not create a longer word target" in " ".join(phase2.split()).lower()
+    assert "no beat quota" in phase1.lower()
 
 
 def test_micro_moment_script_can_be_approved_before_pages_exist(tmp_path, monkeypatch):

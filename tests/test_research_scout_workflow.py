@@ -284,6 +284,44 @@ def test_micro_exact_issue_intent_rejects_validly_cited_wrong_comics(mock_workfl
     assert "Batman: Knightfight #1" in validation["rejected"][0]["reason"]
 
 
+def test_broad_micro_general_filters_old_issues_with_bound_sources(mock_workflow):
+    from datetime import date
+
+    year = date.today().year
+    issues = [
+        ("older", "Hero #1 (2014)"),
+        ("previous", f"Hero #2 ({year - 1})"),
+        ("current", f"Hero (2021) #3 ({year})"),
+    ]
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [{
+                "id": key, "title": key, "series_issue_year": issue,
+                "summary": "Hero loses the key, finds a second door, and frees a friend.",
+                "what_visibly_happens": "Hero opens the second door.",
+                "claim_citation": {
+                    "url": f"https://source.test/{key}",
+                    "quote": "Hero opens the second door.",
+                },
+            } for key, issue in issues]},
+            "sources": [{"url": f"https://source.test/{key}"} for key, _ in issues],
+        }
+    }
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    mock_workflow.run_general(session.id)
+
+    candidates = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json"
+    ).read_text(encoding="utf-8"))["candidates"]
+    validation = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidate_validation.rev1.v1.json"
+    ).read_text(encoding="utf-8"))
+    assert [candidate["id"] for candidate in candidates] == ["current", "previous"]
+    assert validation["rejected"] == [
+        {"candidate_id": "older", "reason": "outside_recent_micro_window"},
+    ]
+
+
 def test_planner_prompt_keeps_the_original_user_intent_even_when_plan_drifts(tmp_path):
     workflow = ScoutWorkflow(
         store=SessionStore(tmp_path), client=_FakeYouCom(),

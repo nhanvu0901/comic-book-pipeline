@@ -14,8 +14,9 @@ reversed. These are search leads, not required formulas. A famous character's
 usual rule being broken is a bonus, not a gate.
 
 Prefer a recognizable subject and a promise that a new viewer can understand
-without a lore lecture. Search recent and evergreen published issues; never
-impose a current-year cutoff unless the user's request does. A second famous
+without a lore lecture. For an open-ended scout, search current releases first
+and the previous year's published issues next; the appended RECENT MICRO DEFAULT
+gives the calendar years for this run. A second famous
 character, a loud fight, a fan quote, or an uncovered YouTube lane can improve
 rank, but none is mandatory. Quiet decisions and dialogue qualify when the
 source establishes what someone does or says and what changes because of it.
@@ -30,7 +31,8 @@ For every candidate:
   scene. Do not invent panel order, expressions, motives, or choreography.
 - `why_it_lands`: one or two plain sentences on why the turning point changes
   the opening expectation. Mark interpretation as interpretation.
-- `series_issue_year`: exact series, volume when needed, issue, and year.
+- `series_issue_year`: exact series, volume when needed, issue, and the
+  publication year of that issue (not the series launch year).
   Include source URLs; label uncertain identity rather than guessing.
 
 Reject listicles, a feat with no change, an entire plot or crossover, a moment

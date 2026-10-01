@@ -32,9 +32,10 @@ If the scout says `NOT CONFIRMED` or `CONFLICTING`, distinguish missing evidence
 from an actual contradiction; an unresolved contradiction cannot become a script.
 ```
 
-Your job in PHASE 1 is to verify the central action and learn only as much context
-as the story needs. A sparse source may support a short, sharp Short. It does not
-license invented setup, choreography, reactions, or a longer runtime.
+Your job in PHASE 1 is to verify the central action **and the immediate story
+frame**: the concrete situation that led to this scene. A sparse source may
+support a short, sharp Short. It does not license invented setup, choreography,
+reactions, or a longer runtime.
 
 ---
 
@@ -65,12 +66,19 @@ multiple distinct facts, but do not split a single claim into fake steps.
 
 First open the scout URL and check whether its quote is actually there. Then
 search the exact series and issue with the character and unusual act; try
-reviews, previews, and issue synopses. Stop once the central action and the
-context used in your script are sourced. There is **no beat quota or search
-quota**. A single strong beat can carry a short script when it includes a clear
-action or mechanism. If the scout quote is absent, discard that quote and find
-independent support for the claim. Mark unknown setup or outcome as a gap and
-leave it out.
+reviews, previews, and issue synopses. Also search for the STORY FRAME: what
+immediate conflict or goal is active, and what brought the people in this
+moment together? Check the issue's opening or a directly connected earlier
+issue when necessary; label any earlier-issue fact. A publisher solicitation
+may support a broad premise, but never proves an unseen scene action.
+Record one compact, source-backed frame beat when it exists. A general trait,
+power description, or attitude is character context, not the story frame.
+If no reliable source states the frame, mark it UNKNOWN and do not invent one.
+There is **no beat quota or search quota**: this is a required research question,
+not a requirement to manufacture a beat. A single strong action can still
+carry a short script. If the scout quote is absent, discard that quote and
+find independent support for the claim. Mark unknown setup or outcome as a
+gap and leave it out.
 
 ## Beat rules
 
@@ -119,8 +127,11 @@ SCOUT STATUS: <verdict and reason; accepted claim or discarded lead>
 
 BEATS
 B1 | <central verified action or mechanism> | Tier <n> | <URL> | "<verbatim quote>"
-B2 | <optional context or effect actually supported> | Tier <n> | <URL> | "<verbatim quote>"
+B2 | FRAME: <optional concrete active situation, if supported> | Tier <n> | <URL> | "<verbatim quote>"
+... other context or effects actually supported
 ... only as many as the sources truly support
+
+STORY FRAME | <B ID(s) for the immediate situation and why it leads to this moment, or UNKNOWN; state the gap>
 
 RELATIONSHIPS
 R1 | <only a relationship the script needs> | Tier <n> | <URL> | "<verbatim quote>"
@@ -174,7 +185,9 @@ words quietly add claims while making the voice sound written.
 CHOOSE THE DRAMATIC LINE
 Silently identify:
 - HOOK FACT: one sourced act, result, or contradiction that is odd on its own.
-- CONTEXT: only what a new viewer needs to understand that fact.
+- STORY FRAME: the sourced active conflict, goal, or encounter that led to
+  the moment. It is a concrete piece of this story, not a character biography,
+  personality summary, generic lore, or a second description of the trick.
 - MECHANISM OR EFFECT: use it only if sourced. One clear mechanism is enough.
 - LANDING: the strongest verified result or detail; it becomes the last line.
 
@@ -199,9 +212,10 @@ listener decode several new names in the first breath. Aim for 6–15 spoken
 words; 24 is the ceiling. Trace every factual clause in the chosen hook.
 
 Write the first THREE spoken sentences as one opening chain:
-HOOK (the specific sourced promise) -> NEXT FACT (a different sourced cause,
-action, obstacle, mechanism, or first consequence) -> MOVEMENT (another
-verified change or the first step toward the answer). The second sentence
+HOOK (the specific sourced promise) -> STORY FRAME if verified and needed
+(what is happening around this encounter or why it occurs) -> MOVEMENT
+(the action, mechanism, or consequence that answers the hook). If the hook
+already states the frame, move straight to the action. The second sentence
 must never translate the hook into new words or begin a separate lore
 lecture. The third must not restate either earlier sentence. Do not force a
 reveal into these sentences: some stories earn it later. In a thin one-beat
@@ -209,8 +223,13 @@ sheet, write fewer sentences and vary hook options by phrasing, not by
 inventing three angles.
 
 STORY
-Open on the chosen hook and its new first beat. Add only the context needed
-to understand it. Move through sourced facts in a clear order.
+Open on the chosen hook. When the sheet has a useful STORY FRAME, give it one
+short sentence or clause before expanding the tactic or mechanism. This should
+answer where the characters are in the conflict, what they are trying to do,
+or why they have crossed paths. Choose the part that actually explains this
+moment; do not recite the whole arc. Then move through sourced facts in a
+clear order. Keep the current short length by using the frame to **replace repetition**
+of the hook, attitude, or mechanism, not by adding filler words.
 Each sentence must add a new action, explain the mechanism, or show a sourced
 effect. A one-beat story can be two or three spoken sentences.
 If it does none of these, cut it. Use "but", "because", and "so" when
@@ -232,11 +251,11 @@ from an exact verified detail, put it after that detail and do not
 explain it. Never insert slang just to sound young.
 
 RUNTIME AND AUDIT
-Draft the shortest complete version first. Then count it. With a rich fact
-sheet, aim for 100–145 spoken words (roughly 35–50 seconds at 2.9 words per
-second). With only one or two usable beats, **ship a shorter 35–90 word
-script** (roughly 12–31 seconds); there is no minimum word count. Do not
-return `NO INFO` because the script is short. Never stretch by splitting one
+Draft the shortest complete version first. Then count it. A complete simple
+moment often fits in 35–90 spoken words; adding a verified story frame does
+not create a longer word target. Go above that only when distinct sourced
+events need the room, and stop by 145 words. There is no minimum word count.
+Do not return `NO INFO` because the script is short. Never stretch by splitting one
 beat into invented steps, repeating an action, restating the hook, or adding
 unsourced adjectives, timing, or character labels. Read
 the script aloud; remove caption-like phrases, stacked adjectives, and
@@ -271,6 +290,7 @@ S1 | <first few words> | B<n>, R<n>
 S2 | ...
 <one row for every spoken sentence>
 OPENING CHAIN: <hook promise> -> <new fact in first body sentence, B/R ID> -> <next verified movement or END if the sheet is thin>
+STORY FRAME CHECK: <frame beat ID and the spoken sentence that uses it, or UNKNOWN; confirm no generic trait was substituted>
 REACTIONS: <list or none>
 UNSUPPORTED FACTS: none
 

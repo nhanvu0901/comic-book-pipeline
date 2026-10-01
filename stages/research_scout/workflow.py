@@ -14,6 +14,11 @@ import config
 
 from . import cited_sources
 from .issue_identity import micro_issue_rejection_reason
+from .micro_recency import (
+    issue_publication_year,
+    micro_release_rejection_reason,
+    recent_micro_instruction,
+)
 from . import openrouter_gate
 from . import planner as planner_module
 from .errors import ScoutUserError
@@ -193,6 +198,9 @@ class ScoutWorkflow:
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
             schema = planner_module.compile_schema(plan)
             plan_record = {"source": "planner", **plan.model_dump(mode="json")}
+        if session.mode is ScoutMode.MICRO:
+            prompt_text += "\n\n" + recent_micro_instruction()
+            prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
         raw = self.client.research(
             prompt_text,
             schema,
@@ -211,6 +219,13 @@ class ScoutWorkflow:
             previous = self._candidates_by_id(session)
             kept = [previous[cid] for cid in session.kept_candidate_ids if cid in previous]
             session.kept_candidate_ids = []
+        if session.mode is ScoutMode.MICRO:
+            # A prior broad round may predate this policy. Keep its old entries
+            # from suppressing a fresh candidate with the same source binding.
+            kept = [
+                c for c in kept
+                if micro_release_rejection_reason(c, session.user_intent) is None
+            ]
         returned_sources = _research_source_urls(payload)
         candidates, validation = _validate_new_general_candidates(
             candidates,
@@ -223,6 +238,11 @@ class ScoutWorkflow:
                 if (citation := cited_sources.claim_citation(candidate)) is not None
             },
         )
+        if session.mode is ScoutMode.MICRO:
+            candidates.sort(
+                key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
+                reverse=True,
+            )
         candidates = kept + candidates
         accepted_bound_sources = {
             cited_sources.citation_fingerprint(citation)[0]
@@ -608,9 +628,12 @@ class ScoutWorkflow:
             exclude="\n".join(f"- {item}" for item in excluded) or "- (nothing yet)",
             digest=self.digest,
         )
+        prompt_text = prompt.text
+        if mode is ScoutMode.MICRO:
+            prompt_text += "\n\n" + recent_micro_instruction()
         try:
             raw = self.client.research(
-                prompt.text,
+                prompt_text,
                 # The model labels each candidate with the angle it worked, so the
                 # chat can show an angle chip without guessing from list position.
                 _schema({**props, "angle": {"type": "string"}}),
@@ -635,12 +658,27 @@ class ScoutWorkflow:
                 continue
             if is_burned(text, burn_digest):
                 continue
+            if mode is ScoutMode.MICRO:
+                if micro_release_rejection_reason(candidate) is not None:
+                    continue
+                if not all(str(candidate.get(key, "")).strip() for key in (
+                    "turning_point", "what_visibly_happens", "why_it_lands"
+                )):
+                    continue
+                urls = candidate.get("evidence_urls")
+                if not isinstance(urls, list) or not any(str(url).strip() for url in urls):
+                    continue
             seen.add(text.casefold())
             labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
             picked.append({**candidate, field: text, "angle": labelled})
-            if len(picked) >= count:
+            if mode is ScoutMode.QA and len(picked) >= count:
                 break
-        return picked or fallback
+        if mode is ScoutMode.MICRO:
+            picked.sort(
+                key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
+                reverse=True,
+            )
+        return picked[:count] or fallback
 
     def next_angle(self, mode: ScoutMode) -> str:
         """Public entry point for the Tier B empty-intent fallback (ui/bridge.py):
@@ -1004,6 +1042,10 @@ def _validate_new_general_candidates(
             issue_reason = micro_issue_rejection_reason(user_intent, candidate)
             if issue_reason is not None:
                 rejected.append({"candidate_id": candidate_id, "reason": issue_reason})
+                continue
+            release_reason = micro_release_rejection_reason(candidate, user_intent)
+            if release_reason is not None:
+                rejected.append({"candidate_id": candidate_id, "reason": release_reason})
                 continue
         if fingerprint in seen:
             rejected.append({"candidate_id": candidate_id, "reason": "duplicate_claim_citation"})

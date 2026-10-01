@@ -200,7 +200,7 @@ def test_a_micro_session_the_workflow_produced_creates_a_project(monkeypatch, wi
     monkeypatch.setattr(
         "stages.research_scout.openrouter_gate.review", lambda **kwargs: _confirmed_gate()
     )
-    session = workflow.start(ScoutMode.MICRO, "One Hulk moment")
+    session = workflow.start(ScoutMode.MICRO, "One Hulk moment from 2024")
     workflow.run_general(session.id)
     workflow.verify_selected(session.id, ["candidate-2"])
     workflow.approve_selected(session.id)

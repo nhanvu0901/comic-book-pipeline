@@ -367,9 +367,15 @@ def _series_burned(series_issue_year: str, digest: str) -> str | None:
     return None
 
 
-def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
+def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> None:
     """Scout single MOMENTS for micro_moment mode. Same three-part shape as run_discover:
     our plan fans out, You.com digs, our filters decide."""
+    from stages.research_scout.micro_recency import (
+        micro_release_rejection_reason, recent_micro_instruction,
+    )
+
+    default_window = years is None
+    years = years or recent_micro_instruction()
     digest = build_scouted_digest()
     rows, kept = [], []
     for i, angle in enumerate(MICRO_ANGLES, 1):
@@ -399,6 +405,11 @@ def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
             c["_angle"] = angle
             rows.append(c)
     for c in rows:
+        if default_window:
+            release_reason = micro_release_rejection_reason(c)
+            if release_reason is not None:
+                c["_dropped_as_release"] = release_reason
+                continue
         # Burn-check on series+issue AND on the moment text: the same scene resurfaces
         # under a different phrasing across angles, and a sibling issue of an already-
         # produced series is the commonest false lead (measured: 3 of 7 candidates in the
@@ -425,13 +436,19 @@ def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
         lines += ["## Dropped as burned (our hard filter, not You.com's)"]
         lines += [f"- {c.get('series_issue_year')}  ⇒ collides with: {c['_dropped_as_burned']}"
                   for c in dropped]
+    release_dropped = [c for c in rows if c.get("_dropped_as_release")]
+    if release_dropped:
+        lines += ["## Dropped outside the recent publication window"]
+        lines += [f"- {c.get('series_issue_year')}  ⇒ {c['_dropped_as_release']}"
+                  for c in release_dropped]
     lines += ["",
               "## STILL UNVERIFIED — do these before producing",
               "- on batcave.biz? (Cloudflare 403s plain HTTP; needs the nodriver scraper)",
               "- narration coverage: search AGAIN with different phrasing before trusting a "
               "clean verdict (see .claude/memory/scout_jeff_narration_missed.md)"]
     report.write_text("\n".join(lines), encoding="utf-8")
-    print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned → {report}")
+    print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned, "
+          f"{len(release_dropped)} dropped by release year → {report}")
 
 
 def run_enumerate(key: str, outdir: Path, question: str, have: list[str], effort: str) -> None:
@@ -581,7 +598,7 @@ def main() -> None:
     d.add_argument("--effort", default="standard")
     m = sub.add_parser("micro", help="scout single MOMENTS for micro_moment mode")
     m.add_argument("--effort", default="deep")
-    m.add_argument("--years", default="2010 or later, strongly preferring this year",
+    m.add_argument("--years", default=None,
                    help='publication window phrasing, e.g. "in 2025 or 2026"')
     e = sub.add_parser("enumerate")
     e.add_argument("--question", required=True)
