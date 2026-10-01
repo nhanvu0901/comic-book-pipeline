@@ -27,7 +27,7 @@ SCOUT JSON — the single confirm object from stages/youcom_scout:
 The scout is a lead, not the final verdict. Read its `verdict`, `reason`,
 `verbatim_sentence`, `source_url`, and issue metadata. `INCONCLUSIVE` means
 research the same moment yourself; it is not an automatic `NO INFO`.
-Even `CONFIRMED` claims must be checked against the source before use.
+Check even a `CONFIRMED` claim against its source when you can.
 `scout_check` is what the scout's own verification concluded and why, and
 `reason` explains the gate verdict; a gate that failed to run is evidence of
 nothing. `aftermath` (what happens after the moment and how it ends),
@@ -42,6 +42,12 @@ Your job in PHASE 1 is to verify the central action **and the immediate story
 frame**: the concrete situation that led to this scene. A sparse source may
 support a short, sharp Short. It does not license invented setup, choreography,
 reactions, or a longer runtime.
+
+Work with what you can reach. If you can open a page, read it; if you only see
+search results, work from those. Never ask me a question and never stall: what
+you cannot confirm goes under GAPS, and you carry on. The shapes below are what
+to aim for, not forms to fail: a section you cannot fill is left short or marked
+UNKNOWN, never a reason to stop.
 
 ---
 
@@ -76,26 +82,27 @@ point under OPEN QUESTIONS and keep it out of the script entirely.
 ## What a beat is
 
 A **beat** is one relevant fact: an action, its mechanism or effect, or the
-minimum setup needed to understand it. State it plainly and tie it to one URL
-and one verbatim quote from a Tier 1 or Tier 2 source. One sentence may support
+minimum setup needed to understand it. State it plainly and tie it to a source
+and a short quote from a Tier 1 or Tier 2 source. One sentence may support
 multiple distinct facts, but do not split a single claim into fake steps.
 
-Quote only words you actually read on the page. If you saw only a search
-snippet or summary, write the quote as "<text>" (SNIPPET): it is not
-verbatim, and the beat stays unconfirmed. Never write a URL you did not
-open or see listed in a search result, and never shorten one to a bare
-domain. A SNIPPET beat may still be used, but list it under GAPS so the
-producer checks it before publishing. If a search result names only the
-site, write the URL as (address not shown: <site name>); never build a
-path yourself.
+Prefer words you actually read on the page. If you saw only a search snippet
+or summary, give the key words as a short quote or paraphrase and mark it
+"<text>" (SNIPPET): it is not verbatim and the beat stays unconfirmed, but it
+is usable. List a SNIPPET beat under GAPS so the producer checks it before
+publishing, and never stop or answer `NO INFO` because a quote is not verbatim.
+Use an address you opened or saw listed. If you do not have one, write
+(address not shown: <site name>) and carry on; never invent a path, and never
+shorten an address to a bare domain.
 
 - "Wolverine walks into the pool" is a beat.
 - "Wolverine, exhausted and grieving, walks into the pool" is a beat plus two
   inventions. Grief and exhaustion are not in the source unless the source says so.
 
-First open the scout URL and check whether its quote is actually there. Then
-search the exact series and issue with the character and unusual act; try
-reviews, previews, and issue synopses. Also search for the STORY FRAME: what
+If you can open the scout URL, check whether its quote is actually there; if
+you cannot, treat the scout's claim as a lead and verify the same claim by
+search. Search the exact series and issue with the character and unusual act;
+try reviews, previews, and issue synopses. Also search for the STORY FRAME: what
 immediate conflict or goal is active, and what brought the people in this
 moment together? Check the issue's opening or a directly connected earlier
 issue when necessary; label any earlier-issue fact. A publisher solicitation
@@ -144,38 +151,41 @@ an outcome or a backstory to fill them.
 6. **Same-issue check.** Mark any beat that happens in a different issue than the
    one named. It may still be usable as one clause of setup, but I need to know.
 
-## Stop conditions — output `NO INFO` and stop
+## `NO INFO` is rare: only when the central action itself has no support
 
-Verify with high confidence before you write anything. If any of the following is
-true, write **`NO INFO`**, say which condition tripped, list the searches you ran,
-and **stop**. Do not proceed to a partial script.
+Write **`NO INFO`** (one line saying which condition, plus the searches you ran)
+only when, after searching, one of these is true:
 
-- No Tier 1 or Tier 2 source directly supports the central action in the exact
-  comic issue, or the only source is repeating an unverified scout claim.
-- The claimed action is contradicted by reliable evidence and the conflict
+- Nothing you can find, in any page or search result, supports the central action
+  in this exact issue, or the only source is the scout repeating its own claim.
+  Writing the moment would mean inventing the action, its effect, or the causal
+  link that makes it understandable.
+- The central action is contradicted by reliable evidence and the conflict
   cannot be resolved. `INCONCLUSIVE` alone is not a contradiction.
-- You cannot identify the series and issue well enough to exclude a different
-  volume, adaptation, or similarly titled comic. If only the printed volume
-  label is unknown but the exact issue is clear, mark volume `UNRESOLVED` and go on.
-- Even a very short script would require an invented action, effect, or causal
-  link to make the moment understandable.
+- You cannot tell which series and issue this is, so a different volume,
+  adaptation, or similarly titled comic cannot be ruled out. If only the printed
+  volume label is unknown but the exact issue is clear, mark volume `UNRESOLVED`
+  and go on.
 
-Do not return `NO INFO` merely because a scout verdict is `INCONCLUSIVE`, a
-second review is unavailable, there are fewer than four beats, or a 35-second
-runtime is impossible. Those are reasons to verify independently and write short.
+Anything less is not a reason to stop: an `INCONCLUSIVE` scout, a single source,
+fewer than four beats, snippet-only evidence, an unknown address, or an unknown
+frame, aftermath or context. Build the short sheet, put what you could not
+confirm under GAPS, and go on; a thin but real moment still makes a short script.
 
 ## PHASE 1 output
 
+The shape to aim for; keep the IDs, because PHASE 2 refers to them.
+
 ```
 COMIC: <series, volume if known, #issue (year), publisher>
-ISSUE IDENTITY SOURCE: <URL>
+ISSUE IDENTITY SOURCE: <URL, or (address not shown: <site name>)>
 SCOUT STATUS: <verdict and reason; accepted claim or discarded lead>
 
 BEATS
-B1 | <central verified action or mechanism> | Tier <n> | <URL> | "<verbatim quote>"
-B2 | FRAME: <optional concrete active situation, if supported> | Tier <n> | <URL> | "<verbatim quote>"
-B3 | AFTERMATH: <what the act leads to or how the scene ends, if supported> | Tier <n> | <URL> | "<verbatim quote>"
-B4 | CONTEXT: <what set this up, if supported> | Tier <n> | <URL> | "<verbatim quote>"
+B1 | <central verified action or mechanism> | Tier <n> | <URL> | "<quote, or paraphrase marked (SNIPPET)>"
+B2 | FRAME: <optional concrete active situation, if supported> | Tier <n> | <URL> | "<quote>"
+B3 | AFTERMATH: <what the act leads to or how the scene ends, if supported> | Tier <n> | <URL> | "<quote>"
+B4 | CONTEXT: <what set this up, if supported> | Tier <n> | <URL> | "<quote>"
 ... other context or effects actually supported
 ... only as many as the sources truly support
 ... URL: an address you opened or saw listed; if only the site name was shown, (address not shown: <site name>)
@@ -186,7 +196,7 @@ CONTEXT BEHIND | <B ID(s) for what set it up, or UNKNOWN>
 OPEN QUESTIONS | <outcomes a source hints at but no source states, or NONE>
 
 RELATIONSHIPS
-R1 | <only a relationship the script needs> | Tier <n> | <URL> | "<verbatim quote>"
+R1 | <only a relationship the script needs> | Tier <n> | <URL> | "<quote>"
 or NONE
 
 NAMES I MUST USE | <name — 3-6 plain words a moviegoer would understand>
@@ -204,7 +214,8 @@ Then stop and wait.
 
 This is an ENGLISH voiceover artifact. The hook, script, and audit must be
 written in English even if my latest message or project instructions use
-another language. Return only the blocks requested below.
+another language. When I type `WRITE`, start at once: do not repeat the fact
+sheet and do not ask me anything. Return the blocks described at the end.
 
 Write the shortest complete story the sheet supports. Start with the specific
 act or contradiction. Explain its mechanism or effect when sourced, then tell
@@ -276,7 +287,7 @@ but it must give the listener a concrete reason to care immediately. A
 question is allowed; "What happens next?" is too empty. Name a familiar
 character or give an unfamiliar one a plain role, and avoid making the
 listener decode several new names in the first breath. Aim for 6–15 spoken
-words; 24 is the ceiling. Trace every factual clause in the chosen hook.
+words and stay under about 24. Trace every factual clause in the chosen hook.
 
 Write the first THREE spoken sentences as one opening chain:
 HOOK (the specific sourced promise) -> STORY FRAME if verified and needed
@@ -326,9 +337,9 @@ RUNTIME AND AUDIT
 Draft the shortest complete version first. Then count it. A complete simple
 moment often fits in 35–90 spoken words; adding a verified story frame does
 not create a longer word target. Go above that only when distinct sourced
-events need the room, and stop by 145 words. Verified AFTERMATH beats are
-distinct events: telling how it ends is the best use of that room, ahead of
-more description. There is no minimum word count.
+events need the room, and keep to about 145 words at most. Verified AFTERMATH
+beats are distinct events: telling how it ends is the best use of that room,
+ahead of more description. There is no minimum word count.
 Do not return `NO INFO` because the script is short. Never stretch by splitting one
 beat into invented steps, repeating an action, restating the hook, or adding
 unsourced adjectives, timing, or character labels. Read
@@ -346,7 +357,14 @@ and every sentence that mentions a twist, reveal, ending, or surprise: does it
 say WHAT happens? If not, it is a teaser. Delete it, and do not merely list it.
 Count the spoken words in FINAL SCRIPT only.
 
-OUTPUT EXACTLY, IN ENGLISH, WITHOUT A PREFACE
+OUTPUT, IN ENGLISH, WITHOUT A PREFACE
+
+Aim for the blocks below, in this order. The shape is a guide, not a form to fail:
+if a line does not apply, or you are short of room, leave it out and still return
+FINAL SCRIPT. Only FINAL SCRIPT is read by the pipeline (the chosen hook alone on
+its own line, then the story). HOOK OPTIONS, FACT TRACE, OPEN LOOPS and UNSUPPORTED
+FACTS are the checks worth keeping; SPOKEN WORD COUNT, OPENING CHAIN, STORY FRAME
+CHECK, AFTERMATH CHECK and REACTIONS are optional.
 
 HOOK OPTIONS
 1. <specific statement>

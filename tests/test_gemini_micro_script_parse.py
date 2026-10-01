@@ -260,12 +260,15 @@ def test_a_first_sentence_that_only_shares_words_with_the_hook_is_kept(hook, fir
 # ── the audit block ends the script wherever Gemini puts it ──────────────────
 
 
+OUTPUT_HEADING = "OUTPUT, IN ENGLISH, WITHOUT A PREFACE"
+
+
 def _template_audit_lines() -> list[tuple[str, str]]:
     """(label, printed line) for every audit heading the micro template's OUTPUT block prints
     after FINAL SCRIPT, with its <placeholders> filled in. Read from the template itself, so
     a heading added there later is held to the same rule without touching this test."""
     prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
-    block = prompt.split("OUTPUT EXACTLY", 1)[1].splitlines()
+    block = prompt.split(OUTPUT_HEADING, 1)[1].splitlines()
     found = []
     for line in block[block.index("FINAL SCRIPT") + 1:]:
         label = re.match(r"^([A-Z][A-Z ]*[A-Z])\s*(?::|$)", line)

@@ -6,6 +6,10 @@ import pytest
 
 import stages.stage_3.gemini_prompt as gp
 
+# The heading of the template's output section. The audit lines the parser must recognise, and the
+# hook-once shape, are read from what follows it.
+OUTPUT_HEADING = "OUTPUT, IN ENGLISH, WITHOUT A PREFACE"
+
 
 def _flat(text: str) -> str:
     """The template hard-wraps its sentences; compare them without the line breaks."""
@@ -107,35 +111,87 @@ def test_micro_template_keeps_its_placeholders_and_pinned_phrases():
 def test_micro_template_marks_a_search_snippet_quote_and_forbids_a_url_never_seen():
     """In the agy probe (Gemini 3.1 Pro) the writer only saw search-result snippets. It wrote a
     URL it never opened, a bare domain, and summary text labelled as a verbatim quote. A beat
-    now says what its quote is: words read on the page, or a snippet marked (SNIPPET), which
-    leaves the beat unconfirmed and puts it under GAPS for the producer to check."""
+    now says what its quote is: words read on the page (preferred), or a snippet marked
+    (SNIPPET), which is usable, leaves the beat unconfirmed and goes under GAPS for the producer
+    to check. Loosened 2026-10-01: a non-verbatim quote is never a reason to stop."""
     prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
     beat_section = _flat(prompt.split("## What a beat is", 1)[1].split("\n## ", 1)[0])
-    rule = ('Quote only words you actually read on the page. If you saw only a search snippet '
-            'or summary, write the quote as "<text>" (SNIPPET): it is not verbatim, and the beat '
-            'stays unconfirmed. Never write a URL you did not open or see listed in a search '
-            'result, and never shorten one to a bare domain. A SNIPPET beat may still be used, '
-            'but list it under GAPS so the producer checks it before publishing.')
+    rule = ('Prefer words you actually read on the page. If you saw only a search snippet or '
+            'summary, give the key words as a short quote or paraphrase and mark it "<text>" '
+            '(SNIPPET): it is not verbatim and the beat stays unconfirmed, but it is usable. '
+            'List a SNIPPET beat under GAPS so the producer checks it before publishing, and '
+            'never stop or answer `NO INFO` because a quote is not verbatim.')
 
     assert rule in beat_section
-    assert (beat_section.index("one verbatim quote from a Tier 1 or Tier 2 source")
+    assert (beat_section.index("a short quote from a Tier 1 or Tier 2 source")
             < beat_section.index(rule))
+    assert "Only words you actually read" not in beat_section      # the old all-or-nothing wording
 
 
 def test_micro_template_says_what_to_write_when_a_search_result_shows_only_the_site():
     """The search tool behind the writer lists a source as a site name over an opaque redirect
     link. Told never to write a URL it did not see and never to shorten one to a bare domain, the
     writer built a plausible path instead: 3 invented addresses in the agy re-test, where the
-    template without the rule had produced one invented path and two bare domains. It is now
-    told what to write when the address is not shown."""
+    template without the rule had produced one invented path and two bare domains. It is told what
+    to write when the address is not shown, and (2026-10-01) that not having one is no reason to
+    stall."""
     phase1 = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8").split(
         "# PHASE 2 — WRITE THE SHORT", 1)[0]
     flat = _flat(phase1)
 
-    assert ("If a search result names only the site, write the URL as (address not shown: "
-            "<site name>); never build a path yourself.") in flat
+    assert ("Use an address you opened or saw listed. If you do not have one, write "
+            "(address not shown: <site name>) and carry on; never invent a path, and never "
+            "shorten an address to a bare domain.") in flat
     assert ("... URL: an address you opened or saw listed; if only the site name was shown, "
             "(address not shown: <site name>)") in flat
+
+
+def test_micro_template_asks_for_an_answer_not_a_form_to_fail():
+    """The user, 2026-10-01: the writer "doesn't need to return the exact format"; a prompt that is
+    too strict makes it refuse, ask back, or stop. PHASE 1 carries on with what it can reach and
+    keeps `NO INFO` for a central action no source supports; PHASE 2 starts at once on `WRITE` and
+    treats its output shape as a guide whose only required block is FINAL SCRIPT."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    phase1, phase2 = prompt.split("# PHASE 2 — WRITE THE SHORT", 1)
+    flat1, flat2 = _flat(phase1), _flat(phase2)
+
+    assert ("Work with what you can reach. If you can open a page, read it; if you only see "
+            "search results, work from those. Never ask me a question and never stall") in flat1
+    assert "If you can open the scout URL, check whether its quote is actually there" in flat1
+    assert "Check even a `CONFIRMED` claim against its source when you can." in flat1
+    assert "## `NO INFO` is rare: only when the central action itself has no support" in phase1
+    assert ("Anything less is not a reason to stop: an `INCONCLUSIVE` scout, a single source, "
+            "fewer than four beats, snippet-only evidence, an unknown address") in flat1
+    for gone in ("Do not proceed to a partial script", "and **stop**", "First open the scout URL",
+                 "Even `CONFIRMED` claims must be checked"):
+        assert gone not in phase1, gone
+
+    assert "When I type `WRITE`, start at once: do not repeat the fact sheet and do not ask me anything." in flat2
+    assert "OUTPUT EXACTLY" not in prompt
+    assert ("The shape is a guide, not a form to fail: if a line does not apply, or you are short "
+            "of room, leave it out and still return FINAL SCRIPT. Only FINAL SCRIPT is read by "
+            "the pipeline") in flat2
+    assert ("SPOKEN WORD COUNT, OPENING CHAIN, STORY FRAME CHECK, AFTERMATH CHECK and REACTIONS "
+            "are optional") in flat2
+    # the checks that guard the script itself stay in the block
+    block = flat2.split(OUTPUT_HEADING, 1)[1]
+    for kept in ("FACT TRACE", "OPEN LOOPS:", "UNSUPPORTED FACTS: none",
+                 "Do not put audit text or quotation marks inside FINAL SCRIPT."):
+        assert kept in block, kept
+
+
+def test_micro_template_keeps_its_core_while_the_shape_is_loose():
+    """What loosening must not touch: no teasers, the outcome or the expanded main moment, the
+    scout's aftermath and context as leads, no invented facts, the hook spoken once."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    flat = _flat(prompt)
+    for core in ("## Reactions and teasers are not beats", "NO TEASERS",
+                 "Nothing listed under OPEN QUESTIONS may appear in any wording",
+                 "The Phase 1 fact sheet is the entire factual world",
+                 "The hook line is spoken once",
+                 "the verified outcome when AFTERMATH exists",
+                 "Check the last sentence and every sentence that mentions a twist, reveal, ending, or surprise"):
+        assert core in flat, core
 
 
 def test_micro_template_never_ends_on_a_teaser_and_tells_how_it_ends():
@@ -184,7 +240,7 @@ def test_micro_template_no_longer_ends_on_a_withheld_payoff_by_default():
 
 def test_micro_output_block_audits_aftermath_and_open_loops():
     prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
-    lines = prompt.split("OUTPUT EXACTLY", 1)[1].splitlines()
+    lines = prompt.split(OUTPUT_HEADING, 1)[1].splitlines()
     after_script = lines[lines.index("FINAL SCRIPT") + 1:]
     labels = []
     for line in after_script:
@@ -205,7 +261,7 @@ def test_micro_output_open_loops_line_asks_for_the_sentences_instead_of_a_litera
     states what it is, and keeps its label: the parser's audit-heading test reads the labels
     from this block."""
     prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
-    after_script = prompt.split("OUTPUT EXACTLY", 1)[1].splitlines()
+    after_script = prompt.split(OUTPUT_HEADING, 1)[1].splitlines()
     open_loops = [line.strip() for line in after_script if line.startswith("OPEN LOOPS")]
 
     assert open_loops == [
@@ -219,7 +275,7 @@ def test_micro_output_block_story_placeholder_follows_the_ending_rule():
     placeholder said "stop at the strongest verified detail": the rule the ending section
     replaced (end on the verified outcome when AFTERMATH exists)."""
     prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
-    output = _flat(prompt.split("OUTPUT EXACTLY", 1)[1])
+    output = _flat(prompt.split(OUTPUT_HEADING, 1)[1])
 
     assert "stop at the strongest verified detail" not in output
     assert ("<story, in one or two natural paragraphs; it starts with the sentence AFTER the "
@@ -234,7 +290,7 @@ def test_micro_template_speaks_the_hook_once():
     section says the hook line is spoken once."""
     phase2 = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8").split(
         "# PHASE 2 — WRITE THE SHORT", 1)[1]
-    output = _flat(phase2.split("OUTPUT EXACTLY", 1)[1])
+    output = _flat(phase2.split(OUTPUT_HEADING, 1)[1])
     story = _flat(phase2.split("\nSTORY\n", 1)[1].split("\nRUNTIME AND AUDIT\n", 1)[0])
 
     assert "FINAL SCRIPT <chosen hook, alone on its own line> <story," in output
