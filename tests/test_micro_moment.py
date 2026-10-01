@@ -347,6 +347,16 @@ def test_micro_write_system_outro_is_sourced_landing():
     assert "do not add a line" in low
 
 
+def test_micro_write_system_bans_lines_that_hint_without_stating():
+    """A script ended on "ends with a shocking twist": a reviewer's reaction rewritten as an
+    event. The ending may never hint at an outcome it does not state, and a question ending
+    asks what the verified result means, not what happens next or who is behind it."""
+    low = " ".join(mm._MICRO_WRITE_SYSTEM.lower().split())
+    assert "never end on, or include, a line that hints at an outcome without stating it" in low
+    assert '"ends with a shocking twist"' in low and '"everything changes"' in low
+    assert "never what happens next or who is behind something" in low
+
+
 # ── STORY-FIRST input builder (2026-07-16): story sources IN, panel prose OUT ──
 def test_micro_write_system_is_story_first_not_art_description():
     low = mm._MICRO_WRITE_SYSTEM.lower()

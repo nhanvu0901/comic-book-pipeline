@@ -702,7 +702,9 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
 
   ENDING — stop on the strongest sourced result or detail. A verbal echo of the
   hook is optional when it comes naturally from that result; do not add a line
-  merely to repeat a hook word or bait a replay.
+  merely to repeat a hook word or bait a replay. Never end on, or include, a
+  line that hints at an outcome without stating it ("ends with a shocking
+  twist", "everything changes").
   Pick ONE style for the LAST scene and declare it in "ending_style":
     - "thesis": ONE sentence stating what the verified moment MEANS, when the
       story sources support that interpretation.
@@ -710,7 +712,8 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
       narration line, never a character's quoted words — no separate meaning
       line, no landing, the video cuts off right on it.
     - "question": ONE specific question raised by the verified result (never a
-      generic comment prompt or "subscribe").
+      generic comment prompt or "subscribe"). It asks what the verified result
+      means, never what happens next or who is behind something.
 
   VISUAL BEATS (every scene) — split each scene into the 2-3 separate MOMENTS it contains, so
   Stage 5 can cut to a fresh image on each. You do NOT pick pages or panels — the pipeline maps
