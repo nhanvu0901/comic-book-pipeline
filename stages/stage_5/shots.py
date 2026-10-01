@@ -3728,8 +3728,6 @@ def _apply_inpaint(crop, filled, boxes: list[dict]):
     region's own background tone, drop it and repaint that tone, which reads as an empty
     bubble — exactly what the panels LaMa handled correctly already look like.
     """
-    import numpy as np
-
     out = crop.copy()
     ch, cw = crop.shape[:2]
     for b in boxes:

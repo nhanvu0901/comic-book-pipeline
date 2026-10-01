@@ -8,7 +8,6 @@ deterministically: a stranger character / an overstuffed sentence surface as fla
 clean narration returns zero, and an offline LLM (RuntimeError) degrades softly instead
 of crashing."""
 import json
-import pytest
 
 import stages.stage_3.write_script as ws
 from stages.stage_3.schema import Narration, Scene
