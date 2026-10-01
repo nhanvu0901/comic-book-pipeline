@@ -3,7 +3,8 @@ narration text + panel choices in the review UI.
 
 State lives in projects/<slug>/review/:
   • locks.json      — approval flag + per-scene panel LOCKS (the review UI writes this).
-  • candidates.json — the matcher's ranked panel shortlist per beat (this module writes it).
+  • candidates.json — every panel of each beat's issue, page-sorted, for Master to pick from
+                      (this module writes it).
   • thumbs/         — cropped panel previews referenced by candidates.json.
 
 Two JSON contracts the UI is built against (documented in EXPLORE_ANSWER_DESIGN.md):
@@ -24,10 +25,12 @@ candidates.json
               "candidates": [{"page": int, "panel": int, "score": float,
                               "thumb": "review/thumbs/pXXX_Y.jpg",
                               "desc": str, "dialog": str}]}]}
+  Candidates come in (page, panel) order and "score" is always 0.0 — nothing is ranked, Master
+  picks by eye; the field stays so the review UI's tile schema is unchanged.
 
 CLI:
-  python -m stages.review_gate --project X --build-candidates [--k 10]
-  python -m stages.review_gate --project X --build-candidates --all   # ALL panels/beat, ranked
+  python -m stages.review_gate --project X --build-candidates         # ALL panels/beat, page-sorted
+  python -m stages.review_gate --project X --build-candidates --all   # same (the UI's Build button passes it)
   python -m stages.review_gate --project X                            # print gate status
 """
 from __future__ import annotations
@@ -52,69 +55,23 @@ from stages.user_errors import MissingInputError
 # Default-ON boolean env, same idiom as shots.PANEL_ANCHOR_BIND.
 REVIEW_GATE = os.getenv("REVIEW_GATE", "1").strip().lower() not in ("0", "false", "no", "")
 
-# Panel TEXT-embed master switch (see config.PANEL_TEXT_EMBED). OFF (default) → build_candidates
-# skips the cosine matcher and lists ALL panels of each beat's issue PAGE-SORTED so Master picks
-# by hand (no vector query, no dialog/vision rerank). Bound to the module so tests can flip it.
-from config import PANEL_TEXT_EMBED
-
 # Provenance label stamped on every lock — panels come from batcave-downloaded pages.
 _LOCK_SOURCE = "batcave"
 
-# Q&A image-blend weight (Feature-A SigLIP). Master 2026-07-07: the old 0.55 over-rewarded
-# VISUAL SPECTACLE (big splashes, lightning) — the matcher kept surfacing "big highlight"
-# panels instead of the one that depicts what the NARRATION BEAT says (what the audience
-# pictures from the spoken line). Lowered toward the recap default so the text-semantic
-# (narration) signal leads and the image signal only tie-breaks. Only on answer_research.
+# Transitional: stages/stage_5/shots.py and stages/sentence_match.py still import this knob.
 QA_PANEL_IMG_WEIGHT = float(os.getenv("QA_PANEL_IMG_WEIGHT", "0.35"))
-
-# How a Q&A beat's match query is formed from the beat narration + item's drawable_moment:
-#   "blend"     — NARRATION leads, drawable_moment trails (default). Master 2026-07-07: the
-#                 pick must be the panel closest to what the audience HEARS (the narration
-#                 line), with drawable_moment only sharpening it — not the reverse.
-#   "drawable"  — drawable_moment ONLY (pure visual target)
-#   "narration" — narration ONLY (recap parity)
-# Recap beats have no drawable_moment so every mode collapses to narration for them.
-QA_QUERY_MODE = os.getenv("QA_QUERY_MODE", "blend").strip().lower()
-# In "blend", how many times the narration is repeated ahead of the drawable_moment — a
-# cheap way to up-weight the spoken line in the embedded query without a dual-cosine rewrite.
-QA_NARR_WEIGHT = int(os.getenv("QA_NARR_WEIGHT", "2"))
-
-# ─── Candidate-ranking layer (this file ONLY — the shared matcher is untouched) ──
-# The blended cosine is good RECALL but weak ORDERING: VLM panel descriptions share
-# one register ("The panel shows…"), so within an issue dozens of panels cluster and
-# rank order inside the cluster is noise (Master, 2026-07-07: suggestions "still not
-# good"). Two extra signals fix the ordering, both applied AFTER _match_panels here:
-#   1. DIALOG CHANNEL — each panel's OCR dialog embedded ALONE (short, distinctive,
-#      no boilerplate) and cosined against the beat query. Semantic, so a paraphrase
-#      matches ("offers to resurrect her" ↔ "I can restore the child to life").
-#      Plus a hard bonus when the query QUOTES dialog verbatim ("Live, Scott" in
-#      quotation marks = the writer's explicit verbatim intent → fuzzy string match
-#      is valid there and only there).
-#   2. VLM VISION RANK — a vision judge LOOKS at the top-K crops and scores "does
-#      this panel actually SHOW this moment?" — the only signal that crosses the
-#      text↔image modality gap. Cosine+dialog decide WHICH K get judged.
-QA_DIALOG_WEIGHT = float(os.getenv("QA_DIALOG_WEIGHT", "0.35"))
-QA_QUOTE_BONUS = float(os.getenv("QA_QUOTE_BONUS", "0.6"))
-QA_CAND_VLM_K = int(os.getenv("QA_CAND_VLM_K", "14"))   # 0 → skip the vision judge
-# Moment-present floor: if the BEST vision score (0-10) across a beat's whole issue is
-# below this, no panel in the cited issue actually depicts the beat's moment → the
-# research almost certainly named the WRONG issue (the moment lives in a neighbour, e.g.
-# Children's Crusade: strip-power is in #8, cited #9 is aftermath). We can't fix the
-# number automatically (which neighbour?), but we FLAG it loudly for Master at review —
-# the one error class that resolve_reader_url / verify_issue structurally cannot catch.
-QA_MOMENT_FLOOR = float(os.getenv("QA_MOMENT_FLOOR", "4.0"))
 
 # ─── MONEY SHOT funnel (Q&A only; gated on answer_context.money_target) ──────────
 # The cold-open / frame-1 panel is the single biggest virality lever (VIRAL_2K_TO_10K_PLAN
-# #4). This funnel FINDS the panel that ACTUALLY DRAWS the video's money moment via 3-channel
-# recall (Qwen text cosine · SigLIP text→image · OCR keyword) → VLM CONFIRM, flags + boosts
-# that panel in candidates.json, and pins the best one to the intro (subject_panels.json, which
-# cold-open already consumes). Entirely inert unless answer_context.json carries a `money_target`
+# #4). This funnel FINDS the panel that ACTUALLY DRAWS the video's money moment via OCR
+# keyword recall → VLM CONFIRM, flags + boosts that panel in candidates.json, and pins the
+# best one to the intro (subject_panels.json, which cold-open already consumes). Entirely
+# inert unless answer_context.json carries a `money_target`
 # {"money_character","money_object","money_event","query_text"} — recap and non-money Q&A stay
 # byte-identical (no money_target → the funnel returns before touching anything). The money_shot
 # module (derive_money_target + ocr_money_hits) is written by a sibling task; imported LAZILY so
 # this file loads even before it lands.
-# Master 2026-07-24: DEFAULT OFF. The money-shot VISION sweep (3-channel recall → VLM confirm →
+# Master 2026-07-24: DEFAULT OFF. The money-shot VISION sweep (OCR recall → VLM confirm →
 # pin frame-1) is dead now that Master hand-picks the intro / edits subject_panels.json. OFF skips
 # the whole _money_funnel detection loop (no VLM sweep); subject_panels.json is still built by
 # Stage 2 (cheap text-match) — Master just picks the intro there as usual. MONEY_SHOT_PIN=1
@@ -122,7 +79,7 @@ QA_MOMENT_FLOOR = float(os.getenv("QA_MOMENT_FLOOR", "4.0"))
 MONEY_SHOT_PIN = os.getenv("MONEY_SHOT_PIN", "0").strip().lower() not in ("0", "false", "no", "")
 MONEY_SHOT_BONUS = float(os.getenv("MONEY_SHOT_BONUS", "2.0"))       # rank nudge for a confirmed money panel
 MONEY_CONF_FLOOR = float(os.getenv("MONEY_CONF_FLOOR", "0.5"))       # min VLM confidence to accept a panel
-MONEY_RECALL_K = int(os.getenv("MONEY_RECALL_K", "12"))             # per-channel top nominations
+MONEY_RECALL_K = int(os.getenv("MONEY_RECALL_K", "12"))             # top OCR nominations per issue
 MONEY_SWEEP_CHUNK = int(os.getenv("MONEY_SWEEP_CHUNK", "12"))       # panels per VLM confirm call
 MONEY_SWEEP_MAX_CALLS = int(os.getenv("MONEY_SWEEP_MAX_CALLS", "8"))  # sweep fan-out cap per issue
 
@@ -207,9 +164,9 @@ def lock_custom_image(lock: dict | None) -> str | None:
     page-panel lock. Additive v3 lock shape ({"custom_image": str}) alongside v1/v2 (see
     lock_panels) — lock_panels() correctly returns [] for this shape (no "panels"/"page"
     key), so every existing page/panel-anchor reader no-ops on a custom-image lock. A
-    custom image is NEVER cosine-gated (Master added it → it WILL appear in the video);
-    cosine only decides WHICH BEAT an unlocked custom image lands on (see
-    stages.stage_5.shots.assign_custom_images) — a beat locked here skips that argmax
+    custom image is NEVER gated (Master added it → it WILL appear in the video); only the
+    choice of WHICH BEAT an unlocked custom image lands on is automatic (see
+    stages.stage_5.shots.assign_custom_images) — a beat locked here skips that assignment
     entirely. Mirrors the review UI's own normaliser
     (ui/screens/s_review_gate._normalize_lock_custom_image)."""
     if not lock:
@@ -415,95 +372,6 @@ def _beat_source(scene: dict, comic_ctx: dict, answer_ctx: dict, *, issue_label:
             "research_urls": research}
 
 
-_QUOTE_SPAN_RE = re.compile(r'[“"]([^”"]{3,80})[”"]')
-
-
-def _dialog_rescore(cands: list, query_text: str, pages_by_number: dict) -> list:
-    """Dialog-channel boost (see knob block). Adds QA_DIALOG_WEIGHT·cos(query, panel's
-    OCR dialog) to each candidate that HAS dialog (silent panels are not penalised),
-    plus QA_QUOTE_BONUS when a quoted span from the query matches the dialog. Returns
-    the list re-sorted by adjusted score; on any embed failure returns it unchanged."""
-    if not cands or QA_DIALOG_WEIGHT <= 0:
-        return cands
-    dialogs = []
-    for c in cands:
-        page_tb = (pages_by_number.get(c["page"]) or {}).get("text_blocks")
-        dialogs.append(_panel_dialog_str(c["panel"], page_tb))
-    try:
-        from stages._embedding import embed_batch
-        vecs = embed_batch([query_text] + dialogs)
-    except Exception:
-        return cands
-    qv = vecs[0]
-    if qv is None:
-        return cands
-    from stages.stage_2.pipeline import _norm_dialog_text
-    spans = [_norm_dialog_text(sp) for sp in _QUOTE_SPAN_RE.findall(query_text)]
-    spans = [sp for sp in spans if len(sp.split()) >= 2]
-    import difflib
-    for c, dlg, dv in zip(cands, dialogs, vecs[1:]):
-        boost = 0.0
-        if dv is not None:
-            boost += QA_DIALOG_WEIGHT * max(0.0, float(sum(a * b for a, b in zip(qv, dv))))
-        if spans and dlg:
-            dn = _norm_dialog_text(dlg)
-            if any(sp in dn or difflib.SequenceMatcher(None, sp, dn).ratio() >= 0.8
-                   for sp in spans):
-                boost += QA_QUOTE_BONUS
-        c["score"] = float(c["score"]) + boost
-    return sorted(cands, key=lambda c: c["score"], reverse=True)
-
-
-def _vlm_rank_top(cands: list, query_text: str, root: Path, *, log=print) -> list:
-    """Vision-judge the TOP QA_CAND_VLM_K candidates: one sdk_complete_vision call per
-    beat scores every crop 0-10 on "does this panel SHOW this moment?", and the top
-    slice is re-ordered by (vlm score, adjusted cosine). The tail keeps its order.
-    Never raises; any failure (SDK down, unparseable, missing crops) → unchanged."""
-    if QA_CAND_VLM_K <= 0 or len(cands) < 2:
-        return cands
-    try:
-        from stages._claude_sdk import sdk_complete_vision, sdk_available
-        if not sdk_available():
-            return cands
-        top = cands[:QA_CAND_VLM_K]
-        paths = []
-        for c in top:
-            rel = f"review/thumbs/p{c['page']:03d}_{c['panel_idx']}.jpg"
-            ap = root / rel
-            if not ap.exists():
-                if not _write_thumb(c["src"], (c["panel"].get("bbox") or {}), ap):
-                    return cands          # can't show the judge every crop → don't half-judge
-            paths.append(ap)
-        listing = "\n".join(f"{i + 1}. {p}" for i, p in enumerate(paths))
-        raw = sdk_complete_vision(
-            "You are a comic panel judge. Read each numbered image (a comic panel crop) and "
-            "score 0-10 how well the PICTURE ITSELF shows the described moment — the drawn "
-            "action/character, not caption text. Return STRICT JSON only: "
-            '{"scores": [<one number per image, in order>]}',
-            f"MOMENT to depict: {query_text}\n\nPANEL CROPS:\n{listing}",
-            log=log,
-        )
-        m = re.search(r"\{.*\}", raw or "", re.DOTALL)
-        scores = (json.loads(m.group(0)) if m else {}).get("scores")
-        if not isinstance(scores, list) or len(scores) != len(top):
-            return cands
-        # Stash each judged panel's vision score (0-10) so build_candidates can run the
-        # MOMENT-PRESENT check: if the BEST score across the whole issue is low, the
-        # cited issue probably doesn't depict this moment (wrong issue number in the
-        # research — the CC #9-vs-#8 class of error that resolve/verify can't catch).
-        for i, c in enumerate(top):
-            try:
-                c["_vlm"] = float(scores[i])
-            except (TypeError, ValueError):
-                pass
-        order = sorted(range(len(top)),
-                       key=lambda i: (float(scores[i]), float(top[i]["score"])), reverse=True)
-        return [top[i] for i in order] + cands[len(top):]
-    except Exception as exc:  # noqa: BLE001 — ranking sugar must never block the gate
-        log(f"[review-gate] vlm rank skipped ({type(exc).__name__}: {exc})")
-        return cands
-
-
 def _write_thumb(src, bbox: dict, out_path: Path, *, max_side: int = 520) -> bool:
     """Crop one candidate panel from its page and save a small JPEG preview. Returns False
     (leaving the thumb path empty) when the source image is missing / unreadable."""
@@ -578,48 +446,20 @@ def _panel_dialog_str(panel: dict, page_tb) -> str:
 
 # ─── money shot funnel ──────────────────────────────────────────────────────────
 
-def _money_recall_union(scope_keys, qv, panel_vecs, qimg_vec, img_vecs, ocr_hits,
-                        *, k: int = MONEY_RECALL_K) -> list:
-    """Union of three recall channels over `scope_keys`, each nominating its own top-`k`:
-        (i)   Qwen text cosine   — qv · panel_vecs[key]
-        (ii)  SigLIP text→image  — qimg_vec · img_vecs[key]
-        (iii) OCR keyword        — ocr_hits[key]  (score > 0)
-    Deduped in channel order (text, then image, then OCR). A channel with no data (None query
-    vector / empty index / no hits) simply contributes nothing. Returns list[(page, panel)]."""
-    import numpy as np
+def _money_ocr_recall(scope_keys, ocr_hits, *, k: int = MONEY_RECALL_K) -> list:
+    """OCR keyword recall over `scope_keys`: the top-`k` panels by ocr_hits[key] (score > 0),
+    best first. No hits (or none inside the scope) → []. Returns list[(page, panel)]."""
     scope = set(scope_keys)
-
-    def _topk(scores: dict) -> list:
-        return [key for key, _ in
-                sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:max(1, k)]]
-
-    text_scores, img_scores = {}, {}
-    if qv is not None:
-        for key in scope_keys:
-            v = panel_vecs.get(key)
-            if v is not None:
-                text_scores[key] = float(np.dot(qv, v))
-    if qimg_vec is not None:
-        for key in scope_keys:
-            v = img_vecs.get(key)
-            if v is not None:
-                img_scores[key] = float(np.dot(qimg_vec, v))
-    ocr_scores = {key: float(s) for key, s in (ocr_hits or {}).items()
-                  if key in scope and float(s) > 0}
-
-    union, seen = [], set()
-    for channel in (_topk(text_scores), _topk(img_scores), _topk(ocr_scores)):
-        for key in channel:
-            if key not in seen:
-                seen.add(key)
-                union.append(key)
-    return union
+    scores = {key: float(s) for key, s in (ocr_hits or {}).items()
+              if key in scope and float(s) > 0}
+    return [key for key, _ in
+            sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:max(1, k)]]
 
 
 def _money_vlm_confirm_call(keyed_paths: list, event: str, *, log=print) -> dict:
     """ONE vision call: does each crop ACTUALLY DRAW `event`? keyed_paths=[(key, abs_path)].
     Returns {key: confidence 0-1} for the panels the judge scored (floor applied by caller).
-    {} on any failure / no SDK. Mirrors _vlm_rank_top's SDK usage (Read-the-crop vision)."""
+    {} on any failure / no SDK. Read-the-crop vision through the Claude SDK."""
     from stages import _claude_sdk
     if not keyed_paths or not _claude_sdk.sdk_available():
         return {}
@@ -706,41 +546,19 @@ def _pin_money_intro(root: Path, key: tuple, conf: float, *, log=print) -> None:
 def _money_funnel(root: Path, answer_ctx: dict, pages_by_number: dict,
                   page_to_issue: dict, groups: dict, cands_by_id: dict, *, log=print) -> None:
     """MONEY SHOT funnel — see the knob block. Inert unless answer_ctx carries a money_target.
-    3-channel recall → VLM confirm per issue; confirmed panels get money:true + money_conf +
+    OCR keyword recall → VLM confirm per issue; confirmed panels get money:true + money_conf +
     a rank bonus on their candidate entries, the best is pinned to the intro, and an issue whose
-    top-K union AND full sweep both draw a blank prints a loud wrong-item warning. Never raises."""
+    top-K OCR nominees AND full sweep both draw a blank prints a loud wrong-item warning.
+    Never raises."""
     money = answer_ctx.get("money_target")
     if not (isinstance(money, dict) and str(money.get("money_event", "")).strip()):
         return
     event = str(money["money_event"]).strip()
-    query_text = str(money.get("query_text") or event).strip()
     try:
-        slug = root.name
-        from stages._embedding import embed_batch
-        from stages._panel_index import load_vectors
-        from stages import _img_index
         try:
             from stages.money_shot import ocr_money_hits
         except Exception:  # sibling task not landed yet → OCR channel simply absent
             ocr_money_hits = None
-
-        qv = None
-        try:
-            qv = embed_batch([query_text])[0]
-        except Exception as exc:  # noqa: BLE001
-            log(f"[money-shot] text embed failed ({type(exc).__name__}: {exc})")
-        panel_vecs = load_vectors(slug)
-        img_vecs = _img_index.load_image_vectors(slug)
-        qimg_vec = None
-        try:
-            qimg = _img_index.embed_texts([query_text])
-            if qimg is not None:
-                qimg_vec = qimg[0]
-        except Exception as exc:  # noqa: BLE001
-            log(f"[money-shot] SigLIP text embed failed ({type(exc).__name__}: {exc})")
-        # SigLIP-swap guard: mismatched query/panel dim would crash np.dot → drop the channel.
-        if qimg_vec is not None and img_vecs and len(qimg_vec) != len(next(iter(img_vecs.values()))):
-            qimg_vec = None
 
         thumbs_dir = root / "review" / "thumbs"
 
@@ -784,11 +602,12 @@ def _money_funnel(root: Path, answer_ctx: dict, pages_by_number: dict,
                     ocr_hits = ocr_money_hits(issue_pages, money) or {}
                 except Exception as exc:  # noqa: BLE001
                     log(f"[money-shot] ocr_money_hits failed ({type(exc).__name__}: {exc})")
-            union = _money_recall_union(scope_keys, qv, panel_vecs, qimg_vec, img_vecs, ocr_hits)
-            confirmed = _money_confirm(union, thumb_for, event, max_calls=4, log=log)
+            nominees = _money_ocr_recall(scope_keys, ocr_hits)
+            confirmed = _money_confirm(nominees, thumb_for, event, max_calls=4, log=log)
             if not confirmed:
-                log(f"[money-shot] issue {issue_label or '(single)'}: top-{MONEY_RECALL_K} union "
-                    f"({len(union)} panels) confirmed none — SWEEPING all {len(scope_keys)} panels")
+                log(f"[money-shot] issue {issue_label or '(single)'}: top-{MONEY_RECALL_K} OCR "
+                    f"nominees ({len(nominees)} panels) confirmed none — SWEEPING all "
+                    f"{len(scope_keys)} panels")
                 confirmed = _money_confirm(scope_keys, thumb_for, event,
                                            max_calls=MONEY_SWEEP_MAX_CALLS, log=log)
             if not confirmed:
@@ -852,20 +671,18 @@ def _lock_pair_list(raw) -> list[dict]:
 
 
 def _page_sorted_candidates(sub_pages: dict) -> list[dict]:
-    """NO-EMBED candidate pool: EVERY panel of `sub_pages`, sorted (page, panel_idx). Mirrors the
-    row shape _match_panels emits into candidates_out (score/cosine 0.0 — no ranking, no _vlm),
-    so the rest of build_candidates + the review UI consume it unchanged. Used when
-    PANEL_TEXT_EMBED is off: Master picks the panel by eye, cosine order is meaningless."""
+    """Candidate pool for one review row: EVERY panel of `sub_pages`, sorted (page, panel_idx).
+    Nothing is ranked — Master picks the panel by eye — so every entry carries score 0.0."""
     from stages.stage_5.shots import _panel_pool
     rows = sorted(_panel_pool(sub_pages), key=lambda t: (int(t[0][0]), int(t[0][1])))
-    return [{"page": int(key[0]), "panel_idx": int(key[1]), "score": 0.0, "cosine": 0.0,
+    return [{"page": int(key[0]), "panel_idx": int(key[1]), "score": 0.0,
              "panel": panel, "src": src} for (key, panel, src, _tb) in rows]
 
 
 def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
-    """Score every review ROW against every panel with the EXISTING Stage-5 matcher and write
-    review/candidates.json + thumbs. Reuses _match_panels' own ranked scores (no duplicate
-    scoring). Needs the embed backend up (LM Studio Qwen), same as Stage 5's matcher.
+    """List every panel of each review ROW's issue, page-sorted, and write review/candidates.json
+    + thumbs. Master picks panels by eye in the review UI, so nothing is scored or ranked: every
+    candidate carries score 0.0 and no embed backend or vision call is involved.
 
     A review ROW is one thing Master approves a panel for — mode-aware (Master 2026-07-14):
       • recap / Q&A  — one row PER STORY SCENE (unit "scene", beat_key str(scene_id)); the old
@@ -884,14 +701,12 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     (list, may be empty — the panel(s) already anchored/pinned), and "unit". Old fields keep
     their name + position so the existing review UI never breaks.
 
-    `k` is a CAP on candidates per beat. k<=0 → emit ALL panels of the beat's OWN issue,
-    ranked best-first (the correct panel sometimes ranks 11th+)."""
+    `k` is a CAP on candidates per beat; k<=0 → emit ALL panels of the beat's OWN issue.
+    Candidates are page-sorted, so a cap keeps the same first k panels for every beat of an
+    issue — callers pass 0."""
     root = _project_root(project_name)
     slug = root.name
-    # k<=0 → ALL: no output cap (cap=None slices the whole list), and the matcher gets a
-    # sentinel candidates_k so its argsort returns the full ranked pool (not a top-k).
-    cap = None if k <= 0 else k
-    match_k = 10**9 if cap is None else k
+    cap = None if k <= 0 else k           # k<=0 → ALL: cap=None slices the whole list
     narration_path = root / "narration.json"
     if not narration_path.exists():
         raise MissingInputError(
@@ -906,7 +721,6 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
         log(f"[build_candidates] reanchor note: {_reanchor_err}")
 
     scenes = narration.get("scenes") or []
-    mode = str(narration.get("mode") or "")
     story = [s for s in scenes if not (s.get("is_intro") or s.get("is_outro"))]
     if not story:
         raise ValueError("no story scenes in narration.json — nothing to review")
@@ -914,20 +728,18 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     comic_ctx = _load_json(root / "comic_context.json")
     answer_ctx = _load_json(root / "answer_context.json")
 
-    # Mirror stage_5.assemble_project's matcher inputs, then run the matcher in
-    # candidates-only mode (fills the ranked shortlist, skips assignment + VLM rerank).
+    # Candidate pools are built from the same preprocessed pages Stage 5 renders from.
     from stages.stage_5.pipeline import _load_preprocessed_pages
-    from stages.stage_5.shots import _match_panels, _vb_text, _vb_pin
+    from stages.stage_5.shots import _vb_text, _vb_pin
     pages_by_number = _load_preprocessed_pages(root)
     _sync_thumbs(root / "review" / "thumbs", pages_by_number, log=log)
-    cluster_to_name = {int(kk): str(vv) for kk, vv in _load_json(root / "cluster_to_name.json").items()}
 
     # Per-issue candidate scoping (general, keyed on data). In a multi-issue project
     # (saga / Q&A countdown) each beat is anchored — via its page_ref — to ONE issue,
-    # and its panel MUST come from that issue. The matcher scores whatever pool it is
-    # given, so restricting pages_by_number to the beat's own issue keeps a "Punisher /
-    # Thunderbolts #29" beat from grabbing a high-cosine Thanos page. Single-issue
-    # projects have one group → identical to the old whole-pool call (no-op).
+    # and its panel MUST come from that issue. A row's pool is whatever pages it is handed,
+    # so restricting pages_by_number to the beat's own issue keeps a "Punisher /
+    # Thunderbolts #29" beat from being offered a Thanos page. Single-issue
+    # projects have one group → the whole pool (no-op).
     page_to_issue = {
         int(p.get("page_number", 0) or 0): str(p.get("issue_label", "") or "")
         for p in pages_by_number.values()
@@ -943,19 +755,19 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
         """Issue used to SCOPE a row's candidate pool (citation labels keep _issue_of).
 
         Scoping is a Q&A contract, not a general one: each countdown item cites ONE issue
-        and its panel must come from that issue, so a "Thunderbolts #29" beat must not grab
-        a high-cosine Thanos page. A recap/micro tells a SINGLE story that merely spans
+        and its panel must come from that issue, so a "Thunderbolts #29" beat must not be
+        offered a Thanos page. A recap/micro tells a SINGLE story that merely spans
         issues — there is no per-beat citation to honour, and scoping just silos each row
         to whichever issue its page_ref landed in. Seen 2026-07-27 on an arc recap: body
         rows offered 86 panels while the bookends offered 444, so the same story was picked
         from five disjoint pools. Those modes get the whole project pool."""
         return _issue_of(scene) if qa_mode else ""
-    micro = mode == "micro_moment"
+
     intro_scene = next((s for s in scenes if s.get("is_intro")), None)
     outro_scene = next((s for s in scenes if s.get("is_outro")), None)
 
-    # Citation + drawable_moment per scene, resolved ONCE (reused for the match query below and
-    # each row's "source" field). For a Q&A beat this carries the item's drawable_moment.
+    # Citation + drawable_moment per scene, resolved ONCE and reused as each row's "source"
+    # field. For a Q&A beat this carries the item's drawable_moment.
     src_by_id = {id(s): _beat_source(s, comic_ctx, answer_ctx, issue_label=_issue_of(s))
                  for s in story}
     # The bookend scenes cite the FIRST / LAST body beat's source: neither has an issue anchor of
@@ -969,25 +781,8 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
             src_by_id[id(_bs)] = _beat_source(_cite, comic_ctx, answer_ctx,
                                               issue_label=_issue_of(_cite))
 
-    def _query_text(scene) -> str:
-        """Match query. For a Q&A beat, the item's drawable_moment (a PRECISE VISUAL of the exact
-        panel to find) drives the query — per QA_QUERY_MODE it either leads with narration trailing
-        ("blend") or stands alone ("drawable") — so the matcher (text cosine AND the SigLIP
-        text→ART image blend, which both read this query) aims at the depicted moment, not the
-        story text. A recap beat has no drawable_moment → the query is the narration, UNCHANGED."""
-        narr = str(scene.get("text", "") or "")
-        dm = str(src_by_id[id(scene)].get("drawable_moment", "") or "").strip()
-        if not dm or QA_QUERY_MODE == "narration":
-            return narr
-        if QA_QUERY_MODE == "drawable":
-            return dm
-        # "blend": NARRATION leads (repeated QA_NARR_WEIGHT× to weigh the spoken line
-        # more), drawable_moment trails to sharpen — so the pick matches what the
-        # audience hears, not the flashiest panel on the page.
-        return (" ".join([narr] * max(1, QA_NARR_WEIGHT)) + " " + dm).strip()
-
-    # ── Build review ROWS (mode-aware). Each row: scene, unit, beat_key, query, narration_text,
-    #    pre_selected. recap/Q&A rows == story scenes (byte-identical matcher input). ─────────
+    # ── Build review ROWS (mode-aware). Each row: scene, unit, beat_key, narration_text,
+    #    pre_selected. recap/Q&A rows == story scenes. ─────────────────────────────────────
     def _bookend_rows(scene: dict, unit: str, pre_selected: list) -> list[dict]:
         out = []
         for fi, (bk, u, txt) in enumerate(bookend_row_keys(scene, unit)):
@@ -999,7 +794,7 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
                         # needs a separate marker or the UI labels it "s1 · mảnh 1" and the
                         # cold open becomes invisible among the body rows.
                         "bookend": unit,
-                        "query": txt, "narration_text": txt,
+                        "narration_text": txt,
                         "pre_selected": ([{"page": pin[0], "panel": pin[1]}] if pin
                                          else (pre_selected if fi == 0 else []))})
         return out
@@ -1023,23 +818,18 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
                 txt = _vb_text(b)
                 pin = _vb_pin(b)
                 rows.append({"scene": s, "unit": "fragment", "beat_key": f"{sid}:{fi}",
-                             "query": txt, "narration_text": txt,
+                             "narration_text": txt,
                              "pre_selected": [{"page": pin[0], "panel": pin[1]}] if pin else []})
-        elif micro:
-            txt = str(s.get("text", "") or "")
-            rows.append({"scene": s, "unit": "scene", "beat_key": f"{sid}",
-                         "query": txt, "narration_text": txt,
-                         "pre_selected": _scene_pre_selected(s)})
         else:
             rows.append({"scene": s, "unit": "scene", "beat_key": str(sid),
-                         "query": _query_text(s), "narration_text": str(s.get("text", "") or ""),
+                         "narration_text": str(s.get("text", "") or ""),
                          "pre_selected": _scene_pre_selected(s)})
     if outro_scene is not None:
         rows.extend(_bookend_rows(outro_scene, "outro",
                                   _scene_pre_selected(outro_scene)))
 
-    # Group rows by their scene's issue, preserving order; score each group against only that
-    # issue's pages. Rows with an unknown/blank issue fall back to the full pool ("" group).
+    # Group rows by their scene's issue, preserving order; each group lists only that issue's
+    # pages. Rows with an unknown/blank issue fall back to the full pool ("" group).
     groups: dict[str, list] = {}
     for r in rows:
         # INTRO/OUTRO always get the FULL pool (group ""): a bookend panel belongs to no
@@ -1049,55 +839,20 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
         # beats comes back from bookend_row_keys as unit "fragment" (that is what gives each
         # fragment its own text box), so a unit-only test dropped every FRAGMENTED bookend
         # back into per-issue scoping without a word — and in Q&A that pinned the whole cold
-        # open to whichever issue the intro's placeholder page_ref happened to land in (the
-        # same meaningless page_ref the PANEL_FWD_BIAS note below zeroes the prior for).
+        # open to whichever issue the intro's placeholder page_ref happened to land in.
         is_bookend = bool(r.get("bookend")) or r["unit"] in ("intro", "outro")
         groups.setdefault("" if is_bookend else _pool_issue_of(r["scene"]), []).append(r)
 
-    # FIX B: a Q&A drawable_moment query is a visual description, so trust the SigLIP image
-    # signal more than the recap default. Bump _img_index.PANEL_IMG_WEIGHT (read late-bound
-    # by shots._blend_image_content) for the Q&A matcher calls only, then restore. Recap/micro
-    # keep the default weight → the shared matcher stays byte-identical for those renders.
-    from stages import _img_index
-    from stages.stage_5 import shots as _shots_mod
-    _orig_img_w = _img_index.PANEL_IMG_WEIGHT
-    _orig_fwd_bias = _shots_mod.PANEL_FWD_BIAS
-    if qa_mode:
-        _img_index.PANEL_IMG_WEIGHT = QA_PANEL_IMG_WEIGHT
-        # A Q&A beat's page_ref is the FIRST page of the cited issue (drawable_moment has
-        # no page anchor of its own), not the page the moment actually happens on — so the
-        # page-anchored prior in _match_panels only drags rank toward the issue's opener/
-        # montage page. Zero it for Q&A; recap beats (real page_ref) keep the prior.
-        _shots_mod.PANEL_FWD_BIAS = 0.0
-
-    try:
-        for issue_label, group_rows in groups.items():
-            sub_pages = (
-                {pn: p for pn, p in pages_by_number.items()
-                 if page_to_issue.get(int(pn)) == issue_label}
-                if issue_label else pages_by_number
-            )
-            if not PANEL_TEXT_EMBED:
-                # NO-EMBED: Master picks by eye — every panel of the issue, page-sorted, no
-                # vector query / dialog-channel / vision judge (all embed- or SDK-bound).
-                for r in group_rows:
-                    r["_cands"] = _page_sorted_candidates(sub_pages)
-                continue
-            group_out: list = []
-            _match_panels([(r["scene"], r["query"]) for r in group_rows],
-                          sub_pages, cluster_to_name, project=slug,
-                          candidates_out=group_out, candidates_k=match_k)
-            for r, cl in zip(group_rows, group_out):
-                # Candidates-only ranking layer (dialog channel → vision judge); the shared
-                # matcher above is scored per-row independently, so adding the intro/fragment
-                # rows never shifts a body scene's own candidate scores.
-                q = r["query"]
-                cl = _dialog_rescore(cl, q, pages_by_number)
-                cl = _vlm_rank_top(cl, q, root, log=log)
-                r["_cands"] = cl
-    finally:
-        _img_index.PANEL_IMG_WEIGHT = _orig_img_w
-        _shots_mod.PANEL_FWD_BIAS = _orig_fwd_bias
+    # Every row lists EVERY panel of its group's pages, page-sorted: Master picks by eye, so
+    # nothing is ranked (score 0.0) and no embed backend / vision call is involved.
+    for issue_label, group_rows in groups.items():
+        sub_pages = (
+            {pn: p for pn, p in pages_by_number.items()
+             if page_to_issue.get(int(pn)) == issue_label}
+            if issue_label else pages_by_number
+        )
+        for r in group_rows:
+            r["_cands"] = _page_sorted_candidates(sub_pages)
 
     # MONEY SHOT funnel — no-op unless answer_context carries a money_target (recap/micro + non-money
     # Q&A untouched). Keyed on story SCENES: collapse rows to ONE representative per scene so a Q&A
@@ -1122,23 +877,11 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     if MONEY_SHOT_PIN:
         _money_funnel(root, answer_ctx, pages_by_number, page_to_issue, money_groups, cands_by_id, log=log)
 
-    thumbs_dir = root / "review" / "thumbs"
     beats = []
     for r in rows:
         scene = r["scene"]
         cand_list = r.get("_cands") or []
-        # MOMENT-PRESENT check (Q&A only): if the vision judge ran and NO panel in the
-        # cited issue scored above the floor, the moment isn't drawn here → the research
-        # named the wrong issue. Flag it on the beat's source for the review UI + log.
         src = src_by_id[id(scene)]
-        vlm_scores = [c["_vlm"] for c in cand_list if "_vlm" in c]
-        if qa_mode and vlm_scores:
-            best = max(vlm_scores)
-            if best < QA_MOMENT_FLOOR:
-                src["moment_warn"] = (
-                    f"No panel in {src.get('title', 'this issue')} clearly depicts this moment "
-                    f"(best {best:.0f}/10) — the cited issue number may be wrong.")
-                log(f"[review-gate] ⚠ scene {scene.get('scene_id')}: {src['moment_warn']}")
         out_cands = []
         for c in cand_list[:cap]:
             page, pidx, panel, csrc = c["page"], c["panel_idx"], c["panel"], c["src"]
@@ -1151,12 +894,6 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
                 "thumb": thumb, "desc": str(panel.get("description", "") or ""),
                 "dialog": _panel_dialog_str(panel, page_tb),
             }
-            # Vision-judge score (0-10) when _vlm_rank_top ran. This is what actually ORDERS the
-            # top slice (see _vlm_rank_top: key=(vlm, cosine)), so the file/UI MUST surface it —
-            # otherwise a lower-`score` (cosine) tile sitting ABOVE a higher one reads as a sort
-            # bug when it is really VLM winning the tie. Absent on the tail / when SDK is off.
-            if "_vlm" in c:
-                entry["vlm"] = round(float(c["_vlm"]), 1)
             # Money-shot flag (present only when the funnel confirmed this panel — the no-money
             # path leaves the 6-key schema byte-identical).
             if c.get("money"):
@@ -1194,18 +931,15 @@ def main(argv: list[str] | None = None) -> int:
         description="Review gate: build the panel-candidate shortlist / report gate status.")
     ap.add_argument("--project", required=True, help="Project slug under projects/.")
     ap.add_argument("--build-candidates", action="store_true",
-                    help="Score panels and write review/candidates.json + thumbs.")
-    ap.add_argument("--k", type=int, default=0,
-                    help="Candidate CAP per beat. Default 0 = ALL panels. A cap only made "
-                         "sense while cosine ranked the pool; under manual-first every score "
-                         "is 0.0, so a cap degenerates into 'the first k panels of the comic' "
-                         "— the same k for every beat — and any lock outside it loses its tile.")
+                    help="List every panel of each beat's issue, page-sorted, and write "
+                         "review/candidates.json + thumbs.")
     ap.add_argument("--all", action="store_true",
-                    help="Emit ALL panels of each beat's issue, ranked (same as --k 0).")
+                    help="Emit ALL panels of each beat's issue (the default; the UI's Build "
+                         "candidates button passes it).")
     args = ap.parse_args(argv)
 
     if args.build_candidates:
-        path = build_candidates(args.project, k=0 if args.all else args.k)
+        path = build_candidates(args.project)
         print(f"[review-gate] candidates -> {path}")
         return 0
 

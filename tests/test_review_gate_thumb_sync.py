@@ -76,8 +76,6 @@ def test_build_candidates_writes_src_json(tmp_path, monkeypatch):
     """End-to-end: build_candidates leaves review/thumbs/_src.json mapping each page to its
     CURRENT source-image basename. No PIL/real images needed — _write_thumb is monkeypatched,
     same pattern as the existing build_candidates tests in test_review_gate.py."""
-    import stages.stage_5.shots as shots
-
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
     proj = tmp_path / "srcwrite"
     proj.mkdir()
@@ -90,12 +88,6 @@ def test_build_candidates_writes_src_json(tmp_path, monkeypatch):
         "page_number": 10, "source_image": "ch01_page_10.jpg", "panels": [], "text_blocks": [],
     }))
 
-    def fake_match(units, pages, cluster, *, project=None, candidates_out=None, candidates_k=12):
-        for _ in units:
-            candidates_out.append([])
-        return []
-
-    monkeypatch.setattr(shots, "_match_panels", fake_match)
     monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
 
     rg.build_candidates("srcwrite", k=5)

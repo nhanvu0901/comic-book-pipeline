@@ -12,7 +12,6 @@ import json
 import pytest
 
 import stages.review_gate as rg
-import stages.stage_5.shots as shots
 from stages.stage_3.write_script import _defining_line_fallback
 
 
@@ -95,34 +94,28 @@ def _project(tmp_path, slug: str, *, qa: bool, bookends: bool = False) -> None:
         ]}))
 
 
-def _pools_seen(tmp_path, monkeypatch, slug: str, *, qa: bool, bookends: bool = False) -> list[set]:
-    """Page-number sets handed to the matcher — one entry per candidate GROUP."""
+def _pools_seen(tmp_path, monkeypatch, slug: str, *, qa: bool, bookends: bool = False) -> dict:
+    """{beat_key: page numbers its candidate row lists} — read back from the real
+    candidates.json, i.e. the pools Master actually reviews through."""
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
     monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
-    pools: list[set] = []
-
-    def fake_match(units, pages, cluster, *, project=None, candidates_out=None, candidates_k=12):
-        pools.append(set(pages))
-        for _ in units:
-            candidates_out.append([])
-        return []
-
-    monkeypatch.setattr(shots, "_match_panels", fake_match)
     _project(tmp_path, slug, qa=qa, bookends=bookends)
-    rg.build_candidates(slug, k=5)
-    return pools
+    rg.build_candidates(slug)
+    beats = json.loads(
+        (tmp_path / slug / "review" / "candidates.json").read_text())["beats"]
+    return {b["beat_key"]: {c["page"] for c in b["candidates"]} for b in beats}
 
 
 def test_recap_spanning_issues_uses_one_whole_project_pool(tmp_path, monkeypatch):
     pools = _pools_seen(tmp_path, monkeypatch, "arc_recap", qa=False)
-    assert len(pools) == 1, f"a recap must not be split per issue, got {len(pools)} groups"
-    assert pools[0] == {1, 2, 3, 4}, f"recap rows must see every page, got {pools[0]}"
+    assert pools == {"2": {1, 2, 3, 4}, "3": {1, 2, 3, 4}}, (
+        f"a recap must not be split per issue, every row sees every page, got {pools}")
 
 
 def test_qa_still_scopes_each_row_to_its_cited_issue(tmp_path, monkeypatch):
     pools = _pools_seen(tmp_path, monkeypatch, "qa_arc", qa=True)
-    assert len(pools) == 2, f"Q&A keeps one group per cited issue, got {len(pools)}"
-    assert sorted(sorted(p) for p in pools) == [[1, 2], [3, 4]], pools
+    assert pools == {"2": {1, 2}, "3": {3, 4}}, (
+        f"Q&A keeps one pool per cited issue, got {pools}")
 
 
 # ─── fragmented bookends keep the whole-project pool ─────────────────────────
@@ -135,28 +128,9 @@ def test_qa_still_scopes_each_row_to_its_cited_issue(tmp_path, monkeypatch):
 
 def test_fragmented_bookend_keeps_the_whole_project_pool(tmp_path, monkeypatch):
     pools = _pools_seen(tmp_path, monkeypatch, "qa_frag_bookend", qa=True, bookends=True)
-    assert {1, 2, 3, 4} in pools, (
-        f"a fragmented intro/outro must still see every issue's pages, got {pools}")
-    assert sorted(sorted(p) for p in pools) == [[1, 2], [1, 2, 3, 4], [3, 4]], (
-        f"bookends share ONE full pool, body rows stay per-issue, got {pools}")
-
-
-def test_fragmented_bookend_pool_holds_on_the_no_embed_path(tmp_path, monkeypatch):
-    """PANEL_TEXT_EMBED is OFF in production (conftest pins it back ON so the cosine suites
-    keep exercising the matcher), so the branch Master actually reviews through is
-    _page_sorted_candidates — assert the real candidates.json, not the matcher spy."""
-    slug = "qa_frag_noembed"
-    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
-    monkeypatch.setattr(rg, "PANEL_TEXT_EMBED", False)
-    monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
-    _project(tmp_path, slug, qa=True, bookends=True)
-    rg.build_candidates(slug, k=0)
-
-    beats = json.loads(
-        (tmp_path / slug / "review" / "candidates.json").read_text())["beats"]
-    by_key = {b["beat_key"]: b for b in beats}
+    everything = {1, 2, 3, 4}
     for bk in ("1:0", "1:1", "4:0", "4:1"):
-        pages = {c["page"] for c in by_key[bk]["candidates"]}
-        assert pages == {1, 2, 3, 4}, f"bookend fragment {bk} saw only pages {pages}"
-    assert {c["page"] for c in by_key["2"]["candidates"]} == {1, 2}, (
-        "a Q&A body row must stay scoped to its cited issue")
+        assert pools[bk] == everything, (
+            f"bookend fragment {bk} saw only pages {pools[bk]}")
+    assert pools["2"] == {1, 2} and pools["3"] == {3, 4}, (
+        f"Q&A body rows must stay scoped to their cited issue, got {pools}")
