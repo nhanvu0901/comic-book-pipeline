@@ -1,9 +1,15 @@
 """Tests for Stage 2 Gemini prompt generation in micro_moment mode and script anchoring."""
 import json
+import re
 from pathlib import Path
 import pytest
 
 import stages.stage_3.gemini_prompt as gp
+
+
+def _flat(text: str) -> str:
+    """The template hard-wraps its sentences; compare them without the line breaks."""
+    return " ".join(text.split())
 
 
 def test_micro_moment_prompt_generation(tmp_path, monkeypatch):
@@ -66,6 +72,105 @@ def test_micro_prompt_requires_verified_story_frame_without_padding():
     assert "replace repetition" in phase2
     assert "adding a verified story frame does not create a longer word target" in " ".join(phase2.split()).lower()
     assert "no beat quota" in phase1.lower()
+
+
+# generate_gemini_writer_prompt string-replaces these two; an edit that breaks either one
+# silently stops the moment and the scout JSON from reaching Gemini.
+_MICRO_PLACEHOLDERS = (
+    "<<one line: character — what happens — series, volume, #issue (year)>>",
+    "<<paste the object here>>",
+)
+# Phrases the tests above, the importer and the writer's own contract rely on.
+_MICRO_PINNED_PHRASES = (
+    "GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)",
+    "HOOK AND FIRST BEAT",
+    "A question is allowed",
+    "same concrete person-and-event promise",
+    "STORY FRAME if verified",
+    "# PHASE 2 — WRITE THE SHORT",
+    "STORY FRAME CHECK",
+    "replace repetition",
+    "no beat quota",
+    "adding a verified story frame does not create a longer word target",
+)
+
+
+def test_micro_template_keeps_its_placeholders_and_pinned_phrases():
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    for placeholder in _MICRO_PLACEHOLDERS:
+        assert prompt.count(placeholder) == 1, placeholder
+    flat = _flat(prompt)
+    for phrase in _MICRO_PINNED_PHRASES:
+        assert phrase in flat, phrase
+
+
+def test_micro_template_never_ends_on_a_teaser_and_tells_how_it_ends():
+    """A reviewer's reaction to a twist the review withheld ("a shocking twist I never saw
+    coming") was rewritten by the scout as an event and became the script's last line. The
+    template now treats such lines as research questions, asks for what happens next and
+    what set the moment up, and bans any sentence that hints at an outcome it never states."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    phase1, phase2 = prompt.split("# PHASE 2 — WRITE THE SHORT", 1)
+    flat1, flat2 = _flat(phase1), _flat(phase2)
+
+    # PHASE 1: the scout's new fields are leads, teasers are not beats, two new questions.
+    for field in ("scout_check", "aftermath", "context_behind", "detail_citations", "unrevealed"):
+        assert f"`{field}`" in flat1, field
+    assert "## Reactions and teasers are not beats" in phase1
+    assert "never grounds for implying an outcome" in flat1
+    assert "## What happens next, and what set it up" in phase1
+    assert "never manufacture an outcome or a backstory" in flat1
+    for sheet_line in ("B3 | AFTERMATH:", "B4 | CONTEXT:", "AFTERMATH |", "CONTEXT BEHIND |",
+                       "OPEN QUESTIONS |"):
+        assert sheet_line in phase1, sheet_line
+
+    # PHASE 2: carry the story through the aftermath, no teasers, check both in the audit.
+    assert "NO TEASERS" in phase2
+    assert "Nothing listed under OPEN QUESTIONS may appear in any wording" in flat2
+    assert "If the only way to end is a tease, end one sentence earlier" in flat2
+    assert "carry the story through them" in flat2
+    assert "CONTEXT BEHIND: use it only when a sourced fact makes the moment clearer" in flat2
+    assert "in story order: setup, the act, what it leads to, how it ends" in flat2
+    assert "The final sentence states a concrete verified outcome" in flat2
+    assert "Verified AFTERMATH beats are distinct events" in flat2
+    assert "If not, it is a teaser. Delete it, and do not merely list it." in flat2
+
+
+def test_micro_template_no_longer_ends_on_a_withheld_payoff_by_default():
+    """The old landing rule ("strongest verified detail", "do not tease a payoff") let the
+    teaser through as that detail. The detail is now only the fallback when no aftermath
+    is sourced."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    phase2 = _flat(prompt.split("# PHASE 2 — WRITE THE SHORT", 1)[1])
+    assert "Do not tease a payoff that the sheet lacks." not in phase2
+    assert "the verified outcome when AFTERMATH exists" in phase2
+    assert "otherwise the strongest verified result or detail of the moment" in phase2
+    assert "When it has none, spend the words on the main moment instead" in phase2
+
+
+def test_micro_output_block_audits_aftermath_and_open_loops():
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    lines = prompt.split("OUTPUT EXACTLY", 1)[1].splitlines()
+    after_script = lines[lines.index("FINAL SCRIPT") + 1:]
+    labels = []
+    for line in after_script:
+        label = re.match(r"^([A-Z][A-Z ]+[A-Z])\s*(?::|$)", line)
+        if label:
+            labels.append(label.group(1))
+
+    assert labels[0] == "SPOKEN WORD COUNT"          # still the first block after the script
+    order = [labels.index(name) for name in (
+        "STORY FRAME CHECK", "AFTERMATH CHECK", "OPEN LOOPS", "REACTIONS", "UNSUPPORTED FACTS")]
+    assert order == sorted(order)
+    assert any(line.strip() == "OPEN LOOPS: none" for line in after_script)
+
+
+def test_qa_template_ends_every_item_on_what_happened():
+    """The same rule for Q&A: an item paragraph may not end on a hint it never explains."""
+    qa = gp.QA_TEMPLATE_PATH.read_text(encoding="utf-8")
+    paragraph = next(p for p in qa.split("\n\n") if "announces that a twist is coming" in p)
+    assert ("End every item paragraph on what actually happened, never on a hint of "
+            "something the paragraph does not explain.") in _flat(paragraph)
 
 
 def test_micro_moment_script_can_be_approved_before_pages_exist(tmp_path, monkeypatch):

@@ -199,7 +199,9 @@ The Phase 1 mention of 40–60 words per item is a research warning, not a
 spoken-word quota.
 
 Read the result aloud. Remove any sentence that merely repeats the theme,
-announces that a twist is coming, or tells the viewer how to feel. Compare
+announces that a twist is coming, or tells the viewer how to feel. End every
+item paragraph on what actually happened, never on a hint of something the
+paragraph does not explain. Compare
 with PREVIOUS SCRIPTS when provided, and replace a repeated opening,
 observation, or ending. Check every factual clause, including the hook,
 against an item and beat. A non-factual reaction must be labeled REACTION;

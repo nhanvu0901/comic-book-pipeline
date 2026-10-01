@@ -28,6 +28,12 @@ The scout is a lead, not the final verdict. Read its `verdict`, `reason`,
 `verbatim_sentence`, `source_url`, and issue metadata. `INCONCLUSIVE` means
 research the same moment yourself; it is not an automatic `NO INFO`.
 Even `CONFIRMED` claims must be checked against the source before use.
+`scout_check` is what the scout's own verification concluded and why, and
+`reason` explains the gate verdict; a gate that failed to run is evidence of
+nothing. `aftermath` (what happens after the moment and how it ends),
+`context_behind` (what set it up) and their `detail_citations` are leads for
+PHASE 1, not facts. `unrevealed` names outcomes the sources hint at but never
+state: research them, and never narrate them as written there.
 If the scout says `NOT CONFIRMED` or `CONFLICTING`, distinguish missing evidence
 from an actual contradiction; an unresolved contradiction cannot become a script.
 ```
@@ -52,6 +58,20 @@ reactions, or a longer runtime.
 Publisher solicitations establish issue identity or a broad premise, not
 unshown scene choreography or the outcome of a teaser question. Tier 3 may tell
 you where to look; it may never establish a beat.
+
+## Reactions and teasers are not beats
+
+Reviews, solicitations, and previews often describe how an ending feels, or
+announce that something happens without saying what: "a shocking twist I
+never saw coming", "who's at the center of that twist", "too easy a solution",
+"everything changes", "a reveal that will leave readers reeling". Such a line
+proves only that the source is holding something back. It is never a beat,
+never the landing, and never grounds for implying an outcome, even when it
+comes from a Tier 1 or Tier 2 source. Treat it as a research question: look
+for what actually happens in other reviews, recaps, and synopses of the same
+issue, or in the next issue's recap. If a Tier 1 or Tier 2 source states it,
+record that statement as an AFTERMATH beat. If none does, list the teased
+point under OPEN QUESTIONS and keep it out of the script entirely.
 
 ## What a beat is
 
@@ -79,6 +99,23 @@ not a requirement to manufacture a beat. A single strong action can still
 carry a short script. If the scout quote is absent, discard that quote and
 find independent support for the claim. Mark unknown setup or outcome as a
 gap and leave it out.
+
+## What happens next, and what set it up
+
+The viewer should leave knowing how the moment plays out. After the central
+action and its story frame, research two more questions:
+
+1. AFTERMATH: what the act leads to: how the fight or scene ends, what
+   happens to the people involved, and what any announced twist actually is.
+   Stay in the same issue; label a later-issue fact NEXT ISSUE.
+2. CONTEXT BEHIND: what set this up, extending the story frame backwards:
+   why these characters are in this place and at odds, what each wants, and
+   where a key object or power came from, as far as the sources state it.
+   One or two compact facts, not an arc recap.
+
+Record each answer as a beat with its own source, or mark it UNKNOWN. Like
+the story frame, these are research questions, not quotas: never manufacture
+an outcome or a backstory to fill them.
 
 ## Beat rules
 
@@ -128,10 +165,15 @@ SCOUT STATUS: <verdict and reason; accepted claim or discarded lead>
 BEATS
 B1 | <central verified action or mechanism> | Tier <n> | <URL> | "<verbatim quote>"
 B2 | FRAME: <optional concrete active situation, if supported> | Tier <n> | <URL> | "<verbatim quote>"
+B3 | AFTERMATH: <what the act leads to or how the scene ends, if supported> | Tier <n> | <URL> | "<verbatim quote>"
+B4 | CONTEXT: <what set this up, if supported> | Tier <n> | <URL> | "<verbatim quote>"
 ... other context or effects actually supported
 ... only as many as the sources truly support
 
 STORY FRAME | <B ID(s) for the immediate situation and why it leads to this moment, or UNKNOWN; state the gap>
+AFTERMATH | <B ID(s) for what the moment leads to and how it ends, or UNKNOWN; state the gap>
+CONTEXT BEHIND | <B ID(s) for what set it up, or UNKNOWN>
+OPEN QUESTIONS | <outcomes a source hints at but no source states, or NONE>
 
 RELATIONSHIPS
 R1 | <only a relationship the script needs> | Tier <n> | <URL> | "<verbatim quote>"
@@ -155,10 +197,13 @@ written in English even if my latest message or project instructions use
 another language. Return only the blocks requested below.
 
 Write the shortest complete story the sheet supports. Start with the specific
-act or contradiction. Explain its mechanism or effect when sourced. If the
-sources do not report a further consequence, end on the verified odd detail
-itself. The event should make the viewer react; do not manufacture a narrator
-punchline or a resolution.
+act or contradiction. Explain its mechanism or effect when sourced, then tell
+how it plays out: when the sheet has AFTERMATH beats, carry the story through
+them (what the act leads to, how the scene ends, what the twist turns out to
+be) so the viewer finishes knowing the outcome. When it has none, spend the
+words on the main moment instead (its frame, mechanism, and direct effect)
+and end on the verified odd detail itself. The event should make the viewer
+react; do not manufacture a narrator punchline or a resolution.
 
 SOURCE BOUNDARY
 The Phase 1 fact sheet is the entire factual world. Every action, motive,
@@ -189,12 +234,24 @@ Silently identify:
   the moment. It is a concrete piece of this story, not a character biography,
   personality summary, generic lore, or a second description of the trick.
 - MECHANISM OR EFFECT: use it only if sourced. One clear mechanism is enough.
-- LANDING: the strongest verified result or detail; it becomes the last line.
+- CONTEXT BEHIND: use it only when a sourced fact makes the moment clearer; one clause.
+- LANDING: the verified outcome when AFTERMATH exists (how it ends, what the
+  twist is); otherwise the strongest verified result or detail of the moment.
+  It becomes the last line.
 
 Use the pattern that fits the sheet. A rich sheet can support a setup, turn,
 and consequence. A thin sheet may support one odd action plus the reason it
 works. If the effect is already in the hook, clarify the verified mechanism.
-Do not tease a payoff that the sheet lacks.
+
+NO TEASERS
+Never write a sentence that hints at, promises, or advertises an outcome
+without stating it: no "ends with a shocking twist", "nothing will ever be the
+same", "but that's not the end", "what happens next changes everything", "the
+answer is darker than you think", and no rhetorical question the script does
+not answer. Nothing listed under OPEN QUESTIONS may appear in any wording. A
+hook may hold the result back, but the script must then deliver it. Every
+sentence states an event, its context, or its consequence. If the only way to
+end is a tease, end one sentence earlier, on the strongest verified detail.
 
 HOOK AND FIRST BEAT
 Draft three openings from different angles and print them in HOOK OPTIONS:
@@ -227,9 +284,10 @@ Open on the chosen hook. When the sheet has a useful STORY FRAME, give it one
 short sentence or clause before expanding the tactic or mechanism. This should
 answer where the characters are in the conflict, what they are trying to do,
 or why they have crossed paths. Choose the part that actually explains this
-moment; do not recite the whole arc. Then move through sourced facts in a
-clear order. Keep the current short length by using the frame to **replace repetition**
-of the hook, attitude, or mechanism, not by adding filler words.
+moment; do not recite the whole arc. Then move through sourced facts in story
+order: setup, the act, what it leads to, how it ends. Keep the current short
+length by using the frame to **replace repetition** of the hook, attitude, or
+mechanism, not by adding filler words.
 Each sentence must add a new action, explain the mechanism, or show a sourced
 effect. A one-beat story can be two or three spoken sentences.
 If it does none of these, cut it. Use "but", "because", and "so" when
@@ -243,9 +301,11 @@ panels, poses, colors, camera moves, issue numbers, or the narrator's
 research process. Use spoken English with ordinary verbs, contractions,
 and a mix of short and medium sentences.
 
-The final sentence is the strongest verified effect or concrete detail. It
-does not have to be a later event. Stop there. No moral, call to action, loop
-back to a hook word, or generic "and that's why" line. Let sad scenes remain sad.
+The final sentence states a concrete verified outcome: how it ends or what the
+twist turns out to be when the sheet has AFTERMATH, otherwise the strongest
+verified effect or detail of the moment. It does not have to be a later event.
+Stop there. No moral, call to action, teaser, loop back to a hook word, or
+generic "and that's why" line. Let sad scenes remain sad.
 Default to zero narrator jokes. If one brief, dry observation arises
 from an exact verified detail, put it after that detail and do not
 explain it. Never insert slang just to sound young.
@@ -254,7 +314,9 @@ RUNTIME AND AUDIT
 Draft the shortest complete version first. Then count it. A complete simple
 moment often fits in 35–90 spoken words; adding a verified story frame does
 not create a longer word target. Go above that only when distinct sourced
-events need the room, and stop by 145 words. There is no minimum word count.
+events need the room, and stop by 145 words. Verified AFTERMATH beats are
+distinct events: telling how it ends is the best use of that room, ahead of
+more description. There is no minimum word count.
 Do not return `NO INFO` because the script is short. Never stretch by splitting one
 beat into invented steps, repeating an action, restating the hook, or adding
 unsourced adjectives, timing, or character labels. Read
@@ -267,8 +329,10 @@ sentence. For every sentence, check the beat wording word by word: does
 the source establish ALL modifiers and causal links as well as the main
 verb? If any clause does not, delete it. Do not merely mark a weak trace
 "UNSUPPORTED FACTS: none." Label a fact-free observation REACTION. If
-it implies an unsourced event or emotion, remove it. Count the spoken
-words in FINAL SCRIPT only.
+it implies an unsourced event or emotion, remove it. Check the last sentence
+and every sentence that mentions a twist, reveal, ending, or surprise: does it
+say WHAT happens? If not, it is a teaser. Delete it, and do not merely list it.
+Count the spoken words in FINAL SCRIPT only.
 
 OUTPUT EXACTLY, IN ENGLISH, WITHOUT A PREFACE
 
@@ -291,6 +355,8 @@ S2 | ...
 <one row for every spoken sentence>
 OPENING CHAIN: <hook promise> -> <new fact in first body sentence, B/R ID> -> <next verified movement or END if the sheet is thin>
 STORY FRAME CHECK: <frame beat ID and the spoken sentence that uses it, or UNKNOWN; confirm no generic trait was substituted>
+AFTERMATH CHECK: <AFTERMATH beat IDs and the sentence that tells them, or UNKNOWN — main moment expanded instead>
+OPEN LOOPS: none
 REACTIONS: <list or none>
 UNSUPPORTED FACTS: none
 
