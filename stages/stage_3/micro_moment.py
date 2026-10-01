@@ -81,22 +81,14 @@ _MICRO_ENDING_STYLES = {"thesis", "hardcut", "question"}
 _MICRO_WRITE_MAX_RETRIES = 3
 # Issues that mean the draft is structurally broken (Stage 5 can't render it right) —
 # never ship these even after retries exhaust; everything else (hook length, you-quota,
-# the soft ground-check "not drawn" hint) is a lint that's fine to ship with a log line.
+# quote fidelity, ...) is a lint that's fine to ship with a log line.
 _MICRO_HARD_ISSUE_MARKERS = ("no visual_beats", "do not reconstruct", "expected ")
-# GROUND-CHECK floor (2026-07-16): after the TEXT is locked we cosine-match every visual-beat
-# fragment against the panels on its OWN pages (the same richer panel embed Stage 5 matches on).
-# A body scene whose best panel is below this floor draws NOTHING on its pages → a SOFT retry
-# hint ("retell using what's actually there"), the safety net for the new story-first writer
-# (which reads plot prose that may mention off-panel events). ponytail: single tuning knob; the
-# live-observed on-page cosine sits well above this — raise if false "not drawn" hints appear.
-_MICRO_GROUND_FLOOR = float(os.getenv("MICRO_GROUND_COS_FLOOR", "0.34"))
 
 
 def _content_tokens(text: str) -> set[str]:
     """Lower-cased content words (len>=3, minus hook stopwords) for the deterministic
-    lexical matcher below. Purely offline — window selection must NOT depend on the
-    embedding server being up (semantic_sim returns 0.0 when it is down, which would
-    make the pick non-deterministic and untestable)."""
+    lexical matcher below. Purely offline — window selection depends on no model and no
+    network, so the pick is the same on every run and easy to test."""
     return {w for w in re.findall(r"[a-z']{3,}", (text or "").lower())
             if w not in _HOOK_STOPWORDS}
 
@@ -196,8 +188,8 @@ def _select_moment_window(
 
     Every tier's result then passes through `_with_setup` (SETUP-REACH, 2026-07-20):
     it prepends far-back setup beats about the title subject that the positional lead
-    cap left out. This is the offline/no-embed/LLM-fail FALLBACK path; the LLM
-    segmenter (`_segment_moment_window`) is the primary context-aware picker."""
+    cap left out. This is the default window picker, and the FALLBACK when the opt-in LLM
+    segmenter (`_segment_moment_window`, FOCUS_FILTER_LLM=1) is off or fails."""
     if not beats:
         return []
     peak = _peak_index(beats, target_moment)
@@ -228,8 +220,8 @@ def _select_moment_window(
         through the full outline, prepending each contiguous beat that names the same
         subject as the TITLE, stopping at the first that doesn't (the subplot boundary).
         No-op when the title carries no tokens (window tests pass title="") or the window
-        already starts at beat 0. This is the FALLBACK's context reach; the LLM segmenter
-        (`_segment_moment_window`) is the primary, smarter context picker.
+        already starts at beat 0. This is the heuristic's context reach; the opt-in LLM
+        segmenter (`_segment_moment_window`) is the smarter context picker.
         ponytail: bounded only by the subplot boundary — on an all-on-focus solo book it
         can pull the whole first act; fine, the word band caps output length."""
         if not window or not title_tokens:
@@ -307,9 +299,10 @@ def _select_moment_window(
 
 
 def _focus_filter_llm_on() -> bool:
-    """FOCUS_FILTER_LLM knob (default ON). =0/false/no → skip the LLM segmenter and use
-    the deterministic heuristic (`_select_moment_window`) exactly as before."""
-    return os.getenv("FOCUS_FILTER_LLM", "1").strip().lower() in ("1", "true", "yes", "on")
+    """FOCUS_FILTER_LLM knob (default OFF). =1/true/yes/on → pick the moment window with the
+    LLM segmenter (`_segment_moment_window`). Otherwise the deterministic heuristic
+    (`_select_moment_window`) picks it, with no extra LLM call."""
+    return os.getenv("FOCUS_FILTER_LLM", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 _FOCUS_SEGMENT_SYSTEM = """You are a STORY SEGMENTER for a 40-90 second micro-story video. \
@@ -367,12 +360,12 @@ def _segment_moment_window(
     progress: Callable[[str], None] | None = None,
     log: Callable[[str], None] | None = None,
 ) -> list[Beat] | None:
-    """LLM-SEGMENT primary path (context-aware, 2026-07-20). Reads the WHOLE outline and
-    asks the model to split beats into focus / context / payoff / drop by id, then returns
-    (focus ∪ context ∪ payoff) MINUS drop, in the ORIGINAL causal order — keeping the far
-    setup a positional window misses so the narration tells the whole story, not just the
-    payoff. Returns None (→ caller falls back to the deterministic `_select_moment_window`
-    heuristic) when: the knob is off, STAGE3_NO_EMBED is set (deterministic offline mode),
+    """LLM-SEGMENT path (context-aware, 2026-07-20; opt-in with FOCUS_FILTER_LLM=1). Reads
+    the WHOLE outline and asks the model to split beats into focus / context / payoff /
+    drop by id, then returns (focus ∪ context ∪ payoff) MINUS drop, in the ORIGINAL causal
+    order — keeping the far setup a positional window misses so the narration tells the
+    whole story, not just the payoff. Returns None (→ caller falls back to the
+    deterministic `_select_moment_window` heuristic) when: the knob is off (the default),
     the outline is empty, the LLM call fails/raises, the JSON is unparseable, or the model
     names no valid focus beat. NEVER raises — it can only replace the heuristic with a
     better window or defer to it.
@@ -382,10 +375,6 @@ def _segment_moment_window(
     here would trip the writer-shaped `call_with_chain` fixtures the micro tests patch in."""
     log = log or (lambda _m: None)
     if not _focus_filter_llm_on():
-        return None
-    from config import stage3_no_embed
-    if stage3_no_embed():
-        log("[micro_moment] focus-segment skipped (--no-embed): deterministic heuristic fallback")
         return None
     if not beats:
         return None
@@ -966,123 +955,6 @@ def _beat_text(b) -> str:
     return str(b.get("text", "")).strip() if isinstance(b, dict) else str(b).strip()
 
 
-def _window_panel_candidates(window: list[Beat], story_pages: list[dict] | None) \
-        -> list[tuple[int, int, str]]:
-    """(page, panel_idx, embed_text) for EVERY panel on the pages this window covers. panel_idx
-    is the reading-order enumerate index — identical to Stage 5's _panel_pool key, so a pin
-    binds directly there. embed_text = _panel_index.panel_embed_text (the SAME text Stage 2
-    embedded and Stage 5 matches on), so a Stage-3 pin agrees with Stage 5's own matcher. []
-    when no pages/panels."""
-    if not story_pages:
-        return []
-    from .._panel_index import panel_embed_text
-    pages_by_no = {p.get("page_number"): p for p in story_pages}
-    wanted = sorted({pg for b in window for pg in (b.page_refs or [])})
-    out: list[tuple[int, int, str]] = []
-    for pn in wanted:
-        page = pages_by_no.get(pn)
-        if not page:
-            continue
-        page_tb = page.get("text_blocks")
-        for idx, panel in enumerate(page.get("panels") or []):
-            out.append((int(pn), idx, panel_embed_text(panel, page_tb)))
-    return out
-
-
-def _pin_beats_by_vector(
-    scenes: list[dict],
-    window: list[Beat],
-    story_pages: list[dict] | None,
-    *,
-    floor: float,
-    log: Callable[[str], None],
-) -> list[float]:
-    """PIN PHASE (story-first, 2026-07-16): after the writer's TEXT is locked, assign each
-    visual-beat fragment the window panel whose embedding is closest (cosine) to the fragment,
-    writing {"text","page","panel"} on the beat. VECTORS, not a second LLM call and not the
-    writer: the pin is decided by the SAME cosine-on-richer-embed basis Stage 5's matcher uses
-    (the project's validated best matcher), so the writer never has to read panel PROSE to pin —
-    that is exactly what caused the VLM tilt. A fragment whose best panel is below `floor`
-    (nothing on those pages draws it) is left UNPINNED (page/panel=None) so Stage 5's fuller
-    matcher retries it. Returns per-scene best cosine (drives the ground-check). Graceful []
-    when there are no panels or the embedding backend is down — every beat then flows through
-    the Stage 5 matcher, byte-identical to the recap/Q&A path.
-
-    STAGE3_NO_EMBED=1 (--no-embed, narration-only test mode) short-circuits this to the
-    same graceful [] path — pins stay empty, no network embed call is made, Stage 5's
-    matcher fills in panels at render time (valid existing fallback)."""
-    from config import stage3_no_embed
-    if stage3_no_embed():
-        log("[stage3] embed skipped (--no-embed): vector pin (pins left empty, "
-            "Stage 5 matcher will assign panels)")
-        return []
-    cands = _window_panel_candidates(window, story_pages)
-    if not cands:
-        return []
-    from .. import _embedding
-    if _embedding.backend_name() == "none":
-        return []
-    import numpy as np
-
-    cand_vecs = _embedding.embed_batch([c[2] for c in cands])
-    frag_texts: list[str] = []
-    frag_locs: list[tuple[int, int]] = []
-    for si, s in enumerate(scenes):
-        for bi, b in enumerate(s.get("visual_beats") or []):
-            if _beat_text(b):
-                frag_texts.append(_beat_text(b))
-                frag_locs.append((si, bi))
-    if not frag_texts:
-        return []
-    frag_vecs = _embedding.embed_batch(frag_texts)
-
-    scene_best = [0.0] * len(scenes)
-    pinned = 0
-    for (si, bi), fv in zip(frag_locs, frag_vecs):
-        vb = scenes[si]["visual_beats"]
-        b = vb[bi] if isinstance(vb[bi], dict) else {"text": _beat_text(vb[bi])}
-        vb[bi] = b
-        best_score, best_key = -1.0, None
-        if fv is not None:
-            for (pg, idx, _txt), cv in zip(cands, cand_vecs):
-                if cv is None:
-                    continue
-                sc = float(np.dot(fv, cv))
-                if sc > best_score:
-                    best_score, best_key = sc, (pg, idx)
-        if best_key is not None and best_score >= floor:
-            b["page"], b["panel"] = best_key
-            pinned += 1
-        else:
-            b["page"] = b["panel"] = None
-        scene_best[si] = max(scene_best[si], best_score)
-    log(f"[micro_moment] vector-pin: {pinned}/{len(frag_locs)} fragment(s) pinned to a window "
-        f"panel (cos>={floor}); the rest fall back to the Stage 5 matcher")
-    return scene_best
-
-
-def _ground_issues(scenes: list[dict], window: list[Beat], scene_best: list[float],
-                   floor: float) -> list[str]:
-    """GROUND-CHECK: a body scene whose best fragment cosine is below `floor` describes
-    something no panel on its OWN pages draws — a SOFT retry hint telling the writer to retell
-    it from what is actually on those pages. Skips the LAST scene (the thesis/hardcut/question
-    landing is allowed to be a thematic line with no dedicated panel). No scores → no issues
-    (embedding unavailable → don't block)."""
-    if not scene_best:
-        return []
-    issues: list[str] = []
-    for i, _s in enumerate(scenes):
-        if i >= len(scene_best) or i == len(scenes) - 1:
-            continue
-        if scene_best[i] < floor:
-            beat = window[i] if i < len(window) else None
-            pages = ", ".join(map(str, beat.page_refs)) if (beat and beat.page_refs) else "?"
-            issues.append(
-                f"scene {i + 1} describes something not drawn on page(s) {pages} — retell that "
-                f"scene using only what actually happens on those pages (best panel match was weak)")
-    return issues
-
-
 def _story_sources_block(comic_context: dict) -> str:
     """The STORY-language sources the writer draws its wording from (2026-07-16 story-first):
     the theme (story_meaning — THEME ONLY, for hook/landing, never a scene) and the key story
@@ -1220,8 +1092,8 @@ def _validate_micro_scenes(
     visual_beats, non-verbatim beats, wrong scene count) once retries are
     exhausted — everything else here (hook length, you-quota, quote-fidelity,
     quote-speaker, ambiguous-subject, ...) stays a soft, ship-anyway lint. Panel
-    PINS are assigned separately by _pin_beats_by_vector AFTER the text is
-    locked, so this validator no longer sees or checks them.
+    choice is not part of this check: the writer works from the story and picks no
+    panels.
 
     `focus_tokens` (from `_focus_tokens(title, target_moment)`, same set used to
     filter the beat window) is optional and defaults to None = skip: when given,
@@ -1325,8 +1197,7 @@ def write_micro_moment(
     """Orchestrate the micro_moment writer: read target_moment -> outline the full
     issue (reuse recap's grounded beat pipeline) -> select the moment mini-arc
     window -> LLM writes hook + one scene per windowed beat from STORY sources only
-    (no panel prose) -> vector-pin each fragment to its best window panel + ground-
-    check (retry a scene that draws nothing on its pages) -> beat-anchor the body ->
+    (no panel prose), retried while the draft has lint issues -> beat-anchor the body ->
     prepend the hook as the is_intro scene -> banner."""
     log = progress or (lambda _msg: None)
     dump = debug_dump if debug_dump is not None else {}
@@ -1351,9 +1222,10 @@ def write_micro_moment(
     beats_all, beats_model = outline_beats(
         comic_context, story_pages, mode, hook_hint=hook_hint, model=model,
         progress=progress, debug_dump=dump, story_map=None, direction=direction)
-    # Context-aware LLM segmenter first (keeps far setup so the whole story lands);
-    # falls back to the deterministic positional+token heuristic on any failure /
-    # knob off / --no-embed (see _segment_moment_window).
+    # Opt-in (FOCUS_FILTER_LLM=1) context-aware LLM segmenter first (keeps far setup so
+    # the whole story lands); the deterministic positional+token heuristic picks the
+    # window when the knob is off (the default) or the segmenter fails (see
+    # _segment_moment_window).
     window = _segment_moment_window(beats_all, target_moment, title=title,
                                     model=model, progress=progress, log=log)
     if window is None:
@@ -1374,17 +1246,11 @@ def write_micro_moment(
     dialog_lines = [t for _, _, t in dialog_entries]
 
     def _score(p: dict) -> list[str]:
-        """Two-phase per draft: PIN each fragment to its best window panel (vector), then
-        validate the TEXT + run the ground-check on the pin cosines. Panels are pinned in
-        place on the accepted draft, so no separate pin pass is needed after the loop."""
-        scns = p.get("scenes") or []
-        scene_best = _pin_beats_by_vector(scns, window, story_pages,
-                                          floor=_MICRO_GROUND_FLOOR, log=log)
-        iss = _validate_micro_scenes(p.get("hook", ""), scns, window, p.get("ending_style"),
-                                     focus_tokens=focus_tokens, dialog_lines=dialog_lines,
-                                     dialog_entries=dialog_entries)
-        iss += _ground_issues(scns, window, scene_best, _MICRO_GROUND_FLOOR)
-        return iss
+        """Lint issues of one draft (see `_validate_micro_scenes`)."""
+        return _validate_micro_scenes(p.get("hook", ""), p.get("scenes") or [], window,
+                                      p.get("ending_style"), focus_tokens=focus_tokens,
+                                      dialog_lines=dialog_lines,
+                                      dialog_entries=dialog_entries)
 
     parsed, mdl = _call_micro_writer(window, comic_context, target_moment, model=model,
                                      progress=progress, debug_dump=dump, story_pages=story_pages,

@@ -72,7 +72,6 @@ def test_direction_block_prepended_in_outline_prompt(monkeypatch):
 
     monkeypatch.setattr(ws, "call_with_chain", fake_call_with_chain)
     monkeypatch.setattr(ws, "_validate_outline", lambda beats, max_gap=5: [])
-    monkeypatch.setattr(ws, "_ground_beat_panels", lambda beats, pages, progress=None: beats)
 
     ctx = {"title": "T", "plot_summary": "A hero fights a villain."}
     pages = [{"page_number": 1, "panels": []}]

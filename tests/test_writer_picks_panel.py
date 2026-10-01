@@ -163,8 +163,8 @@ def test_writer_dict_beats_survive_to_narration(monkeypatch):
 def test_write_prompt_has_no_panel_prose(monkeypatch):
     """2026-07-16 story-first rewrite: the writer no longer picks panels, so its prompt must
     contain NEITHER a PANEL MENU NOR any VLM panel description — that panel prose is exactly
-    what made the writer describe the ART instead of telling the story. Pins are assigned
-    afterwards by _pin_beats_by_vector, invisible to the writer."""
+    what made the writer describe the ART instead of telling the story. Panels are picked
+    afterwards (Review Beats / Stage 5), invisible to the writer."""
     captured = {}
 
     def _capture(*, system, user, models=None, max_tokens=1600, progress=None,
