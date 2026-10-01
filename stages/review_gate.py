@@ -52,14 +52,11 @@ from config import PROJECTS_ROOT
 from stages._arc import qa_item_chapters
 from stages.user_errors import MissingInputError
 
-# Default-ON boolean env, same idiom as shots.PANEL_ANCHOR_BIND.
+# Default-ON boolean env: REVIEW_GATE=0/false/no lets Stage 4/5 run without Master's approval.
 REVIEW_GATE = os.getenv("REVIEW_GATE", "1").strip().lower() not in ("0", "false", "no", "")
 
 # Provenance label stamped on every lock — panels come from batcave-downloaded pages.
 _LOCK_SOURCE = "batcave"
-
-# Transitional: stages/stage_5/shots.py and stages/sentence_match.py still import this knob.
-QA_PANEL_IMG_WEIGHT = float(os.getenv("QA_PANEL_IMG_WEIGHT", "0.35"))
 
 # ─── MONEY SHOT funnel (Q&A only; gated on answer_context.money_target) ──────────
 # The cold-open / frame-1 panel is the single biggest virality lever (VIRAL_2K_TO_10K_PLAN

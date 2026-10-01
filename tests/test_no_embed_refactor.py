@@ -88,22 +88,6 @@ def test_match_panels_empty_inputs():
     assert shots._match_panels([unit, unit], {}, {}) == [(None, ""), (None, "")]   # no panels at all
 
 
-def test_match_panels_candidates_out_lists_all_panels_page_sorted():
-    pages = {11: _story_page(11, "p11.png", [_panel(1, 900), _panel(0, 0)]),
-             10: _story_page(10, "p10.png", [_panel(0, 0)])}
-    units = [({"scene_id": 1, "text": "x", "page_ref": 11, "panel_ref": 0}, "x"),
-             ({"scene_id": 2, "text": "y", "page_ref": 10, "panel_ref": 0}, "y")]
-    cands: list = []
-    assert shots._match_panels(units, pages, {}, candidates_out=cands) == []
-    assert len(cands) == 2                                           # one ranked list per unit
-    for row in cands:
-        assert [(c["page"], c["panel_idx"]) for c in row] == [(10, 0), (11, 0), (11, 1)]
-        assert all(c["score"] == 0.0 for c in row)
-    capped: list = []
-    shots._match_panels(units[:1], pages, {}, candidates_out=capped, candidates_k=2)
-    assert [(c["page"], c["panel_idx"]) for c in capped[0]] == [(10, 0), (11, 0)]
-
-
 def test_build_shots_headless_no_embed_no_crash(monkeypatch):
     """build_shots (recap per-chunk) runs from the pages alone — no panel index, no backend."""
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)

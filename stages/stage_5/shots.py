@@ -275,9 +275,6 @@ LOOP_TAIL_SECONDS = float(os.getenv("LOOP_TAIL_SECONDS", "1.0"))
 PANEL_FIT_MODE = os.getenv("PANEL_FIT_MODE", "contain").strip().lower()
 FILL_MAX_AREA_LOSS = float(os.getenv("FILL_MAX_AREA_LOSS", "0.60"))
 
-# Not read by the matcher any more. Kept because stages/review_gate.py still saves, zeroes (Q&A)
-# and restores it around its candidate build, which needs the attribute to exist.
-PANEL_FWD_BIAS = float(os.getenv("PANEL_FWD_BIAS", "1.0"))
 # ONE_SHOT_PER_LINE: collapse each narration SENTENCE (scene) into ONE held shot (one panel, one
 # continuous motion) instead of one shot per visual-beat clause. Fixes "panels change faster than
 # the voice" — the cut lands only when the line's speech ends. Uses the scene's FIRST pinned panel
@@ -1917,10 +1914,9 @@ def _build_shots_per_chunk_locked(
         if (frag_pin or frag_custom) and all(
                 fi in frag_pin or fi in frag_custom for _t, _s, _d, fi in parts):
             # EVERY fragment is individually pinned — Master's per-fragment picks are final.
-            # Skip the matcher AND the no-reuse guard below entirely: those are
-            # heuristics for a FREE assignment and must never override an explicit hand pick
-            # (Master pinning the same panel twice in a row is deliberate, not a duplicate to
-            # dedupe away).
+            # Skip the matcher entirely: it is for a FREE assignment and must never override
+            # an explicit hand pick (Master pinning the same panel twice in a row is
+            # deliberate, not a duplicate to dedupe away).
             for text, _st, dur, fi in parts:
                 if fi in frag_pin:
                     _key, panel, src, _tb = cand_by_key[frag_pin[fi]]
@@ -1944,8 +1940,8 @@ def _build_shots_per_chunk_locked(
         spans = [(p[1], p[1] + p[2]) for p in parts]
         if frag_pin:
             # PARTIAL pin: some fragments are individually pinned, the rest are not. Pin those
-            # directly; run the matcher (+ no-reuse guard) only on the UNPINNED
-            # fragments, over the locked panels NOT already spent on a pin.
+            # directly; run the matcher only on the UNPINNED fragments, over the locked panels
+            # NOT already spent on a pin.
             pinned_idx = {i: frag_pin[fi] for i, (_t, _s, _d, fi) in enumerate(parts)
                           if fi in frag_pin}
             free_idx = [i for i in range(len(parts)) if i not in pinned_idx]
@@ -1959,39 +1955,12 @@ def _build_shots_per_chunk_locked(
                 picks[i] = {"page": pg, "panel": pn}
             for i, p in zip(free_idx, sub_picks):
                 picks[i] = p
-            locked_keys = [c[0] for c in sub_cands]
-            used_keys: set = set(used_by_pins)
-            for i in free_idx:
-                p = picks[i]
-                key = (p.get("page"), p.get("panel"))
-                if key in used_keys:
-                    for lk in locked_keys:
-                        if lk not in used_keys:
-                            p["page"], p["panel"] = int(lk[0]), int(lk[1])
-                            key = lk
-                            break
-                used_keys.add(key)
             print(f"[stage5] qa-locked: scene {sid} partial pin "
                   f"({len(pinned_idx)}/{len(parts)} fragments)")
         else:
+            # Round-robin over the beat's locked panels: the first len(cands) shots each take a
+            # distinct panel, and a panel only repeats once the shots outnumber the panels.
             picks = _match_sentences(texts, spans, cands)
-            # No-reuse across THIS beat: a NON-adjacent repeat (A-B-A) slips past
-            # _merge_locked_segments (adjacent-only) → the same panel renders twice = duplicate
-            # scene. Reassign any duplicate pick to a locked panel not yet used in this beat
-            # (K ≤ #locked, so an unused one always exists) → Master's N locked panels yield up
-            # to N DISTINCT shots. The round-robin pick is already distinct while the beat has no
-            # more groups than locked panels, so this is a backstop.
-            locked_keys = [c[0] for c in cands]
-            used_keys = set()
-            for p in picks:
-                key = (p.get("page"), p.get("panel"))
-                if key in used_keys:
-                    for lk in locked_keys:
-                        if lk not in used_keys:
-                            p["page"], p["panel"] = int(lk[0]), int(lk[1])
-                            key = lk
-                            break
-                used_keys.add(key)
 
         for (text, _st, dur, _fi), p in zip(parts, picks):
             pair = entry_by_key.get((p["page"], p["panel"])) if p["page"] is not None else None
@@ -2828,15 +2797,12 @@ def _panel_pool(pages_by_number: dict) -> list:
 
 
 def _match_panels(units: list, pages_by_number: dict, cluster_to_name: dict,
-                  *, project: str | None = None,
-                  candidates_out: list | None = None, candidates_k: int = 12,
-                  narration: dict | None = None) -> list:
+                  *, project: str | None = None, narration: dict | None = None) -> list:
     """Deterministic panel assignment: Master picks panels by hand in the review UI, so an
     UNLOCKED unit takes no content match. Each STORY unit → its scene's (page_ref, panel_ref)
     when that panel is in the pool, else the FIRST panel of page_ref, else the first panel of the
     NEAREST page. Intro → the cold-open panel, outro → the panel the video opened on (the loop
-    close); both are geometric. candidates_out mode → ALL panels page-sorted (score 0.0) for every
-    unit, then returns []. Never raises on an empty/absent panel index.
+    close); both are geometric. Never raises on an empty/absent panel index.
     units=[(scene,text)] in audio order → [(panel,src)]."""
     pool = _panel_pool(pages_by_number)
     n = len(units)
@@ -2853,16 +2819,6 @@ def _match_panels(units: list, pages_by_number: dict, cluster_to_name: dict,
     for pg in page_js:
         page_js[pg].sort(key=lambda jj: int(pool[jj][0][1]))
     sorted_pages = sorted(page_js)
-
-    if candidates_out is not None:
-        rows = sorted(range(len(pool)),
-                      key=lambda jj: (int(pool[jj][0][0]), int(pool[jj][0][1])))[:max(1, candidates_k)]
-        for _ in units:
-            candidates_out.append([
-                {"page": int(pool[j][0][0]), "panel_idx": int(pool[j][0][1]),
-                 "score": 0.0, "panel": pool[j][1], "src": pool[j][2]}
-                for j in rows])
-        return []
 
     def _pick_j(pref: int, pnref: int):
         if pref > 0 and pnref >= 0 and (pref, pnref) in key_to_j:

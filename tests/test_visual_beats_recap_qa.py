@@ -160,7 +160,6 @@ def test_qa_locked_splits_by_fragment_from_lock_pool(tmp_path, monkeypatch):
         "1:1": {"panels": [{"page": 5, "panel": 1}], "source": "batcave"}}}))
 
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)
-    monkeypatch.setattr(shots, "PANEL_RERANK", False, raising=False)   # never call a vision judge
     _no_network(monkeypatch)
 
     pages = {5: _pg([_panel_at(0, "punisher vomit"), _panel_at(900, "deadpool punch")], "p5.png")}
