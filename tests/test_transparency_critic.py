@@ -67,7 +67,7 @@ def test_overstuffed_sentence_is_flagged_but_light(monkeypatch):
 
 
 def test_offline_llm_degrades_softly(monkeypatch):
-    # call_with_chain raises (SDK unavailable / offline / no-embed) → skip, never crash.
+    # call_with_chain raises (SDK unavailable / offline) → skip, never crash.
     def boom(*a, **k):
         raise RuntimeError("[transparency] all models exhausted")
     monkeypatch.setattr(ws, "call_with_chain", boom)

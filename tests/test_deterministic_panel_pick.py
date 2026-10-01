@@ -1,5 +1,5 @@
-"""Panel selection without any embedding backend (Master 2026-07-24): the render + review-candidate
-build never score panels against the narration — Master hand-picks panels, so:
+"""Panel selection is deterministic (Master 2026-07-24): the render + review-candidate build never
+score panels against the narration — Master hand-picks panels, so:
 
   (a) review_gate.build_candidates lists ALL panels of a beat's issue PAGE-SORTED (no ranking),
   (b) shots._match_panels assigns UNLOCKED scenes deterministically (the scene's anchor panel, else
@@ -33,7 +33,7 @@ def _panel(idx, y, desc="", dialog=None):
 
 # ── (a) build_candidates page-sort, no ranking ────────────────────────────────
 
-def test_build_candidates_page_sorted_no_embed(tmp_path, monkeypatch):
+def test_build_candidates_page_sorted(tmp_path, monkeypatch):
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
     # PROVE the panel matcher is never invoked by the candidate build.
     monkeypatch.setattr(shots, "_match_panels",
@@ -57,7 +57,7 @@ def test_build_candidates_page_sorted_no_embed(tmp_path, monkeypatch):
 
 # ── (b) shots._match_panels is deterministic: anchor → page → nearest page ────
 
-def test_match_panels_deterministic_no_embed():
+def test_match_panels_deterministic():
     pages = {10: _story_page(10, "p10.png", [_panel(0, 0), _panel(1, 900)]),
              11: _story_page(11, "p11.png", [_panel(0, 0), _panel(1, 900)])}
     units = [
@@ -88,7 +88,7 @@ def test_match_panels_empty_inputs():
     assert shots._match_panels([unit, unit], {}, {}) == [(None, ""), (None, "")]   # no panels at all
 
 
-def test_build_shots_headless_no_embed_no_crash(monkeypatch):
+def test_build_shots_headless_no_crash(monkeypatch):
     """build_shots (recap per-chunk) runs from the pages alone — no panel index, no backend."""
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)
     narration = {"scenes": [{"scene_id": 1, "text": "hello world", "page_ref": 10, "panel_ref": 0}]}

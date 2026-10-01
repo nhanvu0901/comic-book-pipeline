@@ -1,4 +1,4 @@
-"""MOTION CORE overhaul (2026-07-04) — pure-logic checks, no ffmpeg / no embeddings.
+"""MOTION CORE overhaul (2026-07-04) — pure-logic checks, no ffmpeg.
 
 Covers the pacing + amplitude spec:
   • sub-shot SPLIT of a long hold into competitor-cadence clips (durations sum EXACTLY),

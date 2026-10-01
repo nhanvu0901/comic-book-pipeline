@@ -2,7 +2,7 @@
 
 The build_candidates tests write real preprocessed/page_*.json fixtures into tmp_path and read
 the rows back from candidates.json: every panel of the row's pool, page-sorted, score 0.0 —
-nothing is ranked, so no embed backend, matcher or vision call is involved. The stage-4 test
+nothing is ranked, so no matcher or vision call is involved. The stage-4 test
 stubs the TTS synth so it never hits the live endpoint.
 """
 import json
