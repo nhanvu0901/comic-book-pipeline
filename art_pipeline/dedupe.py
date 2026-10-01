@@ -2,16 +2,20 @@
 prompt missed, and surgically rewrite the LATER offending scene to say something
 new. Long-form writes chapters independently, so the same painting gets
 re-described (Toledo: the brushstroke line landed in scenes 15, 26, 49). We
-embed every scene and rewrite the second occurrence of any near-duplicate pair —
-never the first — so earlier chapters stay stable.
+compare every pair of scenes as word sequences and rewrite the second occurrence
+of any near-duplicate pair — never the first — so earlier chapters stay stable.
 
-Uses the shared local embedder (stages/_embedding.semantic_sim); if the model is
-unavailable every similarity is 0.0 → this pass is a no-op (graceful degrade)."""
+The comparison is utils.lexical_sim.seq_ratio: no model, no network, the same answer
+on every run. A sentence repeated with a word or two changed scores high; two
+sentences that only share a topic or a template score low. A paraphrase that shares
+few words does not score high either, so it is not caught here — the said-lines
+block in the chapter prompt (the earlier chapters' sentences, see narrate_longform)
+is what steers the writer away from those."""
 import json
 
 from config import CREATIVE_LLM_MODELS
 from stages.stage_3._llm import call_with_chain
-from stages._embedding import semantic_sim
+from utils.lexical_sim import seq_ratio
 
 from ._json import extract_json
 from .narrate import _starts_with_connective
@@ -42,7 +46,7 @@ def find_near_duplicates(scenes, threshold: float):
     for j in range(len(texts)):
         best = None
         for i in range(j):
-            sim = semantic_sim(texts[i], texts[j])
+            sim = seq_ratio(texts[i], texts[j])
             if sim >= threshold and (best is None or sim > best[2]):
                 best = (j, i, sim)
         if best:

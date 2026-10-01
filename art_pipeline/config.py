@@ -115,9 +115,13 @@ ART_LF_REGION_REUSE_WINDOW = 6      # same region may not appear twice within an
 # Long-form writes one chapter at a time; each chapter re-describes the same
 # painting → near-verbatim repeats (Toledo: the brushstroke line appeared 3x).
 # Layer 1: feed prior chapters' sentences into the prompt (truncated). Layer 2:
-# embedding near-dup guard + surgical rewrite (dedupe.py).
+# word-sequence near-dup guard + surgical rewrite (dedupe.py).
 ART_LF_SAID_LINES_MAX = int(os.getenv("ART_LF_SAID_LINES_MAX", "60"))
-ART_LF_DEDUP_THRESHOLD = float(os.getenv("ART_LF_DEDUP_THRESHOLD", "0.86"))
+# Layer 2 cut-off, on utils.lexical_sim.seq_ratio. Measured on sentence pairs: near-verbatim
+# repeats score 0.81-0.93, unrelated sentences 0.07-0.15, sentences that only share one
+# template ~0.48 — 0.70 sits in the empty gap between them. Paraphrases (0.14-0.25) are not
+# caught here; layer 1 is the defense against those.
+ART_LF_DEDUP_THRESHOLD = float(os.getenv("ART_LF_DEDUP_THRESHOLD", "0.70"))
 ART_LF_DEDUP_MAX_PASSES = int(os.getenv("ART_LF_DEDUP_MAX_PASSES", "2"))
 
 # ── Chapter title cards (long-form, 2026-06-14) ──────────────────────────────

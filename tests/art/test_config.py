@@ -58,7 +58,7 @@ def test_longform_constants():
 def test_dedup_and_card_constants_exist():
     from art_pipeline import config as C
     assert C.ART_LF_SAID_LINES_MAX == 60
-    assert C.ART_LF_DEDUP_THRESHOLD == 0.86
+    assert C.ART_LF_DEDUP_THRESHOLD == 0.70
     assert C.ART_LF_DEDUP_MAX_PASSES == 2
     assert C.ART_LF_CHAPTER_CARDS is True
     assert C.ART_LF_CHAPTER_CARD_SEC == 2.6
