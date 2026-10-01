@@ -1,13 +1,12 @@
-"""PANEL_TEXT_EMBED=0 refactor (Master 2026-07-24): the render + review-candidate build no longer
-touch the embedding backend / Qdrant — Master hand-picks panels, so:
+"""Panel selection without any embedding backend (Master 2026-07-24): the render + review-candidate
+build never score panels against the narration — Master hand-picks panels, so:
 
-  (a) review_gate.build_candidates lists ALL panels of a beat's issue PAGE-SORTED (no cosine query),
-  (b) shots._match_panels assigns UNLOCKED scenes deterministically (first panel of page_ref) and
-      never calls load_vectors / embed_batch,
+  (a) review_gate.build_candidates lists ALL panels of a beat's issue PAGE-SORTED (no ranking),
+  (b) shots._match_panels assigns UNLOCKED scenes deterministically (the scene's anchor panel, else
+      the first panel of its page, else the nearest page's) whatever the narration or the panel
+      descriptions say,
   (c) every RENDERED panel that carries a dialog bbox is bubble-inpainted; a panel with dialog but
       NO bbox is warned; a one-line summary prints.
-
-These tests OPT OUT of tests/conftest.py's cosine-path fixture by setting PANEL_TEXT_EMBED=False.
 """
 import json
 
@@ -15,8 +14,6 @@ import pytest
 
 import stages.review_gate as rg
 import stages.stage_5.shots as shots
-import stages._embedding as _embedding
-import stages._panel_index as _panel_index
 from stages.stage_5.schema import Shot
 
 
@@ -34,13 +31,11 @@ def _panel(idx, y, desc="", dialog=None):
     return p
 
 
-# ── (a) build_candidates page-sort, no vector query ───────────────────────────
+# ── (a) build_candidates page-sort, no ranking ────────────────────────────────
 
 def test_build_candidates_page_sorted_no_embed(tmp_path, monkeypatch):
-    monkeypatch.setattr(rg, "PANEL_TEXT_EMBED", False)
-    monkeypatch.setattr(shots, "PANEL_TEXT_EMBED", False)
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
-    # PROVE the cosine matcher is never invoked in the no-embed path.
+    # PROVE the panel matcher is never invoked by the candidate build.
     monkeypatch.setattr(shots, "_match_panels",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("_match_panels called")))
     monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
@@ -57,37 +52,60 @@ def test_build_candidates_page_sorted_no_embed(tmp_path, monkeypatch):
     cands = data["beats"][0]["candidates"]
     assert [(c["page"], c["panel"]) for c in cands] == [(10, 0), (10, 1), (10, 2)]
     assert all(set(c) == {"page", "panel", "score", "thumb", "desc", "dialog"} for c in cands)
-    assert all(c["score"] == 0.0 for c in cands)                # no cosine → blank score, no vlm key
+    assert all(c["score"] == 0.0 for c in cands)                # no ranking → blank score, no vlm key
 
 
-# ── (b) shots._match_panels deterministic fallback, no embed / no load_vectors ─
+# ── (b) shots._match_panels is deterministic: anchor → page → nearest page ────
 
-def test_match_panels_deterministic_no_embed(monkeypatch):
-    monkeypatch.setattr(shots, "PANEL_TEXT_EMBED", False)
-    monkeypatch.setattr(_embedding, "embed_batch",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("embed_batch called")))
-    monkeypatch.setattr(_panel_index, "load_vectors",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("load_vectors called")))
-
+def test_match_panels_deterministic_no_embed():
     pages = {10: _story_page(10, "p10.png", [_panel(0, 0), _panel(1, 900)]),
              11: _story_page(11, "p11.png", [_panel(0, 0), _panel(1, 900)])}
     units = [
         ({"scene_id": 1, "text": "one", "page_ref": 11, "panel_ref": 1}, "one"),  # exact anchor
         ({"scene_id": 2, "text": "two", "page_ref": 10, "panel_ref": -1}, "two"),  # page only → panel 0
         ({"scene_id": 3, "text": "three", "page_ref": 99, "panel_ref": -1}, "three"),  # nearest page
+        ({"scene_id": 4, "text": "four", "page_ref": 10, "panel_ref": 7}, "four"),  # stale anchor → page's first
     ]
     out = shots._match_panels(units, pages, {}, project="p")
     got = [(p["_page_number"], p["index"]) for p, _s in out]
-    assert got == [(11, 1), (10, 0), (11, 0)]   # anchor honored, page-first, nearest-page fallback
+    assert got == [(11, 1), (10, 0), (11, 0), (10, 0)]   # anchor honored, page-first, nearest-page, stale anchor
+
+
+def test_match_panels_ignores_what_the_narration_and_panels_say():
+    """A line that names another panel's drawing does not move the pick: the pick follows the
+    scene's anchor only."""
+    pages = {10: _story_page(10, "p10.png", [_panel(0, 0, "a quiet street"),
+                                              _panel(1, 900, "Hulk smashes the rooftop")])}
+    scene = {"scene_id": 1, "text": "Hulk smashes the rooftop", "page_ref": 10, "panel_ref": 0}
+    out = shots._match_panels([(scene, "Hulk smashes the rooftop")], pages, {})
+    assert out[0][0]["index"] == 0
+
+
+def test_match_panels_empty_inputs():
+    pages = {10: _story_page(10, "p10.png", [_panel(0, 0)])}
+    assert shots._match_panels([], pages, {}) == []
+    unit = ({"scene_id": 1, "text": "x", "page_ref": 10, "panel_ref": 0}, "x")
+    assert shots._match_panels([unit, unit], {}, {}) == [(None, ""), (None, "")]   # no panels at all
+
+
+def test_match_panels_candidates_out_lists_all_panels_page_sorted():
+    pages = {11: _story_page(11, "p11.png", [_panel(1, 900), _panel(0, 0)]),
+             10: _story_page(10, "p10.png", [_panel(0, 0)])}
+    units = [({"scene_id": 1, "text": "x", "page_ref": 11, "panel_ref": 0}, "x"),
+             ({"scene_id": 2, "text": "y", "page_ref": 10, "panel_ref": 0}, "y")]
+    cands: list = []
+    assert shots._match_panels(units, pages, {}, candidates_out=cands) == []
+    assert len(cands) == 2                                           # one ranked list per unit
+    for row in cands:
+        assert [(c["page"], c["panel_idx"]) for c in row] == [(10, 0), (11, 0), (11, 1)]
+        assert all(c["score"] == 0.0 for c in row)
+    capped: list = []
+    shots._match_panels(units[:1], pages, {}, candidates_out=capped, candidates_k=2)
+    assert [(c["page"], c["panel_idx"]) for c in capped[0]] == [(10, 0), (11, 0)]
 
 
 def test_build_shots_headless_no_embed_no_crash(monkeypatch):
-    """build_shots (recap per-chunk) runs with an empty panel index and never touches embed/Qdrant."""
-    monkeypatch.setattr(shots, "PANEL_TEXT_EMBED", False)
-    monkeypatch.setattr(_embedding, "embed_batch",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("embed_batch called")))
-    monkeypatch.setattr(_panel_index, "load_vectors",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("load_vectors called")))
+    """build_shots (recap per-chunk) runs from the pages alone — no panel index, no backend."""
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)
     narration = {"scenes": [{"scene_id": 1, "text": "hello world", "page_ref": 10, "panel_ref": 0}]}
     pages = {10: _story_page(10, "p10.png", [_panel(0, 0, "a"), _panel(1, 900, "b")])}
@@ -95,6 +113,7 @@ def test_build_shots_headless_no_embed_no_crash(monkeypatch):
     built = shots.build_shots(narration, caption_chunks=chunks, pages_by_number=pages,
                               scene_timings=[{"scene_id": 1, "start": 0.0, "end": 1.5}], project=None)
     assert built and all(isinstance(s, Shot) for s in built)
+    assert built[0].panel_bbox["y"] == 0                      # the scene's anchor panel (10, 0)
 
 
 # ── (c) bubble-clean applies to every shot with a dialog bbox + warns/summarises ─

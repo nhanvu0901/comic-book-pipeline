@@ -141,22 +141,11 @@ def test_build_shots_routes_on_gate(monkeypatch):
 
 
 # ── Q&A caption-chunk render, restricted to Master's LOCKED panels ────────────
-import re                                                    # noqa: E402
-
-import stages._embedding as _embedding                       # noqa: E402
-import stages._panel_index as _panel_index                   # noqa: E402
 import stages.review_gate as _review_gate                     # noqa: E402
 
 
 def _panel_at(y, desc):
     return {"bbox": {"x": 0, "y": y, "w": 600, "h": 900}, "description": desc, "characters": []}
-
-
-def _fake_score(panel, panel_vec, chunk_vec, scene_vec, page_tb, *, chunk_text, scene_text):
-    cw = set(re.findall(r"[a-z]+", (chunk_text or "").lower()))
-    dw = set(re.findall(r"[a-z]+", str(panel.get("description", "")).lower()))
-    sim = min(0.9, 0.15 * len(cw & dw))
-    return sim, sim
 
 
 def test_qa_chunk_locked_gate_routes(monkeypatch):
@@ -182,8 +171,8 @@ def test_qa_chunk_locked_gate_routes(monkeypatch):
 
 
 def _setup_qa(tmp_path, monkeypatch, locks):
-    """Write a minimal answer_research project with `locks` (scene_id str -> {"panels":[...]}) and
-    stub all scoring so the chunk-locked builder runs deterministically (no network/SDK/Qdrant).
+    """Write a minimal answer_research project with `locks` (scene_id str -> {"panels":[...]}); the
+    chunk-locked builder is deterministic, so there is nothing to stub.
     Returns the project slug 'qa'. review_gate binds PROJECTS_ROOT at import (module-level), so we
     patch it there too — else the gate resolves the real projects dir and never fires."""
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
@@ -193,10 +182,6 @@ def _setup_qa(tmp_path, monkeypatch, locks):
     (proj / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
     (proj / "narration.json").write_text(json.dumps({"scenes": [{"scene_id": 1, "text": "s"}]}))
     (proj / "review" / "locks.json").write_text(json.dumps({"approved": True, "locks": locks}))
-    monkeypatch.setattr(_embedding, "embed_batch", lambda texts: [None] * len(texts))
-    monkeypatch.setattr(_panel_index, "load_vectors", lambda project: {})
-    monkeypatch.setattr(shots, "_panel_content_score", _fake_score)
-    monkeypatch.setattr(shots, "_blend_image_content", lambda *a, **k: None)
     return "qa"
 
 
@@ -205,7 +190,7 @@ _LOCK_3 = {"1": {"panels": [{"page": 5, "panel": 0}, {"page": 5, "panel": 1},
 _PAGES_3 = {
     5: _pg([_panel_at(0, "punisher vomit"), _panel_at(900, "deadpool punch"),
             _panel_at(1800, "carnage grin")], "p5.png", w=600, h=2700),
-    # Unlocked magnet: matches EVERY chunk best — must never be chosen (pool is Master-restricted).
+    # Unlocked decoy page: must never be chosen (pool is Master-restricted).
     9: _pg([{"bbox": {"x": 0, "y": 0, "w": 600, "h": 900},
              "description": "punisher vomit deadpool punch carnage grin", "characters": []}],
            "p9.png", w=600, h=900),
@@ -213,11 +198,10 @@ _PAGES_3 = {
 
 
 def test_qa_chunk_locked_segments_into_distinct_panels(tmp_path, monkeypatch):
-    """6 chunks over 3 locked panels + a long beat → K=3 contiguous groups, each a DISTINCT locked
-    panel held ≥ min. Never the p9 magnet (pool is Master-restricted). Each shot a unique scene_id
-    (→ the assembler dissolves between them)."""
+    """3 chunks over 3 locked panels + a long beat → K=3 contiguous groups, each a DISTINCT locked
+    panel held ≥ min, taken in lock order. Never the unlocked p9 decoy (pool is Master-restricted).
+    Each shot a unique scene_id (→ the assembler dissolves between them)."""
     slug = _setup_qa(tmp_path, monkeypatch, _LOCK_3)
-    monkeypatch.setattr(shots, "PANEL_RERANK", False)        # isolate segmentation from VLM
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)       # isolate from the loop-tail carve
     # one 2s chunk per subject → 3 groups, each ≥ min, one distinct panel apiece.
     words = ["punisher vomit", "deadpool punch", "carnage grin"]
@@ -228,8 +212,8 @@ def test_qa_chunk_locked_segments_into_distinct_panels(tmp_path, monkeypatch):
 
     assert len(built) == 3                                   # K = min(3 panels, 3 chunks, 6/1.5)
     assert all(s.duration_seconds >= shots.QA_MIN_SHOT_SECONDS for s in built)
-    assert all(s.source_image == "p5.png" for s in built)   # never the p9 magnet
-    assert {s.panel_bbox["y"] for s in built} == {0, 900, 1800}   # 3 DISTINCT locked panels
+    assert all(s.source_image == "p5.png" for s in built)   # never the p9 decoy
+    assert [s.panel_bbox["y"] for s in built] == [0, 900, 1800]   # 3 DISTINCT locked panels, lock order
     assert [s.scene_id for s in built] == [1, 2, 3]         # unique scene_id per shot → dissolve
 
 
@@ -237,7 +221,6 @@ def test_qa_chunk_locked_duration_caps_shot_count(tmp_path, monkeypatch):
     """A short beat yields FEWER shots than locked panels: 3 panels locked but only ~2s of audio →
     floor(2/1.5)=1 → a single held shot (no sub-1.5s jump)."""
     slug = _setup_qa(tmp_path, monkeypatch, _LOCK_3)
-    monkeypatch.setattr(shots, "PANEL_RERANK", False)
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)       # isolate from the loop-tail carve
     chunks = [{"text": "punisher", "start": 0.0, "end": 0.5},
               {"text": "vomit", "start": 0.5, "end": 1.0},
@@ -252,28 +235,23 @@ def test_qa_chunk_locked_duration_caps_shot_count(tmp_path, monkeypatch):
     assert built[0].source_image == "p5.png"
 
 
-def test_qa_chunk_locked_vlm_rerank_overrides_weak_cosine(tmp_path, monkeypatch):
-    """PANEL_RERANK on + weak cosine → the VLM judge (stubbed) re-picks a locked panel per group.
-    The judge forces ALL groups to (5,2), but the per-beat NO-REUSE rule reassigns the duplicate
-    picks to the other locked panels → 3 DISTINCT shots (no duplicate scene, Master 2026-07-07),
-    with the rerank still visible on the first group. Previously this collapsed to a single hold."""
-    slug = _setup_qa(tmp_path, monkeypatch, _LOCK_3)
-    monkeypatch.setattr(shots, "PANEL_RERANK", True)
-    monkeypatch.setattr(shots, "PANEL_RERANK_COS_CEIL", 0.66)
+def test_qa_chunk_locked_fragments_outnumbering_panels_cycle_the_locked_set(tmp_path, monkeypatch):
+    """4 visual-beat fragments over 2 locked panels: the fragments take the locked panels
+    round-robin (A, B, A, B) — one shot per fragment, never a panel outside the lock set."""
+    lock_2 = {"1": {"panels": [{"page": 5, "panel": 0}, {"page": 5, "panel": 1}], "source": "batcave"}}
+    slug = _setup_qa(tmp_path, monkeypatch, lock_2)
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)       # isolate from the loop-tail carve
-    # _vlm_rerank gets cands=[(idx, src, panel, tb), ...]; return idx 2 → locked panel (5,2).
-    monkeypatch.setattr(shots, "_vlm_rerank", lambda line, cands, **k: 2)
-    words = ["punisher vomit", "deadpool punch", "carnage grin"]
-    chunks = [{"text": w, "start": 2.0 * i, "end": 2.0 * (i + 1)} for i, w in enumerate(words)]
-    timings = [{"scene_id": 1, "start": 0.0, "end": 6.0}]
-    built = build_shots({"scenes": [{"scene_id": 1, "text": "s"}]}, scene_timings=timings,
-                        caption_chunks=chunks, pages_by_number=_PAGES_3, project=slug)
+    beats = ["alpha one.", "beta two.", "gamma three.", "delta four."]
+    chunks = [{"text": b, "start": 2.0 * i, "end": 2.0 * (i + 1)} for i, b in enumerate(beats)]
+    timings = [{"scene_id": 1, "start": 0.0, "end": 8.0}]
+    narration = {"scenes": [{"scene_id": 1, "text": " ".join(beats), "visual_beats": beats}]}
+    built = build_shots(narration, scene_timings=timings, caption_chunks=chunks,
+                        pages_by_number=_PAGES_3, project=slug)
 
-    assert len(built) == 3                                   # no-reuse: 3 distinct locked panels
-    assert built[0].panel_bbox["y"] == 1800                 # (5,2), the VLM-forced first pick
-    ys = [s.panel_bbox["y"] for s in built]
-    assert len(set(ys)) == 3, f"panels must be distinct (no-reuse), got {ys}"
-    assert round(sum(s.duration_seconds for s in built), 2) == 6.0
+    assert [s.panel_bbox["y"] for s in built] == [0, 900, 0, 900]    # (5,0), (5,1), (5,0), (5,1)
+    assert all(s.source_image == "p5.png" for s in built)           # never the unlocked p9 decoy
+    assert [s.caption_text for s in built] == beats                 # one shot per fragment
+    assert round(sum(s.duration_seconds for s in built), 2) == 8.0
 
 
 # ─── Bubble-avoiding cover-crop window (frame-1 slop fix) ─────────────────────

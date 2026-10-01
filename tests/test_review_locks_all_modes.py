@@ -186,9 +186,6 @@ def test_qa_locked_builder_honors_intro_and_outro_locks(tmp_path, monkeypatch):
     multi-panel subject hook collapses to that ONE panel."""
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
-    monkeypatch.setattr(shots, "PANEL_TEXT_EMBED", False)   # deterministic geometric fallback
-    from stages import _panel_index
-    monkeypatch.setattr(_panel_index, "load_vectors", lambda project: {})
     proj = tmp_path / "qa"
     (proj / "review").mkdir(parents=True)
     (proj / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
