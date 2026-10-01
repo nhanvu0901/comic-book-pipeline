@@ -9,6 +9,7 @@ from stages.research_scout.models import EvidenceGate, ScoutMode, SessionState
 from stages.research_scout.planner import PlanField, ResearchPlan
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.workflow import InvalidTransition, ScoutWorkflow
+from tests import micro_detail_rules as rules
 
 
 class _FakeYouCom:
@@ -934,3 +935,97 @@ def test_candidate_ids_may_be_any_sequence(mock_workflow):
     mock_workflow.verify_selected(session.id, (c for c in ["a", "b"]), only=[])
 
     assert mock_workflow.store.load(session.id).selected_specific_candidate_ids == ["a", "b"]
+
+
+# ─── Micro asks for the aftermath and the context; Q&A is untouched ──────────
+
+
+def _item_props(schema):
+    return schema["properties"]["candidates"]["items"]["properties"]
+
+
+def test_the_fallback_micro_round_asks_for_the_aftermath_fields_and_qa_does_not(mock_workflow):
+    micro = mock_workflow.start(ScoutMode.MICRO, "new Hulk moment")
+    mock_workflow.run_general(micro.id)
+    micro_props = _item_props(mock_workflow.client.seen_schema)
+    micro_prompt = mock_workflow.client.seen_prompt
+    micro_schema = mock_workflow.client.seen_schema
+
+    qa = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(qa.id)
+    qa_props = _item_props(mock_workflow.client.seen_schema)
+
+    for name in rules.DETAIL_FIELDS:
+        assert name in micro_props
+        assert name not in qa_props
+    items = micro_schema["properties"]["candidates"]["items"]
+    assert set(items["required"]) == set(items["properties"])
+    assert rules.missing_rules(micro_prompt) == []
+    assert "is not an event" not in mock_workflow.client.seen_prompt
+
+
+def test_the_planner_micro_round_asks_for_the_aftermath_fields_and_carries_the_rules(tmp_path):
+    def make_workflow():
+        return ScoutWorkflow(
+            store=SessionStore(tmp_path / "sessions"), client=_FakeYouCom(),
+            planner=lambda *_: ResearchPlan(
+                unit="one scene", cardinality="options", ranking="", extra_fields=[],
+                research_prompt="Find a moment.",
+            ),
+        )
+
+    workflow = make_workflow()
+    micro = workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    workflow.run_general(micro.id)
+    assert set(rules.DETAIL_FIELDS) <= set(_item_props(workflow.client.seen_schema))
+    assert rules.missing_rules(workflow.client.seen_prompt) == []
+
+    qa = workflow.start(ScoutMode.QA, "Which heroes?")
+    workflow.run_general(qa.id)
+    assert not set(rules.DETAIL_FIELDS) & set(_item_props(workflow.client.seen_schema))
+    assert "aftermath" not in workflow.client.seen_prompt
+
+
+def test_general_output_schema_is_mode_aware_and_defaults_to_the_qa_shape():
+    from stages.research_scout.workflow import general_output_schema
+
+    default = _item_props(general_output_schema())
+    assert list(default) == [
+        "title", "summary", "character_or_thing", "series_issue_year",
+        "what_visibly_happens", "evidence_urls", "claim_citation",
+    ]
+    assert general_output_schema(ScoutMode.QA) == general_output_schema()
+    assert set(rules.DETAIL_FIELDS) <= set(_item_props(general_output_schema("micro")))
+    assert set(rules.DETAIL_FIELDS) <= set(_item_props(general_output_schema(ScoutMode.MICRO)))
+
+
+def test_a_micro_candidates_aftermath_fields_reach_the_stored_candidate_untouched(mock_workflow):
+    """The round stores candidates as returned: nothing in the workflow may
+    whitelist keys, or the writer never sees what the scout found."""
+    from datetime import date
+
+    detail = {
+        "aftermath": "Steve loses the duel and keeps the weapon.",
+        "context_behind": "He took the sword from the vault.",
+        "unrevealed": "",
+        "detail_citations": [{
+            "supports": "aftermath", "url": "https://source.test/a", "quote": "Steve loses.",
+        }],
+    }
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [{
+                "id": "a", "title": "A", "series_issue_year": f"Hero #1 ({date.today().year})",
+                "claim_citation": {"url": "https://source.test/a", "quote": "Evidence."},
+                **detail,
+            }]},
+            "sources": [{"url": "https://source.test/a"}],
+        }
+    }
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    mock_workflow.run_general(session.id)
+
+    stored = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json"
+    ).read_text(encoding="utf-8"))["candidates"][0]
+    assert {key: stored[key] for key in detail} == detail

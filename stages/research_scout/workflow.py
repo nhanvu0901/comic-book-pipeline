@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -100,7 +101,12 @@ def verify_output_schema() -> dict[str, Any]:
     }
 
 
-def general_output_schema() -> dict[str, Any]:
+def general_output_schema(mode: ScoutMode | str = ScoutMode.QA) -> dict[str, Any]:
+    """The fallback round's output schema. Micro adds the aftermath/context
+    fields (planner.MICRO_DETAIL_PROPS); Q&A keeps exactly the shape it had."""
+    item_props = dict(_GENERAL_ITEM_PROPS)
+    if ScoutMode(mode) is ScoutMode.MICRO:
+        item_props.update(copy.deepcopy(planner_module.MICRO_DETAIL_PROPS))
     return {
         "type": "object",
         "additionalProperties": False,
@@ -110,8 +116,8 @@ def general_output_schema() -> dict[str, Any]:
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "properties": _GENERAL_ITEM_PROPS,
-                    "required": list(_GENERAL_ITEM_PROPS),
+                    "properties": item_props,
+                    "required": list(item_props),
                 },
             },
             "notes": {"type": "string"},
@@ -186,7 +192,7 @@ class ScoutWorkflow:
                 digest=self.digest,
             )
             prompt_text, prompt_hash = prompt.text, prompt.sha256
-            schema = general_output_schema()
+            schema = general_output_schema(session.mode)
             plan_record: dict[str, Any] = {"source": "fallback"}
         else:
             # Planner path — feedback already reached the planner input above,
@@ -196,7 +202,7 @@ class ScoutWorkflow:
                 mode=session.mode.value,
             )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
-            schema = planner_module.compile_schema(plan)
+            schema = planner_module.compile_schema(plan, mode=session.mode.value)
             plan_record = {"source": "planner", **plan.model_dump(mode="json")}
         if session.mode is ScoutMode.MICRO:
             prompt_text += "\n\n" + recent_micro_instruction()

@@ -30,5 +30,28 @@ Use the retrieved page's issue metadata or another source to establish the
 issue identity; never claim the quote alone proves a detail it does not say.
 Source verification follows this research round.
 
+Also return what happens next (`aftermath`) and what set the moment up
+(`context_behind`), each backed by `detail_citations` with a verbatim quote,
+and list those URLs in `evidence_urls` too. `aftermath` is what happens after
+the turning point in the same issue, how the confrontation or scene ends, and
+what any announced twist actually is. `context_behind` is what set the moment
+up: why these characters are here and at odds, what each wants, where a key
+object or power came from, as sources state it. `unrevealed` is any outcome a
+source hints at but never states. Each `detail_citations` entry is
+{{"supports": "aftermath" or "context_behind", "url": the page, "quote": a
+verbatim sentence from that page}}. Use "" when no source states it; never
+infer or invent an outcome or backstory.
+
+A reviewer's reaction or a teaser ("a shocking twist I never saw coming",
+"who's at the center of that twist", "everything changes") is not an event.
+Never restate it as one, and never build `what_visibly_happens`,
+`turning_point` or `aftermath` from it. When a source withholds a reveal, keep
+`aftermath` to what is actually stated and put the withheld point in
+`unrevealed`.
+
+The request's own wording (e.g. "final twist", "shocking reveal") says what
+the user hopes to find; it is never evidence. Do not echo it into a candidate
+unless a source states it.
+
 SCOUTED DIGEST:
 {digest}

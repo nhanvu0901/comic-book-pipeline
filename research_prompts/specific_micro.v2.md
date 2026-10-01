@@ -27,7 +27,14 @@ State plainly:
 - What exact action, decision, or admission changes the scene, and which source
   sentence supports it? Is the consequence in that same scene or narrow
   sequence?
+- Does the moment, and any `aftermath` or `context_behind` the candidate
+  carries, rest on a STATED event? A reviewer's reaction or a teaser ("a
+  shocking twist I never saw coming", "who's at the center of that twist") is
+  not an event. Quote the sentence that states what happens; if a source only
+  reacts to the event or withholds it, say exactly what it withholds.
 
 Never treat publisher solicitation copy as evidence. A moment that is inferred,
-belongs to another issue, or cannot be grounded in a retrieved source is
-NOT CONFIRMED — say so rather than softening it.
+rests on a reaction or teaser instead of a stated event, belongs to another
+issue, or cannot be grounded in a retrieved source is NOT CONFIRMED — say so
+rather than softening it. In `notes`, say what the sources state, what they
+only hint at or withhold, and why the verdict follows.
