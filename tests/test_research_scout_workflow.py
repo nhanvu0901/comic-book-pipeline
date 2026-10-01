@@ -1029,3 +1029,54 @@ def test_a_micro_candidates_aftermath_fields_reach_the_stored_candidate_untouche
         session.id, "general/candidates.v1.json"
     ).read_text(encoding="utf-8"))["candidates"][0]
     assert {key: stored[key] for key in detail} == detail
+
+
+# ─── The verification round is stored where the project factory can read it ──
+
+
+def test_verify_selected_stores_each_round_where_specific_search_artifact_says(
+    monkeypatch, mock_workflow
+):
+    from stages.research_scout.workflow import specific_search_artifact
+
+    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", _confirmed)
+    session = _verified_micro(mock_workflow)
+
+    path = mock_workflow.store.artifact_path(session.id, specific_search_artifact("a"))
+    assert path.name == "search.a.v1.json"
+    assert json.loads(path.read_text(encoding="utf-8"))["payload"] == (
+        mock_workflow.client.verify_response
+    )
+    # An id is model-supplied text: only filename-safe characters survive.
+    assert specific_search_artifact("r2-candidate/3?") == "specific/search.r2-candidate_3_.v1.json"
+
+
+@pytest.mark.parametrize("payload,expected", [
+    # What You.com returns: the verify object under output.content.
+    ({"output": {"content": {
+        "candidates": [{"verdict": "NOT CONFIRMED as the exact proposed micro-moment"}],
+        "notes": "the review explicitly withholds the exact twist",
+    }, "sources": []}},
+     "NOT CONFIRMED as the exact proposed micro-moment — "
+     "the review explicitly withholds the exact twist"),
+    # content delivered as a JSON string instead of an object
+    ({"output": {"content": json.dumps({
+        "candidates": [{"verdict": "CONFIRMED"}], "notes": "Two sources agree.",
+    })}}, "CONFIRMED — Two sources agree."),
+    # the flat shape the fixtures use
+    ({"candidates": [{"verdict": "CONFIRMED"}], "notes": ""}, "CONFIRMED"),
+    # a verdict-less round still carries its notes
+    ({"candidates": [], "notes": "Nothing found."}, "Nothing found."),
+    # the first item that holds a verdict wins
+    ({"candidates": [{"verdict": ""}, {"verdict": "CONFLICTING"}], "notes": "n"},
+     "CONFLICTING — n"),
+    # a failed call, or something that is not the verify shape
+    ({}, ""),
+    (None, ""),
+    ("not json", ""),
+    ({"output": {"content": {"candidates": [{"verdict": 7}], "notes": None}}}, "7"),
+])
+def test_verification_summary_reads_the_verdict_and_notes(payload, expected):
+    from stages.research_scout.workflow import verification_summary
+
+    assert verification_summary(payload) == expected

@@ -14,12 +14,14 @@ from config import get_project_dirs
 
 from stages.stage_1 import answer_research
 from stages.stage_1.storage import save_comic_context
+from utils.atomic_json import write_json_atomic
 
 from .evidence import GateFlag
 from .errors import ScoutUserError
 from .issue_identity import micro_issue_rejection_reason
 from .models import ResearchSession, ScoutMode, SessionState
 from .storage import SessionStore
+from .workflow import specific_search_artifact, verification_summary
 
 
 @dataclass(frozen=True)
@@ -243,7 +245,7 @@ def create_project_from_session(
         unresolved_reader_urls = answer_research.get_missing_reader_urls(project_slug)
     else:
         candidate, gate = selected[0]
-        _create_micro_project(candidate, gate, project_slug)
+        _create_micro_project(store, session, candidate, gate, project_slug)
 
     if reports or (override and session.mode is ScoutMode.QA and unresolved_reader_urls):
         store.append_audit(
@@ -439,43 +441,71 @@ def _qa_research(
     }
 
 
-def _create_micro_project(
-    candidate: dict[str, Any], gate: dict[str, Any] | None, project_slug: str
-) -> None:
-    gate = gate or {}
-    exact_issue = _first_text(candidate, "series_issue_year")
-    reader_url = _first_text(gate, "reader_url") or _first_text(candidate, "reader_url")
-    series = _series_from_issue(exact_issue) or _first_text(candidate, "title", "series")
-    year = _first_text(candidate, "source_year") or _year(candidate)
-    target_moment = _first_text(candidate, "visible_event", "what_visibly_happens", "moment")
-    char_name = _first_text(candidate, "character_or_thing", "character", "entity", "title") or series
-    base_context = {
-        "status": "ready",
-        "pipeline_mode": "micro_moment",
-        "title": _first_text(candidate, "title", "entity", "character") or series,
-        "series": series,
-        "issues": exact_issue,
-        "year": year,
-        "publisher": "",
-        "characters": [char_name],
-        "reader_url": reader_url,
-        "batcave_url": reader_url,
-        "plot_summary": _first_text(candidate, "summary", "how_or_why", "visible_event"),
-    }
-    context_path = Path(save_comic_context(base_context, project_slug, get_project_dirs))
-    context = json.loads(context_path.read_text(encoding="utf-8"))
+@dataclass(frozen=True)
+class _MicroFacts:
+    """What the project context and the scout_candidate both derive from the
+    chosen candidate, so the two cannot read it differently."""
 
+    exact_issue: str
+    reader_url: str
+    series: str
+    year: str
+    target_moment: str
+    char_name: str
+
+
+def _micro_facts(candidate: Mapping[str, Any], gate: Mapping[str, Any]) -> _MicroFacts:
+    exact_issue = _first_text(candidate, "series_issue_year")
+    series = _series_from_issue(exact_issue) or _first_text(candidate, "title", "series")
+    return _MicroFacts(
+        exact_issue=exact_issue,
+        reader_url=_first_text(gate, "reader_url") or _first_text(candidate, "reader_url"),
+        series=series,
+        year=_first_text(candidate, "source_year") or _year(candidate),
+        target_moment=_first_text(candidate, "visible_event", "what_visibly_happens", "moment"),
+        char_name=_first_text(candidate, "character_or_thing", "character", "entity", "title") or series,
+    )
+
+
+# The scout returns these as "" when no source states them, and that is an answer,
+# so a blank is kept. A candidate from before the aftermath ask has no such key
+# at all, and there the key stays absent.
+_DETAIL_TEXT_FIELDS = ("aftermath", "context_behind", "unrevealed")
+
+
+def build_scout_candidate(
+    store: SessionStore,
+    session: ResearchSession,
+    candidate: Mapping[str, Any],
+    gate: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """What the writer is handed about the chosen micro moment.
+
+    Built only from what is already on disk — the candidate, its gate, and the
+    verification round stored beside them — and it never writes or calls out.
+    Project creation and refresh_scout_candidate both go through it, so a project
+    made before a field existed can be brought up to date without paying for
+    research again.
+
+    The nine keys the writer has always read come first and are unchanged. The
+    rest appear only when they exist: a blank would say "the scout looked and
+    found nothing" about data that never existed. The old whitelist dropped the
+    scout's own "NOT CONFIRMED ... withholds the exact twist" and the gate's
+    reason, which is how a script came to end on a teaser nobody could resolve.
+    """
+    gate = gate or {}
+    facts = _micro_facts(candidate, gate)
     citation = candidate.get("claim_citation") if isinstance(candidate.get("claim_citation"), dict) else {}
     quote = citation.get("quote") or ""
-    source_url = citation.get("url") or reader_url
+    source_url = citation.get("url") or facts.reader_url
     ev_urls = gate.get("evidence_urls") or candidate.get("evidence_urls") or ([source_url] if source_url else [])
     if isinstance(ev_urls, str):
         ev_urls = [ev_urls]
 
-    scout_candidate = {
-        "character": char_name,
-        "series_issue_year": exact_issue,
-        "what_visibly_happens": target_moment,
+    scout_candidate: dict[str, Any] = {
+        "character": facts.char_name,
+        "series_issue_year": facts.exact_issue,
+        "what_visibly_happens": facts.target_moment,
         "summary": _first_text(candidate, "summary", "how_or_why", "visible_event"),
         "claim_citation": citation,
         "verbatim_sentence": quote,
@@ -483,24 +513,197 @@ def _create_micro_project(
         "evidence_urls": ev_urls,
         "verdict": str(gate.get("verdict") or "CONFIRMED").upper(),
     }
+    for key in ("turning_point", "why_it_lands"):
+        text = _first_text(candidate, key)
+        if text:
+            scout_candidate[key] = text
+    for key in _DETAIL_TEXT_FIELDS:
+        if isinstance(candidate.get(key), str):
+            scout_candidate[key] = candidate[key].strip()
+    if isinstance(candidate.get("detail_citations"), list):
+        scout_candidate["detail_citations"] = _detail_citations(candidate["detail_citations"])
+    reason = _first_text(gate, "reason")
+    if reason:
+        scout_candidate["reason"] = reason
+    check = _scout_check(store, session.id, candidate)
+    if check:
+        scout_candidate["scout_check"] = check
+    return scout_candidate
+
+
+def _detail_citations(raw: list[Any]) -> list[dict[str, str]]:
+    """The detail citations that name a page and quote it; one missing either
+    cannot be checked, so the writer is not handed it."""
+    kept: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        url, quote = _first_text(item, "url"), _first_text(item, "quote")
+        if url and quote:
+            kept.append({"supports": _first_text(item, "supports"), "url": url, "quote": quote})
+    return kept
+
+
+def _scout_check(store: SessionStore, session_id: str, candidate: Mapping[str, Any]) -> str:
+    """The verdict and notes of this candidate's verification round, or "".
+
+    That round ran after the candidate was proposed and is where a withheld twist
+    is on record ("NOT CONFIRMED ... the review explicitly withholds the exact
+    twist"). Not having run is normal — "" — and so is a round that failed."""
+    candidate_id = _first_text(candidate, "id")
+    if not candidate_id:
+        return ""
+    try:
+        record = json.loads(
+            store.artifact_path(session_id, specific_search_artifact(candidate_id)).read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError):
+        return ""
+    return verification_summary(record.get("payload")) if isinstance(record, Mapping) else ""
+
+
+def _write_scout_candidate(
+    context_path: Path, context: dict[str, Any], scout_candidate: dict[str, Any]
+) -> None:
+    """Both copies of the scout_candidate, each atomically.
+
+    scout_candidate.json goes first: Stage 3 reads it before the copy inside
+    comic_context.json, so a crash between the two leaves the fresh one in front
+    instead of a stale one."""
+    context["scout_candidate"] = scout_candidate
+    write_json_atomic(context_path.parent / "scout_candidate.json", scout_candidate)
+    write_json_atomic(context_path, context)
+
+
+def refresh_scout_candidate(
+    project_name: str,
+    *,
+    projects_root: Path | None = None,
+    sessions_root: Path | None = None,
+) -> dict[str, Any]:
+    """Rebuild a micro project's scout_candidate from its research session, offline.
+
+    For a project made before the scout_candidate carried the gate's reason, the
+    scout's own verification check or the aftermath fields: it finds the session
+    that created the project, rebuilds the dict from that session's stored
+    artifacts, and rewrites scout_candidate.json and the copy inside
+    comic_context.json — nothing else in the context. No network and no paid call.
+    A candidate that predates the aftermath ask has none to add, so those keys
+    stay absent; ``reason`` and ``scout_check`` come from the stored gate and
+    verification round. Returns the new dict.
+
+    From a shell:
+        python3 -c "from stages.research_scout.project_factory import refresh_scout_candidate as r; print(r('my-project'))"
+    """
+    name = Path(project_name) if isinstance(project_name, str) else None
+    if (
+        name is None
+        or not project_name.strip()
+        or name.is_absolute()
+        or len(name.parts) != 1
+        or name.name in {".", ".."}
+    ):
+        raise ScoutUserError("project name must be a single folder name")
+    projects = Path(projects_root) if projects_root is not None else Path(config.PROJECTS_ROOT)
+    project_dir = projects / project_name
+    if not project_dir.is_dir():
+        raise ScoutUserError(f"project {project_name!r} was not found in {projects}")
+    context_path = project_dir / "comic_context.json"
+    try:
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ScoutUserError(f"project {project_name!r} has no comic_context.json") from exc
+    except ValueError as exc:
+        raise ScoutUserError(f"{context_path} is not valid JSON") from exc
+    if not isinstance(context, dict):
+        raise ScoutUserError(f"{context_path} is not a JSON object")
+
+    store = SessionStore(Path(sessions_root) if sessions_root is not None else config.RESEARCH_SESSIONS_ROOT)
+    session = _session_that_created(store, project_name)
+    if session.mode is not ScoutMode.MICRO:
+        raise ScoutUserError(
+            f"project {project_name!r} came from a {session.mode.value} session; "
+            "only micro-moment projects carry a scout_candidate"
+        )
+    _validate_selection_count(session)
+    candidate_id = session.selected_specific_candidate_ids[0]
+    candidate = _candidate_by_id(store, session.id).get(candidate_id)
+    if candidate is None:
+        raise ScoutUserError(
+            f"candidate {candidate_id!r} is no longer in research session {session.id!r}"
+        )
+    gate = _gate_assignments(session, _load_gates(store, session.id))[0]
+    if gate is None:
+        raise ScoutUserError(
+            f"research session {session.id!r} has no evidence gate for its selected candidate"
+        )
+
+    scout_candidate = build_scout_candidate(store, session, candidate, gate)
+    _write_scout_candidate(context_path, context, scout_candidate)
+    return scout_candidate
+
+
+def _session_that_created(store: SessionStore, project_name: str) -> ResearchSession:
+    """The one session whose ``created_project`` is this project; never a guess."""
+    matches: list[ResearchSession] = []
+    for entry in sorted(store.root.iterdir()):
+        if not entry.is_dir() or not (entry / "session.json").is_file():
+            continue
+        try:
+            session = store.load(entry.name)
+        except Exception:
+            continue  # a corrupt session is not this project's session
+        if session.created_project == project_name:
+            matches.append(session)
+    if not matches:
+        raise ScoutUserError(f"no research session created project {project_name!r}")
+    if len(matches) > 1:
+        raise ScoutUserError(
+            f"more than one research session claims project {project_name!r}: "
+            + ", ".join(session.id for session in matches)
+        )
+    return matches[0]
+
+
+def _create_micro_project(
+    store: SessionStore,
+    session: ResearchSession,
+    candidate: dict[str, Any],
+    gate: dict[str, Any] | None,
+    project_slug: str,
+) -> None:
+    gate = gate or {}
+    facts = _micro_facts(candidate, gate)
+    base_context = {
+        "status": "ready",
+        "pipeline_mode": "micro_moment",
+        "title": _first_text(candidate, "title", "entity", "character") or facts.series,
+        "series": facts.series,
+        "issues": facts.exact_issue,
+        "year": facts.year,
+        "publisher": "",
+        "characters": [facts.char_name],
+        "reader_url": facts.reader_url,
+        "batcave_url": facts.reader_url,
+        "plot_summary": _first_text(candidate, "summary", "how_or_why", "visible_event"),
+    }
+    context_path = Path(save_comic_context(base_context, project_slug, get_project_dirs))
+    context = json.loads(context_path.read_text(encoding="utf-8"))
 
     context.update(
         {
-            "target_moment": target_moment,
-            "series_issue_year": exact_issue,
-            "issue": exact_issue,
-            "issues": exact_issue,
-            "year": year,
-            "reader_url": reader_url,
-            "batcave_url": reader_url,
-            "scout_candidate": scout_candidate,
+            "target_moment": facts.target_moment,
+            "series_issue_year": facts.exact_issue,
+            "issue": facts.exact_issue,
+            "issues": facts.exact_issue,
+            "year": facts.year,
+            "reader_url": facts.reader_url,
+            "batcave_url": facts.reader_url,
         }
     )
-    context_path.write_text(json.dumps(context, indent=2, ensure_ascii=False), encoding="utf-8")
-    project_root = context_path.parent
-    (project_root / "scout_candidate.json").write_text(
-        json.dumps(scout_candidate, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    _write_scout_candidate(context_path, context, build_scout_candidate(store, session, candidate, gate))
 
 
 def _first_text(data: Mapping[str, Any], *keys: str) -> str:

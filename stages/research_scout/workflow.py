@@ -386,7 +386,7 @@ class ScoutWorkflow:
 
         for candidate_id, raw_record in searches.items():
             self.store.write_artifact(
-                session.id, f"specific/search.{_artifact_key(candidate_id)}.v1.json", raw_record
+                session.id, specific_search_artifact(candidate_id), raw_record
             )
 
         self._write_gates(session.id, ids, fresh=gates)
@@ -939,6 +939,55 @@ def _artifact_key(candidate_id: str) -> str:
     """A candidate id is model-supplied text, so keep it to characters that are
     safe in a filename before it becomes one."""
     return _UNSAFE_ARTIFACT_CHARS.sub("_", candidate_id) or "candidate"
+
+
+def specific_search_artifact(candidate_id: str) -> str:
+    """Where ``verify_selected`` keeps one candidate's verification round.
+
+    Named once, here, so the project factory reads the file this writes rather
+    than re-deriving the name."""
+    return f"specific/search.{_artifact_key(candidate_id)}.v1.json"
+
+
+def verification_summary(payload: Any) -> str:
+    """A stored verification round as one line: its verdict, then its notes.
+
+    The verdict is the first item that holds one (the round is asked to verify
+    ONE candidate); the notes sit beside the item list. "" when the call
+    returned neither — a failed request, or a payload that is not the verify
+    shape — so a caller can leave the field out instead of writing a blank."""
+    result = _verify_result(payload)
+    items = result.get("candidates")
+    verdict = next(
+        (
+            text
+            for item in (items if isinstance(items, list) else [])
+            if isinstance(item, Mapping) and (text := str(item.get("verdict") or "").strip())
+        ),
+        "",
+    )
+    notes = str(result.get("notes") or "").strip()
+    return " — ".join(part for part in (verdict, notes) if part)
+
+
+def _verify_result(payload: Any) -> Mapping[str, Any]:
+    """The {candidates, notes} object of a verification round, wherever the API
+    nested it (output.content, or a JSON string) — the same walk as
+    _extract_candidates, but it keeps the notes that sit beside the items."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return {}
+    if not isinstance(payload, Mapping):
+        return {}
+    if "candidates" in payload or "notes" in payload:
+        return payload
+    for key in ("output", "content"):
+        found = _verify_result(payload.get(key))
+        if found:
+            return found
+    return {}
 
 
 def _raw_payload(raw: Any) -> Any:
