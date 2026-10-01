@@ -108,13 +108,28 @@ For each lead, write `setup → turning point → direct consequence` in three
 plain clauses. Name who acts or speaks. If the three clauses need different
 issues, several scenes, or invented psychology, keep searching.
 
+A reviewer's reaction or a teaser ("a shocking twist I never saw coming",
+"who's at the center of that twist", "everything changes") is not an event.
+Never restate it as one, and never build the turning point or the aftermath
+from it; when a source withholds a reveal, keep to what it states and note the
+withheld point as `unrevealed`. The request's own wording (e.g. "final twist",
+"shocking reveal") says what Master hopes to find; it is never evidence. Do not
+echo it into a candidate unless a source states it.
+
 ## STEP 2 — verify each finalist
 (a) exact series/volume/issue/year and comic versus adaptation;
 (b) a source quote for the turning action or admission and its direct
 consequence in the same scene; if one source lacks either, find another;
 (c) batcave.biz live reader URL and enough pages to tell that scene;
 (d) English Short/long coverage for the exact framing. Fan posts and Shorts
-can lead to a source, but do not establish the comic beat.
+can lead to a source, but do not establish the comic beat;
+(e) what happens next and what set the moment up, each with a URL + verbatim
+quote. `aftermath`: what happens after the turning point in the same issue,
+how the scene or confrontation ends, and what any announced twist actually is.
+`context`: why these characters are here and at odds, what each wants, where a
+key object or power came from. Write `not stated` when no source says it —
+never infer an outcome or a backstory — and list outcomes a source only hints
+at under `unrevealed`.
 
 ## STEP 3 — phrase the title + target_moment
 - Title: short direct statement with the recognizable character and concrete
@@ -123,10 +138,11 @@ can lead to a source, but do not establish the comic beat.
   turning action, and consequence; page number only if verified.
 
 ## OUTPUT — ranked table + command
-| # | Setup → turning point → consequence | Issue (year) | Beat evidence (URL + short quote) | EN coverage | batcave URL | Title draft | Why it ranks |
+| # | Setup → turning point → consequence | Issue (year) | Beat evidence (URL + short quote) | Aftermath · context · unrevealed (URL + short quote, or `not stated`) | EN coverage | batcave URL | Title draft | Why it ranks |
 
 Rank by clarity of the turn, zero-lore comprehension, direct consequence,
-source strength, and fit in 35–50 seconds. Mention a famous-name pairing,
+source strength, and fit in 35–50 seconds. A moment whose aftermath is sourced
+outranks one whose sources withhold it. Mention a famous-name pairing,
 visual strength, fan interest, or low coverage when evidenced, but do not
 force any one of them. Return ≤5 verified candidates; list rejected leads
 with the reason. If none pass, say so rather than inventing picks.

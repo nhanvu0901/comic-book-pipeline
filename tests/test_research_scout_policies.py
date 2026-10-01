@@ -189,6 +189,21 @@ def test_specific_micro_template_flags_a_moment_that_rests_on_a_reaction_or_teas
     assert "reaction or a teaser" not in qa
 
 
+def test_moment_scout_agent_doc_asks_for_the_same_things():
+    """The agent scouts by hand what the workflow scouts by API; it gets the same
+    ask and the same two rules, in its own words."""
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parent.parent / ".claude" / "agents" / "moment-scout.md"
+    flat = rules.normalized(doc.read_text(encoding="utf-8"))
+
+    assert "aftermath" in flat and "context" in flat and "unrevealed" in flat
+    assert "not stated" in flat                      # the agent's "" for a missing source
+    assert "a shocking twist I never saw coming" in flat
+    assert "is not an event" in flat
+    assert "final twist" in flat and "it is never evidence" in flat
+
+
 def test_reddit_scouts_but_does_not_verify():
     """Reddit is where you learn what fans argue about, which is discovery's
     job. For confirming an issue number and year it is not a primary source,

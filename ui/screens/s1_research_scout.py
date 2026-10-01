@@ -212,6 +212,13 @@ def _candidate_card(
     reader_url = candidate.get("reader_url") or gate.get("reader_url")
     if reader_url and reader_url not in urls:
         urls = [*urls, reader_url]
+    # The pages the aftermath/context research cites. The scout is asked to list
+    # them in evidence_urls too, but a card that hid a cited page would hide the
+    # very thing the extra lines below claim.
+    for citation in candidate.get("detail_citations") or []:
+        cited = citation.get("url") if isinstance(citation, dict) else None
+        if isinstance(cited, str) and cited.strip() and cited not in urls:
+            urls = [*urls, cited]
     flags = [str(flag) for flag in (candidate.get("flags") or [])]
     flags.extend(str(flag) for flag in (gate.get("flags") or []))
     header_controls: list[ft.Control] = [
@@ -243,6 +250,16 @@ def _candidate_card(
         ], spacing=2))
     if candidate.get("why_it_lands"):
         details.append(ft.Text(f"Why it lands: {candidate['why_it_lands']}", size=11, color=TEXT_MUTED, selectable=True))
+    # Micro's extra research: how the scene ends, what set it up, and what the
+    # sources only hint at. Blank or absent means nothing was found, so no line.
+    for label, key, color in (
+        ("What happens next", "aftermath", TEXT_MUTED),
+        ("Context", "context_behind", TEXT_MUTED),
+        ("Not revealed by sources", "unrevealed", WARN),
+    ):
+        text = str(candidate.get(key) or "").strip()
+        if text:
+            details.append(ft.Text(f"{label}: {text}", size=11, color=color, selectable=True))
     if candidate.get("rank_reason"):
         details.append(ft.Text(f"Rank reason: {candidate['rank_reason']}", size=11, italic=True, color=TEXT_MUTED, selectable=True))
     if gate.get("reason"):
