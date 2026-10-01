@@ -5,7 +5,7 @@
     resolve (custom_image bypasses crop-from-page)
   • stages/stage_5/panel_sheet.py — sheet shows the custom image, not the old panel
 
-Cosine is NEVER a select/reject gate here — every test that touches assign_custom_images
+The match score is NEVER a select/reject gate here — every test that touches assign_custom_images
 asserts every image still gets SOME beat, only the beat CHOICE varies with score.
 """
 from __future__ import annotations
@@ -73,24 +73,64 @@ def test_add_custom_image_appends_multiple(tmp_path):
     assert {e["beat_key"] for e in imgs} == {"1", "2"}
 
 
-# ─── ui/custom_image.py: enrich degrades gracefully (SDK/embed/Qdrant all down) ──
+# ─── ui/custom_image.py: enrich is the VLM describe only, and degrades gracefully ──
 
-def test_enrich_never_raises_when_everything_unavailable(tmp_path, monkeypatch):
+def _sidecar_entry(root):
+    return json.loads((root / "review/custom/custom_images.json").read_text())["images"][0]
+
+
+def test_enrich_never_raises_when_the_sdk_is_unavailable(tmp_path, monkeypatch):
     import stages._claude_sdk as sdk
-    import stages._img_index as img_index
     entry = add_custom_image(tmp_path, _tiny_jpg(tmp_path / "src.jpg"), "1")
 
     monkeypatch.setattr(sdk, "sdk_available", lambda: False)
-    monkeypatch.setattr(img_index, "img_embed_available", lambda: False)
 
     logs = []
     enrich_custom_image(tmp_path, entry["file"], log=logs.append)  # must not raise
 
-    sidecar = json.loads((tmp_path / "review/custom/custom_images.json").read_text())
-    updated = sidecar["images"][0]
+    updated = _sidecar_entry(tmp_path)
     assert updated["desc"] == ""
     assert "sdk_unavailable" in updated["enrich_status"]
     assert any("enrich done" in m for m in logs)
+
+
+def test_enrich_stores_the_vlm_description_and_marks_ok(tmp_path, monkeypatch):
+    import stages._claude_sdk as sdk
+    entry = add_custom_image(tmp_path, _tiny_jpg(tmp_path / "src.jpg"), "1")
+    seen = {}
+
+    def fake_vision(system, user, **_kw):
+        seen["user"] = user
+        return "  A hero flying over a city at night.  "
+
+    monkeypatch.setattr(sdk, "sdk_available", lambda: True)
+    monkeypatch.setattr(sdk, "sdk_complete_vision", fake_vision)
+
+    enrich_custom_image(tmp_path, entry["file"], log=lambda _m: None)
+
+    updated = _sidecar_entry(tmp_path)
+    assert updated["desc"] == "A hero flying over a city at night."   # stripped, stored as-is
+    assert updated["enrich_status"] == "ok"                           # ok iff a desc was written
+    assert str(tmp_path / entry["file"]) in seen["user"]              # the VLM was pointed at the file
+
+
+def test_enrich_vlm_failure_or_empty_answer_leaves_the_image_usable(tmp_path, monkeypatch):
+    import stages._claude_sdk as sdk
+    entry = add_custom_image(tmp_path, _tiny_jpg(tmp_path / "src.jpg"), "1")
+    monkeypatch.setattr(sdk, "sdk_available", lambda: True)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("not logged in")
+
+    monkeypatch.setattr(sdk, "sdk_complete_vision", boom)
+    enrich_custom_image(tmp_path, entry["file"], log=lambda _m: None)          # must not raise
+    updated = _sidecar_entry(tmp_path)
+    assert updated["desc"] == "" and "desc_failed" in updated["enrich_status"]
+
+    monkeypatch.setattr(sdk, "sdk_complete_vision", lambda *_a, **_k: None)   # judge answered nothing
+    enrich_custom_image(tmp_path, entry["file"], log=lambda _m: None)
+    updated = _sidecar_entry(tmp_path)
+    assert updated["desc"] == "" and updated["enrich_status"] == "desc_empty"
 
 
 def test_enrich_missing_file_marks_status(tmp_path):
@@ -123,15 +163,15 @@ def test_assign_custom_images_argmax_two_images_three_beats_contention():
     }
     out = shots.assign_custom_images(
         beats, images, {}, score_fn=lambda text, img: table[(img["file"], text)])
-    assert out["b1"] == "imgA.jpg"     # higher cosine wins the contested beat
+    assert out["b1"] == "imgA.jpg"     # higher score wins the contested beat
     assert out["b2"] == "imgB.jpg"     # loser falls through to its next-best FREE beat
     assert "b3" not in out             # no image left to claim it
     assert set(out.values()) == {"imgA.jpg", "imgB.jpg"}   # both images placed SOMEWHERE
 
 
 def test_assign_custom_images_locked_bypasses_argmax():
-    """A Master hand-lock wins outright, even against a much higher cosine elsewhere —
-    cosine is never a veto over an explicit lock."""
+    """A Master hand-lock wins outright, even against a much higher score elsewhere —
+    a score is never a veto over an explicit lock."""
     beats = [("b1", "x"), ("b2", "y")]
     images = [{"file": "imgA.jpg"}]
     out = shots.assign_custom_images(
@@ -154,54 +194,65 @@ def test_resolve_custom_images_noop_when_no_sidecar(tmp_path, monkeypatch):
     assert shots._resolve_custom_images("noimg", {"scenes": []}) == {}
 
 
-def test_resolve_custom_images_scores_via_desc_semantic_sim(tmp_path, monkeypatch):
+def test_score_custom_image_is_the_word_overlap_of_beat_and_desc():
+    img = {"file": "x.jpg", "desc": "A hero flying over the city"}   # content words: hero flying city
+    assert shots._score_custom_image("The hero is flying over the city", img) == 1.0
+    assert shots._score_custom_image("The hero lands", img) == 0.25          # 1 shared of 4 distinct
+    assert shots._score_custom_image("Mayor signs the budget", img) == 0.0   # nothing in common
+    # no desc yet (enrich pending/failed) → 0.0 on every beat, never an error
+    assert shots._score_custom_image("The hero flying", {"file": "x.jpg"}) == 0.0
+    assert shots._score_custom_image("The hero flying", {"file": "x.jpg", "desc": "  "}) == 0.0
+
+
+def _custom_project(tmp_path, monkeypatch, descs):
+    """A project with one custom image per entry of `descs` (the image's `desc`, "" = enrich never
+    ran). The images are added to beat "1" — the sidecar's beat_key is display-only."""
     import config
     import stages.review_gate as rg
-    import stages._embedding as _embedding
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
     proj = tmp_path / "p"
-    add_custom_image(proj, _tiny_jpg(tmp_path / "src.jpg"), "1")
-    # give the sidecar entry a desc directly (skip the network VLM call)
+    for i in range(len(descs)):
+        add_custom_image(proj, _tiny_jpg(tmp_path / f"src{i}.jpg"), "1")
     sc_path = proj / "review/custom/custom_images.json"
     doc = json.loads(sc_path.read_text())
-    doc["images"][0]["desc"] = "a hero flying"
+    for entry, desc in zip(doc["images"], descs):
+        entry["desc"] = desc          # set directly (skips the network VLM call)
     sc_path.write_text(json.dumps(doc))
+    return doc["images"]
 
-    monkeypatch.setattr(_embedding, "semantic_sim",
-                        lambda a, b: 0.9 if "hero" in b else 0.0)
-    narration = {"scenes": [{"scene_id": 1, "text": "a hero flying through the sky"}]}
+
+def test_resolve_custom_images_lands_an_image_on_the_beat_its_desc_shares_words_with(tmp_path, monkeypatch):
+    images = _custom_project(tmp_path, monkeypatch, ["a hero flying over the city"])
+    narration = {"scenes": [{"scene_id": 1, "text": "The mayor signed the budget in a quiet office"},
+                            {"scene_id": 2, "text": "A hero flying through the sky above the city"},
+                            {"scene_id": 3, "text": "The crowd cheered in the street"}]}
     out = shots._resolve_custom_images("p", narration)
-    assert list(out.keys()) == ["1"]
-    assert Path(out["1"]).as_posix().endswith(doc["images"][0]["file"])
+    assert list(out.keys()) == ["2"]          # the beat sharing "hero flying city", not the first beat
+    assert Path(out["2"]).as_posix().endswith(images[0]["file"])
 
 
-def test_resolve_custom_images_falls_back_to_siglip_when_no_desc(tmp_path, monkeypatch):
-    """No VLM desc yet (enrich pending/failed) → argmax falls back to SigLIP image-vector
-    (from Qdrant) · SigLIP text-embed(beat_text) — BOTH sides mocked here, no live LM
-    Studio / embedding-server call (Master's stop-all-embed-calls order)."""
-    import numpy as np
-    import config
-    import stages.review_gate as rg
-    import stages._img_index as img_index
-    monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
-    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
-    proj = tmp_path / "p"
-    entry = add_custom_image(proj, _tiny_jpg(tmp_path / "src.jpg"), "1")  # desc left "" on purpose
-
-    fake_vec = np.array([1.0, 0.0], dtype="float32")
-    monkeypatch.setattr(shots, "_load_custom_image_vectors",  # mocked Qdrant read
-                        lambda project: {entry["file"]: fake_vec})
-
-    def fake_embed_texts(texts):  # mocked SigLIP text tower — no model load, no network
-        return np.array([[1.0, 0.0] if "match" in t else [0.0, 1.0] for t in texts],
-                        dtype="float32")
-    monkeypatch.setattr(img_index, "embed_texts", fake_embed_texts)
-
+def test_resolve_custom_images_still_places_an_image_with_no_desc(tmp_path, monkeypatch):
+    """No VLM desc yet (enrich pending/failed) → it scores 0.0 on every beat, but a custom image is
+    NEVER dropped: it takes the earliest free beat in story order (Master can lock it elsewhere)."""
+    images = _custom_project(tmp_path, monkeypatch, [""])
     narration = {"scenes": [{"scene_id": 1, "text": "other beat"},
                             {"scene_id": 2, "text": "match beat"}]}
     out = shots._resolve_custom_images("p", narration)
-    assert list(out.keys()) == ["2"]   # the SigLIP-aligned beat wins, not scene 1
+    assert list(out.keys()) == ["1"]
+    assert Path(out["1"]).as_posix().endswith(images[0]["file"])
+
+
+def test_resolve_custom_images_places_every_image_described_or_not(tmp_path, monkeypatch):
+    """One described image and one without: the described one wins the beat it matches, the other
+    falls to the earliest remaining free beat — both appear."""
+    images = _custom_project(tmp_path, monkeypatch, ["a hero flying over the city", ""])
+    narration = {"scenes": [{"scene_id": 1, "text": "The mayor signed the budget"},
+                            {"scene_id": 2, "text": "A hero flying above the city"},
+                            {"scene_id": 3, "text": "The crowd cheered"}]}
+    out = shots._resolve_custom_images("p", narration)
+    by_beat = {bk: Path(p).name for bk, p in out.items()}
+    assert by_beat == {"2": Path(images[0]["file"]).name, "1": Path(images[1]["file"]).name}
 
 
 # ─── stages/stage_5/shots.py: applying the assignment onto the shot list ─────────
@@ -317,9 +368,9 @@ def test_panel_sheet_no_custom_is_unchanged(tmp_path):
 # ─── end-to-end: build_shots() wires resolve → apply on top of a stubbed builder ─
 
 def test_build_shots_end_to_end_applies_locked_custom_image(tmp_path, monkeypatch):
-    """A Master hand-lock ({"custom_image": ...} in locks.json) needs NO embedding backend
-    at all (assign_custom_images returns before ever calling score_fn for a fully-locked
-    image) — proving the "LM Studio down, still add-able" contract end to end."""
+    """A Master hand-lock ({"custom_image": ...} in locks.json) needs NO description at all
+    (assign_custom_images returns before ever calling score_fn for a fully-locked image) —
+    proving the "enrich never ran, still lockable" contract end to end."""
     import config
     import stages.review_gate as rg
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)

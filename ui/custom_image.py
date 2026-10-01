@@ -2,16 +2,16 @@
 Hand-add a custom image to ONE beat in the review UI.
 
 Master's design (approved): an image Master adds himself is CERTAIN to appear in the
-video — cosine similarity is never a select/reject gate for it, only an ASSIGNMENT
-signal deciding which beat it lands on (stages.stage_5.shots.assign_custom_images).
+video — how well it matches a beat's words is never a select/reject gate for it, only an
+ASSIGNMENT signal deciding which beat it lands on (stages.stage_5.shots.assign_custom_images).
 This module is the instant, always-succeeds half of that flow: copy the picked file into
 review/custom/ and record it in the sidecar (review/custom/custom_images.json) that
-Stage 5 reads. enrich_custom_image() is the slow half (VLM describe + embed + Qdrant
-upsert) — meant to be run in a background thread/task so the UI never blocks on it, and
-degrades to a "pending"/"*_failed" sidecar status on ANY failure (LM Studio down, no
-SDK login, ...) rather than raising, per review_gate.py's own graceful-degradation
-convention. Master can still lock the image to a beat immediately even if enrichment
-never completes — Stage-5 assignment simply falls back to an empty-desc score of 0.0.
+Stage 5 reads. enrich_custom_image() is the slow half (the VLM describe that writes the
+sidecar's `desc`) — meant to be run in a background thread/task so the UI never blocks on it,
+and degrades to a "pending"/"*_failed" sidecar status on ANY failure (no SDK login, ...)
+rather than raising, per review_gate.py's own graceful-degradation convention. Master can
+still lock the image to a beat immediately even if enrichment never completes — Stage-5
+assignment simply falls back to an empty-desc score of 0.0.
 
 Pure module (no flet) so the review-gate screen can call it and it stays unit-testable.
 """
@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import re
 import time
-import uuid
 from pathlib import Path
 
 CUSTOM_DIR = "review/custom"
@@ -58,18 +57,12 @@ def list_custom_images(project_root: Path) -> list[dict]:
     return list(_load_sidecar(project_root).get("images") or [])
 
 
-def point_id(rel_file: str) -> str:
-    """Deterministic Qdrant point id for a custom image (stable across re-enrich runs, so a
-    re-upsert REPLACES the same point instead of duplicating it)."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, str(rel_file)))
-
-
 def add_custom_image(project_root: Path, src_image: Path, beat_key: str, *,
                      data: bytes | None = None) -> dict:
     """Write projects/<slug>/review/custom/custom_<ts>_<origname>.<ext> and append a
     sidecar entry (beat_key is the card Master clicked "Add image" on — display-only;
     Stage 5's custom-assign argmax is free to place the image on a DIFFERENT beat unless
-    Master also locks it here). Instant — no VLM/embedding call — so the UI never blocks.
+    Master also locks it here). Instant — no VLM call — so the UI never blocks.
 
     `data`: raw bytes to write directly, when given — the Flet WEB-mode path.
     FilePicker.pick_files(with_data=True) is the only way to get a picked file's
@@ -110,14 +103,13 @@ def _update_entry(project_root: Path, rel_file: str, *, desc: str, enrich_status
 
 def enrich_custom_image(project_root: Path, rel_file: str, *, log=print) -> None:
     """Best-effort ONE-TIME enrichment for a just-added custom image: VLM-describe it (Claude
-    SDK vision, same sdk_complete_vision pattern as stages/review_gate.py's vision judge),
-    Qwen/text-embed the description, and SigLIP-embed the pixels — then upsert BOTH into the
-    project's per-project Qdrant collections with payload {"custom": True, "image_path": rel}
-    so Stage 5's custom-assign can score it. Meant to run OFF the UI thread (asyncio.to_thread /
-    run_blocking) — never raises; any step that fails (SDK not logged in, LM Studio down, Qdrant
-    down) is logged and the sidecar's enrich_status records how far it got. Locking + rendering
-    the image do NOT depend on this succeeding — a pending/failed enrich just means Stage 5's
-    argmax scores this image 0.0 (no desc, no SigLIP vector) unless Master hand-locks it."""
+    SDK vision, same sdk_complete_vision pattern as stages/review_gate.py's vision judge) and
+    store the sentence as the sidecar entry's `desc`, which Stage 5's custom-assign scores
+    against each beat's words. Meant to run OFF the UI thread (asyncio.to_thread /
+    run_blocking) — never raises; a describe that fails (SDK not logged in, ...) is logged and
+    the sidecar's enrich_status records how far it got. Locking + rendering the image do NOT
+    depend on this succeeding — a pending/failed enrich just means Stage 5's argmax scores this
+    image 0.0 (no desc) unless Master hand-locks it."""
     project_root = Path(project_root)
     abs_path = project_root / rel_file
     if not abs_path.exists():
@@ -125,7 +117,6 @@ def enrich_custom_image(project_root: Path, rel_file: str, *, log=print) -> None
         _update_entry(project_root, rel_file, desc="", enrich_status="missing_file")
         return
 
-    slug = project_root.name
     desc = ""
     status_bits: list[str] = []
 
@@ -145,53 +136,8 @@ def enrich_custom_image(project_root: Path, rel_file: str, *, log=print) -> None
         log(f"[custom-image] {rel_file}: VLM describe failed ({type(exc).__name__}: {exc})")
         status_bits.append("desc_failed")
 
-    if desc:
-        try:
-            from stages import _qdrant
-            from stages._embedding import embed_batch, embed_dim
-            vec = embed_batch([desc])[0]
-            if vec is not None:
-                _qdrant.ensure_collection(slug, embed_dim())
-                _qdrant.upsert_panels(slug, [{
-                    "id": point_id(rel_file),
-                    "vector": vec.tolist() if hasattr(vec, "tolist") else list(vec),
-                    "payload": {"custom": True, "image_path": rel_file, "desc": desc},
-                }])
-            else:
-                status_bits.append("text_embed_failed")
-        except Exception as exc:  # noqa: BLE001
-            log(f"[custom-image] {rel_file}: text upsert failed ({type(exc).__name__}: {exc})")
-            status_bits.append("text_upsert_failed")
-    else:
+    if not desc:
         status_bits.append("desc_empty")
-
-    try:
-        from stages import _img_index, _qdrant
-        if _img_index.img_embed_available():
-            from PIL import Image
-            with Image.open(abs_path) as im:
-                vecs = _img_index.embed_images([im.convert("RGB")])
-            _img_index.release()
-            if vecs is not None:
-                from qdrant_client import models
-                name = _img_index._img_collection_name(slug)
-                c = _qdrant.client()
-                if not c.collection_exists(name):
-                    c.create_collection(name, vectors_config=models.VectorParams(
-                        size=int(vecs.shape[1]), distance=models.Distance.COSINE))
-                c.upsert(name, points=[models.PointStruct(
-                    id=point_id(rel_file), vector=vecs[0].tolist(),
-                    payload={"custom": True, "image_path": rel_file})])
-            else:
-                status_bits.append("image_embed_failed")
-        else:
-            status_bits.append("siglip_unavailable")
-    except Exception as exc:  # noqa: BLE001
-        log(f"[custom-image] {rel_file}: image upsert failed ({type(exc).__name__}: {exc})")
-        status_bits.append("image_upsert_failed")
-
-    status = "ok" if desc and "text_upsert_failed" not in status_bits else "pending"
-    if status_bits:
-        status = ",".join(status_bits) if not desc else f"ok({','.join(status_bits)})"
+    status = "ok" if desc else ",".join(status_bits)
     _update_entry(project_root, rel_file, desc=desc, enrich_status=status)
     log(f"[custom-image] {rel_file}: enrich done (status={status}, desc={'yes' if desc else 'no'})")

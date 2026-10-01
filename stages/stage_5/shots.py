@@ -9,6 +9,8 @@ from typing import Callable
 
 from PIL import Image, ImageFilter
 
+from utils.lexical_sim import token_jaccard
+
 from .schema import Shot
 
 
@@ -585,11 +587,11 @@ def build_shots(
         shots = _build_shots_per_scene(narration, scene_timings, word_timestamps)
 
     # Custom images (Master-added, review UI): OVERRIDE whatever the matcher/builder above
-    # picked for a beat that got a custom image (locked by Master, or argmax-assigned by
-    # cosine — see assign_custom_images). No-op (byte-identical) for any project with no
-    # review/custom/custom_images.json.
+    # picked for a beat that got a custom image (locked by Master, or argmax-assigned by word
+    # overlap with the beat — see assign_custom_images). No-op (byte-identical) for any project
+    # with no review/custom/custom_images.json.
     custom_map = _resolve_custom_images(project, narration) if project else {}
-    # An image that Master ADDED but never LOCKED gets placed by cosine argmax. That guess must
+    # An image that Master ADDED but never LOCKED gets placed by argmax. That guess must
     # never outrank an explicit pick: on power-fantasy-etienne a stray third sidecar entry
     # (beat_key "4:0", added then abandoned) was argmax-assigned to "outro" and painted over the
     # panel Master had locked there (p120/0), so the video closed on a repeat of an earlier image.
@@ -1232,14 +1234,14 @@ def _qa_drawable_moments(project: str | None, pages_by_number: dict[int, dict],
         return {}
 
 
-# ─── Custom images (Master-added; certain to appear, cosine only picks the BEAT) ──────────
+# ─── Custom images (Master-added; certain to appear, word overlap only picks the BEAT) ─────
 # Design (Master-approved): an image Master adds himself in the review UI is GUARANTEED to
 # show up somewhere in the video — unlike a matched comic panel, it is NEVER filtered out by
-# a cosine floor. Cosine only decides WHICH BEAT it lands on (assign_custom_images), and a
-# Master hand-lock ({"custom_image": path} in locks.json) skips that argmax entirely for that
-# one image. This whole block is a no-op (returns {} / [] immediately) for any project with no
-# review/custom/custom_images.json — so a project that never used this feature renders on the
-# EXACT same path as before it existed.
+# a score threshold. The words a beat shares with the image's description only decide WHICH
+# BEAT it lands on (assign_custom_images), and a Master hand-lock ({"custom_image": path} in
+# locks.json) skips that argmax entirely for that one image. This whole block is a no-op
+# (returns {} / [] immediately) for any project with no review/custom/custom_images.json — so
+# a project that never used this feature renders on the EXACT same path as before it existed.
 
 def _load_custom_images(project: str | None) -> list[dict]:
     """review/custom/custom_images.json → its "images" list ([] if missing/project None/
@@ -1275,37 +1277,6 @@ def _custom_locks(project: str | None) -> dict[str, str]:
     return out
 
 
-def _load_custom_image_vectors(project: str | None) -> dict:
-    """{"review/custom/<file>": np.ndarray} SigLIP vectors for every custom:true point in the
-    project's per-project IMAGE collection — the argmax fallback for a custom image whose VLM
-    describe never completed (no desc → no text cosine). {} on any failure/missing collection/
-    Qdrant down/SigLIP unavailable. Never raises. Loaded lazily by _resolve_custom_images only
-    when some image actually needs it (most runs have a desc and never touch Qdrant here)."""
-    if not project:
-        return {}
-    try:
-        import numpy as np
-        from .. import _img_index, _qdrant
-        c = _qdrant.client()
-        name = _img_index._img_collection_name(project)
-        if not c.collection_exists(name):
-            return {}
-        out: dict = {}
-        offset = None
-        while True:
-            recs, offset = c.scroll(name, limit=256, with_payload=True, with_vectors=True,
-                                    offset=offset)
-            for p in recs:
-                pl = p.payload or {}
-                if pl.get("custom") and p.vector is not None:
-                    out[str(pl.get("image_path", ""))] = np.asarray(p.vector, dtype="float32")
-            if offset is None:
-                break
-        return out
-    except Exception:
-        return {}
-
-
 def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
                          locked: dict[str, str], *,
                          panel_locked: set[str] | None = None,
@@ -1317,16 +1288,16 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     {beat_key: file} from Master's hand-locks (_custom_locks) — resolved DIRECTLY, no argmax.
     `panel_locked` = set of beat_keys Master locked to comic panels, off-limits to argmax.
     `score_fn(beat_text, image_dict) -> float` scores every remaining (beat, image) pair
-    (real caller: cosine on the image's VLM desc, SigLIP-vector fallback — see
-    _score_custom_image; tests inject a stub for determinism, same idiom as this repo's
-    _panel_content_score stubs).
+    (real caller: word overlap between the beat and the image's VLM desc — see
+    _score_custom_image; tests inject a stub for determinism).
 
     Every UNLOCKED image is greedily assigned to its best still-free beat, highest score
-    first — so when two images both want the SAME beat, the higher-cosine one wins it and
+    first — so when two images both want the SAME beat, the higher-scoring one wins it and
     the other falls through to its next-best free beat ("nhiều ảnh tranh 1 beat"). An image
-    that scores 0.0 everywhere (empty beats / totally unavailable embeddings) still gets
-    assigned something if any beat remains free — a custom image is NEVER dropped, only its
-    beat placement can be a coin-flip in the worst case (Master added it → it WILL appear).
+    that scores 0.0 everywhere (no desc yet, or no word in common with any beat) still gets
+    assigned something if any beat remains free, the earliest in story order — a custom
+    image is NEVER dropped, only its beat placement can be arbitrary in the worst case
+    (Master added it → it WILL appear, and he can lock it to the beat he wants).
 
     Returns {beat_key: file} — every beat that ends up with a custom image, locked ∪
     argmax-assigned. {} when there are no images or no beats.
@@ -1368,29 +1339,13 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     return out
 
 
-def _score_custom_image(beat_text: str, image: dict, *, project: str | None,
-                        siglip_vecs: dict) -> float:
-    """Real scoring for assign_custom_images: cosine(beat_text, image's VLM desc) via the
-    shared text-embed backend (Qwen/Gemini/local, whatever Stage 5 already uses); falls back
-    to SigLIP image-vector · SigLIP text-embed(beat_text) when the image has no desc yet
-    (enrich pending/failed). 0.0 if neither signal is available — never raises."""
-    desc = str(image.get("desc") or "").strip()
-    if desc:
-        try:
-            from .._embedding import semantic_sim
-            return semantic_sim(beat_text, desc)
-        except Exception:
-            return 0.0
-    vec = siglip_vecs.get(str(image.get("file", "")))
-    if vec is None:
-        return 0.0
-    try:
-        import numpy as np
-        from .. import _img_index
-        txt_vecs = _img_index.embed_texts([beat_text])
-        return float(np.dot(vec, txt_vecs[0])) if txt_vecs is not None else 0.0
-    except Exception:
-        return 0.0
+def _score_custom_image(beat_text: str, image: dict) -> float:
+    """Real scoring for assign_custom_images: the share of content words (stopwords dropped,
+    word order ignored) that the beat's text and the image's VLM desc have in common, 0.0-1.0
+    (utils.lexical_sim.token_jaccard). An image with no desc yet (enrichment pending or
+    failed) scores 0.0 on every beat: assign_custom_images still places it on a free beat,
+    and Master can hand-lock it to the one he wants. Never raises."""
+    return token_jaccard(beat_text, str(image.get("desc") or ""))
 
 
 def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
@@ -1433,22 +1388,14 @@ def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, st
     root = _project_root(project)
     locked = _custom_locks(project)
     beats = _beat_rows_for_custom(narration)
-    siglip_vecs: dict = {}
-    loaded_siglip = False
-
-    def _score(text, img):
-        nonlocal loaded_siglip, siglip_vecs
-        if not str(img.get("desc") or "").strip() and not loaded_siglip:
-            siglip_vecs = _load_custom_image_vectors(project)
-            loaded_siglip = True
-        return _score_custom_image(text, img, project=project, siglip_vecs=siglip_vecs)
 
     from ..review_gate import load_state as _load_review_state
     _locks = (_load_review_state(project) or {}).get("locks") or {} if project else {}
     panel_locked = {k for k, v in _locks.items()
                     if isinstance(v, dict) and not v.get("custom_image")}
 
-    by_key = assign_custom_images(beats, images, locked, panel_locked=panel_locked, score_fn=_score)
+    by_key = assign_custom_images(beats, images, locked, panel_locked=panel_locked,
+                                  score_fn=_score_custom_image)
     return {bk: str(root / f) for bk, f in by_key.items()}
 
 
