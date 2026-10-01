@@ -336,6 +336,29 @@ _MICRO_PROPS = {
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
 }
 
+# Only run_micro's full scout asks for these. workflow.discover_questions shares
+# _MICRO_PROPS and its candidates (and every fixture) carry none of them, so they
+# stay out of it. Same shape as stages.research_scout.planner.MICRO_DETAIL_PROPS,
+# which this module cannot import without pulling in config; a test pins them equal.
+_MICRO_DETAIL_PROPS = {
+    "aftermath": {"type": "string"},
+    "context_behind": {"type": "string"},
+    "unrevealed": {"type": "string"},
+    "detail_citations": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "supports": {"type": "string"},
+                "url": {"type": "string"},
+                "quote": {"type": "string"},
+            },
+            "required": ["supports", "url", "quote"],
+        },
+    },
+}
+
 
 def _series_of(series_issue_year: str) -> str:
     """"Absolute Batman #11 (2025)" -> "absolute batman". Issue number and year removed."""
@@ -367,6 +390,25 @@ def _series_burned(series_issue_year: str, digest: str) -> str | None:
     return None
 
 
+def _detail_lines(c: dict) -> list[str]:
+    """The report lines for what happens next, what set the moment up and what the
+    sources withhold. An empty aftermath/context is printed as such: "" is the scout
+    saying no source states it, and a missing line would read as it never looking.
+    What is not revealed is only worth a line when there is something to say."""
+    none = "(none found in sources)"
+    lines = [f"- what happens next: {str(c.get('aftermath') or '').strip() or none}",
+             f"- context: {str(c.get('context_behind') or '').strip() or none}"]
+    unrevealed = str(c.get("unrevealed") or "").strip()
+    if unrevealed:
+        lines.append(f"- not revealed by sources: {unrevealed}")
+    cites = [x for x in (c.get("detail_citations") or []) if isinstance(x, dict)]
+    if cites:
+        lines.append("- detail sources:")
+        lines += [f"  - {x.get('supports', '')}: {x.get('url', '')} — \"{x.get('quote', '')}\""
+                  for x in cites]
+    return lines
+
+
 def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> None:
     """Scout single MOMENTS for micro_moment mode. Same three-part shape as run_discover:
     our plan fans out, You.com digs, our filters decide."""
@@ -393,6 +435,26 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
             "what_visibly_happens name only source-grounded actions needed to locate the "
             "scene; do not invent panel order, expressions, motive, or choreography. In "
             "why_it_lands explain how the turn changes the viewer's first reading.\n"
+            "Also return what happens next (aftermath) and what set the moment up "
+            "(context_behind), each backed by detail_citations with a verbatim quote, "
+            "and list those URLs in evidence_urls too. aftermath is what happens after "
+            "the turning point in the same issue, how the confrontation or scene ends, "
+            "and what any announced twist actually is. context_behind is what set the "
+            "moment up: why these characters are here and at odds, what each wants, "
+            "where a key object or power came from, as sources state it. unrevealed is "
+            "any outcome a source hints at but never states. Each detail_citations "
+            'entry is {"supports": "aftermath" or "context_behind", "url": the page, '
+            '"quote": a verbatim sentence from that page}. Use "" when no source states '
+            "it; never infer or invent an outcome or backstory.\n"
+            "A reviewer's reaction or a teaser (\"a shocking twist I never saw coming\", "
+            "\"who's at the center of that twist\", \"everything changes\") is not an "
+            "event. Never restate it as one, and never build what_visibly_happens, "
+            "turning_point or aftermath from it. When a source withholds a reveal, keep "
+            "aftermath to what is actually stated and put the withheld point in "
+            "unrevealed.\n"
+            "The request's own wording (e.g. \"final twist\", \"shocking reveal\") says "
+            "what the user hopes to find; it is never evidence. Do not echo it into a "
+            "candidate unless a source states it.\n"
             "REJECT: listicles, scenes without a concrete turn, moments needing multiple "
             "issues for their payoff, abstract claims like 'controls the tempo', adaptation-only "
             "events, unpublished solicitations, and anything without exact series, volume "
@@ -400,7 +462,9 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
             f"Angle for THIS search: {angle}."
         )
         print(f"[micro {i}/{len(MICRO_ANGLES)}] {angle[:60]}…", flush=True)
-        resp = _call_logged(key, prompt, effort, _schema(_MICRO_PROPS), outdir, f"micro{i}")
+        resp = _call_logged(
+            key, prompt, effort, _schema({**_MICRO_PROPS, **_MICRO_DETAIL_PROPS}), outdir, f"micro{i}"
+        )
         for c in _cands(resp):
             c["_angle"] = angle
             rows.append(c)
@@ -430,6 +494,7 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
                   f"- turning point: {c.get('turning_point', '')}",
                   f"- what is SEEN: {str(c.get('what_visibly_happens', ''))}",
                   f"- why it lands: {str(c.get('why_it_lands', ''))}",
+                  *_detail_lines(c),
                   f"- evidence: {' '.join(c.get('evidence_urls') or [])}", ""]
     dropped = [c for c in rows if c.get("_dropped_as_burned")]
     if dropped:
