@@ -162,7 +162,22 @@ def test_micro_output_block_audits_aftermath_and_open_loops():
     order = [labels.index(name) for name in (
         "STORY FRAME CHECK", "AFTERMATH CHECK", "OPEN LOOPS", "REACTIONS", "UNSUPPORTED FACTS")]
     assert order == sorted(order)
-    assert any(line.strip() == "OPEN LOOPS: none" for line in after_script)
+
+
+def test_micro_output_open_loops_line_asks_for_the_sentences_instead_of_a_literal_none():
+    """`OPEN LOOPS: none` was printed as a literal the writer could copy without checking, as the
+    old `REACTIONS: none` was copied beside a reaction sentence. The line now asks for each
+    sentence that mentions a twist, reveal, ending or surprise, paired with the sentence that
+    states what it is, and keeps its label: the parser's audit-heading test reads the labels
+    from this block."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    after_script = prompt.split("OUTPUT EXACTLY", 1)[1].splitlines()
+    open_loops = [line.strip() for line in after_script if line.startswith("OPEN LOOPS")]
+
+    assert open_loops == [
+        "OPEN LOOPS: <every sentence that mentions a twist, reveal, ending, or surprise, each "
+        "paired with the sentence that states what it is; or none>"]
+    assert "OPEN LOOPS: none" not in prompt
 
 
 def test_micro_output_block_story_placeholder_follows_the_ending_rule():

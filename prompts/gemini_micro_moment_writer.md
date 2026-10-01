@@ -358,7 +358,7 @@ S2 | ...
 OPENING CHAIN: <hook promise> -> <new fact in first body sentence, B/R ID> -> <next verified movement or END if the sheet is thin>
 STORY FRAME CHECK: <frame beat ID and the spoken sentence that uses it, or UNKNOWN; confirm no generic trait was substituted>
 AFTERMATH CHECK: <AFTERMATH beat IDs and the sentence that tells them, or UNKNOWN — main moment expanded instead>
-OPEN LOOPS: none
+OPEN LOOPS: <every sentence that mentions a twist, reveal, ending, or surprise, each paired with the sentence that states what it is; or none>
 REACTIONS: <list or none>
 UNSUPPORTED FACTS: none
 
