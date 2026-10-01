@@ -104,6 +104,24 @@ def test_micro_template_keeps_its_placeholders_and_pinned_phrases():
         assert phrase in flat, phrase
 
 
+def test_micro_template_marks_a_search_snippet_quote_and_forbids_a_url_never_seen():
+    """In the agy probe (Gemini 3.1 Pro) the writer only saw search-result snippets. It wrote a
+    URL it never opened, a bare domain, and summary text labelled as a verbatim quote. A beat
+    now says what its quote is: words read on the page, or a snippet marked (SNIPPET), which
+    leaves the beat unconfirmed and puts it under GAPS for the producer to check."""
+    prompt = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8")
+    beat_section = _flat(prompt.split("## What a beat is", 1)[1].split("\n## ", 1)[0])
+    rule = ('Quote only words you actually read on the page. If you saw only a search snippet '
+            'or summary, write the quote as "<text>" (SNIPPET): it is not verbatim, and the beat '
+            'stays unconfirmed. Never write a URL you did not open or see listed in a search '
+            'result, and never shorten one to a bare domain. A SNIPPET beat may still be used, '
+            'but list it under GAPS so the producer checks it before publishing.')
+
+    assert rule in beat_section
+    assert (beat_section.index("one verbatim quote from a Tier 1 or Tier 2 source")
+            < beat_section.index(rule))
+
+
 def test_micro_template_never_ends_on_a_teaser_and_tells_how_it_ends():
     """A reviewer's reaction to a twist the review withheld ("a shocking twist I never saw
     coming") was rewritten by the scout as an event and became the script's last line. The

@@ -80,6 +80,13 @@ minimum setup needed to understand it. State it plainly and tie it to one URL
 and one verbatim quote from a Tier 1 or Tier 2 source. One sentence may support
 multiple distinct facts, but do not split a single claim into fake steps.
 
+Quote only words you actually read on the page. If you saw only a search
+snippet or summary, write the quote as "<text>" (SNIPPET): it is not
+verbatim, and the beat stays unconfirmed. Never write a URL you did not
+open or see listed in a search result, and never shorten one to a bare
+domain. A SNIPPET beat may still be used, but list it under GAPS so the
+producer checks it before publishing.
+
 - "Wolverine walks into the pool" is a beat.
 - "Wolverine, exhausted and grieving, walks into the pool" is a beat plus two
   inventions. Grief and exhaustion are not in the source unless the source says so.
