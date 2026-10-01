@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
@@ -38,6 +39,11 @@ TEMPLATE_PATH = QA_TEMPLATE_PATH  # backward compatibility
 _SHORT_WORDS = 20
 # Below this a body paragraph is a transition line ("Now the worst one."), not an item.
 _MIN_ITEM_WORDS = 8
+# How alike two sentences must be, by their words, for the second to be the first said again.
+# A few words changed ("a rescue team" -> "Wren Calloway's rescue team") still counts; a
+# sentence that only shares names or a subject with the hook (its answer, another act by the
+# same person) does not.
+_RESTATED_RATIO = 0.85
 
 
 def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, state_data: dict) -> dict:
@@ -414,8 +420,30 @@ def _qa_layout(paras: list[str], n_items: int, hook: str | None,
     return fits[0] if len(fits) == 1 else None
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"\w+", text.lower())
+
+
 def _same_words(a: str, b: str) -> bool:
-    return re.findall(r"\w+", a.lower()) == re.findall(r"\w+", b.lower())
+    return _words(a) == _words(b)
+
+
+def _restates(sentence: str, hook: str) -> bool:
+    """`sentence` is `hook` said again: the same words (as _same_words reads them) or close."""
+    a, b = _words(sentence), _words(hook)
+    return bool(a and b) and SequenceMatcher(None, a, b, autojunk=False).ratio() >= _RESTATED_RATIO
+
+
+def _drop_restated_hook(hook: str | None, paras: list[str]) -> list[str]:
+    """The writer sometimes opens the story by saying its hook again, word for word or with a
+    few words changed. The hook is spoken once, so that first sentence goes and the rest of the
+    paragraph stays. Only the first sentence is compared: one that merely shares words with the
+    hook is a new sentence and is kept."""
+    sentences = split_sentences(paras[0]) if hook and paras else []
+    if not sentences or not _restates(sentences[0], hook):
+        return paras
+    rest = " ".join(sentences[1:])
+    return ([rest] if rest else []) + paras[1:]
 
 
 def _drop_repeated_ends(hook: str | None, outro: str | None,
@@ -461,12 +489,15 @@ def _split_qa_script(raw_text: str, n_items: int) -> tuple[str, list[str], str]:
 
 def _split_free_script(raw_text: str) -> tuple[str, list[str], str]:
     """No answer items (recap / micro): paragraphs are spread over the story pages, so
-    only the hook and closing line need recognising — a short first/last paragraph."""
+    only the hook and closing line need recognising — a short first/last paragraph. The
+    hook is spoken once, whether the writer repeats it as its own paragraph or opens the
+    story with it again."""
     hook, outro, paragraphs = _read_script(raw_text)
     paragraphs = _drop_repeated_ends(hook, outro, paragraphs)
     paras = [" ".join(p) for p in paragraphs]
     if not hook and len(paras) > 1 and _is_short(paras[0]):
         hook = paras.pop(0)
+    paras = _drop_restated_hook(hook, paras)
     if not outro and len(paras) > 1 and _is_short(paras[-1]):
         outro = paras.pop()
     return hook or "", paras, outro or ""

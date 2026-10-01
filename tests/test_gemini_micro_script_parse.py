@@ -109,6 +109,154 @@ def test_a_different_first_paragraph_is_not_taken_for_the_hook():
     assert outro == ""
 
 
+# ── the story does not say the hook again ────────────────────────────────────
+# Seen 2026-10-01 probing the rewritten template with agy (Gemini 3.1 Pro): in 2 of 3 replies
+# the story paragraph opened with the chosen hook again, once word for word and once with a
+# few words changed. The parser only dropped a paragraph that EQUALS the hook, so the hook was
+# narrated twice (75 spoken words where the reply's own count said 60). These are those two
+# replies, verbatim.
+
+PROBE_A_HOOK = "Trapped in Hell, Steve Rogers battles the Red Skull and an army of undead Nazis."
+PROBE_A_REPLY = """HOOK OPTIONS
+1. Steve Rogers trades his soul to the devil.
+2. Trapped in Hell, Steve Rogers battles the Red Skull and an army of undead Nazis.
+3. Why does Captain America surrender his soul to Mephisto?
+CHOSEN HOOK: 2
+
+FINAL SCRIPT
+Trapped in Hell, Steve Rogers battles the Red Skull and an army of undead Nazis. He fights using the Antidivine, an angel-slaying sword that he transforms into a circular shield.
+
+But realizing they can't defeat Mephisto, Steve makes a deal with the devil. Mephisto promises to end dictatorships and ensure democracies flourish in exchange for Steve's soul, which Steve accepts.
+
+SPOKEN WORD COUNT: 60
+
+FACT TRACE
+S1 | Trapped in Hell, Steve Rogers battles the Red Skull and an army of undead Nazis. | B2
+S2 | He fights using the Antidivine, an angel-slaying sword that he transforms into a circular shield. | B1
+S3 | But realizing they can't defeat Mephisto, Steve makes a deal with the devil. | B3
+S4 | Mephisto promises to end dictatorships and ensure democracies flourish in exchange for Steve's soul, which Steve accepts. | B4
+OPENING CHAIN: Steve battles the Red Skull in Hell -> shapes the angel-slaying sword into a shield, B1 -> makes a deal with the devil, B3
+STORY FRAME CHECK: B2, used in S1; no generic trait was substituted.
+AFTERMATH CHECK: B3, B4, used in S3 and S4 to tell how the encounter ends.
+OPEN LOOPS: none
+REACTIONS: none
+UNSUPPORTED FACTS: none
+"""
+PROBE_B_HOOK = ("Dr. Ambrose Keel's engine keeps rewriting the street grid of Lowtown, so a "
+                "rescue team cannot reach the hostages.")
+PROBE_B_REPLY = """HOOK OPTIONS
+1. Wren Calloway tears the minute hand off a clock tower and drives it straight into an engine.
+2. Dr. Ambrose Keel's engine keeps rewriting the street grid of Lowtown, so a rescue team cannot reach the hostages.
+3. How do you stop a machine that keeps changing the city streets around you?
+
+CHOSEN HOOK: 2
+
+FINAL SCRIPT
+Dr. Ambrose Keel's engine keeps rewriting the street grid of Lowtown, so Wren Calloway's rescue team cannot reach the hostages. Calloway tears the minute hand off the Halvorsen clock tower and drives it straight into the engine. With the hand lodged in its gears, the machine seizes, and every street snaps back to its original layout.
+
+SPOKEN WORD COUNT: 56
+
+FACT TRACE
+S1 | Dr. Ambrose Keel's engine keeps rewriting the street grid of Lowtown, so Wren Calloway's rescue team cannot reach the hostages. | B2
+S2 | Calloway tears the minute hand off the Halvorsen clock tower and drives it straight into the engine. | B1
+S3 | With the hand lodged in its gears, the machine seizes, and every street snaps back to its original layout. | B3
+OPENING CHAIN: Keel's engine rewrites the grid so the team cannot reach hostages -> Calloway drives the clock hand into the engine, B1 -> the machine seizes and the streets snap back
+STORY FRAME CHECK: B2 used in S1
+AFTERMATH CHECK: UNKNOWN — main moment expanded instead
+OPEN LOOPS: none
+REACTIONS: none
+UNSUPPORTED FACTS: none
+"""
+# The same hook with a few words changed: what a writer prints when it "restates" it.
+HOOK_REWORDED = ("Captain America fought the Red Skull in the middle of Hell with a weapon that "
+                 "makes evil explode.")
+
+
+def test_a_story_that_opens_on_the_hook_again_speaks_it_once(tmp_path, monkeypatch):
+    name = _micro_project(tmp_path, monkeypatch)
+
+    narration = gp.parse_and_save_script(name, PROBE_A_REPLY, log=lambda *_: None)
+
+    texts = [scene["text"] for scene in narration["scenes"]]
+    assert narration["hook"] == PROBE_A_HOOK
+    assert texts == [
+        PROBE_A_HOOK,
+        "He fights using the Antidivine, an angel-slaying sword that he transforms into a circular shield.",
+        "But realizing they can't defeat Mephisto, Steve makes a deal with the devil.",
+        "Mephisto promises to end dictatorships and ensure democracies flourish in exchange for "
+        "Steve's soul, which Steve accepts.",
+    ]
+    assert [scene["is_intro"] for scene in narration["scenes"]] == [True, False, False, False]
+    assert narration["total_word_count"] == 60     # what the reply's own count said
+    spoken = " ".join(texts)
+    for audit in AUDIT_WORDS:
+        assert audit not in spoken, audit
+
+
+def test_a_story_that_opens_on_the_hook_reworded_speaks_it_once():
+    """A rescue team became "Wren Calloway's rescue team": the same sentence, said again."""
+    hook, paras, outro = gp._split_free_script(PROBE_B_REPLY)
+
+    assert hook == PROBE_B_HOOK
+    assert paras == ["Calloway tears the minute hand off the Halvorsen clock tower and drives it "
+                     "straight into the engine. With the hand lodged in its gears, the machine "
+                     "seizes, and every street snaps back to its original layout."]
+    assert outro == ""
+
+
+def test_a_hook_without_labels_is_not_said_again_by_the_story():
+    """Only the part under FINAL SCRIPT was pasted: the short first paragraph is the hook."""
+    hook, paras, outro = gp._split_free_script(f"FINAL SCRIPT\n{HOOK}\n\n{HOOK_REWORDED} {BODY}")
+
+    assert (hook, paras, outro) == (HOOK, [BODY], "")
+
+
+def test_the_hook_said_again_is_dropped_wherever_the_closing_line_is():
+    outro = "That is how it ends."
+
+    hook, paras, closing = gp._split_free_script(
+        f"CHOSEN HOOK: {HOOK}\n\n{HOOK_REWORDED} {BODY}\n\n{outro}")
+
+    assert (hook, paras, closing) == (HOOK, [BODY], outro)
+
+
+def test_a_story_made_only_of_the_hook_again_leaves_just_the_hook():
+    assert gp._split_free_script(f"CHOSEN HOOK: {HOOK}\n\n{HOOK_REWORDED}") == (HOOK, [], "")
+
+
+def test_the_story_line_after_a_reworded_hook_line_is_not_taken_for_the_closing():
+    """The hook said again goes first, so the one line of story left is not the last of two
+    short paragraphs (which the parser reads as the closing line)."""
+    assert gp._split_free_script(
+        f"CHOSEN HOOK: {HOOK}\n\n{HOOK_REWORDED}\n\nHe fights.") == (HOOK, ["He fights."], "")
+
+
+def test_a_hook_printed_alone_is_dropped_and_the_story_keeps_its_first_sentence():
+    """The exact-paragraph dedupe, which the template's "hook alone on its own line" relies on:
+    the hook line goes (case and punctuation do not matter), the sentence after it stays."""
+    hook, paras, outro = gp._split_free_script(
+        f"CHOSEN HOOK: {HOOK}\n\nFINAL SCRIPT\n{HOOK.rstrip('.').lower()}\n\n{BODY}")
+
+    assert (hook, paras, outro) == (HOOK, [BODY], "")
+
+
+@pytest.mark.parametrize("hook,first", [
+    (HOOK, "Captain America carries the Antidivine into Hell."),
+    (HOOK, "The Red Skull battled Captain America in Hell."),
+    ("Steve Rogers trades his soul to the devil.", "Steve Rogers saves the soul of the devil."),
+    ("Why does Captain America surrender his soul to Mephisto?",
+     "Captain America surrenders his soul to Mephisto."),
+    ("Steve Rogers trades his soul to the devil.",
+     "Steve Rogers fights the Red Skull in Hell with the Antidivine."),
+])
+def test_a_first_sentence_that_only_shares_words_with_the_hook_is_kept(hook, first):
+    """The answer to a question hook, a sentence on the same subject, the same names in
+    another act: each is new information, not the hook said again."""
+    story = f"{first} Then the fight turns. The Skull falls."
+
+    assert gp._split_free_script(f"CHOSEN HOOK: {hook}\n\n{story}") == (hook, [story], "")
+
+
 # ── the audit block ends the script wherever Gemini puts it ──────────────────
 
 

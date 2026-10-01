@@ -280,14 +280,16 @@ sheet, write fewer sentences and vary hook options by phrasing, not by
 inventing three angles.
 
 STORY
-Open on the chosen hook. When the sheet has a useful STORY FRAME, give it one
-short sentence or clause before expanding the tactic or mechanism. This should
-answer where the characters are in the conflict, what they are trying to do,
-or why they have crossed paths. Choose the part that actually explains this
-moment; do not recite the whole arc. Then move through sourced facts in story
-order: setup, the act, what it leads to, how it ends. Keep the current short
-length by using the frame to **replace repetition** of the hook, attitude, or
-mechanism, not by adding filler words.
+Open on the chosen hook. The hook line is spoken once: the story's first
+sentence is the one after it, never the hook again in other words. When the
+sheet has a useful STORY FRAME, give it one short sentence or clause before
+expanding the tactic or mechanism. This should answer where the characters are
+in the conflict, what they are trying to do, or why they have crossed paths.
+Choose the part that actually explains this moment; do not recite the whole
+arc. Then move through sourced facts in story order: setup, the act, what it
+leads to, how it ends. Keep the current short length by using the frame to
+**replace repetition** of the hook, attitude, or mechanism, not by adding
+filler words.
 Each sentence must add a new action, explain the mechanism, or show a sourced
 effect. A one-beat story can be two or three spoken sentences.
 If it does none of these, cut it. Use "but", "because", and "so" when
@@ -343,9 +345,9 @@ HOOK OPTIONS
 CHOSEN HOOK: <number>
 
 FINAL SCRIPT
-<chosen hook>
+<chosen hook, alone on its own line>
 
-<story, in one or two natural paragraphs; end on how it ends when AFTERMATH exists, otherwise on the strongest verified detail>
+<story, in one or two natural paragraphs; it starts with the sentence AFTER the hook and never repeats the hook; end on how it ends when AFTERMATH exists, otherwise on the strongest verified detail>
 
 SPOKEN WORD COUNT: <actual number>
 

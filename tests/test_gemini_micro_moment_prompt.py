@@ -173,8 +173,26 @@ def test_micro_output_block_story_placeholder_follows_the_ending_rule():
     output = _flat(prompt.split("OUTPUT EXACTLY", 1)[1])
 
     assert "stop at the strongest verified detail" not in output
-    assert ("<story, in one or two natural paragraphs; end on how it ends when AFTERMATH "
-            "exists, otherwise on the strongest verified detail>") in output
+    assert ("<story, in one or two natural paragraphs; it starts with the sentence AFTER the "
+            "hook and never repeats the hook; end on how it ends when AFTERMATH exists, "
+            "otherwise on the strongest verified detail>") in output
+
+
+def test_micro_template_speaks_the_hook_once():
+    """A probe of the template with agy (Gemini 3.1 Pro): in 2 of 3 replies the story paragraph
+    opened with the chosen hook again (once reworded), so the hook was narrated twice. The OUTPUT
+    block now prints the hook alone on its own line and starts the story after it, and the STORY
+    section says the hook line is spoken once."""
+    phase2 = gp.MICRO_TEMPLATE_PATH.read_text(encoding="utf-8").split(
+        "# PHASE 2 — WRITE THE SHORT", 1)[1]
+    output = _flat(phase2.split("OUTPUT EXACTLY", 1)[1])
+    story = _flat(phase2.split("\nSTORY\n", 1)[1].split("\nRUNTIME AND AUDIT\n", 1)[0])
+
+    assert "FINAL SCRIPT <chosen hook, alone on its own line> <story," in output
+    assert "<chosen hook>" not in output
+    assert "it starts with the sentence AFTER the hook and never repeats the hook;" in output
+    assert ("The hook line is spoken once: the story's first sentence is the one after it, "
+            "never the hook again in other words.") in story
 
 
 def test_qa_template_ends_every_item_on_what_happened():
