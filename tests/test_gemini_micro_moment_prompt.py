@@ -303,8 +303,9 @@ def test_micro_moment_reanchor_narration(tmp_path, monkeypatch):
 
 
 # ── the scout's verification and aftermath leads reach the writer ────────────
-# The writer prompt reads these (INPUT section) and project_factory stores them under exactly
-# these names, but the places that rebuild a candidate used to copy only nine fixed keys.
+# The writer prompt reads these (INPUT section). project_factory.build_scout_candidate is the
+# one place that maps a scout candidate to them; Stage 3 only calls it when it has to rebuild
+# a candidate from the research session, and carries a recorded one through as recorded.
 
 BASE_CANDIDATE = {
     "character": "Steve Rogers",
@@ -323,7 +324,7 @@ SCOUT_EXTRAS = {
     "why_it_lands": "A weapon that makes evil explode changes the fight.",
     "aftermath": "The fight ends when the Skull's power collapses.",
     "context_behind": "Steve went into Hell to topple its ruler.",
-    "unrevealed": ["who is at the center of the final twist"],
+    "unrevealed": "who is at the center of the final twist",
     "detail_citations": [{"supports": "aftermath", "url": "https://example.com/recap",
                           "quote": "The Skull's power collapses."}],
     "reason": "The review describes the throw and what it does.",
@@ -350,20 +351,33 @@ def _micro_project(tmp_path, monkeypatch, *, context=None):
     return root
 
 
-def _research_session(tmp_path, monkeypatch, root, *, candidate, gate):
-    """A scout session that created this project; the candidate is found through it."""
+def _verification_round(verdict, notes):
+    """What workflow.verify_selected stores for one candidate: the raw call around its payload."""
+    return {"api": "research", "error": None, "payload": {"output": {"content": {
+        "candidates": [{"verdict": verdict}], "notes": notes}}}}
+
+
+def _research_session(tmp_path, monkeypatch, root, *, candidate, gate, verify=None):
+    """A scout session that created this project, laid out as the workflow writes it, so the
+    candidate is found through it. Returns the store and the session, which is what
+    project_factory.build_scout_candidate takes."""
     import config
+    from stages.research_scout.models import ResearchSession, ScoutMode
+    from stages.research_scout.storage import SessionStore
+    from stages.research_scout.workflow import specific_search_artifact
+
     sessions = tmp_path / "research_sessions"
     monkeypatch.setattr(config, "RESEARCH_SESSIONS_ROOT", sessions)
-    (sessions / "s1" / "general").mkdir(parents=True)
-    (sessions / "s1" / "specific").mkdir(parents=True)
-    (sessions / "s1" / "session.json").write_text(json.dumps({
-        "id": "s1", "created_project": root.name,
-        "selected_specific_candidate_ids": [candidate["id"]]}), encoding="utf-8")
-    (sessions / "s1" / "general" / "candidates.v1.json").write_text(
-        json.dumps({"candidates": [candidate]}), encoding="utf-8")
-    (sessions / "s1" / "specific" / "evidence_gate.v1.json").write_text(
-        json.dumps({"gates": [gate]}), encoding="utf-8")
+    store = SessionStore(sessions)
+    session = ResearchSession(
+        id="s1", mode=ScoutMode.MICRO, user_intent="a micro moment", created_project=root.name,
+        selected_specific_candidate_ids=[candidate["id"]])
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [candidate]})
+    store.write_artifact(session.id, "specific/evidence_gate.v1.json", {"gates": [gate]})
+    if verify is not None:
+        store.write_artifact(session.id, specific_search_artifact(candidate["id"]), verify)
+    return store, session
 
 
 def test_scout_extras_reach_the_prompt_from_the_stored_candidate(tmp_path, monkeypatch):
@@ -387,8 +401,9 @@ def test_scout_extras_reach_the_prompt_from_the_candidate_in_comic_context(tmp_p
 
 
 def test_scout_extras_survive_rebuilding_the_candidate_from_its_session(tmp_path, monkeypatch):
-    """No stored candidate: it is rebuilt from the scout session's candidate and gate. The
-    gate's `reason` explains the verdict, so it wins over a `reason` on the candidate."""
+    """No stored candidate: it is rebuilt from the scout session's candidate, gate and
+    verification round. The gate's `reason` explains the verdict, so it is the one carried (a
+    `reason` on the candidate is not), and the scout's own check is what the round concluded."""
     root = _micro_project(tmp_path, monkeypatch)
     candidate = {"id": "c1", "character": "Steve Rogers",
                  "series_issue_year": "Captain America #1 (2026)",
@@ -397,17 +412,51 @@ def test_scout_extras_survive_rebuilding_the_candidate_from_its_session(tmp_path
                  **{key: value for key, value in SCOUT_EXTRAS.items()
                     if key not in ("reason", "scout_check")},
                  "reason": "the candidate's own reasoning"}
-    gate = {"verdict": "confirmed", "reason": SCOUT_EXTRAS["reason"],
-            "scout_check": SCOUT_EXTRAS["scout_check"]}
-    _research_session(tmp_path, monkeypatch, root, candidate=candidate, gate=gate)
+    gate = {"verdict": "confirmed", "reason": SCOUT_EXTRAS["reason"]}
+    verify = _verification_round("CONFIRMED", SCOUT_EXTRAS["scout_check"])
+    _research_session(tmp_path, monkeypatch, root, candidate=candidate, gate=gate, verify=verify)
 
     prompt, _path = gp.generate_gemini_writer_prompt(root.name)
 
+    expected = {**SCOUT_EXTRAS, "scout_check": f"CONFIRMED — {SCOUT_EXTRAS['scout_check']}"}
     rebuilt = _scout_json_in(prompt)
-    assert {key: rebuilt[key] for key in SCOUT_EXTRAS} == SCOUT_EXTRAS
+    assert {key: rebuilt[key] for key in SCOUT_EXTRAS} == expected
     assert rebuilt["verdict"] == "CONFIRMED"
     stored = json.loads((root / "scout_candidate.json").read_text(encoding="utf-8"))
-    assert {key: stored[key] for key in SCOUT_EXTRAS} == SCOUT_EXTRAS     # kept for the next run
+    assert {key: stored[key] for key in SCOUT_EXTRAS} == expected     # kept for the next run
+
+
+def test_the_session_rebuild_is_exactly_what_project_creation_builds(tmp_path, monkeypatch):
+    """Stage 3 holds no copy of the candidate mapping: what it rebuilds is whatever
+    project_factory.build_scout_candidate gives for the same session, candidate and gate. This
+    candidate is one a second copy would read differently: both event keys (the factory takes
+    visible_event first), a citation list with an unusable entry, a field the scout left blank,
+    and a check that only the stored verification round holds."""
+    from stages.research_scout.project_factory import build_scout_candidate
+
+    root = _micro_project(tmp_path, monkeypatch)
+    candidate = {"id": "c1", "character_or_thing": "Steve Rogers",
+                 "series_issue_year": "Captain America #1 (2026)",
+                 "visible_event": "Steve hurls a shield that makes evil explode.",
+                 "what_visibly_happens": "Steve throws his shield.",
+                 "summary": "Steve fights to topple a ruler of Hell.",
+                 "claim_citation": BASE_CANDIDATE["claim_citation"],
+                 "aftermath": SCOUT_EXTRAS["aftermath"], "context_behind": "",
+                 "detail_citations": [SCOUT_EXTRAS["detail_citations"][0],
+                                      {"supports": "aftermath", "url": "", "quote": "No page."}]}
+    gate = {"verdict": "inconclusive", "reason": "The gate could not run."}
+    verify = _verification_round("NOT CONFIRMED", "The review withholds the twist.")
+    store, session = _research_session(
+        tmp_path, monkeypatch, root, candidate=candidate, gate=gate, verify=verify)
+
+    prompt, _path = gp.generate_gemini_writer_prompt(root.name)
+
+    expected = build_scout_candidate(store, session, candidate, gate)
+    assert expected["scout_check"] == "NOT CONFIRMED — The review withholds the twist."
+    assert expected["what_visibly_happens"] == candidate["visible_event"]
+    assert expected["detail_citations"] == SCOUT_EXTRAS["detail_citations"]
+    assert _scout_json_in(prompt) == expected
+    assert json.loads((root / "scout_candidate.json").read_text(encoding="utf-8")) == expected
 
 
 def test_scout_extras_survive_the_fallback_rebuild(tmp_path, monkeypatch):
@@ -423,15 +472,14 @@ def test_scout_extras_survive_the_fallback_rebuild(tmp_path, monkeypatch):
     assert rebuilt["what_visibly_happens"] == "Steve hurls a shield that makes evil explode."
 
 
-def test_absent_or_empty_scout_extras_stay_out_of_the_prompt(tmp_path, monkeypatch):
-    """An older candidate, or a scout that found nothing for a field, adds no empty keys."""
+def test_a_candidate_from_before_the_aftermath_ask_adds_no_keys(tmp_path, monkeypatch):
+    """No aftermath, context, leads, verification round or gate reason was ever recorded, so
+    none appears, not even as an empty placeholder."""
     root = _micro_project(tmp_path, monkeypatch)
     candidate = {"id": "c1", "character": "Steve Rogers",
                  "series_issue_year": "Captain America #1 (2026)",
                  "what_visibly_happens": "Steve hurls a shield that makes evil explode.",
-                 "summary": "Steve fights to topple a ruler of Hell.",
-                 "aftermath": "", "unrevealed": [], "detail_citations": [],
-                 "context_behind": "   ", "scout_check": None}
+                 "summary": "Steve fights to topple a ruler of Hell."}
     _research_session(tmp_path, monkeypatch, root, candidate=candidate,
                       gate={"verdict": "CONFIRMED"})
 
@@ -439,6 +487,59 @@ def test_absent_or_empty_scout_extras_stay_out_of_the_prompt(tmp_path, monkeypat
 
     rebuilt = _scout_json_in(prompt)
     assert set(rebuilt) == set(BASE_CANDIDATE)
+
+
+def test_a_field_the_scout_returned_blank_stays_blank_as_project_creation_keeps_it(
+    tmp_path, monkeypatch
+):
+    """A blank string or empty list from the scout means it looked and found nothing, which is
+    an answer; a field that was never asked for is the one that stays absent (the test above)."""
+    root = _micro_project(tmp_path, monkeypatch)
+    candidate = {"id": "c1", "character": "Steve Rogers",
+                 "series_issue_year": "Captain America #1 (2026)",
+                 "what_visibly_happens": "Steve hurls a shield that makes evil explode.",
+                 "summary": "Steve fights to topple a ruler of Hell.",
+                 "aftermath": "", "context_behind": "   ", "unrevealed": "",
+                 "detail_citations": []}
+    _research_session(tmp_path, monkeypatch, root, candidate=candidate,
+                      gate={"verdict": "CONFIRMED"})
+
+    prompt, _path = gp.generate_gemini_writer_prompt(root.name)
+
+    rebuilt = _scout_json_in(prompt)
+    assert (rebuilt["aftermath"], rebuilt["context_behind"], rebuilt["unrevealed"]) == ("", "", "")
+    assert rebuilt["detail_citations"] == []
+    assert "scout_check" not in rebuilt               # no verification round was ever stored
+
+
+def test_a_session_that_cannot_be_loaded_leaves_the_prompt_to_the_context_rebuild(
+    tmp_path, monkeypatch
+):
+    """A session.json that is not a valid session cannot be handed to the factory, and must not
+    stop the prompt: it is still written, from the project's own context."""
+    import config
+    root = _micro_project(tmp_path, monkeypatch)
+    sessions = tmp_path / "research_sessions"
+    (sessions / "s1").mkdir(parents=True)
+    (sessions / "s1" / "session.json").write_text(
+        json.dumps({"id": "s1", "created_project": root.name}), encoding="utf-8")
+    monkeypatch.setattr(config, "RESEARCH_SESSIONS_ROOT", sessions)
+
+    prompt, _path = gp.generate_gemini_writer_prompt(root.name)
+
+    assert set(_scout_json_in(prompt)) == set(BASE_CANDIDATE)
+    assert not (root / "scout_candidate.json").exists()
+
+
+def test_the_fallback_rebuild_has_no_list_of_field_names_to_fall_behind(tmp_path, monkeypatch):
+    """What the recorded candidate has beyond the nine is carried as recorded, like a stored
+    candidate is, so a field project_factory starts recording later is not dropped here."""
+    partial = {"character": "Steve Rogers", **SCOUT_EXTRAS, "next_scout_lead": "from a later scout"}
+    root = _micro_project(tmp_path, monkeypatch, context={"scout_candidate": partial})
+
+    prompt, _path = gp.generate_gemini_writer_prompt(root.name)
+
+    assert _scout_json_in(prompt)["next_scout_lead"] == "from a later scout"
 
 
 def test_fallback_without_a_scout_candidate_adds_no_extras(tmp_path, monkeypatch):

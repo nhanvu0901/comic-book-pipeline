@@ -39,34 +39,6 @@ _SHORT_WORDS = 20
 # Below this a body paragraph is a transition line ("Now the worst one."), not an item.
 _MIN_ITEM_WORDS = 8
 
-# Scout fields the micro writer prompt reads on top of the nine basics a rebuilt candidate
-# carries: the scout's own verification, and its leads for the AFTERMATH and CONTEXT BEHIND
-# questions. project_factory stores them under these names.
-_SCOUT_EXTRA_KEYS = (
-    "turning_point", "why_it_lands", "aftermath", "context_behind", "unrevealed",
-    "detail_citations", "reason", "scout_check",
-)
-
-
-def _blank(value) -> bool:
-    """None, or an empty/whitespace string, list or dict."""
-    if isinstance(value, str):
-        value = value.strip()
-    return value is None or value in ("", [], {})
-
-
-def _scout_extras(*sources) -> dict:
-    """The _SCOUT_EXTRA_KEYS that any of `sources` records with a value, earlier sources
-    first. A field nobody recorded stays absent instead of becoming an empty key."""
-    extras: dict = {}
-    for key in _SCOUT_EXTRA_KEYS:
-        for source in sources:
-            value = source.get(key) if isinstance(source, dict) else None
-            if not _blank(value):
-                extras[key] = value
-                break
-    return extras
-
 
 def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, state_data: dict) -> dict:
     """Retrieve or reconstruct the verified scout candidate for a micro_moment project."""
@@ -86,7 +58,12 @@ def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, 
     # 3. Look up from research_sessions
     try:
         from config import RESEARCH_SESSIONS_ROOT
+        # Imported here, not at the top: only a rebuild needs the scout, and loading it with this
+        # module would make stage_3 import stage_1, which already imports from stage_3.
+        from stages.research_scout.project_factory import build_scout_candidate
+        from stages.research_scout.storage import SessionStore
         if RESEARCH_SESSIONS_ROOT.exists():
+            store = SessionStore(RESEARCH_SESSIONS_ROOT)
             for sdir in RESEARCH_SESSIONS_ROOT.iterdir():
                 if not sdir.is_dir():
                     continue
@@ -125,47 +102,9 @@ def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, 
                     chosen_gate = gates[0] if gates and isinstance(gates[0], dict) else {}
 
                     if chosen_cand:
-                        char = (
-                            chosen_cand.get("character_or_thing")
-                            or chosen_cand.get("character")
-                            or chosen_cand.get("entity")
-                            or comic_ctx.get("title", "")
-                        )
-                        series_issue_year = (
-                            chosen_cand.get("series_issue_year")
-                            or comic_ctx.get("series_issue_year")
-                            or comic_ctx.get("issues", "")
-                        )
-                        target_moment = (
-                            chosen_cand.get("what_visibly_happens")
-                            or chosen_cand.get("visible_event")
-                            or comic_ctx.get("target_moment", "")
-                        )
-                        summary = (
-                            chosen_cand.get("summary")
-                            or chosen_cand.get("how_or_why")
-                            or comic_ctx.get("plot_summary", "")
-                        )
-                        citation = chosen_cand.get("claim_citation") if isinstance(chosen_cand.get("claim_citation"), dict) else {}
-                        quote = citation.get("quote") or ""
-                        source_url = citation.get("url") or comic_ctx.get("reader_url") or ""
-                        ev_urls = chosen_gate.get("evidence_urls") or chosen_cand.get("evidence_urls") or ([source_url] if source_url else [])
-                        if isinstance(ev_urls, str):
-                            ev_urls = [ev_urls]
-
-                        result = {
-                            "character": char,
-                            "series_issue_year": series_issue_year,
-                            "what_visibly_happens": target_moment,
-                            "summary": summary,
-                            "claim_citation": citation,
-                            "verbatim_sentence": quote,
-                            "source_url": source_url,
-                            "evidence_urls": ev_urls,
-                            "verdict": str(chosen_gate.get("verdict") or "CONFIRMED").upper(),
-                            # the gate's `reason` explains its verdict, so the gate goes first
-                            **_scout_extras(chosen_gate, chosen_cand),
-                        }
+                        # Not mapped here: build_scout_candidate is what wrote this candidate when
+                        # the project was created, so a rebuild cannot read it differently.
+                        result = build_scout_candidate(store, store.load(sdir.name), chosen_cand, chosen_gate)
                         cand_file.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
                         comic_ctx["scout_candidate"] = result
                         (root / "comic_context.json").write_text(json.dumps(comic_ctx, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -179,7 +118,7 @@ def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, 
     target_moment = comic_ctx.get("target_moment") or comic_ctx.get("plot_summary", "")
     summary = comic_ctx.get("plot_summary", "")
     reader_url = comic_ctx.get("batcave_url") or comic_ctx.get("reader_url", "")
-    return {
+    rebuilt = {
         "character": char,
         "series_issue_year": series_issue_year,
         "what_visibly_happens": target_moment,
@@ -189,9 +128,13 @@ def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, 
         "source_url": reader_url,
         "evidence_urls": [reader_url] if reader_url else [],
         "verdict": "CONFIRMED",
-        # a recorded candidate too thin to use as is can still carry the scout's leads
-        **_scout_extras(comic_ctx.get("scout_candidate")),
     }
+    # A recorded candidate too thin to use as is can still carry the scout's leads. Which fields
+    # those are is project_factory's to say, so keep whatever else it records, as recorded.
+    recorded = comic_ctx.get("scout_candidate")
+    if isinstance(recorded, dict):
+        rebuilt.update({key: value for key, value in recorded.items() if key not in rebuilt})
+    return rebuilt
 
 
 def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
