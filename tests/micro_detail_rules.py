@@ -50,3 +50,25 @@ def in_order(text: str) -> bool:
     flat = normalized(text)
     positions = [flat.find(group[0]) for group in (ASK_PHRASES, REACTION_PHRASES, REQUEST_WORDING_PHRASES)]
     return all(p >= 0 for p in positions) and positions == sorted(positions)
+
+
+# Added after an end-to-end run (2026-10-01) in which the code's own screens threw two scouted answers
+# away: a claim_citation url rebuilt from a page title (it was not among the sources returned), and a
+# series_issue_year that carried a volume, a cover date and an on-sale date (several years: not one exact
+# issue). Plus the aftermath rule: with no stated outcome the field is "", not a sentence about the
+# withheld ending. Micro-only, in the planner's assembled prompt and in the fixed general_micro template.
+FORMAT_PHRASES = (
+    "In series_issue_year write only Series Title #N (YYYY)",
+    "ONE four-digit year",
+    "A volume number, cover date or on-sale date goes in summary, never in that field.",
+    "Copy every URL",
+    "character for character from the address of a page you retrieved in this run",
+    "rebuild a URL from a page title or guess a slug",
+    'When no source states what happens, aftermath is ""',
+    "never cite a reaction line as aftermath support",
+)
+
+
+def missing_format_rules(text: str) -> list[str]:
+    flat = normalized(text)
+    return [phrase for phrase in FORMAT_PHRASES if phrase not in flat]

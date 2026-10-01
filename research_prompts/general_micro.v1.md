@@ -28,6 +28,15 @@ volume if needed, issue publication year, and source URLs. Include
 verbatim sentence from the retrieved URL that supports the decisive event.
 Use the retrieved page's issue metadata or another source to establish the
 issue identity; never claim the quote alone proves a detail it does not say.
+In `series_issue_year` write only `Series Title #N (YYYY)`: the title as
+printed, the issue number and ONE four-digit year, the year the issue was
+published (or the year the request names, when a source gives it as the
+issue's cover or release year). A volume number, cover date or on-sale date
+goes in `summary`, never in that field. Copy every URL (`claim_citation.url`,
+each `detail_citations` url, `evidence_urls`) character for character from the
+address of a page you retrieved in this run; never rebuild a URL from a page
+title or guess a slug, and a sentence from a page you did not retrieve cannot
+be cited.
 Source verification follows this research round.
 
 Also return what happens next (`aftermath`) and what set the moment up
@@ -47,7 +56,9 @@ A reviewer's reaction or a teaser ("a shocking twist I never saw coming",
 Never restate it as one, and never build `what_visibly_happens`,
 `turning_point` or `aftermath` from it. When a source withholds a reveal, keep
 `aftermath` to what is actually stated and put the withheld point in
-`unrevealed`.
+`unrevealed`. When no source states what happens, `aftermath` is "": do not
+write a sentence saying the ending is withheld, and never cite a reaction line
+as `aftermath` support.
 
 The request's own wording (e.g. "final twist", "shocking reveal") says what
 the user hopes to find; it is never evidence. Do not echo it into a candidate

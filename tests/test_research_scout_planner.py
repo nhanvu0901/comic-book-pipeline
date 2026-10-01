@@ -427,6 +427,20 @@ def test_micro_planner_prompt_carries_the_three_rules_and_qa_does_not():
     assert "is not an event" not in qa
 
 
+def test_micro_planner_prompt_pins_the_identity_and_url_formats_the_screens_need():
+    """An end-to-end run lost two scouted answers at the code's own screens: a claim_citation
+    url rebuilt from a page title (not among the sources returned) and a series_issue_year that
+    carried a volume, a cover date and an on-sale date (several years). The micro prompt now
+    asks for the one canonical shape; Q&A never sees it."""
+    plan = _plan(unit="one comic moment", cardinality="options")
+    micro = assemble_prompt(plan, "digest", user_intent="find a moment", mode="micro")
+    qa = assemble_prompt(plan, "digest", user_intent="find a moment")
+
+    assert rules.missing_format_rules(micro) == []
+    assert "Series Title #N" not in qa
+    assert "rebuild a URL" not in qa
+
+
 def test_the_planner_is_told_the_code_already_adds_the_micro_detail_fields():
     micro = planner._user_message("Find a moment", [], "micro")
     qa = planner._user_message("Find a question", [], "qa")

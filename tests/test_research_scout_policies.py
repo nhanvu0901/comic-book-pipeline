@@ -154,6 +154,9 @@ def test_general_micro_template_carries_the_three_rules_in_order_and_qa_does_not
     for name in rules.DETAIL_FIELDS:
         assert name not in qa
     assert "is not an event" not in qa
+    # the fixed template asks for the same canonical identity / url shape as the planner path
+    assert rules.missing_format_rules(micro) == []
+    assert "Series Title #N" not in qa
 
 
 def test_general_micro_template_keeps_the_pinned_breadth_wording():
