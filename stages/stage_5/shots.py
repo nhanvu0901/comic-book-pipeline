@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Collection
 
 from PIL import Image, ImageFilter
 
@@ -1144,6 +1144,7 @@ def _custom_locks(project: str | None) -> dict[str, str]:
 def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
                          locked: dict[str, str], *,
                          panel_locked: set[str] | None = None,
+                         bookend_keys: Collection[str] = (),
                          score_fn: Callable) -> dict[str, str]:
     """Pure greedy assignment: decide which BEAT each custom image lands on.
 
@@ -1151,6 +1152,7 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     "images" list (each a dict with at least "file"; may carry "desc"). `locked` =
     {beat_key: file} from Master's hand-locks (_custom_locks) — resolved DIRECTLY, no argmax.
     `panel_locked` = set of beat_keys Master locked to comic panels, off-limits to argmax.
+    `bookend_keys` = the beat_keys of the intro/outro rows (see _beat_rows_for_custom).
     `score_fn(beat_text, image_dict) -> float` scores every remaining (beat, image) pair
     (real caller: word overlap between the beat and the image's VLM desc — see
     _score_custom_image; tests inject a stub for determinism).
@@ -1159,9 +1161,13 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     first — so when two images both want the SAME beat, the higher-scoring one wins it and
     the other falls through to its next-best free beat ("nhiều ảnh tranh 1 beat"). An image
     that scores 0.0 everywhere (no desc yet, or no word in common with any beat) still gets
-    assigned something if any beat remains free, the earliest in story order — a custom
-    image is NEVER dropped, only its beat placement can be arbitrary in the worst case
-    (Master added it → it WILL appear, and he can lock it to the beat he wants).
+    assigned something if any beat remains free — a custom image is NEVER dropped (Master
+    added it → it WILL appear, and he can lock it to the beat he wants). With no evidence
+    for any beat the placement is a tie, and a tie at 0.0 never prefers a BOOKEND row: the
+    image takes the earliest free STORY beat, and the intro hook / outro only when no story
+    beat is free. Dropping an image Master never aimed at the cold-open is the worst way to
+    break that tie. A positive score is never second-guessed: an image that matches the
+    intro best still lands on the intro.
 
     Returns {beat_key: file} — every beat that ends up with a custom image, locked ∪
     argmax-assigned. {} when there are no images or no beats.
@@ -1191,7 +1197,10 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
         f = str(img.get("file"))
         for bk, text in beats:
             pairs.append((float(score_fn(text, img)), f, bk))
-    pairs.sort(key=lambda p: p[0], reverse=True)
+    # Highest score first. Among equal scores the order stays "image order, then story order",
+    # except that a score of 0.0 (no evidence) ranks a bookend row after every story row.
+    bookends = set(bookend_keys or ())
+    pairs.sort(key=lambda p: (-p[0], p[0] <= 0.0 and p[2] in bookends))
 
     assigned_images: set[str] = set()
     for _score, f, bk in pairs:
@@ -1207,23 +1216,31 @@ def _score_custom_image(beat_text: str, image: dict) -> float:
     """Real scoring for assign_custom_images: the share of content words (stopwords dropped,
     word order ignored) that the beat's text and the image's VLM desc have in common, 0.0-1.0
     (utils.lexical_sim.token_jaccard). An image with no desc yet (enrichment pending or
-    failed) scores 0.0 on every beat: assign_custom_images still places it on a free beat,
-    and Master can hand-lock it to the one he wants. Never raises."""
+    failed) scores 0.0 on every beat: assign_custom_images still places it, on the earliest
+    free story beat, and Master can hand-lock it to the one he wants. Never raises."""
     return token_jaccard(beat_text, str(image.get("desc") or ""))
+
+
+def _bookend_rows_for_custom(narration: dict) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """([intro rows], [outro rows]) as (beat_key, text), in the SAME beat_key scheme review_gate
+    writes to locks.json. A fragmented bookend yields ordinary "<sid>:<fi>" keys, so a row's key
+    alone cannot say it is a bookend — this is the one place that knows."""
+    from ..review_gate import bookend_row_keys
+    scenes = narration.get("scenes") or []
+    intro = next((s for s in scenes if s.get("is_intro")), None)
+    outro = next((s for s in scenes if s.get("is_outro")), None)
+    intro_rows = [(bk, txt) for bk, _unit, txt in bookend_row_keys(intro, "intro")] if intro is not None else []
+    outro_rows = [(bk, txt) for bk, _unit, txt in bookend_row_keys(outro, "outro")] if outro is not None else []
+    return intro_rows, outro_rows
 
 
 def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
     """[(beat_key, text), ...] for every beat Master can lock a custom image to, in the SAME
     beat_key scheme review_gate writes to locks.json — so a lock written by the review
     UI and the argmax pool here always agree on identity."""
-    from ..review_gate import bookend_row_keys
     scenes = narration.get("scenes") or []
-    rows: list[tuple[str, str]] = []
-    intro = next((s for s in scenes if s.get("is_intro")), None)
-    outro = next((s for s in scenes if s.get("is_outro")), None)
-    if intro is not None:
-        for bk, _unit, txt in bookend_row_keys(intro, "intro"):
-            rows.append((bk, txt))
+    intro_rows, outro_rows = _bookend_rows_for_custom(narration)
+    rows: list[tuple[str, str]] = list(intro_rows)
     for s in scenes:
         if s.get("is_intro") or s.get("is_outro"):
             continue
@@ -1235,9 +1252,7 @@ def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
                 rows.append((f"{sid}:{fi}", _vb_text(b)))
         else:
             rows.append((str(sid), str(s.get("text", "") or "")))
-    if outro is not None:
-        for bk, _unit, txt in bookend_row_keys(outro, "outro"):
-            rows.append((bk, txt))
+    rows.extend(outro_rows)
     return rows
 
 
@@ -1252,6 +1267,7 @@ def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, st
     root = _project_root(project)
     locked = _custom_locks(project)
     beats = _beat_rows_for_custom(narration)
+    bookend_keys = {bk for rows in _bookend_rows_for_custom(narration) for bk, _txt in rows}
 
     from ..review_gate import load_state as _load_review_state
     _locks = (_load_review_state(project) or {}).get("locks") or {} if project else {}
@@ -1259,7 +1275,7 @@ def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, st
                     if isinstance(v, dict) and not v.get("custom_image")}
 
     by_key = assign_custom_images(beats, images, locked, panel_locked=panel_locked,
-                                  score_fn=_score_custom_image)
+                                  bookend_keys=bookend_keys, score_fn=_score_custom_image)
     return {bk: str(root / f) for bk, f in by_key.items()}
 
 

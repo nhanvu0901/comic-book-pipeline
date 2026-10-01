@@ -184,6 +184,70 @@ def test_assign_custom_images_no_images_or_no_beats_is_noop():
     assert shots.assign_custom_images([("b1", "x")], [], {}, score_fn=lambda t, i: 0.0) == {}
 
 
+# An image with no evidence for any beat (no desc yet, or nothing in common with any beat) must not
+# take the cold-open just because the intro row is listed first in story order.
+_BOOKENDS = {"intro", "outro"}
+_ROWS = [("intro", "the hook"), ("1", "first story beat"), ("2", "second story beat"),
+         ("outro", "the closer")]
+
+
+def _zero(_text, _img):
+    return 0.0
+
+
+def test_assign_custom_images_undescribed_image_skips_the_bookends():
+    out = shots.assign_custom_images(_ROWS, [{"file": "a.jpg"}], {}, bookend_keys=_BOOKENDS,
+                                     score_fn=_zero)
+    assert out == {"1": "a.jpg"}          # the first free STORY beat, not the intro row above it
+
+
+def test_assign_custom_images_undescribed_images_fill_story_beats_in_order():
+    images = [{"file": "a.jpg"}, {"file": "b.jpg"}]
+    out = shots.assign_custom_images(_ROWS, images, {}, bookend_keys=_BOOKENDS, score_fn=_zero)
+    assert out == {"1": "a.jpg", "2": "b.jpg"}
+
+
+def test_assign_custom_images_takes_a_bookend_only_when_no_story_beat_is_free():
+    """Never dropped: with every story beat taken by a panel lock the image uses the earliest
+    free bookend; with one story beat free, three images go story, intro, outro."""
+    one = shots.assign_custom_images(_ROWS, [{"file": "a.jpg"}], {}, panel_locked={"1", "2"},
+                                     bookend_keys=_BOOKENDS, score_fn=_zero)
+    assert one == {"intro": "a.jpg"}
+    three = shots.assign_custom_images(
+        _ROWS, [{"file": "a.jpg"}, {"file": "b.jpg"}, {"file": "c.jpg"}], {}, panel_locked={"2"},
+        bookend_keys=_BOOKENDS, score_fn=_zero)
+    assert three == {"1": "a.jpg", "intro": "b.jpg", "outro": "c.jpg"}
+
+
+def test_assign_custom_images_a_scored_image_keeps_its_bookend():
+    """Evidence still decides: an image whose description matches the hook lands on the intro."""
+    out = shots.assign_custom_images(_ROWS, [{"file": "a.jpg"}], {}, bookend_keys=_BOOKENDS,
+                                     score_fn=lambda text, img: 0.6 if text == "the hook" else 0.0)
+    assert out == {"intro": "a.jpg"}
+
+
+def test_assign_custom_images_a_lock_on_a_bookend_is_unchanged():
+    out = shots.assign_custom_images(_ROWS, [{"file": "a.jpg"}], {"outro": "a.jpg"},
+                                     bookend_keys=_BOOKENDS, score_fn=_zero)
+    assert out == {"outro": "a.jpg"}
+
+
+def test_assign_custom_images_an_image_that_loses_its_only_match_does_not_fall_onto_a_bookend():
+    """B matches only beat 1, which the better-matching A takes. B then has no evidence left, so
+    it takes the next story beat, not the cold-open."""
+    table = {("a.jpg", "first story beat"): 0.9, ("b.jpg", "first story beat"): 0.4}
+    out = shots.assign_custom_images(
+        _ROWS, [{"file": "a.jpg"}, {"file": "b.jpg"}], {}, bookend_keys=_BOOKENDS,
+        score_fn=lambda text, img: table.get((img["file"], text), 0.0))
+    assert out == {"1": "a.jpg", "2": "b.jpg"}
+
+
+def test_assign_custom_images_without_bookend_keys_keeps_the_old_tie_order():
+    """bookend_keys is optional: a caller that names none gets image order, then story order."""
+    out = shots.assign_custom_images(_ROWS, [{"file": "a.jpg"}], {}, score_fn=_zero)
+    assert out == {"intro": "a.jpg"}
+
+
 def test_resolve_custom_images_noop_when_no_sidecar(tmp_path, monkeypatch):
     """No review/custom/custom_images.json at all → {} — the byte-identical no-op path."""
     import config
@@ -253,6 +317,40 @@ def test_resolve_custom_images_places_every_image_described_or_not(tmp_path, mon
     out = shots._resolve_custom_images("p", narration)
     by_beat = {bk: Path(p).name for bk, p in out.items()}
     assert by_beat == {"2": Path(images[0]["file"]).name, "1": Path(images[1]["file"]).name}
+
+
+def test_resolve_custom_images_keeps_an_undescribed_image_off_the_intro_and_outro(tmp_path, monkeypatch):
+    images = _custom_project(tmp_path, monkeypatch, [""])
+    narration = {"scenes": [{"scene_id": 1, "text": "The hook line", "is_intro": True},
+                            {"scene_id": 2, "text": "First story beat"},
+                            {"scene_id": 3, "text": "Second story beat"},
+                            {"scene_id": 4, "text": "The closing line", "is_outro": True}]}
+    out = shots._resolve_custom_images("p", narration)
+    assert list(out) == ["2"]
+    assert Path(out["2"]).as_posix().endswith(images[0]["file"])
+
+
+def test_resolve_custom_images_knows_a_fragmented_bookend_is_still_a_bookend(tmp_path, monkeypatch):
+    """A hook or closer split into 2+ visual beats has "<sid>:<fi>" row keys that look just like
+    story fragments, so the bookend set has to come from the scenes, not from the key's shape."""
+    _custom_project(tmp_path, monkeypatch, [""])
+    narration = {"scenes": [
+        {"scene_id": 1, "text": "Hook one. Hook two.", "is_intro": True,
+         "visual_beats": ["Hook one.", "Hook two."]},
+        {"scene_id": 2, "text": "A story beat"},
+        {"scene_id": 3, "text": "Closer one. Closer two.", "is_outro": True,
+         "visual_beats": ["Closer one.", "Closer two."]}]}
+    assert list(shots._resolve_custom_images("p", narration)) == ["2"]      # not "1:0"
+
+
+def test_resolve_custom_images_uses_a_bookend_when_every_story_beat_is_panel_locked(tmp_path, monkeypatch):
+    _custom_project(tmp_path, monkeypatch, [""])
+    (tmp_path / "p" / "review" / "locks.json").write_text(json.dumps(
+        {"locks": {"2": {"panels": [{"page": 1, "panel": 0}], "source": "batcave"}}}))
+    narration = {"scenes": [{"scene_id": 1, "text": "The hook line", "is_intro": True},
+                            {"scene_id": 2, "text": "The only story beat"},
+                            {"scene_id": 3, "text": "The closing line", "is_outro": True}]}
+    assert list(shots._resolve_custom_images("p", narration)) == ["intro"]   # placed, not dropped
 
 
 # ─── stages/stage_5/shots.py: applying the assignment onto the shot list ─────────
