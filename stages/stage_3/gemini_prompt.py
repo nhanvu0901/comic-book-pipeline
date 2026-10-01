@@ -254,6 +254,13 @@ _TAIL_RE = re.compile(
 # to the start in _TAIL_RE above.
 _AUDIT_WORD_RE = re.compile(
     r"\b(?:word\s*count|fact[\s-]*trace|audit|self[\s-]*check|check\s*list|checklist)\b", re.I)
+# The other audit labels of the micro template's OUTPUT block (the word count and fact trace
+# are caught above). Gemini sometimes reorders that block, so each label ends the script on its
+# own. A label followed by ":" or the end of the line is strict enough to trust even on a
+# markdown heading ("### OPENING CHAIN"), where _TAIL_RE's looser words are not.
+_AUDIT_LABEL_RE = re.compile(
+    r"^[\s#>(\[\-•–]*(?:opening\s+chain|story\s+frame\s+check|aftermath\s+check|open\s+loops|"
+    r"reactions|unsupported\s+facts)\s*(?::|$)", re.I)
 _HOOK_OPTION_RE = re.compile(r"^\s*hook\s*(\d+)?\s*[:.)\-–—]\s*(.+)$", re.I)
 _CHOSEN_RE = re.compile(r"^\s*\[?\s*chosen\s+hook\b(.*)$", re.I)
 _OUTRO_LABEL_RE = re.compile(
@@ -347,10 +354,12 @@ def _read_script(raw_text: str) -> tuple[str | None, str | None, list[list[str]]
     seen_content = False
     lines = text.splitlines()
     for i, raw in enumerate(lines):
+        clean = _strip_emphasis(raw)
+        if seen_content and _AUDIT_LABEL_RE.match(clean):
+            break
         if _HEADING_RE.match(raw) or _RULE_RE.match(raw):
             kept.append("")
             continue
-        clean = _strip_emphasis(raw)
         if not clean.strip():
             kept.append("")
             continue
@@ -434,13 +443,20 @@ def _same_words(a: str, b: str) -> bool:
     return re.findall(r"\w+", a.lower()) == re.findall(r"\w+", b.lower())
 
 
-def _split_qa_script(raw_text: str, n_items: int) -> tuple[str, list[str], str]:
-    hook, outro, paragraphs = _read_script(raw_text)
-    # A labelled hook/closing that the script then repeats as its own paragraph is one line.
+def _drop_repeated_ends(hook: str | None, outro: str | None,
+                        paragraphs: list[list[str]]) -> list[list[str]]:
+    """A labelled hook/closing that the script then repeats as its own paragraph is one line.
+    The writer prints its chosen hook again as the first line of FINAL SCRIPT."""
     if hook and paragraphs and _same_words(" ".join(paragraphs[0]), hook):
         paragraphs = paragraphs[1:]
     if outro and paragraphs and _same_words(" ".join(paragraphs[-1]), outro):
         paragraphs = paragraphs[:-1]
+    return paragraphs
+
+
+def _split_qa_script(raw_text: str, n_items: int) -> tuple[str, list[str], str]:
+    hook, outro, paragraphs = _read_script(raw_text)
+    paragraphs = _drop_repeated_ends(hook, outro, paragraphs)
     paras = [" ".join(p) for p in paragraphs]
     layout = _qa_layout(paras, n_items, hook, outro)
     multi = [p for p in paragraphs if len(p) > 1]
@@ -472,6 +488,7 @@ def _split_free_script(raw_text: str) -> tuple[str, list[str], str]:
     """No answer items (recap / micro): paragraphs are spread over the story pages, so
     only the hook and closing line need recognising — a short first/last paragraph."""
     hook, outro, paragraphs = _read_script(raw_text)
+    paragraphs = _drop_repeated_ends(hook, outro, paragraphs)
     paras = [" ".join(p) for p in paragraphs]
     if not hook and len(paras) > 1 and _is_short(paras[0]):
         hook = paras.pop(0)
