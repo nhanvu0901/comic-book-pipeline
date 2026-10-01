@@ -39,6 +39,34 @@ _SHORT_WORDS = 20
 # Below this a body paragraph is a transition line ("Now the worst one."), not an item.
 _MIN_ITEM_WORDS = 8
 
+# Scout fields the micro writer prompt reads on top of the nine basics a rebuilt candidate
+# carries: the scout's own verification, and its leads for the AFTERMATH and CONTEXT BEHIND
+# questions. project_factory stores them under these names.
+_SCOUT_EXTRA_KEYS = (
+    "turning_point", "why_it_lands", "aftermath", "context_behind", "unrevealed",
+    "detail_citations", "reason", "scout_check",
+)
+
+
+def _blank(value) -> bool:
+    """None, or an empty/whitespace string, list or dict."""
+    if isinstance(value, str):
+        value = value.strip()
+    return value is None or value in ("", [], {})
+
+
+def _scout_extras(*sources) -> dict:
+    """The _SCOUT_EXTRA_KEYS that any of `sources` records with a value, earlier sources
+    first. A field nobody recorded stays absent instead of becoming an empty key."""
+    extras: dict = {}
+    for key in _SCOUT_EXTRA_KEYS:
+        for source in sources:
+            value = source.get(key) if isinstance(source, dict) else None
+            if not _blank(value):
+                extras[key] = value
+                break
+    return extras
+
 
 def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, state_data: dict) -> dict:
     """Retrieve or reconstruct the verified scout candidate for a micro_moment project."""
@@ -135,6 +163,8 @@ def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, 
                             "source_url": source_url,
                             "evidence_urls": ev_urls,
                             "verdict": str(chosen_gate.get("verdict") or "CONFIRMED").upper(),
+                            # the gate's `reason` explains its verdict, so the gate goes first
+                            **_scout_extras(chosen_gate, chosen_cand),
                         }
                         cand_file.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
                         comic_ctx["scout_candidate"] = result
@@ -159,6 +189,8 @@ def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, 
         "source_url": reader_url,
         "evidence_urls": [reader_url] if reader_url else [],
         "verdict": "CONFIRMED",
+        # a recorded candidate too thin to use as is can still carry the scout's leads
+        **_scout_extras(comic_ctx.get("scout_candidate")),
     }
 
 
