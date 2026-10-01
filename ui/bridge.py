@@ -988,12 +988,11 @@ def render_scene_panel_path(project_name: str, scene: dict) -> str:
 
 
 def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
-    """Re-render the ACCEPTED recipe as SUBPROCESSES (cannot run in-process: the Stage 5
-    PANEL_* knobs are module-level constants read at import). Streams each subprocess's
-    stdout+stderr to `log`.
+    """Re-render the ACCEPTED recipe as SUBPROCESSES (cannot run in-process: Stage 5 reads its
+    tuning knobs as module-level constants at import). Streams each subprocess's stdout+stderr
+    to `log`.
       A: stage_4 --force (reading pace from config for the narration's format)
-      B (only if A exits 0): stage_5 --force with PANEL_RERANK=0 PANEL_COS_FLOOR=0.2
-         PANEL_ANCHOR_BONUS=8 (and CLAUDE_SDK_MODEL unset).
+      B (only if A exits 0): stage_5 --force (with CLAUDE_SDK_MODEL unset).
     Returns the final.mp4 path on success; raises on a non-zero exit."""
     import os
     import subprocess
@@ -1034,9 +1033,8 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     # the same as the Synthesize button (a forced 1.35 here overrode the server's .env).
     _run([py, "-m", "stages.stage_4", "--project", project_name, "--force"], dict(os.environ))
 
-    # Step B — Stage 5 render with the proven panel knobs; drop CLAUDE_SDK_MODEL.
-    env = {**os.environ, "PANEL_RERANK": "0", "PANEL_COS_FLOOR": "0.2",
-           "PANEL_ANCHOR_BONUS": "8"}
+    # Step B — Stage 5 render; drop CLAUDE_SDK_MODEL.
+    env = dict(os.environ)
     env.pop("CLAUDE_SDK_MODEL", None)
     _run([py, "-m", "stages.stage_5", "--project", project_name, "--force"], env)
 

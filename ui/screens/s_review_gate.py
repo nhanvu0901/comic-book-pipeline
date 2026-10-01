@@ -721,9 +721,10 @@ def build(
     locks_doc["locks"] = locks
     _init_pre_selected(review.get("beats") or [], locks, src_by_page)
 
-    # Custom images (Master-added, cosine only decides PLACEMENT — never a select/reject
-    # gate). Loaded once per screen build; a new add triggers on_state_change() (full
-    # rebuild), same pattern as the "Build candidates" flow below re-reading candidates.json.
+    # Custom images (Master-added; word overlap with the beat only decides PLACEMENT of an
+    # unlocked one — never a select/reject gate). Loaded once per screen build; a new add
+    # triggers on_state_change() (full rebuild), same pattern as the "Build candidates" flow
+    # below re-reading candidates.json.
     custom_by_beat: dict[str, list[dict]] = {}
     for entry in list_custom_images(PROJECTS_ROOT / project):
         custom_by_beat.setdefault(str(entry.get("beat_key") or ""), []).append(entry)
@@ -1036,7 +1037,7 @@ def build(
             _show_snack(f"Add image failed: {e}")
             return
         _show_snack(f"Added custom image for beat {beat_key} — enriching in background…")
-        # Fire-and-forget: the UI never blocks on VLM describe / embed / Qdrant upsert.
+        # Fire-and-forget: the UI never blocks on the VLM describe.
         page.run_task(run_blocking, enrich_custom_image, PROJECTS_ROOT / project, entry["file"])
         on_state_change()  # full rebuild — cheapest way to show the new tile (rare action)
 
@@ -1088,7 +1089,7 @@ def build(
         """Full-project re-run of stages.review_gate.build_candidates — the one
         place this screen calls into that module (see docstring above). Needed for a
         beat with zero candidates (e.g. a brand-new Master-inserted scene has no
-        matcher shortlist yet)."""
+        candidate list yet)."""
         async def _run():
             status_text.value = "Rebuilding candidates — may take a few minutes…"
             status_text.color = TEXT_MUTED
@@ -1098,9 +1099,7 @@ def build(
                 pass
             try:
                 from stages.review_gate import build_candidates
-                # k=0 → ALL panels of the beat's issue, not the top-10 shortlist. The default
-                # k=10 silently hid the rest, and build_candidates' own docstring warns "the
-                # correct panel sometimes ranks 11th+". Manual-first picks by eye, so the full
+                # k=0 → ALL panels of the beat's issue. Manual-first picks by eye, so the full
                 # pool is the only correct pool — the thumb loader below is already built for it.
                 await run_blocking(build_candidates, project, 0)
             except Exception as exc:
@@ -1235,17 +1234,6 @@ def build(
                 padding=ft.padding.symmetric(horizontal=8, vertical=4),
                 tooltip="Comic Vine cross-check flagged this item — the downloaded issue may not match the research.",
             ))
-        # Moment-present WARN (stronger, red) — the vision judge found NO panel in the
-        # cited issue that depicts this beat's moment, so the issue number is likely wrong
-        # (the moment lives in a neighbouring issue). Master should change the source.
-        if source.get("moment_warn"):
-            source_items.append(ft.Container(
-                content=ft.Text(f"⛔ {source['moment_warn']}", size=11,
-                                color="#FF5555", weight=ft.FontWeight.BOLD),
-                bgcolor="#3A0000", border_radius=6,
-                padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                tooltip="No panel in the cited issue depicts this moment — likely the wrong issue number.",
-            ))
         if src_label:
             if src_url:
                 source_items.append(ft.TextButton(
@@ -1264,9 +1252,8 @@ def build(
 
         tiles: dict[tuple[int, int], ft.Container] = {}
         icons: dict[tuple[int, int], ft.IconButton] = {}
-        # ORDER: always PAGE order (p, panel) — the panel is hand-picked by eye now, so a
-        # predictable page-by-page browse beats a cosine/vlm ranking (which is empty under
-        # PANEL_TEXT_EMBED=0 anyway). Old projects that still carry scores also sort page-order.
+        # ORDER: always PAGE order (p, panel) — the panel is hand-picked by eye, so a
+        # predictable page-by-page browse is what the gallery needs.
         # splice_locked_orphans: a lock outside this beat's candidate list would otherwise
         # have no tile, and the card would read as "nothing picked" — see that docstring.
         _cands = splice_locked_orphans(beat.get("candidates") or [], locks.get(beat_key), hidden)
@@ -1311,15 +1298,6 @@ def build(
                 # adds nothing a look does not already give, and generating it costs a full
                 # VLM pass over every page. Dialogue is OCR (Magi), so it stays.
                 tooltip = f"“{c['dialog']}”" if c.get("dialog") else ""
-                # Score goes in the TOOLTIP, not on the tile: a grid cell is ~120px wide and
-                # under PANEL_TEXT_EMBED=0 there is no score at all (old cosine/vlm projects
-                # still get it, just on hover).
-                score = " · ".join(
-                    ([f"vlm {float(c['vlm']):.0f}"] if c.get("vlm") is not None else [])
-                    + ([f"cos {float(c.get('score') or 0):.2f}"]
-                       if float(c.get("score") or 0) > 0 else []))
-                if score:
-                    tooltip = f"{tooltip}\n\n{score}" if tooltip else score
 
                 def _pick(_e, bk=beat_key, k=key, u=unit):
                     _toggle_candidate(bk, k[0], k[1], u)
@@ -1364,9 +1342,7 @@ def build(
                 cand_tiles.append(tile)
 
             # Custom images (Master-added, this beat's card only) — PREPENDED so they lead
-            # the gallery. Rendered like a candidate tile but with a "CUSTOM" chip instead of
-            # a score (there is no matcher cosine to show — see module docstring: cosine only
-            # decides PLACEMENT for an UNLOCKED custom image, never a per-tile number here).
+            # the gallery. Rendered like a candidate tile but with a "CUSTOM" chip.
             custom_controls: list[ft.Control] = []
             for entry in _custom_entries:
                 rel_path = str(entry.get("file") or "")
