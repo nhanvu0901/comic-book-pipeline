@@ -30,6 +30,8 @@ Thumbs.db
 logs/
 projects/
 art_projects/
+research_sessions/*
+!research_sessions/.gitkeep
 .understand-anything/
 bin/
 comic-pipeline-course/
