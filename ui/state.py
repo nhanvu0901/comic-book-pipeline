@@ -21,9 +21,9 @@ PICKER_STAGE = 0
 
 STAGE_NAMES = {
     1: "Research Scout",
-    2: "Download Comic",
-    3: "Preprocess Pages",
-    4: "Narration Script",
+    2: "Narration Script",
+    3: "Download Comic",
+    4: "Preprocess Pages",
     5: "Review Beats",
     6: "TTS Audio",
     7: "Review & Edit",

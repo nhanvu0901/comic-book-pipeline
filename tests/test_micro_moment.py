@@ -178,11 +178,30 @@ def test_micro_band_rejects_under_floor():
     assert any("micro band" in i for i in issues), issues
 
 
-def test_micro_hook_must_not_be_a_question():
+def test_micro_hook_can_be_a_specific_question():
     beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3)]
     q = "Why did the Punisher make Juggernaut throw up in their brawl here?"
     issues = mm._validate_micro_scenes(q, _scenes(36, 36, 36), beats, "thesis")
-    assert any("question" in i for i in issues), issues
+    assert not any("hook is a question" in i for i in issues), issues
+
+
+def test_micro_hook_accepts_a_short_specific_action():
+    beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3)]
+    hook = "Batman gave the Penguin his own heart."
+    issues = mm._validate_micro_scenes(hook, _scenes(36, 36, 36), beats, "thesis")
+    assert not any("micro hook is" in i and "w (want" in i for i in issues), issues
+
+
+def test_micro_first_scene_must_advance_past_the_hook():
+    beats = [Beat(id=i, function="SETUP", name="x") for i in (1, 2, 3)]
+    hook = "Batman gives the Penguin his own heart after their last fight."
+    scenes = [
+        {"text": "Batman gives the Penguin his own heart after their last fight."},
+        {"text": "The surgeon explains how the transplant works."},
+        {"text": "The Penguin wakes up and learns who saved him."},
+    ]
+    issues = mm._validate_micro_scenes(hook, scenes, beats, "hardcut")
+    assert any("opening repeats" in issue for issue in issues), issues
 
 
 # ── (d) hook mirrors the title: statement + names a character in sentence 1 ──
@@ -302,23 +321,40 @@ def test_micro_write_system_forbids_quoting_dialogue():
     assert "quote-fidelity" not in low
 
 
-# ── RULE 1 (retention): hook is a CONCRETE twist, abstract/poetic hooks banned ──
-def test_micro_write_system_hook_is_concrete_twist_bans_abstract():
+# ── Opening: concrete promise, supported reveal order, abstract hooks banned ──
+def test_micro_write_system_hook_is_concrete_and_source_backed():
     low = mm._MICRO_WRITE_SYSTEM.lower()
-    assert "concrete twist" in low                 # winning shape is a concrete reversal
-    assert "concrete, never abstract" in low       # the abstract ban is explicit
-    assert "she planned every second" in low       # a named banned abstract example
-    # reconciled with the old "don't force a paradox" note — the story's REAL reversal is wanted,
-    # only a disconnected invented riddle is banned
-    assert "invented riddle is banned" in low
+    assert "concrete, never abstract" in low
+    assert "she planned every second" in low
+    assert "title/target_moment" in low
+    assert "do not force the final reveal early" in low
+    assert "different sourced cause" in low
 
 
-# ── RULE 2 (retention): last line is a SHORT, quotable loop back to the hook ────
-def test_micro_write_system_outro_is_quotable_loop():
+def test_micro_write_system_uses_story_frame_before_mechanism():
     low = mm._MICRO_WRITE_SYSTEM.lower()
-    assert "the last line is the loop" in low
-    assert "quotable" in low
-    assert "close the hook" in low
+    assert "immediate story frame" in low
+    assert "active conflict or goal" in low
+    assert "replace repetition" in low
+    assert "do not add a scene" in low
+
+
+# ── Landing: finish on sourced detail without a forced loop ────
+def test_micro_write_system_outro_is_sourced_landing():
+    low = mm._MICRO_WRITE_SYSTEM.lower()
+    assert "stop on the strongest sourced result or detail" in low
+    assert "verbal echo of the" in low
+    assert "do not add a line" in low
+
+
+def test_micro_write_system_bans_lines_that_hint_without_stating():
+    """A script ended on "ends with a shocking twist": a reviewer's reaction rewritten as an
+    event. The ending may never hint at an outcome it does not state, and a question ending
+    asks what the verified result means, not what happens next or who is behind it."""
+    low = " ".join(mm._MICRO_WRITE_SYSTEM.lower().split())
+    assert "never end on, or include, a line that hints at an outcome without stating it" in low
+    assert '"ends with a shocking twist"' in low and '"everything changes"' in low
+    assert "never what happens next or who is behind something" in low
 
 
 # ── STORY-FIRST input builder (2026-07-16): story sources IN, panel prose OUT ──
@@ -371,98 +407,6 @@ def test_call_micro_writer_omits_sources_when_absent(monkeypatch):
                           model=None, progress=None, debug_dump={}, story_pages=None)
     assert "STORY MEANING" not in captured["user"]
     assert "KEY STORY MOMENTS" not in captured["user"]
-
-
-# ── vector-PIN + GROUND-CHECK (2026-07-16) ───────────────────────────────────
-def _crc_embed(texts):
-    """Deterministic bag-of-words embedding (crc32-bucketed, 4096-dim, unit-normed) — a
-    fragment sharing content words with a panel's embed_text scores high; disjoint text
-    scores ~0. Stands in for the real embedding backend so the pin argmax is predictable
-    without a network/model."""
-    import re as _re
-    import zlib
-    import numpy as np
-    out = []
-    for t in texts:
-        v = np.zeros(4096, dtype="float32")
-        for tok in _re.findall(r"[a-z]+", (t or "").lower()):
-            v[zlib.crc32(tok.encode()) % 4096] += 1.0
-        n = float(np.linalg.norm(v))
-        out.append(v / n if n else v)
-    return out
-
-
-def test_pin_beats_by_vector_argmax_and_ground_check(monkeypatch):
-    import stages._embedding as emb
-    monkeypatch.setattr(emb, "backend_name", lambda: "openai")
-    monkeypatch.setattr(emb, "embed_batch", _crc_embed)
-
-    window = [Beat(id=1, function="SETUP", name="a", page_refs=[10]),
-              Beat(id=2, function="SETUP", name="b", page_refs=[11]),
-              Beat(id=3, function="SETUP", name="c", page_refs=[12])]
-    story_pages = [
-        {"page_number": 10, "is_story_page": True, "panels": [
-            {"index": 0, "description": "quiet empty rooftop"},
-            {"index": 1, "description": "hero punches villain fist"}]},
-        {"page_number": 11, "is_story_page": True, "panels": [
-            {"index": 0, "description": "villain grows huge monster"}]},
-        {"page_number": 12, "is_story_page": True, "panels": [
-            {"index": 0, "description": "crowd flees burning street"}]},
-    ]
-    scenes = [
-        {"text": "hero punches villain fist", "visual_beats": ["hero punches villain fist"]},
-        {"text": "penguin waddles across frozen antarctica",   # matches NOTHING on any page
-         "visual_beats": ["penguin waddles across frozen antarctica"]},
-        {"text": "villain grows huge monster", "visual_beats": ["villain grows huge monster"]},
-    ]
-    best = mm._pin_beats_by_vector(scenes, window, story_pages, floor=0.3, log=lambda _m: None)
-
-    # scene 1 fragment → argmax is page 10 panel 1 (exact content overlap), pinned as a dict
-    vb0 = scenes[0]["visual_beats"][0]
-    assert isinstance(vb0, dict) and vb0["page"] == 10 and vb0["panel"] == 1
-    # scene 2 fragment matches no window panel → left UNPINNED (Stage 5 matcher handles it)
-    vb1 = scenes[1]["visual_beats"][0]
-    assert isinstance(vb1, dict) and vb1["page"] is None and vb1["panel"] is None
-
-    # ground-check flags the ungrounded MIDDLE scene, never the grounded scene 1, never last
-    issues = mm._ground_issues(scenes, window, best, 0.3)
-    assert any("scene 2 describes something not drawn" in i for i in issues), issues
-    assert not any("scene 1 describes" in i for i in issues)
-    assert not any("scene 3 describes" in i for i in issues)  # last scene is exempt (thematic landing)
-
-
-def test_pin_beats_by_vector_graceful_without_backend(monkeypatch):
-    """No embedding backend → no pins, no ground scores, beats left untouched (Stage 5 matcher
-    then handles every beat, identical to recap/Q&A)."""
-    import stages._embedding as emb
-    monkeypatch.setattr(emb, "backend_name", lambda: "none")
-    scenes = [{"text": "hero wins", "visual_beats": ["hero wins"]}]
-    window = [Beat(id=1, function="SETUP", name="a", page_refs=[10])]
-    story_pages = [{"page_number": 10, "is_story_page": True,
-                    "panels": [{"index": 0, "description": "hero wins"}]}]
-    best = mm._pin_beats_by_vector(scenes, window, story_pages, floor=0.3, log=lambda _m: None)
-    assert best == []
-    assert scenes[0]["visual_beats"] == ["hero wins"]            # untouched (still a string)
-    assert mm._ground_issues(scenes, window, best, 0.3) == []    # no scores → no issues
-
-
-def test_pin_beats_by_vector_skips_on_no_embed_env(monkeypatch):
-    """--no-embed (STAGE3_NO_EMBED=1) must short-circuit BEFORE any network call — even
-    with a live backend configured, embed_batch must never be invoked."""
-    import stages._embedding as emb
-    monkeypatch.setattr(emb, "backend_name", lambda: "openai")  # backend IS configured
-    def _boom(_texts):
-        raise AssertionError("embed_batch called despite STAGE3_NO_EMBED=1")
-    monkeypatch.setattr(emb, "embed_batch", _boom)
-    monkeypatch.setenv("STAGE3_NO_EMBED", "1")
-
-    scenes = [{"text": "hero wins", "visual_beats": ["hero wins"]}]
-    window = [Beat(id=1, function="SETUP", name="a", page_refs=[10])]
-    story_pages = [{"page_number": 10, "is_story_page": True,
-                    "panels": [{"index": 0, "description": "hero wins"}]}]
-    best = mm._pin_beats_by_vector(scenes, window, story_pages, floor=0.3, log=lambda _m: None)
-    assert best == []
-    assert scenes[0]["visual_beats"] == ["hero wins"]  # untouched, no network attempted
 
 
 def test_call_micro_writer_surfaces_dialog_block_in_user_prompt(monkeypatch):

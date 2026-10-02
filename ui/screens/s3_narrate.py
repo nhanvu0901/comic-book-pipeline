@@ -238,7 +238,7 @@ def build(
         _update_counter()
         page.update()
 
-    # ── Approve and Continue (Stage 4 -> Stage 5) ──────────────────────────
+    # ── Approve and Continue (Stage 2 -> Stage 3) ──────────────────────────
     async def approve_and_go(_e):
         raw_text = (script_area.value or "").strip()
         if not raw_text:
@@ -274,10 +274,10 @@ def build(
             status_text.color = SUCCESS
             page.update()
 
-            state.mark_approved(4)
-            state.current_stage = 5
+            state.mark_approved(2)
+            state.current_stage = 3
             save_state(state)
-            on_go(5)
+            on_go(3)
         except Exception as exc:
             running.visible = False
             # A mapping refusal leads with its own first line (what is wrong); the log
@@ -338,8 +338,47 @@ def build(
         except Exception:
             pass
 
+    if not items_controls and state.project_name:
+        comic_ctx_path = PROJECTS_ROOT / state.project_name / "comic_context.json"
+        if comic_ctx_path.exists():
+            try:
+                cctx = json.loads(comic_ctx_path.read_text(encoding="utf-8"))
+                mode = cctx.get("pipeline_mode") or "comic"
+                series = cctx.get("series") or cctx.get("title") or state.project_name
+                issue = cctx.get("issue")
+                issue_str = f" #{issue}" if issue else ""
+                chars = cctx.get("characters") or []
+                char_str = ", ".join([c for c in chars if c]) if isinstance(chars, list) else str(chars)
+                cand = cctx.get("scout_candidate") or {}
+                if not char_str and isinstance(cand, dict):
+                    char_str = cand.get("character") or cand.get("character_or_thing") or ""
+                moment = (
+                    cctx.get("target_moment")
+                    or (cand.get("what_visibly_happens") if isinstance(cand, dict) else "")
+                    or (cand.get("summary") if isinstance(cand, dict) else "")
+                    or cctx.get("logline")
+                    or ""
+                )
+                items_controls.append(
+                    ft.Text(f"Mode: {mode.replace('_', ' ').title()}", size=11, color=TEXT_MUTED, selectable=True)
+                )
+                items_controls.append(
+                    ft.Text(f"Comic: {series}{issue_str}", size=11, color=TEXT_PRIMARY, weight=ft.FontWeight.W_500, selectable=True)
+                )
+                if char_str:
+                    items_controls.append(
+                        ft.Text(f"Character: {char_str}", size=11, color=TEXT_MUTED, selectable=True)
+                    )
+                if moment:
+                    items_controls.append(
+                        ft.Text(f"Target Moment:\n{moment[:200]}..." if len(moment) > 200 else f"Target Moment:\n{moment}",
+                                size=11, color=TEXT_MUTED, selectable=True)
+                    )
+            except Exception:
+                pass
+
     right = ft.Column([
-        ft.Text("STEP 4 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 2 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Narration Script", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Gemini-First Narration (0% Claude):\n"
@@ -362,7 +401,7 @@ def build(
 
     return three_col(
         center, right, state=state, on_go=on_go,
-        header_title="Step 4: Narration Script",
+        header_title="Step 2: Narration Script",
         header_subtitle="Export context to your Gemini account, then paste the written script below.",
     )
 

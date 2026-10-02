@@ -194,8 +194,6 @@ def test_qa_subject_sequence_force_intro_bypasses_exclude(tmp_path, monkeypatch)
 
 # ── Stage 5: multi-panel subject intro end to end ─────────────────────────────
 
-import stages._embedding as _embedding             # noqa: E402
-import stages._panel_index as _panel_index          # noqa: E402
 import stages.review_gate as _review_gate            # noqa: E402
 
 
@@ -205,10 +203,6 @@ def _panel_y(y, desc="x"):
 
 def _pg(panels, src, w=600, h=6000):
     return {"panels": panels, "source_image": src, "image_dimensions": {"width": w, "height": h}}
-
-
-def _fake_score(panel, panel_vec, chunk_vec, scene_vec, page_tb, *, chunk_text, scene_text):
-    return 0.5, 0.5
 
 
 def _setup(tmp_path, monkeypatch, subject_panels_json):
@@ -224,11 +218,6 @@ def _setup(tmp_path, monkeypatch, subject_panels_json):
         {"approved": True, "locks": {"2": {"panels": [{"page": 8, "panel": 0}], "source": "b"}}}))
     if subject_panels_json is not None:
         (proj / "subject_panels.json").write_text(json.dumps(subject_panels_json))
-    monkeypatch.setattr(_embedding, "embed_batch", lambda texts: [None] * len(texts))
-    monkeypatch.setattr(_panel_index, "load_vectors", lambda project: {})
-    monkeypatch.setattr(shots, "_panel_content_score", _fake_score)
-    monkeypatch.setattr(shots, "_blend_image_content", lambda *a, **k: None)
-    monkeypatch.setattr(shots, "PANEL_RERANK", False)
     # intro/outro are fallback units → _match_panels runs for them; the intro is overridden by
     # subject panels and the outro by the subject sequence, so a null pair here is fine.
     monkeypatch.setattr(shots, "_match_panels", lambda units, *a, **k: [(None, "")] * len(units))

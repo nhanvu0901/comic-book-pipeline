@@ -200,7 +200,7 @@ def test_a_micro_session_the_workflow_produced_creates_a_project(monkeypatch, wi
     monkeypatch.setattr(
         "stages.research_scout.openrouter_gate.review", lambda **kwargs: _confirmed_gate()
     )
-    session = workflow.start(ScoutMode.MICRO, "One Hulk moment")
+    session = workflow.start(ScoutMode.MICRO, "One Hulk moment from 2024")
     workflow.run_general(session.id)
     workflow.verify_selected(session.id, ["candidate-2"])
     workflow.approve_selected(session.id)
@@ -210,3 +210,72 @@ def test_a_micro_session_the_workflow_produced_creates_a_project(monkeypatch, wi
         (tmp_path / "projects" / slug / "comic_context.json").read_text(encoding="utf-8")
     )
     assert context["reader_url"] == "https://batcave.biz/reader/1/2"
+
+
+def test_the_scouts_own_check_and_the_aftermath_reach_the_writers_scout_candidate(
+    monkeypatch, wired, tmp_path
+):
+    """The regression in one test: the verification round said NOT CONFIRMED because
+    the review withheld the twist, the gate was only inconclusive because OpenRouter
+    failed, and the project factory dropped both. What the workflow itself writes
+    must be what the factory hands the writer — and refreshing must rebuild it."""
+    workflow, _built = wired
+    detail = {
+        "aftermath": "Hero loses the duel and keeps the blade.",
+        "context_behind": "Hero took the blade from the vault.",
+        "unrevealed": "The review never says what the twist is.",
+        "detail_citations": [{
+            "supports": "aftermath", "url": "https://source.test/1", "quote": "Evidence sentence.",
+        }],
+    }
+    workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [{
+                "id": "candidate-1", "title": "Hero", "summary": "Hero duels Rival.",
+                "series_issue_year": "Thor #1 (2024)",
+                "what_visibly_happens": "Hero swings the blade.",
+                "evidence_urls": ["https://source.test/1"],
+                "claim_citation": {"url": "https://source.test/1", "quote": "Evidence sentence."},
+                "turning_point": "Hero swings the blade.",
+                **detail,
+            }]},
+            "sources": [{"url": "https://source.test/1"}],
+        }
+    }
+    verify = {"output": {"content": {
+        "candidates": [{"verdict": "NOT CONFIRMED as the exact proposed micro-moment"}],
+        "notes": "the review explicitly withholds the exact twist",
+    }, "sources": []}}
+    general_research = workflow.client.research
+
+    def research(prompt, schema, profile, *, effort="standard"):
+        if "verdict" in schema["properties"]["candidates"]["items"]["properties"]:
+            return type("RawCall", (), {"api": "research", "payload": verify, "error": None})()
+        return general_research(prompt, schema, profile, effort=effort)
+
+    workflow.client.research = research
+    monkeypatch.setattr(
+        "stages.research_scout.openrouter_gate.review",
+        lambda **kwargs: EvidenceGate(verdict="inconclusive", reason="OpenRouter request failed"),
+    )
+
+    session = workflow.start(ScoutMode.MICRO, "One Hulk moment from 2024")
+    workflow.run_general(session.id)
+    workflow.verify_selected(session.id, ["candidate-1"])
+    workflow.approve_selected(session.id)
+    slug = factory.create_project_from_session(session.id, "hulk-moment", override=True)
+
+    project = tmp_path / "projects" / slug
+    scout = json.loads((project / "comic_context.json").read_text(encoding="utf-8"))["scout_candidate"]
+    assert scout["verdict"] == "INCONCLUSIVE"
+    assert scout["reason"] == "OpenRouter request failed"
+    assert scout["scout_check"] == (
+        "NOT CONFIRMED as the exact proposed micro-moment — "
+        "the review explicitly withholds the exact twist"
+    )
+    assert scout["turning_point"] == "Hero swings the blade."
+    assert {key: scout[key] for key in detail} == detail
+    assert json.loads((project / "scout_candidate.json").read_text(encoding="utf-8")) == scout
+    assert factory.refresh_scout_candidate(
+        slug, projects_root=tmp_path / "projects", sessions_root=tmp_path / "research-sessions",
+    ) == scout

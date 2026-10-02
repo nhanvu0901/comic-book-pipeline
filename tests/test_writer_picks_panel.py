@@ -4,7 +4,7 @@ The micro writer now emits visual_beats as {"text","page","panel"} objects, each
 exact comic panel that draws that clause. Verifies:
   (a) a writer response with dict beats survives Stage 3 onto the Narration as dicts;
   (b) Stage 5 (_build_shots_per_chunk) binds a pinned beat straight to that page/panel and
-      does NOT call the cosine matcher for it;
+      does NOT call the panel matcher (_match_panels) for it;
   (c) recap-shape string beats route through the matcher for EVERY unit, in order (the old
       behavior is byte-identical — no pin ever short-circuits a recap render);
   (d) a pin to a panel that isn't in the pool logs a warning and falls back to the matcher;
@@ -163,8 +163,8 @@ def test_writer_dict_beats_survive_to_narration(monkeypatch):
 def test_write_prompt_has_no_panel_prose(monkeypatch):
     """2026-07-16 story-first rewrite: the writer no longer picks panels, so its prompt must
     contain NEITHER a PANEL MENU NOR any VLM panel description — that panel prose is exactly
-    what made the writer describe the ART instead of telling the story. Pins are assigned
-    afterwards by _pin_beats_by_vector, invisible to the writer."""
+    what made the writer describe the ART instead of telling the story. Panels are picked
+    afterwards (Review Beats / Stage 5), invisible to the writer."""
     captured = {}
 
     def _capture(*, system, user, models=None, max_tokens=1600, progress=None,

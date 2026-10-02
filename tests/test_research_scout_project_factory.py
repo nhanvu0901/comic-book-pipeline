@@ -53,12 +53,12 @@ def _gate(candidate_id, *, reader_url=None, verdict="confirmed", flags=None):
     }
 
 
-def _session(tmp_path, mode, candidates, gates):
+def _session(tmp_path, mode, candidates, gates, *, intent="Which heroes did this?"):
     store = SessionStore(tmp_path / "research-sessions")
     session = ResearchSession(
         id=f"{mode.value}-session",
         mode=mode,
-        user_intent="Which heroes did this?",
+        user_intent=intent,
         state=SessionState.PRODUCTION_GATES,
         selected_specific_candidate_ids=[candidate["id"] for candidate in candidates],
     )
@@ -80,6 +80,32 @@ def test_micro_factory_writes_target_moment_without_changing_stage_contract(tmp_
     assert context["series_issue_year"] == candidate["series_issue_year"]
     assert context["issue"] == candidate["series_issue_year"]
     assert context["reader_url"] == candidate["reader_url"]
+
+
+def test_micro_factory_refuses_an_old_off_topic_candidate_even_with_override(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _candidate("wrong", mode=ScoutMode.MICRO)
+    session = _session(
+        tmp_path, ScoutMode.MICRO, [candidate], [_gate("wrong")],
+        intent="Amazing X-Men #2: Cyclops faces Darkchild.",
+    )
+
+    assert not factory.can_override_production_gates(session, root=tmp_path / "research-sessions")
+    with pytest.raises(ValueError, match="target_issue_mismatch"):
+        factory.create_project_from_session(session.id, "wrong-comic", override=True)
+    assert not (tmp_path / "projects" / "wrong-comic").exists()
+
+
+def test_micro_factory_accepts_the_exact_requested_issue(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _candidate("right", mode=ScoutMode.MICRO)
+    candidate["series_issue_year"] = "Amazing X-Men #2 (2025)"
+    session = _session(
+        tmp_path, ScoutMode.MICRO, [candidate], [_gate("right")],
+        intent="In Amazing X-Men #2, Cyclops faces Darkchild.",
+    )
+
+    assert factory.create_project_from_session(session.id, "right-comic") == "right-comic"
 
 
 def test_qa_factory_requires_three_confirmed_reader_urls(tmp_path, monkeypatch):
@@ -318,3 +344,403 @@ def test_a_legacy_bare_gate_object_still_works_for_micro(tmp_path, monkeypatch):
     )
 
     assert factory.create_project_from_session(session.id, "thor-hammer") == "thor-hammer"
+
+
+# ─── scout_candidate: what the writer is handed ─────────────────────────────
+#
+# A real micro session produced a script that ended on a teaser. The scout had
+# built the moment from a review that withheld its twist, its own verification
+# had said "NOT CONFIRMED ... withholds the exact twist", and the gate had only
+# been INCONCLUSIVE because "OpenRouter request failed" — and the factory's
+# whitelist dropped all of it, so the writer never saw any of it.
+
+_NINE_KEYS = {
+    "character", "series_issue_year", "what_visibly_happens", "summary",
+    "claim_citation", "verbatim_sentence", "source_url", "evidence_urls", "verdict",
+}
+_RESEARCH_FIELDS = ("aftermath", "context_behind", "unrevealed", "detail_citations")
+
+
+def _micro_candidate(candidate_id="micro", **extra):
+    return {
+        "id": candidate_id,
+        "title": "The duel in the vault",
+        "summary": "Hero and Rival duel over a blade.",
+        "character_or_thing": "Hero",
+        "series_issue_year": "Vault Duel (2025) #3 (2026)",
+        "what_visibly_happens": "Hero swings the blade at Rival.",
+        "evidence_urls": ["https://aiptcomics.com/vault-duel-3"],
+        "claim_citation": {
+            "url": "https://aiptcomics.com/vault-duel-3", "quote": "Hero swings the blade.",
+        },
+        **extra,
+    }
+
+
+def _verify_round(verdict, notes):
+    """The record verify_selected stores: the raw You.com call around its payload."""
+    return {
+        "api": "research",
+        "error": None,
+        "payload": {
+            "output": {
+                "content": {
+                    "candidates": [{"verdict": verdict, "verbatim_sentence": "Hero swings."}],
+                    "notes": notes,
+                },
+                "content_type": "application/json",
+                "sources": [],
+            },
+            "warnings": [],
+        },
+    }
+
+
+def _micro_session(tmp_path, candidate, gate, *, verify=None, created_project=None,
+                   intent="Find a new micro moment"):
+    """A session on disk with the same layout the workflow writes: session.json,
+    general/candidates.v1.json, specific/evidence_gate.v1.json and, once the
+    candidate was verified, specific/search.<id>.v1.json."""
+    from stages.research_scout.workflow import specific_search_artifact
+
+    session = _session(tmp_path, ScoutMode.MICRO, [candidate], [gate], intent=intent)
+    store = SessionStore(tmp_path / "research-sessions")
+    if verify is not None:
+        store.write_artifact(session.id, specific_search_artifact(candidate["id"]), verify)
+    if created_project:
+        session.created_project = created_project
+        store.save(session)
+    return session
+
+
+def _created_scout_candidate(tmp_path, monkeypatch, candidate, gate, *, verify=None, override=True):
+    _wire_roots(tmp_path, monkeypatch)
+    session = _micro_session(tmp_path, candidate, gate, verify=verify)
+    slug = factory.create_project_from_session(session.id, "vault-duel", override=override)
+    project = tmp_path / "projects" / slug
+    context = json.loads((project / "comic_context.json").read_text(encoding="utf-8"))
+    return session, context["scout_candidate"], json.loads(
+        (project / "scout_candidate.json").read_text(encoding="utf-8")
+    )
+
+
+def test_scout_candidate_carries_the_gate_reason_the_scouts_own_check_and_the_aftermath(
+    tmp_path, monkeypatch
+):
+    candidate = _micro_candidate(
+        turning_point="Hero swings the blade at Rival.",
+        why_it_lands="The blade was meant for Hero.",
+        aftermath="Hero loses the duel and keeps the blade.",
+        context_behind="Hero took the blade from the vault to settle a debt.",
+        unrevealed="The review never says what the twist is.",
+        detail_citations=[{
+            "supports": "aftermath", "url": "https://cbr.com/duel", "quote": "Hero loses.",
+        }],
+    )
+    gate = {**_gate("micro", verdict="inconclusive"), "reason": "OpenRouter request failed",
+            "evidence_urls": []}
+    verify = _verify_round(
+        "NOT CONFIRMED as the exact proposed micro-moment",
+        "the review explicitly withholds the exact twist",
+    )
+
+    _session_obj, in_context, on_disk = _created_scout_candidate(
+        tmp_path, monkeypatch, candidate, gate, verify=verify,
+    )
+
+    assert in_context == on_disk
+    # the nine keys the writer already read, unchanged
+    assert on_disk["character"] == "Hero"
+    assert on_disk["series_issue_year"] == "Vault Duel (2025) #3 (2026)"
+    assert on_disk["what_visibly_happens"] == "Hero swings the blade at Rival."
+    assert on_disk["summary"] == "Hero and Rival duel over a blade."
+    assert on_disk["claim_citation"] == candidate["claim_citation"]
+    assert on_disk["verbatim_sentence"] == "Hero swings the blade."
+    assert on_disk["source_url"] == "https://aiptcomics.com/vault-duel-3"
+    assert on_disk["evidence_urls"] == ["https://aiptcomics.com/vault-duel-3"]
+    assert on_disk["verdict"] == "INCONCLUSIVE"
+    # what the whitelist used to drop
+    assert on_disk["reason"] == "OpenRouter request failed"
+    assert on_disk["scout_check"] == (
+        "NOT CONFIRMED as the exact proposed micro-moment — "
+        "the review explicitly withholds the exact twist"
+    )
+    assert on_disk["turning_point"] == "Hero swings the blade at Rival."
+    assert on_disk["why_it_lands"] == "The blade was meant for Hero."
+    assert on_disk["aftermath"] == "Hero loses the duel and keeps the blade."
+    assert on_disk["context_behind"] == "Hero took the blade from the vault to settle a debt."
+    assert on_disk["unrevealed"] == "The review never says what the twist is."
+    assert on_disk["detail_citations"] == candidate["detail_citations"]
+
+
+def test_what_never_existed_stays_absent_rather_than_becoming_a_blank(tmp_path, monkeypatch):
+    """An older candidate has no aftermath, no turning point, no verify round and a
+    gate without a reason. None of those may appear as an empty placeholder."""
+    gate = _gate("micro")
+    del gate["reason"]
+
+    _s, _in_context, on_disk = _created_scout_candidate(
+        tmp_path, monkeypatch, _micro_candidate(), gate, override=False,
+    )
+
+    assert set(on_disk) == _NINE_KEYS
+
+
+def test_the_research_fields_may_legitimately_be_blank_when_the_scout_found_nothing(
+    tmp_path, monkeypatch
+):
+    candidate = _micro_candidate(
+        aftermath="", context_behind="", unrevealed="", detail_citations=[],
+    )
+
+    _s, _in_context, on_disk = _created_scout_candidate(
+        tmp_path, monkeypatch, candidate, _gate("micro"), override=False,
+    )
+
+    assert (on_disk["aftermath"], on_disk["context_behind"], on_disk["unrevealed"]) == ("", "", "")
+    assert on_disk["detail_citations"] == []
+
+
+def test_a_detail_citation_without_a_url_or_a_quote_is_not_passed_on(tmp_path, monkeypatch):
+    candidate = _micro_candidate(
+        aftermath="Hero loses.",
+        detail_citations=[
+            {"supports": "aftermath", "url": "https://cbr.com/duel", "quote": "Hero loses."},
+            {"supports": "aftermath", "url": "https://cbr.com/other", "quote": ""},
+            {"supports": "context_behind", "url": "", "quote": "A quote with no page."},
+            "not an object",
+        ],
+    )
+
+    _s, _in_context, on_disk = _created_scout_candidate(
+        tmp_path, monkeypatch, candidate, _gate("micro"), override=False,
+    )
+
+    assert on_disk["detail_citations"] == [
+        {"supports": "aftermath", "url": "https://cbr.com/duel", "quote": "Hero loses."},
+    ]
+
+
+def test_a_failed_verify_round_leaves_no_scout_check(tmp_path, monkeypatch):
+    failed = {"api": "research", "payload": {}, "error": "HTTP 500"}
+
+    _s, _in_context, on_disk = _created_scout_candidate(
+        tmp_path, monkeypatch, _micro_candidate(), _gate("micro"), verify=failed, override=False,
+    )
+
+    assert "scout_check" not in on_disk
+
+
+def test_build_scout_candidate_reads_but_never_writes(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _micro_candidate(aftermath="Hero loses.")
+    session = _micro_session(
+        tmp_path, candidate, _gate("micro"), verify=_verify_round("CONFIRMED", "Two sources agree."),
+    )
+    store = SessionStore(tmp_path / "research-sessions")
+    before = sorted(p.name for p in store.session_dir(session.id).rglob("*"))
+
+    built = factory.build_scout_candidate(store, session, candidate, _gate("micro"))
+
+    assert built["scout_check"] == "CONFIRMED — Two sources agree."
+    assert built["aftermath"] == "Hero loses."
+    assert sorted(p.name for p in store.session_dir(session.id).rglob("*")) == before
+    assert not (tmp_path / "projects").exists()
+
+
+# ─── refresh_scout_candidate: bring an existing project up to date, offline ──
+
+
+def _old_project(tmp_path, *, slug="vault-duel", extra_context=None):
+    """A project made before this change: the nine-key scout_candidate and nothing more."""
+    project = tmp_path / "projects" / slug
+    project.mkdir(parents=True)
+    old = {
+        "character": "Hero", "series_issue_year": "Vault Duel (2025) #3 (2026)",
+        "what_visibly_happens": "Hero swings the blade at Rival.",
+        "summary": "Hero and Rival duel over a blade.",
+        "claim_citation": {"url": "https://aiptcomics.com/vault-duel-3",
+                           "quote": "Hero swings the blade."},
+        "verbatim_sentence": "Hero swings the blade.",
+        "source_url": "https://aiptcomics.com/vault-duel-3",
+        "evidence_urls": ["https://aiptcomics.com/vault-duel-3"],
+        "verdict": "INCONCLUSIVE",
+    }
+    context = {"status": "ready", "pipeline_mode": "micro_moment", "title": "The duel in the vault",
+               "target_moment": "Hero swings the blade at Rival.", "narration_notes": "keep me",
+               "scout_candidate": old, **(extra_context or {})}
+    (project / "comic_context.json").write_text(json.dumps(context, indent=2), encoding="utf-8")
+    (project / "scout_candidate.json").write_text(json.dumps(old, indent=2), encoding="utf-8")
+    return project, old
+
+
+def _stored_session(tmp_path, candidate, gate, verify, *, slug="vault-duel", **kwargs):
+    return _micro_session(tmp_path, candidate, gate, verify=verify, created_project=slug, **kwargs)
+
+
+def _refresh(tmp_path, slug="vault-duel"):
+    return factory.refresh_scout_candidate(
+        slug, projects_root=tmp_path / "projects", sessions_root=tmp_path / "research-sessions",
+    )
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Refreshing is disk-only. Any socket a refresh opened would be a paid call."""
+    import socket
+    import urllib.request
+
+    def boom(*args, **kwargs):
+        raise AssertionError("refresh_scout_candidate must not touch the network")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(socket, "create_connection", boom)
+    monkeypatch.setattr(socket.socket, "connect", boom)
+
+
+def test_refresh_adds_the_gate_reason_and_the_scouts_check_to_a_project_made_before(
+    tmp_path, no_network
+):
+    project, _old = _old_project(tmp_path)
+    gate = {**_gate("micro", verdict="inconclusive"), "reason": "OpenRouter request failed",
+            "evidence_urls": []}
+    _stored_session(
+        tmp_path, _micro_candidate(), gate,
+        _verify_round("NOT CONFIRMED as the exact proposed micro-moment",
+                      "the review explicitly withholds the exact twist"),
+    )
+
+    refreshed = _refresh(tmp_path)
+
+    assert refreshed["reason"] == "OpenRouter request failed"
+    assert refreshed["scout_check"] == (
+        "NOT CONFIRMED as the exact proposed micro-moment — "
+        "the review explicitly withholds the exact twist"
+    )
+    # the candidate predates the aftermath fields: they stay absent, not blank
+    assert not set(_RESEARCH_FIELDS) & set(refreshed)
+    assert _NINE_KEYS <= set(refreshed)
+    assert refreshed["verdict"] == "INCONCLUSIVE"
+    on_disk = json.loads((project / "scout_candidate.json").read_text(encoding="utf-8"))
+    context = json.loads((project / "comic_context.json").read_text(encoding="utf-8"))
+    assert on_disk == refreshed == context["scout_candidate"]
+
+
+def test_refresh_replaces_only_the_scout_candidate_in_the_context(tmp_path, no_network):
+    project, _old = _old_project(tmp_path, extra_context={"year": "2026", "characters": ["Hero"]})
+    _stored_session(tmp_path, _micro_candidate(), _gate("micro"), _verify_round("CONFIRMED", ""))
+    before = json.loads((project / "comic_context.json").read_text(encoding="utf-8"))
+
+    _refresh(tmp_path)
+
+    after = json.loads((project / "comic_context.json").read_text(encoding="utf-8"))
+    assert {k: v for k, v in after.items() if k != "scout_candidate"} == {
+        k: v for k, v in before.items() if k != "scout_candidate"
+    }
+    assert after["scout_candidate"] != before["scout_candidate"]
+
+
+def test_refresh_picks_up_the_aftermath_fields_a_newer_candidate_carries(tmp_path, no_network):
+    _old_project(tmp_path)
+    candidate = _micro_candidate(
+        aftermath="Hero loses.", context_behind="", unrevealed="The twist.",
+        detail_citations=[{"supports": "aftermath", "url": "https://cbr.com/d", "quote": "Hero loses."}],
+    )
+    _stored_session(tmp_path, candidate, _gate("micro"), None)
+
+    refreshed = _refresh(tmp_path)
+
+    assert refreshed["aftermath"] == "Hero loses."
+    assert refreshed["context_behind"] == ""
+    assert refreshed["unrevealed"] == "The twist."
+    assert refreshed["detail_citations"][0]["url"] == "https://cbr.com/d"
+    assert "scout_check" not in refreshed  # no verify round was ever stored
+
+
+def test_refresh_is_idempotent_and_writes_atomically(tmp_path, monkeypatch, no_network):
+    from pathlib import Path
+
+    project, _old = _old_project(tmp_path)
+    _stored_session(tmp_path, _micro_candidate(), _gate("micro"), _verify_round("CONFIRMED", "ok"))
+    written = []
+    real = factory.write_json_atomic
+
+    def recording(path, doc, **kwargs):
+        written.append(Path(path).name)
+        return real(path, doc, **kwargs)
+
+    monkeypatch.setattr(factory, "write_json_atomic", recording)
+
+    first = _refresh(tmp_path)
+    second = _refresh(tmp_path)
+
+    assert first == second
+    # scout_candidate.json first: Stage 3 reads it before the context copy, so a
+    # crash between the two must leave the fresh one in front.
+    assert written == ["scout_candidate.json", "comic_context.json"] * 2
+    assert not list(project.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("setup,message", [
+    ("no_project", "project"),
+    ("no_context", "comic_context.json"),
+    ("no_session", "research session"),
+    ("two_sessions", "more than one"),
+    ("qa_session", "micro"),
+    ("no_gate", "gate"),
+    ("no_candidate", "candidate"),
+])
+def test_refresh_refuses_rather_than_guesses(tmp_path, no_network, setup, message):
+    from stages.research_scout.errors import ScoutUserError
+
+    if setup != "no_project":
+        project, _old = _old_project(tmp_path)
+    if setup == "no_context":
+        (project / "comic_context.json").unlink()
+    if setup in {"two_sessions", "qa_session", "no_gate", "no_candidate"}:
+        session = _stored_session(tmp_path, _micro_candidate(), _gate("micro"), None)
+        store = SessionStore(tmp_path / "research-sessions")
+        if setup == "two_sessions":
+            other = session.model_copy(update={"id": "another-session"})
+            store.save(other)
+        elif setup == "qa_session":
+            session.mode = ScoutMode.QA
+            store.save(session)
+        elif setup == "no_gate":
+            store.artifact_path(session.id, "specific/evidence_gate.v1.json").unlink()
+        elif setup == "no_candidate":
+            store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": []})
+
+    with pytest.raises(ScoutUserError, match=message):
+        _refresh(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["", "  ", ".", "..", "a/b", "../escape", "/abs/path", None])
+def test_refresh_only_accepts_a_single_folder_name(tmp_path, no_network, name):
+    from stages.research_scout.errors import ScoutUserError
+
+    _old_project(tmp_path)
+
+    with pytest.raises(ScoutUserError, match="single folder name"):
+        factory.refresh_scout_candidate(
+            name, projects_root=tmp_path / "projects", sessions_root=tmp_path / "research-sessions",
+        )
+
+
+def test_refresh_ignores_a_session_that_belongs_to_another_project(tmp_path, no_network):
+    from stages.research_scout.errors import ScoutUserError
+
+    _old_project(tmp_path)
+    _stored_session(tmp_path, _micro_candidate(), _gate("micro"), None, slug="some-other-project")
+
+    with pytest.raises(ScoutUserError, match="research session"):
+        _refresh(tmp_path)
+
+
+def test_refresh_defaults_to_the_configured_roots(tmp_path, monkeypatch, no_network):
+    monkeypatch.setattr(factory.config, "PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setattr(factory.config, "RESEARCH_SESSIONS_ROOT", tmp_path / "research-sessions")
+    _old_project(tmp_path)
+    _stored_session(tmp_path, _micro_candidate(), _gate("micro"), _verify_round("CONFIRMED", "ok"))
+
+    assert factory.refresh_scout_candidate("vault-duel")["scout_check"] == "CONFIRMED — ok"

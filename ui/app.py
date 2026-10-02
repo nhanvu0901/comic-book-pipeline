@@ -32,9 +32,9 @@ from .theme import BG, BG_PANEL, BORDER, ACCENT, DANGER, TEXT_MUTED, TEXT_PRIMAR
 
 STAGE_BUILDERS = {
     1: s1_research_scout.build,
-    2: s2_download.build,
-    3: s2_preprocess.build,
-    4: s3_narrate.build,
+    2: s3_narrate.build,
+    3: s2_download.build,
+    4: s2_preprocess.build,
     5: s_review_gate.build,
     6: s4_tts.build,
     7: s6_review.build,

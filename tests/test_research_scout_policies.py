@@ -4,6 +4,7 @@ import pytest
 
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
+from tests import micro_detail_rules as rules
 
 
 def test_general_micro_template_is_external_and_records_hash():
@@ -132,6 +133,78 @@ def test_evidence_gate_v2_tells_the_gate_what_an_unfetchable_source_means():
     lowered = rendered.text.lower()
     assert "unverified, not contradicted" in lowered
     assert "already fetched" in lowered
+
+
+def _render_general(mode):
+    return PolicyBundle.load(mode).render(
+        "general", user_intent="final twist of the fight", angle="a reveal",
+        count="6", digest="none",
+    ).text
+
+
+def test_general_micro_template_carries_the_three_rules_in_order_and_qa_does_not():
+    micro = _render_general(ScoutMode.MICRO)
+    qa = _render_general(ScoutMode.QA)
+
+    assert rules.missing_rules(micro) == []
+    assert rules.in_order(micro)
+    # str.format ate the doubled braces: the model sees one object per citation.
+    assert '{"supports": "aftermath" or "context_behind"' in micro
+    assert "{{" not in micro
+    for name in rules.DETAIL_FIELDS:
+        assert name not in qa
+    assert "is not an event" not in qa
+    # the fixed template asks for the same canonical identity / url shape as the planner path
+    assert rules.missing_format_rules(micro) == []
+    assert "Series Title #N" not in qa
+
+
+def test_general_micro_template_keeps_the_pinned_breadth_wording():
+    """The three rules were added below this paragraph; it must not be reflowed."""
+    micro = _render_general(ScoutMode.MICRO)
+    assert micro.startswith(
+        "# General micro-moment research scout\n\n"
+        "Find source-supported comic moments for this request. Seek about 6 distinct source pages\n"
+        "when available; there is no candidate minimum. State the\n"
+        "actual source and candidate counts in notes and never pad the list.\n"
+    )
+
+
+def test_specific_micro_template_flags_a_moment_that_rests_on_a_reaction_or_teaser():
+    bundle = PolicyBundle.load(ScoutMode.MICRO)
+    text = bundle.render(
+        "specific", user_intent="Hulk", angle="x", digest="none", candidate="candidate-1",
+    ).text
+    flat = rules.normalized(text)
+
+    # still the verification round it was
+    assert "Verify ONE proposed" in text
+    assert "NOT CONFIRMED" in text
+    # the new check: a stated event, not a reviewer's reaction or a teaser
+    assert "reaction or a teaser" in flat
+    assert "a shocking twist I never saw coming" in flat
+    assert "aftermath" in flat and "context_behind" in flat
+    assert "withheld" in flat or "withholds" in flat
+    # the QA verification template is untouched
+    qa = PolicyBundle.load(ScoutMode.QA).render(
+        "specific", user_intent="Hulk", angle="x", digest="none", candidate="candidate-1",
+    ).text
+    assert "reaction or a teaser" not in qa
+
+
+def test_moment_scout_agent_doc_asks_for_the_same_things():
+    """The agent scouts by hand what the workflow scouts by API; it gets the same
+    ask and the same two rules, in its own words."""
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parent.parent / ".claude" / "agents" / "moment-scout.md"
+    flat = rules.normalized(doc.read_text(encoding="utf-8"))
+
+    assert "aftermath" in flat and "context" in flat and "unrevealed" in flat
+    assert "not stated" in flat                      # the agent's "" for a missing source
+    assert "a shocking twist I never saw coming" in flat
+    assert "is not an event" in flat
+    assert "final twist" in flat and "it is never evidence" in flat
 
 
 def test_reddit_scouts_but_does_not_verify():

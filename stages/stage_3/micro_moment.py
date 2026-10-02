@@ -42,6 +42,7 @@ from .write_script import (
     _anchor_scenes_to_beats,
     _beat_anchor,
     _extract_json,
+    _intro_overlaps,
     _lint_you_quota,
     _to_narration,
     _HOOK_STOPWORDS,
@@ -63,7 +64,7 @@ from .write_script import (
 _MICRO_WORDS_MIN = int(os.getenv("MICRO_WORDS_MIN", "120"))   # ~35s at 3.4 wps
 _MICRO_WORDS_MAX = int(os.getenv("MICRO_WORDS_MAX", "320"))   # ~94s at 3.4 wps
 _MICRO_SCENE_MAX_WORDS = 40     # a scene = one paratactic chained sentence (or a short single-event one)
-_MICRO_HOOK_MIN_WORDS = 10
+_MICRO_HOOK_MIN_WORDS = 6
 _MICRO_HOOK_MAX_WORDS = 24
 # A body scene at/under this length is one visual moment anyway — no lint even with
 # no visual_beats (held panel for a short sentence is not the bug).
@@ -80,22 +81,14 @@ _MICRO_ENDING_STYLES = {"thesis", "hardcut", "question"}
 _MICRO_WRITE_MAX_RETRIES = 3
 # Issues that mean the draft is structurally broken (Stage 5 can't render it right) —
 # never ship these even after retries exhaust; everything else (hook length, you-quota,
-# the soft ground-check "not drawn" hint) is a lint that's fine to ship with a log line.
+# quote fidelity, ...) is a lint that's fine to ship with a log line.
 _MICRO_HARD_ISSUE_MARKERS = ("no visual_beats", "do not reconstruct", "expected ")
-# GROUND-CHECK floor (2026-07-16): after the TEXT is locked we cosine-match every visual-beat
-# fragment against the panels on its OWN pages (the same richer panel embed Stage 5 matches on).
-# A body scene whose best panel is below this floor draws NOTHING on its pages → a SOFT retry
-# hint ("retell using what's actually there"), the safety net for the new story-first writer
-# (which reads plot prose that may mention off-panel events). ponytail: single tuning knob; the
-# live-observed on-page cosine sits well above this — raise if false "not drawn" hints appear.
-_MICRO_GROUND_FLOOR = float(os.getenv("MICRO_GROUND_COS_FLOOR", "0.34"))
 
 
 def _content_tokens(text: str) -> set[str]:
     """Lower-cased content words (len>=3, minus hook stopwords) for the deterministic
-    lexical matcher below. Purely offline — window selection must NOT depend on the
-    embedding server being up (semantic_sim returns 0.0 when it is down, which would
-    make the pick non-deterministic and untestable)."""
+    lexical matcher below. Purely offline — window selection depends on no model and no
+    network, so the pick is the same on every run and easy to test."""
     return {w for w in re.findall(r"[a-z']{3,}", (text or "").lower())
             if w not in _HOOK_STOPWORDS}
 
@@ -120,8 +113,8 @@ def _moment_match_score(beat: Beat, tgt_tokens: set[str], page_hints: set[int]) 
 
 def _peak_index(beats: list[Beat], target_moment: str) -> int:
     """Index of the beat that best matches the described moment (the "peak").
-    Shared by window selection and by `_window_block` (which marks it for the
-    writer, so the past->present tense shift lands on the right beat)."""
+    Shared by window selection and `_window_block`, which marks the event the
+    narration needs to pay off."""
     tgt = _content_tokens(target_moment)
     hints = _page_hints(target_moment)
     return max(range(len(beats)), key=lambda i: (_moment_match_score(beats[i], tgt, hints), -i))
@@ -195,8 +188,8 @@ def _select_moment_window(
 
     Every tier's result then passes through `_with_setup` (SETUP-REACH, 2026-07-20):
     it prepends far-back setup beats about the title subject that the positional lead
-    cap left out. This is the offline/no-embed/LLM-fail FALLBACK path; the LLM
-    segmenter (`_segment_moment_window`) is the primary context-aware picker."""
+    cap left out. This is the default window picker, and the FALLBACK when the opt-in LLM
+    segmenter (`_segment_moment_window`, FOCUS_FILTER_LLM=1) is off or fails."""
     if not beats:
         return []
     peak = _peak_index(beats, target_moment)
@@ -227,8 +220,8 @@ def _select_moment_window(
         through the full outline, prepending each contiguous beat that names the same
         subject as the TITLE, stopping at the first that doesn't (the subplot boundary).
         No-op when the title carries no tokens (window tests pass title="") or the window
-        already starts at beat 0. This is the FALLBACK's context reach; the LLM segmenter
-        (`_segment_moment_window`) is the primary, smarter context picker.
+        already starts at beat 0. This is the heuristic's context reach; the opt-in LLM
+        segmenter (`_segment_moment_window`) is the smarter context picker.
         ponytail: bounded only by the subplot boundary — on an all-on-focus solo book it
         can pull the whole first act; fine, the word band caps output length."""
         if not window or not title_tokens:
@@ -306,9 +299,10 @@ def _select_moment_window(
 
 
 def _focus_filter_llm_on() -> bool:
-    """FOCUS_FILTER_LLM knob (default ON). =0/false/no → skip the LLM segmenter and use
-    the deterministic heuristic (`_select_moment_window`) exactly as before."""
-    return os.getenv("FOCUS_FILTER_LLM", "1").strip().lower() in ("1", "true", "yes", "on")
+    """FOCUS_FILTER_LLM knob (default OFF). =1/true/yes/on → pick the moment window with the
+    LLM segmenter (`_segment_moment_window`). Otherwise the deterministic heuristic
+    (`_select_moment_window`) picks it, with no extra LLM call."""
+    return os.getenv("FOCUS_FILTER_LLM", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 _FOCUS_SEGMENT_SYSTEM = """You are a STORY SEGMENTER for a 40-90 second micro-story video. \
@@ -366,12 +360,12 @@ def _segment_moment_window(
     progress: Callable[[str], None] | None = None,
     log: Callable[[str], None] | None = None,
 ) -> list[Beat] | None:
-    """LLM-SEGMENT primary path (context-aware, 2026-07-20). Reads the WHOLE outline and
-    asks the model to split beats into focus / context / payoff / drop by id, then returns
-    (focus ∪ context ∪ payoff) MINUS drop, in the ORIGINAL causal order — keeping the far
-    setup a positional window misses so the narration tells the whole story, not just the
-    payoff. Returns None (→ caller falls back to the deterministic `_select_moment_window`
-    heuristic) when: the knob is off, STAGE3_NO_EMBED is set (deterministic offline mode),
+    """LLM-SEGMENT path (context-aware, 2026-07-20; opt-in with FOCUS_FILTER_LLM=1). Reads
+    the WHOLE outline and asks the model to split beats into focus / context / payoff /
+    drop by id, then returns (focus ∪ context ∪ payoff) MINUS drop, in the ORIGINAL causal
+    order — keeping the far setup a positional window misses so the narration tells the
+    whole story, not just the payoff. Returns None (→ caller falls back to the
+    deterministic `_select_moment_window` heuristic) when: the knob is off (the default),
     the outline is empty, the LLM call fails/raises, the JSON is unparseable, or the model
     names no valid focus beat. NEVER raises — it can only replace the heuristic with a
     better window or defer to it.
@@ -381,10 +375,6 @@ def _segment_moment_window(
     here would trip the writer-shaped `call_with_chain` fixtures the micro tests patch in."""
     log = log or (lambda _m: None)
     if not _focus_filter_llm_on():
-        return None
-    from config import stage3_no_embed
-    if stage3_no_embed():
-        log("[micro_moment] focus-segment skipped (--no-embed): deterministic heuristic fallback")
         return None
     if not beats:
         return None
@@ -569,39 +559,59 @@ def _wrap_resolution_reference(reference: str) -> str:
             f'verbatim, retell with NAMED characters: "{reference[:220]}"')
 
 
-_MICRO_WRITE_SYSTEM = """You are MicroNarrator. You write ONE 35-60 second YouTube Short, documentary style, told plainly for a viewer with ZERO context.
+_MICRO_WRITE_SYSTEM = """You are MicroNarrator. You write ONE 35-60 second YouTube Short in the voice of a comic reader telling a friend what happened, plainly, for a viewer with ZERO context.
 
 TELL THE STORY, NOT THE PICTURES. Your source of truth is the STORY given below — the background plot, its meaning, and the key story moments. It is NOT a description of the comic art. Write what HAPPENS and WHY, the way you would tell a friend the story out loud. NEVER describe the artwork: no "a man with...", no "a figure holding...", no "we see", no "in this panel/frame", no colours / poses / lighting / camera for their own sake. Every scene's SUBJECT must be a story character doing a story action — if a line would only make sense to someone staring at the page, rewrite it as the plain STORY EVENT it stands for.
 
-THE ONE JOB — a micro_moment exists to ANSWER the single question its hook makes a viewer ask.
-The hook states a striking outcome; the viewer instantly wonders WHY / HOW did that happen, and SO
-WHAT. Every scene you write exists ONLY to answer that: the context that makes the moment matter
+IMMEDIATE STORY FRAME — Before writing, find the concrete active conflict or goal
+that led to this moment in the supplied background plot or story context. If the
+source and ordered beats support it, state one short frame clause early, before
+explaining the moment's tactic or mechanism. A general character attitude,
+power description, or biography is not the story frame. Use the frame to
+replace repetition of the hook or mechanism; do not add a scene or lengthen
+the Short merely to include it. If the source lacks this frame, omit it rather
+than inventing a prior event or moving action across beat boundaries.
+
+THE ONE JOB — a micro_moment gives the viewer one concrete reason to keep listening.
+The hook names an odd action, a surprising situation, or a specific question this
+moment can answer. The first body line must move the story forward, not repeat the
+hook in different words. Treat hook and the first two body lines as one chain:
+specific title/moment promise -> a different sourced cause, action, obstacle,
+mechanism or consequence -> another verified change toward the answer. If the
+source has only one usable fact, write less rather than fabricate a third step.
+Do not force the final reveal early; make the unusual situation clear early.
+Every scene exists to explain the situation:
+the context that makes the moment matter
 (what happened, who was wronged, what is at stake), the moment itself, and what it means. Before
 writing, name that question in your head, then make the arc resolve it. A beat that only serves the
 question gets a full scene; a beat that is side-detail gets the BAREST bridge clause (or a few
 words) — never a paragraph of its own. Weight your words toward the beats that answer WHY/HOW.
-  Generic shape: hook "[hero] made [foe] break down." Viewer asks "why would that ever happen?"
+  Possible shape: hook "[hero] made [foe] break down." Viewer asks "why would that ever happen?"
   Arc answers: who got hurt / what is at stake -> the moment it breaks the foe -> what it reveals.
 
 You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short LABEL plus which page(s) it is on, with the ★ PEAK beat marked (the moment itself). The label + page tell you WHICH story event this scene covers and in what order — they are a SPINE, not wording. Take the actual words from the STORY sources above; never copy a beat label verbatim (labels can be rough or carry names a newcomer wouldn't know). Write EXACTLY ONE scene per beat, in the SAME order, PLUS a separate hook line.
 
-  HOOK (separate field, NOT a scene): ONE statement — NEVER a question — that restates the given
-  title as a CONCRETE TWIST taken from THIS story. The winning shape is a specific reversal: the
-  character does one shocking, concrete thing — then the impossible / opposite turn. That hidden
-  contradiction IS the hook; it makes the viewer NEED the answer, so lead with it. (This SHARPENS
-  the old "don't force a paradox" note: a paradox that is the story's REAL reversal is exactly
-  right — only a disconnected, invented riddle is banned.)
+  HOOK (separate field, NOT a scene): Draft three different openings silently,
+  then choose the one the sourced beats can actually repay. The hook must carry
+  the same concrete person-and-event promise as the title/target_moment, so a
+  listener knows which story began. Try (1) the odd act
+  or result first, (2) a short, specific setup that puts the character in an
+  unusual situation, and (3) a direct question about that same concrete event.
+  A question is allowed if it names the actual puzzle; "Why did he do that?"
+  is too vague. A reversal is useful only when the sources establish BOTH sides.
+  Do not force every story into a paradox or reveal the whole payoff in the hook.
+  The hook should usually take 6-15 spoken words, with a 24-word ceiling.
     - CONCRETE, NEVER ABSTRACT. Anchor on something that visibly HAPPENS and a stranger can
       picture. BANNED are vague/poetic hooks with nothing to see: "whether it was worth it", "it
       cost him everything", "she planned every second", "the truth about who he really is". If you
       can't picture the moment, rewrite it as the concrete event.
-    - NAME THE MAIN CHARACTER FIRST. Open on the household-name character the moment is about, in
-      the first sentence. If the lead is NOT a household name, open on their plain role + the twist
-      ("a small-town cop", "their leader") — never make the viewer learn a strange name at second one.
-    - It must be the story's REAL twist (from the sources) — never an invented paradox. Restating
-      the title's concrete outcome is always safe; sharpening it into the real reversal is better.
-    ✓ title "[hero] finally walked away from [foe]" -> hook "[hero] walks away from [foe] the moment he's already won — and the reason is darker than it looks."
-    ✗ "Why did [hero] walk away?"  (a question — that is the Q&A format, not this one)
+    - Name the known character or a clear role in the FIRST sentence, where it
+      helps a new viewer understand the event. Do not cram a name into the first
+      three words or make the listener learn several unfamiliar names at once.
+    - The hook must be a real source-backed part of this moment, never an invented
+      paradox, generic superlative, or promise of a twist the script never shows.
+    ✓ verified act: "[hero] walks away from [foe]."
+    ✓ question about that act: "Why did [hero] walk away from [foe]?"
     ✗ "It was the choice that cost him everything."  (abstract — nothing to picture)
 
   KEEP IT SIMPLE — this is ONE moment, not a plot recap:
@@ -653,15 +663,13 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
       single interpretive line for the ENDING thesis only.
 
   SCENES (one per beat, in order) — PARATACTIC chained sentences, documentary voice:
-    - Each sentence chains 2-3 events with and / but / then / after / while (do NOT
-      write one flat isolated event per sentence) — third person, plain B2
-      vocabulary, NO hype-slang.
+    - Give each sentence one useful development. Join related events with and /
+      but / then / after / while only when the source supports their connection.
+      Mix short and medium sentences; third person, plain B2 vocabulary, NO hype-slang.
         ✓ "[hero] corners them at the docks, and [foe] smashes through the wall to reach him."
         ✗ "[hero] corners them. [foe] smashes through the wall."  (choppy, not chained)
-    - TENSE SHIFT: PAST TENSE for lead-in/context beats (documentary retrospective).
-      At the ★ PEAK beat, switch decisively to PRESENT TENSE and stay present
-      through the rest of the scenes — the tense shift itself IS the emotional
-      turn, so land it exactly on that beat, not before or after.
+    - Keep time and tense easy to follow. A deliberate tense shift is optional;
+      never change tense just to manufacture a turn that the facts do not contain.
     - ANTI-FRAGMENT: every sentence stays a complete subject+verb clause (or chain
       of clauses) — never a bare, unconnected noun-phrase reveal dropped with no
       connective ("They are alive." sitting alone with nothing chaining it in).
@@ -676,23 +684,25 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
         ✓ "Eddie shouts a mocking goodbye as he leaps."
         ✗ any quotation marks around a character's own words, however short or dramatic.
       Keep the narration 100% narrator-voice.
-    - Scene 1 gives the MINIMUM setup a zero-context viewer needs — who this is,
-      where we are.
+    - Scene 1 adds a NEW sourced fact after the hook: the necessary setup, the
+      first reaction to the odd event, or its mechanism. Never paraphrase the hook
+      or start a separate lore lecture. A setup-led hook can leave the result for
+      a later beat, as long as the viewer already understands the unusual situation.
 
-  ENDING — the LAST line is THE LOOP. It must be SHORT, QUOTABLE, and CLOSE THE HOOK: bring back
-  the hook's key word (or its exact contradiction) in the final line, so the end snaps shut on the
-  opening and the viewer loops the Short. A soft, vague inward fade with no punch is the losing
-  shape — never end on one.
-    ✓ hook turns on "his real name" -> the last line returns to that exact phrase (third person,
-      narrator voice, no quotation marks) so it echoes the opening — short, quotable, closes the loop.
-    ✗ "he asks his reflection if he is a bad person"  (soft murmur — no quote, no loop)
+  ENDING — stop on the strongest sourced result or detail. A verbal echo of the
+  hook is optional when it comes naturally from that result; do not add a line
+  merely to repeat a hook word or bait a replay. Never end on, or include, a
+  line that hints at an outcome without stating it ("ends with a shocking
+  twist", "everything changes").
   Pick ONE style for the LAST scene and declare it in "ending_style":
-    - "thesis": ONE sentence stating what the moment MEANS, mirrored onto the character — and
-      echoing the hook's key word.
+    - "thesis": ONE sentence stating what the verified moment MEANS, when the
+      story sources support that interpretation.
     - "hardcut": the last scene IS the payoff/mic-drop line itself — your own
       narration line, never a character's quoted words — no separate meaning
       line, no landing, the video cuts off right on it.
-    - "question": ONE open question that baits a comment (curiosity — never "subscribe").
+    - "question": ONE specific question raised by the verified result (never a
+      generic comment prompt or "subscribe"). It asks what the verified result
+      means, never what happens next or who is behind something.
 
   VISUAL BEATS (every scene) — split each scene into the 2-3 separate MOMENTS it contains, so
   Stage 5 can cut to a fresh image on each. You do NOT pick pages or panels — the pipeline maps
@@ -715,7 +725,7 @@ HARD RULES:
   - Return ONLY JSON, no markdown fences.
 
 Return shape:
-{"hook": "<statement hook, not a question>", "ending_style": "thesis|hardcut|question", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>"], "connective": null, "beat_id": <id>}, ...]}"""
+{"hook": "<specific source-backed opening>", "ending_style": "thesis|hardcut|question", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>"], "connective": null, "beat_id": <id>}, ...]}"""
 
 
 def _window_block(window: list[Beat], peak_idx: int) -> str:
@@ -728,7 +738,7 @@ def _window_block(window: list[Beat], peak_idx: int) -> str:
     for i, b in enumerate(window):
         pg = f" (page{'s' if len(b.page_refs) > 1 else ''} {', '.join(map(str, b.page_refs))})" \
             if b.page_refs else ""
-        mark = " ★ PEAK (the described moment — tense shift lands here)" if i == peak_idx else ""
+        mark = " ★ PEAK (the described moment)" if i == peak_idx else ""
         lines.append(f"{b.id}.{mark} {b.function}{pg}: {b.name}")
     return "\n".join(lines)
 
@@ -945,123 +955,6 @@ def _beat_text(b) -> str:
     return str(b.get("text", "")).strip() if isinstance(b, dict) else str(b).strip()
 
 
-def _window_panel_candidates(window: list[Beat], story_pages: list[dict] | None) \
-        -> list[tuple[int, int, str]]:
-    """(page, panel_idx, embed_text) for EVERY panel on the pages this window covers. panel_idx
-    is the reading-order enumerate index — identical to Stage 5's _panel_pool key, so a pin
-    binds directly there. embed_text = _panel_index.panel_embed_text (the SAME text Stage 2
-    embedded and Stage 5 matches on), so a Stage-3 pin agrees with Stage 5's own matcher. []
-    when no pages/panels."""
-    if not story_pages:
-        return []
-    from .._panel_index import panel_embed_text
-    pages_by_no = {p.get("page_number"): p for p in story_pages}
-    wanted = sorted({pg for b in window for pg in (b.page_refs or [])})
-    out: list[tuple[int, int, str]] = []
-    for pn in wanted:
-        page = pages_by_no.get(pn)
-        if not page:
-            continue
-        page_tb = page.get("text_blocks")
-        for idx, panel in enumerate(page.get("panels") or []):
-            out.append((int(pn), idx, panel_embed_text(panel, page_tb)))
-    return out
-
-
-def _pin_beats_by_vector(
-    scenes: list[dict],
-    window: list[Beat],
-    story_pages: list[dict] | None,
-    *,
-    floor: float,
-    log: Callable[[str], None],
-) -> list[float]:
-    """PIN PHASE (story-first, 2026-07-16): after the writer's TEXT is locked, assign each
-    visual-beat fragment the window panel whose embedding is closest (cosine) to the fragment,
-    writing {"text","page","panel"} on the beat. VECTORS, not a second LLM call and not the
-    writer: the pin is decided by the SAME cosine-on-richer-embed basis Stage 5's matcher uses
-    (the project's validated best matcher), so the writer never has to read panel PROSE to pin —
-    that is exactly what caused the VLM tilt. A fragment whose best panel is below `floor`
-    (nothing on those pages draws it) is left UNPINNED (page/panel=None) so Stage 5's fuller
-    matcher retries it. Returns per-scene best cosine (drives the ground-check). Graceful []
-    when there are no panels or the embedding backend is down — every beat then flows through
-    the Stage 5 matcher, byte-identical to the recap/Q&A path.
-
-    STAGE3_NO_EMBED=1 (--no-embed, narration-only test mode) short-circuits this to the
-    same graceful [] path — pins stay empty, no network embed call is made, Stage 5's
-    matcher fills in panels at render time (valid existing fallback)."""
-    from config import stage3_no_embed
-    if stage3_no_embed():
-        log("[stage3] embed skipped (--no-embed): vector pin (pins left empty, "
-            "Stage 5 matcher will assign panels)")
-        return []
-    cands = _window_panel_candidates(window, story_pages)
-    if not cands:
-        return []
-    from .. import _embedding
-    if _embedding.backend_name() == "none":
-        return []
-    import numpy as np
-
-    cand_vecs = _embedding.embed_batch([c[2] for c in cands])
-    frag_texts: list[str] = []
-    frag_locs: list[tuple[int, int]] = []
-    for si, s in enumerate(scenes):
-        for bi, b in enumerate(s.get("visual_beats") or []):
-            if _beat_text(b):
-                frag_texts.append(_beat_text(b))
-                frag_locs.append((si, bi))
-    if not frag_texts:
-        return []
-    frag_vecs = _embedding.embed_batch(frag_texts)
-
-    scene_best = [0.0] * len(scenes)
-    pinned = 0
-    for (si, bi), fv in zip(frag_locs, frag_vecs):
-        vb = scenes[si]["visual_beats"]
-        b = vb[bi] if isinstance(vb[bi], dict) else {"text": _beat_text(vb[bi])}
-        vb[bi] = b
-        best_score, best_key = -1.0, None
-        if fv is not None:
-            for (pg, idx, _txt), cv in zip(cands, cand_vecs):
-                if cv is None:
-                    continue
-                sc = float(np.dot(fv, cv))
-                if sc > best_score:
-                    best_score, best_key = sc, (pg, idx)
-        if best_key is not None and best_score >= floor:
-            b["page"], b["panel"] = best_key
-            pinned += 1
-        else:
-            b["page"] = b["panel"] = None
-        scene_best[si] = max(scene_best[si], best_score)
-    log(f"[micro_moment] vector-pin: {pinned}/{len(frag_locs)} fragment(s) pinned to a window "
-        f"panel (cos>={floor}); the rest fall back to the Stage 5 matcher")
-    return scene_best
-
-
-def _ground_issues(scenes: list[dict], window: list[Beat], scene_best: list[float],
-                   floor: float) -> list[str]:
-    """GROUND-CHECK: a body scene whose best fragment cosine is below `floor` describes
-    something no panel on its OWN pages draws — a SOFT retry hint telling the writer to retell
-    it from what is actually on those pages. Skips the LAST scene (the thesis/hardcut/question
-    landing is allowed to be a thematic line with no dedicated panel). No scores → no issues
-    (embedding unavailable → don't block)."""
-    if not scene_best:
-        return []
-    issues: list[str] = []
-    for i, _s in enumerate(scenes):
-        if i >= len(scene_best) or i == len(scenes) - 1:
-            continue
-        if scene_best[i] < floor:
-            beat = window[i] if i < len(window) else None
-            pages = ", ".join(map(str, beat.page_refs)) if (beat and beat.page_refs) else "?"
-            issues.append(
-                f"scene {i + 1} describes something not drawn on page(s) {pages} — retell that "
-                f"scene using only what actually happens on those pages (best panel match was weak)")
-    return issues
-
-
 def _story_sources_block(comic_context: dict) -> str:
     """The STORY-language sources the writer draws its wording from (2026-07-16 story-first):
     the theme (story_meaning — THEME ONLY, for hook/landing, never a scene) and the key story
@@ -1130,8 +1023,8 @@ def _call_micro_writer(
     sources_block = _story_sources_block(comic_context)
     context_block = _story_context_block(comic_context)
     user = (
-        f"TITLE (mirror this in the hook — restate/paraphrase it, name the character "
-        f"in sentence 1): {title}\n"
+        f"TITLE (keep its subject and concrete promise; do not simply repeat its "
+        f"wording, and do not promise an unsourced outcome): {title}\n"
         f"THE MOMENT TO TELL (do not stray beyond it): {target_moment}\n\n"
         f"{fix_block}"
         f"{clarity_fixes}"
@@ -1190,7 +1083,8 @@ def _validate_micro_scenes(
     dialog_lines: list[str] | None = None,
     dialog_entries: list[tuple[int, str, str]] | None = None,
 ) -> list[str]:
-    """hook is a statement in band that names a character up front, one scene per
+    """Hook is a concrete opening in band that names a character in its first
+    sentence, with one scene per
     beat, per-scene cap, TOTAL word band, and a declared ending_style (thesis /
     hardcut / question — all three are valid, none are lint-penalized against the
     others). Feeds the bounded retry loop in write_micro_moment(); this function
@@ -1198,8 +1092,8 @@ def _validate_micro_scenes(
     visual_beats, non-verbatim beats, wrong scene count) once retries are
     exhausted — everything else here (hook length, you-quota, quote-fidelity,
     quote-speaker, ambiguous-subject, ...) stays a soft, ship-anyway lint. Panel
-    PINS are assigned separately by _pin_beats_by_vector AFTER the text is
-    locked, so this validator no longer sees or checks them.
+    choice is not part of this check: the writer works from the story and picks no
+    panels.
 
     `focus_tokens` (from `_focus_tokens(title, target_moment)`, same set used to
     filter the beat window) is optional and defaults to None = skip: when given,
@@ -1220,16 +1114,16 @@ def _validate_micro_scenes(
     issues: list[str] = []
     hook = (hook or "").strip()
     hw = len(hook.split())
-    if hook.endswith("?"):
-        issues.append("micro hook is a question — use a STATEMENT that mirrors the title "
-                      "(a question is the Q&A format, not micro_moment)")
     if not (_MICRO_HOOK_MIN_WORDS <= hw <= _MICRO_HOOK_MAX_WORDS):
         issues.append(f"micro hook is {hw}w (want {_MICRO_HOOK_MIN_WORDS}-{_MICRO_HOOK_MAX_WORDS})")
     names = {c.strip().lower() for b in beats for c in (b.characters_active or [])
              if len(c.strip()) >= 3}
     if names and not any(n in _first_sentence(hook).lower() for n in names):
         issues.append("micro hook: name a character from the moment in the FIRST "
-                      "sentence (mirror-of-title register)")
+                      "sentence so the event has a clear subject")
+    if scenes and _intro_overlaps(hook, str(scenes[0].get("text", ""))):
+        issues.append("micro opening repeats the hook in scene 1 — start with the "
+                      "next sourced fact or choose a different hook angle")
     if len(scenes) != len(beats):
         issues.append(f"expected {len(beats)} scenes, got {len(scenes)}")
     total = hw
@@ -1303,8 +1197,7 @@ def write_micro_moment(
     """Orchestrate the micro_moment writer: read target_moment -> outline the full
     issue (reuse recap's grounded beat pipeline) -> select the moment mini-arc
     window -> LLM writes hook + one scene per windowed beat from STORY sources only
-    (no panel prose) -> vector-pin each fragment to its best window panel + ground-
-    check (retry a scene that draws nothing on its pages) -> beat-anchor the body ->
+    (no panel prose), retried while the draft has lint issues -> beat-anchor the body ->
     prepend the hook as the is_intro scene -> banner."""
     log = progress or (lambda _msg: None)
     dump = debug_dump if debug_dump is not None else {}
@@ -1329,9 +1222,10 @@ def write_micro_moment(
     beats_all, beats_model = outline_beats(
         comic_context, story_pages, mode, hook_hint=hook_hint, model=model,
         progress=progress, debug_dump=dump, story_map=None, direction=direction)
-    # Context-aware LLM segmenter first (keeps far setup so the whole story lands);
-    # falls back to the deterministic positional+token heuristic on any failure /
-    # knob off / --no-embed (see _segment_moment_window).
+    # Opt-in (FOCUS_FILTER_LLM=1) context-aware LLM segmenter first (keeps far setup so
+    # the whole story lands); the deterministic positional+token heuristic picks the
+    # window when the knob is off (the default) or the segmenter fails (see
+    # _segment_moment_window).
     window = _segment_moment_window(beats_all, target_moment, title=title,
                                     model=model, progress=progress, log=log)
     if window is None:
@@ -1352,17 +1246,11 @@ def write_micro_moment(
     dialog_lines = [t for _, _, t in dialog_entries]
 
     def _score(p: dict) -> list[str]:
-        """Two-phase per draft: PIN each fragment to its best window panel (vector), then
-        validate the TEXT + run the ground-check on the pin cosines. Panels are pinned in
-        place on the accepted draft, so no separate pin pass is needed after the loop."""
-        scns = p.get("scenes") or []
-        scene_best = _pin_beats_by_vector(scns, window, story_pages,
-                                          floor=_MICRO_GROUND_FLOOR, log=log)
-        iss = _validate_micro_scenes(p.get("hook", ""), scns, window, p.get("ending_style"),
-                                     focus_tokens=focus_tokens, dialog_lines=dialog_lines,
-                                     dialog_entries=dialog_entries)
-        iss += _ground_issues(scns, window, scene_best, _MICRO_GROUND_FLOOR)
-        return iss
+        """Lint issues of one draft (see `_validate_micro_scenes`)."""
+        return _validate_micro_scenes(p.get("hook", ""), p.get("scenes") or [], window,
+                                      p.get("ending_style"), focus_tokens=focus_tokens,
+                                      dialog_lines=dialog_lines,
+                                      dialog_entries=dialog_entries)
 
     parsed, mdl = _call_micro_writer(window, comic_context, target_moment, model=model,
                                      progress=progress, debug_dump=dump, story_pages=story_pages,

@@ -285,9 +285,10 @@ def extract_sources_from_payload(
 ) -> list[FetchedSource]:
     """Extract sources and livecrawl snippets directly from a You.com research payload.
 
-    This avoids fragile third-party reader proxies (which often hit HTTP 422 on fandom
-    wikis or truncate long pages) by using the high-fidelity snippets already crawled
-    and returned by You.com Research.
+    Only text supplied by You.com counts as retrieved evidence. ``candidate`` is
+    accepted for callers using the older signature but its own quote must never
+    be copied into the source list: that would make a fabricated quote pass a
+    mechanical source check.
     """
     fetched: list[FetchedSource] = []
     seen: set[str] = set()
@@ -313,13 +314,4 @@ def extract_sources_from_payload(
                 if text:
                     fetched.append(FetchedSource(url=url, text=text))
 
-    if isinstance(candidate, Mapping):
-        citation = claim_citation(candidate)
-        if citation is not None and citation.url:
-            canonical = canonical_url(citation.url)
-            if canonical and canonical not in seen:
-                seen.add(canonical)
-                fetched.append(FetchedSource(url=citation.url, text=citation.quote))
-
     return fetched
-

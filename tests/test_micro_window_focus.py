@@ -232,9 +232,10 @@ def test_duplicate_id_does_not_fake_a_tier1_pass():
 
 
 # ── LLM-segment context-aware path (_segment_moment_window, 2026-07-20) ──────────
-# Primary path: reads the WHOLE outline and groups beats into focus/context/payoff/drop
-# so the far SETUP a positional window misses is kept (the immortal-hulk bug: setup pages
-# before the moment were dropped, so narration jumped into the payoff and confused viewers).
+# Opt-in path (FOCUS_FILTER_LLM=1): reads the WHOLE outline and groups beats into
+# focus/context/payoff/drop so the far SETUP a positional window misses is kept (the
+# immortal-hulk bug: setup pages before the moment were dropped, so narration jumped into
+# the payoff and confused viewers).
 import json
 
 
@@ -264,7 +265,6 @@ def _seg_beats():
 
 def test_segment_keeps_context_and_drops_subplot(monkeypatch):
     monkeypatch.setenv("FOCUS_FILTER_LLM", "1")
-    monkeypatch.setenv("STAGE3_NO_EMBED", "0")   # embed ON (default flipped 2026-07-27)
     monkeypatch.setattr(mm, "call_with_chain",
                         _seg_call({"focus": [4], "context": [1, 2], "payoff": [5], "drop": [3, 6]}))
     window = mm._segment_moment_window(_seg_beats(), "The Hulk rises in the morgue",
@@ -289,7 +289,6 @@ def _seg_beats_with_recap():
 
 def test_segment_essential_setup_kept_recap_beat_dropped(monkeypatch):
     monkeypatch.setenv("FOCUS_FILTER_LLM", "1")
-    monkeypatch.setenv("STAGE3_NO_EMBED", "0")   # embed ON (default flipped 2026-07-27)
     monkeypatch.setattr(
         mm, "call_with_chain",
         _seg_call({"focus": [4], "context": [1, 2], "payoff": [5], "drop": [3, 6, 7]}))
@@ -312,7 +311,6 @@ def test_segment_prompt_requires_essential_context_and_drops_side_recap():
 
 def test_segment_focus_never_dropped_even_if_model_contradicts(monkeypatch):
     monkeypatch.setenv("FOCUS_FILTER_LLM", "1")
-    monkeypatch.setenv("STAGE3_NO_EMBED", "0")   # embed ON (default flipped 2026-07-27)
     # model absurdly lists the focus beat in BOTH focus and drop — focus must win.
     monkeypatch.setattr(mm, "call_with_chain",
                         _seg_call({"focus": [4], "context": [1, 2], "payoff": [5], "drop": [3, 4]}))
@@ -322,7 +320,6 @@ def test_segment_focus_never_dropped_even_if_model_contradicts(monkeypatch):
 
 def test_segment_falls_back_to_none_on_llm_failure(monkeypatch):
     monkeypatch.setenv("FOCUS_FILTER_LLM", "1")
-    monkeypatch.setenv("STAGE3_NO_EMBED", "0")   # embed ON (default flipped 2026-07-27)
 
     def _boom(*, system, user, models=None, max_tokens=700, progress=None,
               label="llm", validator=None):
@@ -337,7 +334,6 @@ def test_segment_falls_back_to_none_on_llm_failure(monkeypatch):
 
 def test_segment_falls_back_when_no_valid_focus(monkeypatch):
     monkeypatch.setenv("FOCUS_FILTER_LLM", "1")
-    monkeypatch.setenv("STAGE3_NO_EMBED", "0")   # embed ON (default flipped 2026-07-27)
     # focus ids are all OUT of range (99) → no valid focus → fall back.
     monkeypatch.setattr(mm, "call_with_chain", _seg_call({"focus": [99], "context": [1]}))
     assert mm._segment_moment_window(_seg_beats(), "morgue", title="Hulk", model="x") is None
@@ -353,12 +349,13 @@ def test_segment_knob_off_skips_llm(monkeypatch):
     assert mm._segment_moment_window(_seg_beats(), "morgue", title="Hulk", model="x") is None
 
 
-def test_segment_skipped_under_no_embed(monkeypatch):
-    monkeypatch.setenv("FOCUS_FILTER_LLM", "1")
-    monkeypatch.setenv("STAGE3_NO_EMBED", "1")
+def test_segment_off_by_default_skips_llm(monkeypatch):
+    # FOCUS_FILTER_LLM unset: the LLM segmenter is opt-in, so the deterministic
+    # `_select_moment_window` heuristic picks the window and no LLM call is made.
+    monkeypatch.delenv("FOCUS_FILTER_LLM", raising=False)
 
     def _must_not_call(*a, **k):
-        raise AssertionError("--no-embed must not call the LLM segmenter")
+        raise AssertionError("the LLM segmenter must be off by default")
 
     monkeypatch.setattr(mm, "call_with_chain", _must_not_call)
     assert mm._segment_moment_window(_seg_beats(), "morgue", title="Hulk", model="x") is None

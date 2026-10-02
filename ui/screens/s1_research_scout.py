@@ -212,6 +212,13 @@ def _candidate_card(
     reader_url = candidate.get("reader_url") or gate.get("reader_url")
     if reader_url and reader_url not in urls:
         urls = [*urls, reader_url]
+    # The pages the aftermath/context research cites. The scout is asked to list
+    # them in evidence_urls too, but a card that hid a cited page would hide the
+    # very thing the extra lines below claim.
+    for citation in candidate.get("detail_citations") or []:
+        cited = citation.get("url") if isinstance(citation, dict) else None
+        if isinstance(cited, str) and cited.strip() and cited not in urls:
+            urls = [*urls, cited]
     flags = [str(flag) for flag in (candidate.get("flags") or [])]
     flags.extend(str(flag) for flag in (gate.get("flags") or []))
     header_controls: list[ft.Control] = [
@@ -229,10 +236,34 @@ def _candidate_card(
         ft.Row(header_controls, spacing=8),
         ft.Text(summary, size=12, color=TEXT_MUTED, selectable=True),
     ]
+    if candidate.get("series_issue_year"):
+        details.append(ft.Text(str(candidate["series_issue_year"]), size=11, weight=ft.FontWeight.W_500, color=TEXT_PRIMARY, selectable=True))
+    if candidate.get("turning_point"):
+        details.append(ft.Text(f"Turning point: {candidate['turning_point']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
+    if candidate.get("constant_broken"):
+        details.append(ft.Text(f"Constant broken: {candidate['constant_broken']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
+    what_visibly_happens = str(candidate.get("what_visibly_happens") or "").strip()
+    if what_visibly_happens and what_visibly_happens.casefold() != summary.casefold():
+        details.append(ft.Column([
+            ft.Text("On-panel scene:", size=11, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True),
+            ft.Text(what_visibly_happens, size=12, color=TEXT_MUTED, selectable=True),
+        ], spacing=2))
+    if candidate.get("why_it_lands"):
+        details.append(ft.Text(f"Why it lands: {candidate['why_it_lands']}", size=11, color=TEXT_MUTED, selectable=True))
+    # Micro's extra research: how the scene ends, what set it up, and what the
+    # sources only hint at. Blank or absent means nothing was found, so no line.
+    for label, key, color in (
+        ("What happens next", "aftermath", TEXT_MUTED),
+        ("Context", "context_behind", TEXT_MUTED),
+        ("Not revealed by sources", "unrevealed", WARN),
+    ):
+        text = str(candidate.get(key) or "").strip()
+        if text:
+            details.append(ft.Text(f"{label}: {text}", size=11, color=color, selectable=True))
+    if candidate.get("rank_reason"):
+        details.append(ft.Text(f"Rank reason: {candidate['rank_reason']}", size=11, italic=True, color=TEXT_MUTED, selectable=True))
     if gate.get("reason"):
         details.append(ft.Text(str(gate["reason"]), size=11, color=TEXT_MUTED, selectable=True))
-    if candidate.get("series_issue_year"):
-        details.append(ft.Text(str(candidate["series_issue_year"]), size=11, color=TEXT_PRIMARY, selectable=True))
     for url in urls:
         details.append(ft.Text(f"Source: {url}", size=10, color=ACCENT, selectable=True))
     if flags:
@@ -420,6 +451,18 @@ def _discovered_text(entry: dict) -> str:
     """The one human-readable line of a Tier B entry, whichever mode produced
     it — QA discovers a `question`, Micro discovers a `moment`."""
     return str(entry.get("question") or entry.get("moment") or "").strip()
+
+
+def _discovered_intent(entry: dict, mode: ScoutMode) -> str:
+    """Keep a micro card's issue when its prose omits that separate field."""
+
+    text = _discovered_text(entry)
+    if mode is not ScoutMode.MICRO:
+        return text
+    issue = str(entry.get("series_issue_year") or "").strip()
+    if issue and issue.casefold() not in text.casefold():
+        return f"{text}\nComic: {issue}"
+    return text
 
 
 def _bank_suggestions_bubble(suggestions: list[dict]) -> ft.Control:
@@ -625,6 +668,16 @@ def build(
             if session.state is SessionState.CANDIDATE_REVIEW
             else _general_collapsed_lines(session, candidates)
         )
+        if not candidates:
+            rejected = detail.get("candidate_validation_rejections") or []
+            notes: list[ft.Control] = [ft.Text(
+                "No matching candidates. Try feedback to research the same moment again.",
+                size=12, color=WARN, selectable=True,
+            )]
+            for item in rejected[:3]:
+                if isinstance(item, dict) and item.get("reason"):
+                    notes.append(ft.Text(str(item["reason"]), size=11, color=WARN, selectable=True))
+            content = ft.Column([*notes, content], spacing=6)
         plan_summary = detail.get("plan_summary")
         if not plan_summary:
             return _scout_bubble(content)
@@ -702,12 +755,38 @@ def build(
         choices: list[ft.Control] = []
         for index, entry in enumerate(discovered_holder[0]):
             angle = str(entry.get("angle") or "").strip()
-            choices.append(ft.Row([
-                ft.Radio(value=str(index)),
-                ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED, selectable=True) if angle else ft.Container(),
-                ft.Text(_discovered_text(entry), size=12, color=TEXT_PRIMARY,
-                        selectable=True, expand=True),
-            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+            text_desc = _discovered_text(entry)
+            entry_details: list[ft.Control] = [
+                ft.Row([
+                    ft.Text(text_desc, size=13, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True, expand=True),
+                    ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED, selectable=True) if angle else ft.Container(),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ]
+            meta_parts = []
+            if entry.get("character"):
+                meta_parts.append(f"Character: {entry['character']}")
+            if entry.get("series_issue_year"):
+                meta_parts.append(f"Issue: {entry['series_issue_year']}")
+            if meta_parts:
+                entry_details.append(ft.Text(" • ".join(meta_parts), size=11, weight=ft.FontWeight.W_500, color=ACCENT, selectable=True))
+            if entry.get("turning_point"):
+                entry_details.append(ft.Text(f"Turning point: {entry['turning_point']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
+            if entry.get("constant_broken"):
+                entry_details.append(ft.Text(f"Constant broken: {entry['constant_broken']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
+            if entry.get("what_visibly_happens"):
+                entry_details.append(ft.Text(f"What happens: {entry['what_visibly_happens']}", size=12, color=TEXT_MUTED, selectable=True))
+            if entry.get("why_it_lands"):
+                entry_details.append(ft.Text(f"Why it lands: {entry['why_it_lands']}", size=11, color=TEXT_MUTED, selectable=True))
+
+            choices.append(ft.Container(
+                content=ft.Row([
+                    ft.Radio(value=str(index)),
+                    ft.Column(entry_details, spacing=3, expand=True),
+                ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.START),
+                padding=ft.padding.symmetric(vertical=6, horizontal=8),
+                bgcolor=BG_ELEVATED if (discovered_pick[0] == str(index)) else ft.Colors.TRANSPARENT,
+                border_radius=6,
+            ))
         lines: list[ft.Control] = [
             ft.Text("Pick one to research, or look for a different batch:",
                     size=12, color=TEXT_MUTED, selectable=True),
@@ -887,7 +966,7 @@ def build(
         except (TypeError, ValueError, IndexError):
             return
         discovered_pick[0] = raw
-        intent_field.value = _discovered_text(entry)
+        intent_field.value = _discovered_intent(entry, ScoutMode(mode_group.value))
         _render_full()
 
     def _show_discovered(batch) -> None:

@@ -10,6 +10,7 @@ import json
 import pytest
 
 from stages import youcom_scout as Y
+from tests import micro_detail_rules as rules
 
 
 def test_micro_asks_for_one_issue_not_a_list(tmp_path, monkeypatch):
@@ -48,7 +49,7 @@ def _resp(*cands):
 def _cand(series, moment="a thing happens", char="Hulk"):
     return {"moment": moment, "character": char, "series_issue_year": series,
             "what_visibly_happens": "x", "why_it_lands": "y",
-            "constant_broken": "z", "evidence_urls": ["https://aiptcomics.com/x"]}
+            "turning_point": "z", "evidence_urls": ["https://aiptcomics.com/x"]}
 
 
 def test_a_burned_series_is_dropped(tmp_path, monkeypatch):
@@ -79,16 +80,128 @@ def test_the_report_names_what_is_still_unverified(tmp_path, monkeypatch):
     assert "coverage" in report.lower()
 
 
-def test_the_schema_demands_the_broken_constant(tmp_path, monkeypatch):
-    """A micro moment without a broken constant is just a nice panel — that gate is what
-    separates this mode from 'find me a cool page'."""
+def test_the_schema_demands_a_concrete_turning_point(tmp_path, monkeypatch):
+    """Reference moments turn on an action or reveal; breaking a famous rule is optional."""
     got = {}
     monkeypatch.setattr(Y, "build_scouted_digest", lambda: "")
     monkeypatch.setattr(Y, "_call_logged",
                         lambda k, p, e, schema, o, t: got.update(schema=schema) or {})
     Y.run_micro("k", tmp_path, "deep", "2010 or later")
     props = got["schema"]["properties"]["candidates"]["items"]["properties"]
-    assert "constant_broken" in props and "series_issue_year" in props
+    assert "turning_point" in props and "series_issue_year" in props
+    assert "constant_broken" not in props
+
+
+def test_default_micro_cli_window_filters_old_candidates(tmp_path, monkeypatch):
+    from datetime import date
+
+    year = date.today().year
+    monkeypatch.setattr(Y, "build_scouted_digest", lambda: "")
+    monkeypatch.setattr(Y, "_call_logged", lambda *a, **k: _resp(
+        _cand("Hero #1 (2014)"), _cand(f"Hero #2 ({year})")
+    ))
+    Y.run_micro("k", tmp_path, "deep")
+    report = (tmp_path / "micro_report.md").read_text(encoding="utf-8")
+    assert f"## Hulk — Hero #2 ({year})" in report
+    assert "## Hulk — Hero #1 (2014)" not in report
+    assert "outside_recent_micro_window" in report
+
+
+# ─── aftermath and context: the scene alone left the writer a teaser to end on ─
+
+def _run_capturing(tmp_path, monkeypatch, *, response=None):
+    """Run the micro CLI with the network cut; hand back (prompts, schemas, report)."""
+    prompts, schemas = [], []
+
+    def fake_call(key, prompt, effort, schema, outdir, tag):
+        prompts.append(prompt)
+        schemas.append(schema)
+        return response if response is not None else {}
+
+    monkeypatch.setattr(Y, "build_scouted_digest", lambda: "")
+    monkeypatch.setattr(Y, "_call_logged", fake_call)
+    Y.run_micro("k", tmp_path, "deep", "in 2025 or 2026")
+    return prompts, schemas, (tmp_path / "micro_report.md").read_text(encoding="utf-8")
+
+
+def test_micro_cli_prompt_carries_the_three_rules_and_keeps_its_single_issue_shape(
+    tmp_path, monkeypatch
+):
+    prompts, _schemas, _report = _run_capturing(tmp_path, monkeypatch)
+
+    assert len(prompts) == len(Y.MICRO_ANGLES)
+    for prompt in prompts:
+        assert rules.missing_rules(prompt) == []
+        assert rules.in_order(prompt)
+        assert "SINGLE issue" in prompt
+        assert "3 or more separate moments" not in prompt
+        assert "in 2025 or 2026" in prompt
+
+
+def test_micro_cli_schema_asks_for_the_aftermath_fields_in_strict_form(tmp_path, monkeypatch):
+    _prompts, schemas, _report = _run_capturing(tmp_path, monkeypatch)
+
+    items = schemas[0]["properties"]["candidates"]["items"]
+    props = items["properties"]
+    for name in rules.DETAIL_FIELDS:
+        assert name in props
+    assert set(items["required"]) == set(props)
+    assert items["additionalProperties"] is False
+    assert props["detail_citations"]["items"]["required"] == ["supports", "url", "quote"]
+    # what the earlier schema pinned stays pinned
+    assert "turning_point" in props and "series_issue_year" in props
+    assert "constant_broken" not in props
+
+
+def test_discovery_does_not_require_the_aftermath_fields():
+    """workflow.discover_questions shares _MICRO_PROPS and its candidates (and every
+    fixture) carry none of them; only the CLI's full scout asks."""
+    assert not set(rules.DETAIL_FIELDS) & set(Y._MICRO_PROPS)
+
+
+def test_the_cli_and_the_workflow_ask_for_the_same_detail_fields():
+    from stages.research_scout.planner import MICRO_DETAIL_PROPS
+
+    assert Y._MICRO_DETAIL_PROPS == MICRO_DETAIL_PROPS
+
+
+def test_the_report_prints_the_aftermath_the_context_and_what_is_not_revealed(
+    tmp_path, monkeypatch
+):
+    candidate = _cand("Hero #2 (2026)")
+    candidate.update(
+        aftermath="Steve loses the duel and keeps the blade.",
+        context_behind="He took the blade from the vault to settle a debt.",
+        unrevealed="The review never says what the twist is.",
+        detail_citations=[
+            {"supports": "aftermath", "url": "https://aiptcomics.com/duel",
+             "quote": "Steve loses the duel."},
+            {"supports": "context_behind", "url": "https://cbr.com/vault",
+             "quote": "The blade came from the vault."},
+        ],
+    )
+    _prompts, _schemas, report = _run_capturing(
+        tmp_path, monkeypatch, response=_resp(candidate),
+    )
+
+    assert "- what happens next: Steve loses the duel and keeps the blade." in report
+    assert "- context: He took the blade from the vault to settle a debt." in report
+    assert "- not revealed by sources: The review never says what the twist is." in report
+    assert 'aftermath: https://aiptcomics.com/duel — "Steve loses the duel."' in report
+    assert 'context_behind: https://cbr.com/vault — "The blade came from the vault."' in report
+
+
+def test_the_report_says_so_when_no_source_states_the_aftermath(tmp_path, monkeypatch):
+    """"" is the answer when no source states it. Saying nothing would read as the
+    scout never having looked."""
+    candidate = _cand("Hero #2 (2026)")
+    candidate.update(aftermath="", context_behind="", unrevealed="", detail_citations=[])
+    _prompts, _schemas, report = _run_capturing(tmp_path, monkeypatch, response=_resp(candidate))
+
+    assert "- what happens next: (none found in sources)" in report
+    assert "- context: (none found in sources)" in report
+    assert "not revealed by sources" not in report
+    assert "detail sources" not in report
 
 
 # ─── series-level burn check ─────────────────────────────────────────────────

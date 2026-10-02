@@ -71,10 +71,9 @@ def _load_model():
 
 def release_model() -> None:
     """Free the cached Magi model + device buffers. Magi loads float32 on Mac (~3-4GB) and is
-    an lru_cache singleton held for the whole process; if it stays resident when the panel
-    embedder spins up the 8B Qwen server (~6GB), a 16GB Mac OOMs. Call this AFTER all Magi
-    detection is done and BEFORE embedding so the two heavy models run sequentially, not
-    co-resident. Safe to call when nothing is loaded (cache_clear is a no-op)."""
+    an lru_cache singleton held for the whole process, so call this AFTER all Magi detection
+    is done to hand that memory back to whatever heavy model runs next. Safe to call when
+    nothing is loaded (cache_clear is a no-op)."""
     import gc
     _load_model.cache_clear()
     gc.collect()

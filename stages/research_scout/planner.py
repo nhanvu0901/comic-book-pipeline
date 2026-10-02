@@ -11,6 +11,7 @@ that fails validation is treated as invalid and never reaches the caller —
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import socket
@@ -41,6 +42,8 @@ RESERVED_FIELD_NAMES = frozenset({
     "title", "summary", "character_or_thing", "series_issue_year",
     "what_visibly_happens", "evidence_urls", "rank_reason", "id", "flags",
     "claim_citation", "notes", "candidates",
+    # micro-only fields the compiler adds (MICRO_DETAIL_PROPS)
+    "aftermath", "context_behind", "unrevealed", "detail_citations",
 })
 
 
@@ -101,12 +104,38 @@ _CORE_ITEM_PROPS: dict[str, Any] = {
 }
 
 
-def compile_schema(plan: ResearchPlan) -> dict[str, Any]:
+# Micro only. A micro candidate is one scene, and the scene alone left a writer
+# ending on a teaser it could not resolve: what happens next, and what set the
+# moment up, are asked for separately, each tied to a quoted source. Every
+# property is required (strict schema), so a source that states nothing comes
+# back "" / [] rather than a missing key. Q&A candidates never carry these.
+MICRO_DETAIL_PROPS: dict[str, Any] = {
+    "aftermath": {"type": "string"},
+    "context_behind": {"type": "string"},
+    "unrevealed": {"type": "string"},
+    "detail_citations": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "supports": {"type": "string"},
+                "url": {"type": "string"},
+                "quote": {"type": "string"},
+            },
+            "required": ["supports", "url", "quote"],
+        },
+    },
+}
+
+
+def compile_schema(plan: ResearchPlan, mode: str = "") -> dict[str, Any]:
     """You.com-strict output schema for one validated plan.
 
     Same wrapper shape as workflow.general_output_schema: additionalProperties
     false at every object level, every property required, and NO
     minItems/maxItems (the Research API rejects them — probed 2026-08-21).
+    ``mode="micro"`` adds MICRO_DETAIL_PROPS; any other mode is the Q&A shape.
     """
 
     item_props: dict[str, Any] = dict(_CORE_ITEM_PROPS)
@@ -118,6 +147,10 @@ def compile_schema(plan: ResearchPlan) -> dict[str, Any]:
         )
     if plan.ranking.strip():
         item_props["rank_reason"] = {"type": "string"}
+    if mode == "micro":
+        # Last, so a plan that skipped validate_plan still cannot replace one of
+        # these names with an extra_field of the wrong type.
+        item_props.update(copy.deepcopy(MICRO_DETAIL_PROPS))
 
     return {
         "type": "object",
@@ -157,6 +190,84 @@ _INVARIANT_RULES = (
     "in the summary."
 )
 
+_MICRO_INVARIANT_RULES = (
+    "Rules:\n"
+    "- Cite only URLs you actually retrieved — never invent a source.\n"
+    "- Bind every candidate to one claim_citation URL and a verbatim sentence "
+    "from that retrieved page supporting the decisive action or admission. "
+    "Establish exact series, issue, and year from that page's metadata or "
+    "another retrieved source; do not pretend the quote states missing details.\n"
+    "- Name the exact series, volume when needed, issue number, and year; "
+    "never guess missing identity details.\n"
+    "- In `series_issue_year` write only `Series Title #N (YYYY)`: the title "
+    "as printed, the issue number and ONE four-digit year, the year the issue "
+    "was published (or the year the request names, when a source gives it as "
+    "the issue's cover or release year). A volume number, cover date or "
+    "on-sale date goes in `summary`, never in that field.\n"
+    "- Copy every URL (`claim_citation.url`, each `detail_citations` url, "
+    "`evidence_urls`) character for character from the address of a page you "
+    "retrieved in this run. Never rebuild a URL from a page title or guess a "
+    "slug; a sentence from a page you did not retrieve cannot be cited.\n"
+    "- Describe only sourced page actions or spoken revelations, not inferred "
+    "motives or invented choreography.\n"
+    "- Real published comic events only."
+)
+
+# Applies only to micro research. The planner's free-form research_prompt can
+# omit a useful story turn; this contract must still reach the research call.
+# QA assembly remains byte-for-byte the previous path.
+_MICRO_SCOUT_RULES = (
+    "Micro-moment selection:\n"
+    "- One candidate is one scene or tightly connected sequence in one "
+    "published issue, suitable for a 35–50 second Short. A long recap may "
+    "suggest a lead; extract only one self-contained turn.\n"
+    "- Give the setup, the specific action or reveal that changes the "
+    "situation, and its direct consequence. Name who acts or speaks. Reject "
+    "abstract claims such as tactical patience without a sourced action.\n"
+    "- For an open-ended scout, prefer published issues from the current year "
+    "and then the previous year; the workflow appends the live year window. "
+    "Honor an explicitly requested older issue, year, or era. A broken "
+    "character rule, loud spectacle, second famous name, and low YouTube "
+    "coverage are ranking bonuses, not mandatory gates.\n"
+    "- Keep summary and what_visibly_happens focused on the same scene. Do not "
+    "invent motives, panel order, choreography, or consequences from another issue."
+)
+
+# Micro only, and it travels with _MICRO_SCOUT_RULES for the same reason: the
+# planner's research_prompt cannot be trusted to supply it. Three rules, in this
+# order — ask for the aftermath and the context, never treat a reviewer's
+# reaction as an event, never treat the request's wording as evidence. A real
+# session built a candidate from a review that withheld its twist ("a shocking
+# twist I never saw coming") and the scout restated it as an event that echoed
+# the request. general_micro.v1.md and stages/youcom_scout.py carry the same
+# three; Q&A never sees this block.
+_MICRO_DETAIL_RULES = (
+    "Aftermath, context and what sources withhold:\n"
+    "- Also return what happens next (`aftermath`) and what set the moment up "
+    "(`context_behind`), each backed by `detail_citations` with a verbatim "
+    "quote, and list those URLs in `evidence_urls` too. `aftermath` is what "
+    "happens after the turning point in the same issue, how the confrontation "
+    "or scene ends, and what any announced twist actually is. `context_behind` "
+    "is what set the moment up: why these characters are here and at odds, "
+    "what each wants, where a key object or power came from, as sources state "
+    "it. `unrevealed` is any outcome a source hints at but never states. Each "
+    "`detail_citations` entry is {\"supports\": \"aftermath\" or "
+    "\"context_behind\", \"url\": the page, \"quote\": a verbatim sentence from "
+    "that page}. Use \"\" when no source states it; never infer or invent an "
+    "outcome or backstory.\n"
+    "- A reviewer's reaction or a teaser (\"a shocking twist I never saw "
+    "coming\", \"who's at the center of that twist\", \"everything changes\") is "
+    "not an event. Never restate it as one, and never build "
+    "`what_visibly_happens`, `turning_point` or `aftermath` from it. When a "
+    "source withholds a reveal, keep `aftermath` to what is actually stated and "
+    "put the withheld point in `unrevealed`. When no source states what "
+    "happens, `aftermath` is \"\": do not write a sentence saying the ending is "
+    "withheld, and never cite a reaction line as `aftermath` support.\n"
+    "- The request's own wording (e.g. \"final twist\", \"shocking reveal\") says "
+    "what the user hopes to find; it is never evidence. Do not echo it into a "
+    "candidate unless a source states it."
+)
+
 # Research breadth is driven by source coverage, never a candidate floor.  The
 # API cannot enforce array minima, and a candidate minimum made the model split
 # one article into invented entries.  This is deliberately modest: it tells the
@@ -187,24 +298,37 @@ _CARDINALITY_BLOCKS: dict[str, str] = {
 }
 
 
-def assemble_prompt(plan: ResearchPlan, digest: str) -> str:
+def assemble_prompt(
+    plan: ResearchPlan, digest: str, *, user_intent: str = "", mode: str = ""
+) -> str:
     """Deterministic prompt assembly — pure code, no LLM call.
 
-    Order: invariant rules, the unit sentence, the cardinality block, the
-    ranking block (only when plan.ranking is set), the plan's own
-    research_prompt, then the digest.
+    Order: invariant rules, the user's unchanged request, the unit sentence,
+    the cardinality block, the ranking block (only when plan.ranking is set),
+    the plan's own research_prompt, then the digest.
     """
 
     sections = [
-        _INVARIANT_RULES,
+        _MICRO_INVARIANT_RULES if mode == "micro" else _INVARIANT_RULES,
+    ]
+    if user_intent:
+        sections.append(
+            f"USER INTENT: {user_intent}\n"
+            "The user intent is authoritative. Keep the requested comic, issue, "
+            "and scope even if the planner instruction or digest suggests another."
+        )
+    sections.extend([
         f"One candidate per {plan.unit} — never merge entries.",
         _CARDINALITY_BLOCKS[plan.cardinality],
-    ]
+    ])
     if plan.ranking.strip():
         sections.append(
             f"Order candidates by {plan.ranking}, best first, and justify "
             "each position in rank_reason."
         )
+    if mode == "micro":
+        sections.append(_MICRO_SCOUT_RULES)
+        sections.append(_MICRO_DETAIL_RULES)
     sections.append(plan.research_prompt)
     sections.append(f"SCOUTED DIGEST:\n{digest}")
     return "\n\n".join(sections)
@@ -327,6 +451,9 @@ def make_plan(user_intent: str, feedback_notes: list[str], mode: str) -> Researc
 
 def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str:
     parts = [str(user_intent), f"MODE HINT: {mode}"]
+    if mode == "micro":
+        from .micro_recency import recent_micro_instruction
+        parts.append(recent_micro_instruction())
     notes = [str(note) for note in feedback_notes if str(note).strip()]
     if notes:
         parts.append(
@@ -338,10 +465,20 @@ def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str
 
 
 def _request_body(model: str, user_message: str) -> dict[str, Any]:
+    system_prompt = _SYSTEM_PROMPT
+    if "MODE HINT: micro" in user_message:
+        system_prompt += (
+            "\nFor micro mode only, the channel's default scope is recently "
+            "published issues. Honor the live year window in the user message; "
+            "an explicitly requested older issue, year, or era overrides it."
+            "\nFor micro mode the code also adds aftermath, context_behind, "
+            "unrevealed and detail_citations to every candidate and writes the "
+            "research rules for them; never choose those names as extra_fields."
+        )
     return {
         "model": model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         "response_format": {

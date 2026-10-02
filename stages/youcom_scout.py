@@ -313,19 +313,17 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned → {report}")
 
 
-# ─── MICRO — one scene, one issue (the other mode) ───────────────────────────────
+# ─── MICRO — one causal turn, one issue (the other mode) ─────────────────────────
 # DISCOVER's whole premise is a question whose answer spans 3+ DIFFERENT comics. A micro
-# moment is the exact opposite: ONE drawn beat inside ONE issue. So it needs its own plan —
+# moment is the exact opposite: ONE narrow sequence inside ONE issue. So it needs its own plan —
 # reusing discover's prompt returns listicles, which is what a one-off run outside the repo
 # produced before this landed.
 MICRO_ANGLES = [
-    "an A-list hero doing something shockingly out of character in a single panel sequence "
-    "fans keep sharing",
-    "a famously unbeatable character humiliated or broken in one scene readers called the "
-    "most brutal page of the year",
-    "a villain doing something so unexpected that reviewers singled out that one page",
-    "scenes fans call 'peak' or 'insane' — one specific issue, one specific page, never a "
-    "whole storyline",
+    "a small act by a famous character with a surprising direct consequence",
+    "an apparent defeat reversed by a specific action or earlier preparation",
+    "an enemy or rival making an unexpected choice to help someone",
+    "a personal choice or admission that changes an ongoing confrontation",
+    "a secret or identity reveal that reverses who has the advantage",
 ]
 
 _MICRO_PROPS = {
@@ -334,8 +332,31 @@ _MICRO_PROPS = {
     "series_issue_year": {"type": "string"},
     "what_visibly_happens": {"type": "string"},
     "why_it_lands": {"type": "string"},
-    "constant_broken": {"type": "string"},     # the thing everyone "knows" about them
+    "turning_point": {"type": "string"},  # the exact action or reveal that changes the scene
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
+}
+
+# Only run_micro's full scout asks for these. workflow.discover_questions shares
+# _MICRO_PROPS and its candidates (and every fixture) carry none of them, so they
+# stay out of it. Same shape as stages.research_scout.planner.MICRO_DETAIL_PROPS,
+# which this module cannot import without pulling in config; a test pins them equal.
+_MICRO_DETAIL_PROPS = {
+    "aftermath": {"type": "string"},
+    "context_behind": {"type": "string"},
+    "unrevealed": {"type": "string"},
+    "detail_citations": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "supports": {"type": "string"},
+                "url": {"type": "string"},
+                "quote": {"type": "string"},
+            },
+            "required": ["supports", "url", "quote"],
+        },
+    },
 }
 
 
@@ -369,31 +390,90 @@ def _series_burned(series_issue_year: str, digest: str) -> str | None:
     return None
 
 
-def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
+def _detail_lines(c: dict) -> list[str]:
+    """The report lines for what happens next, what set the moment up and what the
+    sources withhold. An empty aftermath/context is printed as such: "" is the scout
+    saying no source states it, and a missing line would read as it never looking.
+    What is not revealed is only worth a line when there is something to say."""
+    none = "(none found in sources)"
+    lines = [f"- what happens next: {str(c.get('aftermath') or '').strip() or none}",
+             f"- context: {str(c.get('context_behind') or '').strip() or none}"]
+    unrevealed = str(c.get("unrevealed") or "").strip()
+    if unrevealed:
+        lines.append(f"- not revealed by sources: {unrevealed}")
+    cites = [x for x in (c.get("detail_citations") or []) if isinstance(x, dict)]
+    if cites:
+        lines.append("- detail sources:")
+        lines += [f"  - {x.get('supports', '')}: {x.get('url', '')} — \"{x.get('quote', '')}\""
+                  for x in cites]
+    return lines
+
+
+def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> None:
     """Scout single MOMENTS for micro_moment mode. Same three-part shape as run_discover:
     our plan fans out, You.com digs, our filters decide."""
+    from stages.research_scout.micro_recency import (
+        micro_release_rejection_reason, recent_micro_instruction,
+    )
+
+    default_window = years is None
+    years = years or recent_micro_instruction()
     digest = build_scouted_digest()
     rows, kept = [], []
     for i, angle in enumerate(MICRO_ANGLES, 1):
         prompt = (
             f"{digest}\n\n=== TASK ===\n"
-            "Find ONE comic-book MICRO MOMENT: a single drawn beat inside a SINGLE issue — "
-            "not a plot, not a crossover, not a character arc. It must be VISUALLY dramatic "
-            "(something a reader SEES happen on the page), star a widely-known character, "
-            f"and be published {years}.\n"
-            "The strongest micro moment breaks a CONSTANT — the one thing everyone 'knows' "
-            "about that character — inside that single scene. Name the constant.\n"
-            "REJECT: talking-heads scenes, moments that need prior lore to follow, whole "
-            "storylines, solicitations or previews for unpublished issues, and anything "
-            "where you cannot give the exact series, issue number and year.\n"
+            "Find ONE comic-book MICRO MOMENT: one scene or tightly connected sequence "
+            "inside a SINGLE issue, not a whole plot, crossover, or character arc. Prefer "
+            "a recognizable subject and a zero-lore setup. Respect the requested publication "
+            f"window: {years}.\n"
+            "The story needs a specific action or reveal that changes the opening situation "
+            "and has a direct consequence. Name the actor and exact turning_point; a broken "
+            "character rule and visual spectacle are bonuses, not gates. Quiet decisions and "
+            "spoken admissions qualify when their effect is sourced.\n"
+            "In moment give setup, turn, and consequence in 2-3 plain sentences. In "
+            "what_visibly_happens name only source-grounded actions needed to locate the "
+            "scene; do not invent panel order, expressions, motive, or choreography. In "
+            "why_it_lands explain how the turn changes the viewer's first reading.\n"
+            "Also return what happens next (aftermath) and what set the moment up "
+            "(context_behind), each backed by detail_citations with a verbatim quote, "
+            "and list those URLs in evidence_urls too. aftermath is what happens after "
+            "the turning point in the same issue, how the confrontation or scene ends, "
+            "and what any announced twist actually is. context_behind is what set the "
+            "moment up: why these characters are here and at odds, what each wants, "
+            "where a key object or power came from, as sources state it. unrevealed is "
+            "any outcome a source hints at but never states. Each detail_citations "
+            'entry is {"supports": "aftermath" or "context_behind", "url": the page, '
+            '"quote": a verbatim sentence from that page}. Use "" when no source states '
+            "it; never infer or invent an outcome or backstory.\n"
+            "A reviewer's reaction or a teaser (\"a shocking twist I never saw coming\", "
+            "\"who's at the center of that twist\", \"everything changes\") is not an "
+            "event. Never restate it as one, and never build what_visibly_happens, "
+            "turning_point or aftermath from it. When a source withholds a reveal, keep "
+            "aftermath to what is actually stated and put the withheld point in "
+            "unrevealed.\n"
+            "The request's own wording (e.g. \"final twist\", \"shocking reveal\") says "
+            "what the user hopes to find; it is never evidence. Do not echo it into a "
+            "candidate unless a source states it.\n"
+            "REJECT: listicles, scenes without a concrete turn, moments needing multiple "
+            "issues for their payoff, abstract claims like 'controls the tempo', adaptation-only "
+            "events, unpublished solicitations, and anything without exact series, volume "
+            "when needed, issue number, and year.\n"
             f"Angle for THIS search: {angle}."
         )
         print(f"[micro {i}/{len(MICRO_ANGLES)}] {angle[:60]}…", flush=True)
-        resp = _call_logged(key, prompt, effort, _schema(_MICRO_PROPS), outdir, f"micro{i}")
+        resp = _call_logged(
+            key, prompt, effort, _schema({**_MICRO_PROPS, **_MICRO_DETAIL_PROPS}), outdir, f"micro{i}"
+        )
         for c in _cands(resp):
             c["_angle"] = angle
             rows.append(c)
     for c in rows:
+        if default_window:
+            release_reason = micro_release_rejection_reason(c)
+            if release_reason is not None:
+                c["_dropped_as_release"] = release_reason
+                continue
         # Burn-check on series+issue AND on the moment text: the same scene resurfaces
         # under a different phrasing across angles, and a sibling issue of an already-
         # produced series is the commonest false lead (measured: 3 of 7 candidates in the
@@ -410,23 +490,30 @@ def run_micro(key: str, outdir: Path, effort: str, years: str) -> None:
     lines = ["# MICRO MOMENTS — candidates for Master\n"]
     for c in kept:
         lines += [f"## {c.get('character')} — {c.get('series_issue_year')}",
-                  f"- moment: {str(c.get('moment', ''))[:300]}",
-                  f"- constant broken: {c.get('constant_broken', '')}",
-                  f"- what is SEEN: {str(c.get('what_visibly_happens', ''))[:300]}",
-                  f"- why it lands: {str(c.get('why_it_lands', ''))[:300]}",
+                  f"- moment: {str(c.get('moment', ''))}",
+                  f"- turning point: {c.get('turning_point', '')}",
+                  f"- what is SEEN: {str(c.get('what_visibly_happens', ''))}",
+                  f"- why it lands: {str(c.get('why_it_lands', ''))}",
+                  *_detail_lines(c),
                   f"- evidence: {' '.join(c.get('evidence_urls') or [])}", ""]
     dropped = [c for c in rows if c.get("_dropped_as_burned")]
     if dropped:
         lines += ["## Dropped as burned (our hard filter, not You.com's)"]
         lines += [f"- {c.get('series_issue_year')}  ⇒ collides with: {c['_dropped_as_burned']}"
                   for c in dropped]
+    release_dropped = [c for c in rows if c.get("_dropped_as_release")]
+    if release_dropped:
+        lines += ["## Dropped outside the recent publication window"]
+        lines += [f"- {c.get('series_issue_year')}  ⇒ {c['_dropped_as_release']}"
+                  for c in release_dropped]
     lines += ["",
               "## STILL UNVERIFIED — do these before producing",
               "- on batcave.biz? (Cloudflare 403s plain HTTP; needs the nodriver scraper)",
               "- narration coverage: search AGAIN with different phrasing before trusting a "
               "clean verdict (see .claude/memory/scout_jeff_narration_missed.md)"]
     report.write_text("\n".join(lines), encoding="utf-8")
-    print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned → {report}")
+    print(f"\n{len(kept)} candidate(s), {len(dropped)} dropped as burned, "
+          f"{len(release_dropped)} dropped by release year → {report}")
 
 
 def run_enumerate(key: str, outdir: Path, question: str, have: list[str], effort: str) -> None:
@@ -576,7 +663,7 @@ def main() -> None:
     d.add_argument("--effort", default="standard")
     m = sub.add_parser("micro", help="scout single MOMENTS for micro_moment mode")
     m.add_argument("--effort", default="deep")
-    m.add_argument("--years", default="2010 or later, strongly preferring the last two years",
+    m.add_argument("--years", default=None,
                    help='publication window phrasing, e.g. "in 2025 or 2026"')
     e = sub.add_parser("enumerate")
     e.add_argument("--question", required=True)

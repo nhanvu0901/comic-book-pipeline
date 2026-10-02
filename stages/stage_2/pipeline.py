@@ -14,11 +14,7 @@ import difflib
 import json
 import os
 import re
-import shutil
-import signal
-import subprocess
 import time
-import urllib.request
 from pathlib import Path
 from typing import Callable
 
@@ -257,8 +253,9 @@ def _process_single_page_group(
 # Description↔bbox verify gate (crop + look ground-truth check — see vlm_extract.
 # verify_page_descriptions). Master 2026-07-24: DEFAULT OFF — panels are now hand-picked in
 # review, so VLM descriptions no longer decide the panel, and the extra VLM round-trip per page
-# is dead cost. DESC_VERIFY=1 re-enables the gate (pages then carry desc_verified / the anchor-
-# trust path in shots.py reactivates). Off = every page treated as trusted (old-project parity).
+# is dead cost. DESC_VERIFY=1 re-enables the gate: a page that fails it is re-described once and
+# keeps desc_verified=False if it still fails. The flag is a diagnostic in the page JSON; no
+# stage reads it back. Off = the check is skipped and no flag is written.
 DESC_VERIFY = os.getenv("DESC_VERIFY", "0").strip().lower() not in ("0", "false", "no", "")
 
 # Coverage guard: flag story pages where Magi's panel boxes cover suspiciously little of
@@ -278,121 +275,6 @@ _DIALOG_MISMATCH_RATIO = 0.4
 # sparse splash (one big panel still covering most of the page) does NOT fire — only a clear
 # under-detection does.
 _COVERAGE_MIN = 0.5
-
-# LM Studio sequencing knob: LM Studio serves the Qwen3-Embedding-8B model (:1234) as a
-# SEPARATE OS PROCESS — release_model() below only frees Magi, it can never touch LM
-# Studio. If LM Studio's JIT keep-alive (default 60min TTL) leaves the ~7-8GB embed
-# server loaded, it sits co-resident with Magi's ~3-4GB through the whole Phase 1.5
-# batch-detect below and pushes a 16GB Mac into swap. LMS_AUTO_UNLOAD=0 disables both
-# helpers (e.g. no LM Studio installed, or plenty of RAM to spare).
-LMS_AUTO_UNLOAD = os.getenv("LMS_AUTO_UNLOAD", "1").strip().lower() not in ("0", "false", "no", "")
-
-
-def _lms_relevant() -> bool:
-    """True only when the configured embedding backend actually IS LM Studio's
-    OpenAI-compatible server — no reason to touch LM Studio for Gemini/Azure/local."""
-    import config
-    return config.EMBED_BACKEND in ("qwen", "openai")
-
-
-def _lms_bin() -> str | None:
-    """Locate the `lms` CLI. None if LM Studio isn't installed on this machine."""
-    binary = shutil.which("lms")
-    if binary:
-        return binary
-    fallback = Path.home() / ".lmstudio" / "bin" / "lms"
-    return str(fallback) if fallback.exists() else None
-
-
-def _lms_unload_all(log: Callable[[str], None] = print) -> None:
-    """Unload every LM Studio-served model right before Stage 2's memory-heavy Magi
-    batch-detect phase, freeing the ~7-8GB Qwen3-Embedding-8B server process for Magi.
-    Best-effort: missing binary / non-zero exit / timeout are all logged and swallowed,
-    never raised — a machine without LM Studio (or on a non-qwen backend) runs
-    completely unaffected."""
-    if not LMS_AUTO_UNLOAD or not _lms_relevant():
-        return
-    binary = _lms_bin()
-    if not binary:
-        return
-    try:
-        subprocess.run([binary, "unload", "--all"], capture_output=True, timeout=20, check=False)
-    except Exception as exc:
-        log(f"[lms] unload --all skipped ({type(exc).__name__}: {exc})")
-        return
-    _lms_kill_zombie_nodes(log)
-
-
-_ZOMBIE_NODE_MARKER = ".lmstudio/.internal/utils/node"
-_ZOMBIE_RSS_FLOOR_KB = 3_000_000  # 3GB — LM Studio 0.4.18's known zombie sits at 5-7GB
-
-
-def _lms_kill_zombie_nodes(log: Callable[[str], None] = print) -> None:
-    """LM Studio 0.4.18 bug: after `unload --all`, the `.lmstudio/.internal/utils/node`
-    helper process occasionally survives as a zombie holding 5-7GB RAM even though
-    `lms ps` reports no loaded model -- enough to push a 16GB Mac into swap. Sweep it,
-    but only when `lms ps` confirms nothing is genuinely loaded/computing (a real,
-    in-use server must never be killed) and the process is fat enough to be the known
-    zombie rather than a fresh legitimate one. Best-effort: any failure is logged and
-    swallowed, same contract as _lms_unload_all above."""
-    binary = _lms_bin()
-    if not binary:
-        return
-    try:
-        time.sleep(2)
-        ps = subprocess.run([binary, "ps"], capture_output=True, timeout=15, check=False, text=True)
-        if any(tag in (ps.stdout or "") for tag in ("LOADED", "COMPUTING")):
-            return
-        procs = subprocess.run(
-            ["ps", "-axo", "pid,rss,command"], capture_output=True, timeout=15, check=False, text=True
-        )
-        for line in (procs.stdout or "").splitlines():
-            if _ZOMBIE_NODE_MARKER not in line:
-                continue
-            parts = line.split(None, 2)
-            if len(parts) < 2:
-                continue
-            try:
-                pid, rss_kb = int(parts[0]), int(parts[1])
-            except ValueError:
-                continue
-            if rss_kb <= _ZOMBIE_RSS_FLOOR_KB:
-                continue
-            try:
-                # SIGKILL does not exist on Windows (where `ps -axo` is absent anyway and
-                # the sweep bails out above); fall back so the attribute lookup is portable.
-                os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-                log(f"[lms] killed zombie node pid={pid} rss={rss_kb / 1_000_000:.1f}GB")
-            except Exception as exc:
-                log(f"[lms] zombie kill pid={pid} failed ({type(exc).__name__}: {exc})")
-    except Exception as exc:
-        log(f"[lms] zombie sweep skipped ({type(exc).__name__}: {exc})")
-
-
-def _ensure_embed_model_loaded(log: Callable[[str], None] = print) -> None:
-    """JIT-load LM Studio's embedding model back in right before index_project() needs
-    it — _lms_unload_all() above may just have evicted it, and JIT auto-load-on-request
-    is an LM Studio setting, not a guarantee. Best-effort: any failure here just falls
-    through to _embedding.py's own graceful degrade (down server -> None -> skipped)."""
-    if not LMS_AUTO_UNLOAD or not _lms_relevant():
-        return
-    binary = _lms_bin()
-    if not binary:
-        return
-    import config
-    model_key = config.EMBED_OPENAI_MODEL
-    models_url = config.EMBED_OPENAI_URL.rsplit("/", 1)[0] + "/models"
-    try:
-        with urllib.request.urlopen(models_url, timeout=5) as r:
-            loaded_ids = {m.get("id") for m in json.load(r).get("data", [])}
-        if model_key in loaded_ids:
-            return
-    except Exception as exc:
-        log(f"[lms] model-list probe failed ({type(exc).__name__}: {exc}); loading anyway")
-    try:
-        subprocess.run([binary, "load", model_key], capture_output=True, timeout=120, check=False)
-    except Exception as exc:
-        log(f"[lms] load {model_key!r} skipped ({type(exc).__name__}: {exc})")
 
 
 def _write_panel_viz(project_root: Path, results: list[dict], log: Callable[[str], None]) -> None:
@@ -529,10 +411,6 @@ def preprocess_project(
     from .panel_detect import detect_full_batch
     magi_by_pn: dict[int, dict] = {}
     _uncached = [ps for ps in page_states if ps["cached"] is None]
-    if _uncached:
-        # Free LM Studio's embed server BEFORE Magi loads — only worth doing when Magi
-        # is actually about to run (all-cache-hit projects never touch Magi).
-        _lms_unload_all(log)
     if _uncached and MAGI_BATCH_SIZE > 1:
         log(f"[preprocess] ▶ Magi batch-detect {len(_uncached)} uncached page(s) "
             f"(batch={MAGI_BATCH_SIZE})")
@@ -753,32 +631,11 @@ def preprocess_project(
     except Exception as exc:
         log(f"[identity]   repair hook crashed unexpectedly: {type(exc).__name__}: {exc}")
 
-    # Free Magi (local vision model, ~3-4GB float32 on Mac) BEFORE embedding — otherwise it
-    # stays co-resident with the 8B Qwen embed server (~6GB) and OOMs a 16GB Mac at the embed
-    # step. Sequential (Magi → free → embed), NOT parallel. See panel_detect.release_model.
+    # Free Magi (local vision model, ~3-4GB float32 on Mac) now that all panel detection is
+    # done — it is an lru_cache singleton that would otherwise stay resident for the rest
+    # of the process. See panel_detect.release_model.
     from .panel_detect import release_model
     release_model()
-
-    # Persist panel embeddings to Qdrant so Stage 5 matches against pre-computed
-    # vectors instead of re-embedding every panel each run. Graceful no-op if
-    # Qdrant/embeddings are unavailable (matcher falls back to in-memory embed).
-    from .._panel_index import index_project
-    from config import PANEL_TEXT_EMBED
-    if PANEL_TEXT_EMBED:                    # only pay the LM Studio JIT model-load when indexing
-        _ensure_embed_model_loaded(log)
-    index_project(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
-
-    # Feature A: ALSO embed the panel PIXELS into SigLIP's joint image-text space so Stage 5
-    # has a desc-FREE second matching signal — a fabricated VLM description can fake a high
-    # TEXT cosine but not the image cosine (see _img_index). Runs AFTER Magi's release_model()
-    # above so SigLIP loads into freed memory, and index_project_images frees SigLIP itself.
-    # Guarded by availability + PANEL_IMG_EMBED; any failure NEVER fails Stage 2 (the matcher
-    # simply falls back to today's text-only path).
-    try:
-        from .._img_index import index_project_images
-        index_project_images(project_name, {int(r.get("page_number", 0)): r for r in results}, log=log)
-    except Exception as exc:
-        (log or print)(f"[img-index] skipped (error): {exc}")
 
     # Q&A subject-panel ranking: for an answer_research (Q&A) project ONLY, rank every
     # panel by how strongly it features the QUESTION'S subject character, so Stage 5 can
@@ -1249,9 +1106,10 @@ def _vlm_text_blocks_with_magi_bboxes(vlm_text_blocks, panel_texts, magi_texts_l
     PER PANEL in reading order so each VLM bubble regains a bbox for the inpaint mask —
     without it a mirrored panel shows the comic's own dialogue BACKWARDS and the text-
     coverage penalty reads 0. We ALSO carry each Magi region's OCR onto the paired block as
-    a `.ocr` attribute: that OCR is deterministic ground truth read from pixels, so
-    panel_embed_text can prefer it over the VLM `text` (which the batch VLM fabricates — see
-    _panel_index.DIALOG_TRUTH) and _apply_dialog_truth_gate can flag divergences. No VLM-
+    a `.ocr` attribute: that OCR is deterministic ground truth read from pixels, so the
+    dialog readers (Stage 3's dialog block, the review gate) can prefer it over the VLM
+    `text` (which the batch VLM fabricates — see _panel_index.DIALOG_TRUTH) and
+    _apply_dialog_truth_gate can flag divergences. No VLM-
     string↔Magi-box CONTENT pairing is needed; positional reading-order pairing is enough
     (the gate compares SETS). Magi boxes with no VLM partner are appended as text-empty
     blocks (still carrying their OCR + bbox) so the mask erases ALL detected text and their
@@ -1430,7 +1288,7 @@ def _assemble_page_dict(
         elif magi_texts_list:
             # No VLM transcription → Magi OCR IS the dialog. Store it under both `text`
             # (rendered/captioned) and `.ocr` (ground truth) so the dialog-truth gate finds
-            # them identical (ratio 1.0 → never falsely flagged) and embedding uses the OCR.
+            # them identical (ratio 1.0 → never falsely flagged) and the dialog readers use the OCR.
             flat = []
             text_to_panel: dict[int, int] = {}
             for pi, t_idxs in panel_texts.items():
@@ -1466,8 +1324,8 @@ def _assemble_page_dict(
         for pinfo in panel_infos:
             pinfo.dialog = dialog_by_panel.get(pinfo.index, [])
 
-        # Last-resort fill: any panel with a BLANK description is invisible to the
-        # embedding matcher. Synthesize one from its dialog → characters → a generic marker.
+        # Last-resort fill: a panel with a BLANK description gives the later stages
+        # nothing to read. Synthesize one from its dialog → characters → a generic marker.
         for pinfo in panel_infos:
             if str(pinfo.description or "").strip():
                 continue
@@ -1578,11 +1436,13 @@ def _apply_dialog_truth_gate(page_dict: dict, *, log: Callable[[str], None] = pr
     """Feature B: flag panels whose VLM `text` does NOT match Magi's pixel OCR ground truth.
     The batch VLM fabricates dialog from story flow (real case: doom-rocket-raccoon p28
     panel 1 — pixels read 'SO NOW WHAT DO WE DO?' but the VLM wrote 'WE'VE REACHED THE BIG
-    BANG'), which poisons the panel embedding and mis-grounds Stage 3/5. Deterministic
+    BANG'). Deterministic
     (stdlib difflib, no network): for each panel that has BOTH a VLM transcription and Magi
     OCR, take the best-pair SequenceMatcher ratio; below _DIALOG_MISMATCH_RATIO sets the
-    panel-level `dialog_mismatch = True` (contract consumed by Stage 5 _panel_untrusted;
-    absent = trusted). Flag-only — never rewrites/removes the VLM dialog content."""
+    panel-level `dialog_mismatch = True` (absent = no mismatch found). The flag is a
+    diagnostic in the page JSON: no stage reads it back, because the dialog readers already
+    take the OCR over the VLM text (see _panel_index.DIALOG_TRUTH). Flag-only — never
+    rewrites/removes the VLM dialog content."""
     if not DIALOG_TRUTH or page_dict.get("page_type") not in ("cover", "story"):
         return page_dict
     pn = page_dict.get("page_number", "?")

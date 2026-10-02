@@ -281,6 +281,84 @@ def test_chapter_without_story_pages_anchors_to_its_own_first_page(tmp_path, mon
     assert _body_chapters(tmp_path, nar) == [(1, "#1"), (2, "#2"), (3, "#3")]
 
 
+@pytest.mark.parametrize("manifest_exists", [False, True])
+def test_qa_script_can_be_approved_before_preprocessing(tmp_path, monkeypatch, manifest_exists):
+    """Stage 2 has no processed pages, even if a prior download left a manifest."""
+    monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(pl, "PROJECTS_ROOT", tmp_path)
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "comic_context.json").write_text(json.dumps({"title": "A question"}))
+    (root / "answer_context.json").write_text(json.dumps({"question": "Q?", "items": ITEMS}))
+    if manifest_exists:
+        raw = root / "raw_comic"
+        raw.mkdir()
+        (raw / "manifest.json").write_text(json.dumps([
+            {"chapter_index": chapter, "reader_url": url, "pages": [f"page{chapter}.jpg"]}
+            for chapter, url in enumerate(URLS, start=1)
+        ]))
+
+    narration = gp.parse_and_save_script(
+        "proj", f"{HOOK}\n\n{P1}\n\n{P2}\n\n{P3}\n\n{OUTRO}",
+        log=lambda _message: None,
+    )
+
+    assert (root / "narration.json").exists()
+    assert [beat["page_refs"] for beat in narration["beats"]] == [[1], [1], [1]]
+
+    raw = root / "raw_comic"
+    raw.mkdir(exist_ok=True)
+    (raw / "manifest.json").write_text(json.dumps([
+        {"chapter_index": chapter, "reader_url": url, "pages": [f"ch{chapter:02d}_page_01.jpg"]}
+        for chapter, url in enumerate(URLS, start=1)
+    ]))
+    prep = root / "preprocessed"
+    prep.mkdir()
+    for chapter, number in enumerate((2, 4, 6), start=1):
+        (prep / f"page_{number:03d}.json").write_text(json.dumps({
+            "page_number": number, "is_story_page": True,
+            "source_image": f"raw_comic/ch{chapter:02d}_page_01.jpg",
+        }))
+
+    assert gp.reanchor_narration_to_pages("proj", log=lambda _message: None)
+    updated = json.loads((root / "narration.json").read_text())
+    assert [beat["page_refs"] for beat in updated["beats"]] == [[2], [4], [6]]
+    assert {scene["page_ref"] for scene in updated["scenes"] if scene["beat_id"] == 2} == {4}
+
+
+def test_qa_draft_survives_partial_preprocessing(tmp_path, monkeypatch):
+    """Returning to Stage 2 during Stage 4 must not require every chapter's pages."""
+    name = _project(tmp_path, monkeypatch)
+    root = tmp_path / name
+    for page_path in (root / "preprocessed").glob("page_*.json"):
+        page = json.loads(page_path.read_text())
+        if "ch02_page" in page["source_image"]:
+            page_path.unlink()
+
+    narration = gp.parse_and_save_script(
+        name, f"{HOOK}\n\n{P1}\n\n{P2}\n\n{P3}\n\n{OUTRO}",
+        log=lambda _message: None,
+    )
+
+    assert [beat["page_refs"] for beat in narration["beats"]] == [[1], [1], [9]]
+    assert gp.reanchor_narration_to_pages(name, log=lambda _message: None) is False
+
+
+def test_qa_draft_survives_stale_pages_without_download_manifest(tmp_path, monkeypatch):
+    """Stage 2 can be reopened after raw downloads were cleared but page JSON remains."""
+    name = _project(tmp_path, monkeypatch)
+    root = tmp_path / name
+    (root / "raw_comic" / "manifest.json").unlink()
+
+    narration = gp.parse_and_save_script(
+        name, f"{HOOK}\n\n{P1}\n\n{P2}\n\n{P3}\n\n{OUTRO}",
+        log=lambda _message: None,
+    )
+
+    assert [beat["page_refs"] for beat in narration["beats"]] == [[1], [1], [1]]
+    assert gp.reanchor_narration_to_pages(name, log=lambda _message: None) is False
+
+
 # ── the editor never offers a script written for a different item list ───────
 
 
@@ -319,6 +397,8 @@ def test_prompt_numbers_items_in_download_order_and_forbids_reordering(tmp_path,
     assert "most surprising answer goes LAST" not in prompt
     assert "skip any item" not in prompt
     assert "FINAL SCRIPT" in prompt
+    assert "OPENING CHAIN" in prompt
+    assert "same answer-theme promise" in prompt
     stored = json.loads((tmp_path / name / "answer_context.json").read_text())
     assert "item_number" not in stored["items"][0]   # the prompt copy only
 

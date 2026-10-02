@@ -1,10 +1,11 @@
 """CLUSTER_NAMER is off by default — the VLM naming pass reaches no render decision.
 
-Reference-counted by hand before switching it off: cluster_to_name.json is read in
-review_gate and stage_5/pipeline, threaded through six signatures in stage_5/shots.py, and
-ends at _match_panels(units, pages_by_number, cluster_to_name, ...) — which never reads the
-argument. No other consumer maps a cluster id to a name either: speaker_cluster_id appears
-only inside Stage 2, and Stage 3 never touches clusters.
+Reference-counted by hand before switching it off: cluster_to_name.json is read in one place,
+stage_5/pipeline, threaded through five signatures in stage_5/shots.py, and ends at
+_match_panels(units, pages_by_number, cluster_to_name, ...) — which never reads the argument.
+The review gate does not read it (build_candidates lists every panel page-sorted). No other
+consumer maps a cluster id to a name either: speaker_cluster_id appears only inside Stage 2,
+and Stage 3 never touches clusters.
 
 Disabled, not deleted: money_shot.py imports a helper out of cluster_namer, and the module is
 one env var away from coming back.

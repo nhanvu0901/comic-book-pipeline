@@ -96,10 +96,10 @@ def _extract_frame(video_path: Path, timestamp: float, out_png: Path) -> bool:
 
 
 def _judge_frame(frame_png: Path, scene_text: str, *, log=print) -> dict | None:
-    """One vision call: does `frame_png` depict `scene_text`? Reuses the same Claude-SDK
-    vision path as shots.py's _vlm_rerank (the agent Reads the image file — no separate
-    image-upload API). Returns the parsed verdict, or None if the SDK/judge is unavailable
-    or the answer didn't parse."""
+    """One vision call: does `frame_png` depict `scene_text`? Goes through the Claude-SDK vision
+    path (`sdk_complete_vision`: the agent Reads the image file — no separate image-upload API),
+    the same call review_gate's money-shot confirm makes. Returns the parsed verdict, or None
+    if the SDK/judge is unavailable or the answer didn't parse."""
     user = f'Narration line: "{scene_text}"\n\nFrame image: {frame_png}'
     raw = sdk_complete_vision(_SYSTEM, user, log=log)
     return _parse_verdict(raw)

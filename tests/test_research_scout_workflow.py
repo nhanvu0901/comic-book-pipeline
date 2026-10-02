@@ -9,6 +9,7 @@ from stages.research_scout.models import EvidenceGate, ScoutMode, SessionState
 from stages.research_scout.planner import PlanField, ResearchPlan
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.workflow import InvalidTransition, ScoutWorkflow
+from tests import micro_detail_rules as rules
 
 
 class _FakeYouCom:
@@ -242,6 +243,99 @@ def test_new_general_round_rejects_a_bound_url_absent_from_returned_sources(mock
     assert validation["rejected"] == [
         {"candidate_id": "candidate-1", "reason": "claim_citation_url_not_returned"},
     ]
+
+
+def test_micro_exact_issue_intent_rejects_validly_cited_wrong_comics(mock_workflow):
+    issues = [
+        ("right", "Amazing X-Men #2 (2014)"),
+        ("other-series", "Batman: Knightfight #1 (2026)"),
+        ("other-number", "Amazing X-Men #3 (2014)"),
+        ("no-issue", "Amazing X-Men"),
+    ]
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [
+                {
+                    "id": key, "title": key, "series_issue_year": issue,
+                    "claim_citation": {
+                        "url": f"https://source.test/{key}", "quote": f"Evidence for {key}.",
+                    },
+                }
+                for key, issue in issues
+            ]},
+            "sources": [{"url": f"https://source.test/{key}"} for key, _ in issues],
+        }
+    }
+    intent = "Find a micro moment in Amazing X-Men #2 (2014)."
+    session = mock_workflow.start(ScoutMode.MICRO, intent)
+    mock_workflow.run_general(session.id)
+
+    candidates = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json"
+    ).read_text(encoding="utf-8"))["candidates"]
+    validation = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidate_validation.rev1.v1.json"
+    ).read_text(encoding="utf-8"))
+
+    assert [candidate["id"] for candidate in candidates] == ["right"]
+    assert [item["candidate_id"] for item in validation["rejected"]] == [
+        "other-series", "other-number", "no-issue",
+    ]
+    assert all("Amazing X-Men #2" in item["reason"] for item in validation["rejected"])
+    assert "Batman: Knightfight #1" in validation["rejected"][0]["reason"]
+
+
+def test_broad_micro_general_filters_old_issues_with_bound_sources(mock_workflow):
+    from datetime import date
+
+    year = date.today().year
+    issues = [
+        ("older", "Hero #1 (2014)"),
+        ("previous", f"Hero #2 ({year - 1})"),
+        ("current", f"Hero (2021) #3 ({year})"),
+    ]
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [{
+                "id": key, "title": key, "series_issue_year": issue,
+                "summary": "Hero loses the key, finds a second door, and frees a friend.",
+                "what_visibly_happens": "Hero opens the second door.",
+                "claim_citation": {
+                    "url": f"https://source.test/{key}",
+                    "quote": "Hero opens the second door.",
+                },
+            } for key, issue in issues]},
+            "sources": [{"url": f"https://source.test/{key}"} for key, _ in issues],
+        }
+    }
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    mock_workflow.run_general(session.id)
+
+    candidates = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json"
+    ).read_text(encoding="utf-8"))["candidates"]
+    validation = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidate_validation.rev1.v1.json"
+    ).read_text(encoding="utf-8"))
+    assert [candidate["id"] for candidate in candidates] == ["current", "previous"]
+    assert validation["rejected"] == [
+        {"candidate_id": "older", "reason": "outside_recent_micro_window"},
+    ]
+
+
+def test_planner_prompt_keeps_the_original_user_intent_even_when_plan_drifts(tmp_path):
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=_FakeYouCom(),
+        planner=lambda *_: ResearchPlan(
+            unit="one scene", cardinality="options", ranking="", extra_fields=[],
+            research_prompt="Find a moment in Batman: Knightfight #1.",
+        ),
+    )
+    intent = "Find a micro moment in Amazing X-Men #2 (2014)."
+    session = workflow.start(ScoutMode.MICRO, intent)
+    workflow.run_general(session.id)
+
+    assert f"USER INTENT: {intent}" in workflow.client.seen_prompt
 
 
 def test_candidates_must_exist_before_they_can_be_verified(mock_workflow):
@@ -510,6 +604,20 @@ def test_planner_path_puts_extra_field_and_rank_reason_in_schema_and_prompt(tmp_
     assert "One candidate per one character — never merge entries." in prompt
     assert "Sweep EVERY retrieved source" in prompt
     assert "most brutal" in prompt
+
+
+def test_micro_planner_path_keeps_the_turning_point_policy(tmp_path):
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=_FakeYouCom(),
+        planner=lambda *_: ResearchPlan(
+            unit="one scene", cardinality="options", ranking="",
+            research_prompt="Find memorable comics.",
+        ),
+    )
+    session = workflow.start(ScoutMode.MICRO, "new Hulk moment")
+    workflow.run_general(session.id)
+    assert "specific action or reveal" in workflow.client.seen_prompt
+    assert "one scene or tightly connected sequence" in workflow.client.seen_prompt
 
 
 def test_general_plan_artifact_records_planner_source(tmp_path):
@@ -827,3 +935,148 @@ def test_candidate_ids_may_be_any_sequence(mock_workflow):
     mock_workflow.verify_selected(session.id, (c for c in ["a", "b"]), only=[])
 
     assert mock_workflow.store.load(session.id).selected_specific_candidate_ids == ["a", "b"]
+
+
+# ─── Micro asks for the aftermath and the context; Q&A is untouched ──────────
+
+
+def _item_props(schema):
+    return schema["properties"]["candidates"]["items"]["properties"]
+
+
+def test_the_fallback_micro_round_asks_for_the_aftermath_fields_and_qa_does_not(mock_workflow):
+    micro = mock_workflow.start(ScoutMode.MICRO, "new Hulk moment")
+    mock_workflow.run_general(micro.id)
+    micro_props = _item_props(mock_workflow.client.seen_schema)
+    micro_prompt = mock_workflow.client.seen_prompt
+    micro_schema = mock_workflow.client.seen_schema
+
+    qa = mock_workflow.start(ScoutMode.QA, "Hulk questions")
+    mock_workflow.run_general(qa.id)
+    qa_props = _item_props(mock_workflow.client.seen_schema)
+
+    for name in rules.DETAIL_FIELDS:
+        assert name in micro_props
+        assert name not in qa_props
+    items = micro_schema["properties"]["candidates"]["items"]
+    assert set(items["required"]) == set(items["properties"])
+    assert rules.missing_rules(micro_prompt) == []
+    assert "is not an event" not in mock_workflow.client.seen_prompt
+
+
+def test_the_planner_micro_round_asks_for_the_aftermath_fields_and_carries_the_rules(tmp_path):
+    def make_workflow():
+        return ScoutWorkflow(
+            store=SessionStore(tmp_path / "sessions"), client=_FakeYouCom(),
+            planner=lambda *_: ResearchPlan(
+                unit="one scene", cardinality="options", ranking="", extra_fields=[],
+                research_prompt="Find a moment.",
+            ),
+        )
+
+    workflow = make_workflow()
+    micro = workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    workflow.run_general(micro.id)
+    assert set(rules.DETAIL_FIELDS) <= set(_item_props(workflow.client.seen_schema))
+    assert rules.missing_rules(workflow.client.seen_prompt) == []
+
+    qa = workflow.start(ScoutMode.QA, "Which heroes?")
+    workflow.run_general(qa.id)
+    assert not set(rules.DETAIL_FIELDS) & set(_item_props(workflow.client.seen_schema))
+    assert "aftermath" not in workflow.client.seen_prompt
+
+
+def test_general_output_schema_is_mode_aware_and_defaults_to_the_qa_shape():
+    from stages.research_scout.workflow import general_output_schema
+
+    default = _item_props(general_output_schema())
+    assert list(default) == [
+        "title", "summary", "character_or_thing", "series_issue_year",
+        "what_visibly_happens", "evidence_urls", "claim_citation",
+    ]
+    assert general_output_schema(ScoutMode.QA) == general_output_schema()
+    assert set(rules.DETAIL_FIELDS) <= set(_item_props(general_output_schema("micro")))
+    assert set(rules.DETAIL_FIELDS) <= set(_item_props(general_output_schema(ScoutMode.MICRO)))
+
+
+def test_a_micro_candidates_aftermath_fields_reach_the_stored_candidate_untouched(mock_workflow):
+    """The round stores candidates as returned: nothing in the workflow may
+    whitelist keys, or the writer never sees what the scout found."""
+    from datetime import date
+
+    detail = {
+        "aftermath": "Steve loses the duel and keeps the weapon.",
+        "context_behind": "He took the sword from the vault.",
+        "unrevealed": "",
+        "detail_citations": [{
+            "supports": "aftermath", "url": "https://source.test/a", "quote": "Steve loses.",
+        }],
+    }
+    mock_workflow.client.general_response = {
+        "output": {
+            "content": {"candidates": [{
+                "id": "a", "title": "A", "series_issue_year": f"Hero #1 ({date.today().year})",
+                "claim_citation": {"url": "https://source.test/a", "quote": "Evidence."},
+                **detail,
+            }]},
+            "sources": [{"url": "https://source.test/a"}],
+        }
+    }
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    mock_workflow.run_general(session.id)
+
+    stored = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json"
+    ).read_text(encoding="utf-8"))["candidates"][0]
+    assert {key: stored[key] for key in detail} == detail
+
+
+# ─── The verification round is stored where the project factory can read it ──
+
+
+def test_verify_selected_stores_each_round_where_specific_search_artifact_says(
+    monkeypatch, mock_workflow
+):
+    from stages.research_scout.workflow import specific_search_artifact
+
+    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", _confirmed)
+    session = _verified_micro(mock_workflow)
+
+    path = mock_workflow.store.artifact_path(session.id, specific_search_artifact("a"))
+    assert path.name == "search.a.v1.json"
+    assert json.loads(path.read_text(encoding="utf-8"))["payload"] == (
+        mock_workflow.client.verify_response
+    )
+    # An id is model-supplied text: only filename-safe characters survive.
+    assert specific_search_artifact("r2-candidate/3?") == "specific/search.r2-candidate_3_.v1.json"
+
+
+@pytest.mark.parametrize("payload,expected", [
+    # What You.com returns: the verify object under output.content.
+    ({"output": {"content": {
+        "candidates": [{"verdict": "NOT CONFIRMED as the exact proposed micro-moment"}],
+        "notes": "the review explicitly withholds the exact twist",
+    }, "sources": []}},
+     "NOT CONFIRMED as the exact proposed micro-moment — "
+     "the review explicitly withholds the exact twist"),
+    # content delivered as a JSON string instead of an object
+    ({"output": {"content": json.dumps({
+        "candidates": [{"verdict": "CONFIRMED"}], "notes": "Two sources agree.",
+    })}}, "CONFIRMED — Two sources agree."),
+    # the flat shape the fixtures use
+    ({"candidates": [{"verdict": "CONFIRMED"}], "notes": ""}, "CONFIRMED"),
+    # a verdict-less round still carries its notes
+    ({"candidates": [], "notes": "Nothing found."}, "Nothing found."),
+    # the first item that holds a verdict wins
+    ({"candidates": [{"verdict": ""}, {"verdict": "CONFLICTING"}], "notes": "n"},
+     "CONFLICTING — n"),
+    # a failed call, or something that is not the verify shape
+    ({}, ""),
+    (None, ""),
+    ("not json", ""),
+    ({"output": {"content": {"candidates": [{"verdict": 7}], "notes": None}}}, "7"),
+])
+def test_verification_summary_reads_the_verdict_and_notes(payload, expected):
+    from stages.research_scout.workflow import verification_summary
+
+    assert verification_summary(payload) == expected

@@ -35,7 +35,7 @@ def test_leftover_magi_box_becomes_bbox_only_entry():
     assert len(out) == 2
     assert out[0].text == "ONE" and out[0].bbox.get("w")
     leftover = out[1]
-    assert leftover.text == "" and leftover.bbox.get("w")   # inert for embed, live for mask
+    assert leftover.text == "" and leftover.bbox.get("w")   # no words for a reader, but its box still masks
 
 
 def test_no_magi_boxes_leaves_empty_bbox_gracefully():

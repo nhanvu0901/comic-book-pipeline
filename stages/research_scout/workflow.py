@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -13,6 +14,12 @@ from typing import Any, Callable
 import config
 
 from . import cited_sources
+from .issue_identity import micro_issue_rejection_reason
+from .micro_recency import (
+    issue_publication_year,
+    micro_release_rejection_reason,
+    recent_micro_instruction,
+)
 from . import openrouter_gate
 from . import planner as planner_module
 from .errors import ScoutUserError
@@ -94,7 +101,12 @@ def verify_output_schema() -> dict[str, Any]:
     }
 
 
-def general_output_schema() -> dict[str, Any]:
+def general_output_schema(mode: ScoutMode | str = ScoutMode.QA) -> dict[str, Any]:
+    """The fallback round's output schema. Micro adds the aftermath/context
+    fields (planner.MICRO_DETAIL_PROPS); Q&A keeps exactly the shape it had."""
+    item_props = dict(_GENERAL_ITEM_PROPS)
+    if ScoutMode(mode) is ScoutMode.MICRO:
+        item_props.update(copy.deepcopy(planner_module.MICRO_DETAIL_PROPS))
     return {
         "type": "object",
         "additionalProperties": False,
@@ -104,8 +116,8 @@ def general_output_schema() -> dict[str, Any]:
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "properties": _GENERAL_ITEM_PROPS,
-                    "required": list(_GENERAL_ITEM_PROPS),
+                    "properties": item_props,
+                    "required": list(item_props),
                 },
             },
             "notes": {"type": "string"},
@@ -180,15 +192,21 @@ class ScoutWorkflow:
                 digest=self.digest,
             )
             prompt_text, prompt_hash = prompt.text, prompt.sha256
-            schema = general_output_schema()
+            schema = general_output_schema(session.mode)
             plan_record: dict[str, Any] = {"source": "fallback"}
         else:
             # Planner path — feedback already reached the planner input above,
             # so it must NOT be folded into the prompt a second time here.
-            prompt_text = planner_module.assemble_prompt(plan, self.digest)
+            prompt_text = planner_module.assemble_prompt(
+                plan, self.digest, user_intent=session.user_intent,
+                mode=session.mode.value,
+            )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
-            schema = planner_module.compile_schema(plan)
+            schema = planner_module.compile_schema(plan, mode=session.mode.value)
             plan_record = {"source": "planner", **plan.model_dump(mode="json")}
+        if session.mode is ScoutMode.MICRO:
+            prompt_text += "\n\n" + recent_micro_instruction()
+            prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
         raw = self.client.research(
             prompt_text,
             schema,
@@ -207,16 +225,30 @@ class ScoutWorkflow:
             previous = self._candidates_by_id(session)
             kept = [previous[cid] for cid in session.kept_candidate_ids if cid in previous]
             session.kept_candidate_ids = []
+        if session.mode is ScoutMode.MICRO:
+            # A prior broad round may predate this policy. Keep its old entries
+            # from suppressing a fresh candidate with the same source binding.
+            kept = [
+                c for c in kept
+                if micro_release_rejection_reason(c, session.user_intent) is None
+            ]
         returned_sources = _research_source_urls(payload)
         candidates, validation = _validate_new_general_candidates(
             candidates,
             returned_sources,
+            mode=session.mode,
+            user_intent=session.user_intent,
             protected_fingerprints={
                 cited_sources.citation_fingerprint(citation)
                 for candidate in kept
                 if (citation := cited_sources.claim_citation(candidate)) is not None
             },
         )
+        if session.mode is ScoutMode.MICRO:
+            candidates.sort(
+                key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
+                reverse=True,
+            )
         candidates = kept + candidates
         accepted_bound_sources = {
             cited_sources.citation_fingerprint(citation)[0]
@@ -354,7 +386,7 @@ class ScoutWorkflow:
 
         for candidate_id, raw_record in searches.items():
             self.store.write_artifact(
-                session.id, f"specific/search.{_artifact_key(candidate_id)}.v1.json", raw_record
+                session.id, specific_search_artifact(candidate_id), raw_record
             )
 
         self._write_gates(session.id, ids, fresh=gates)
@@ -602,9 +634,12 @@ class ScoutWorkflow:
             exclude="\n".join(f"- {item}" for item in excluded) or "- (nothing yet)",
             digest=self.digest,
         )
+        prompt_text = prompt.text
+        if mode is ScoutMode.MICRO:
+            prompt_text += "\n\n" + recent_micro_instruction()
         try:
             raw = self.client.research(
-                prompt.text,
+                prompt_text,
                 # The model labels each candidate with the angle it worked, so the
                 # chat can show an angle chip without guessing from list position.
                 _schema({**props, "angle": {"type": "string"}}),
@@ -629,12 +664,27 @@ class ScoutWorkflow:
                 continue
             if is_burned(text, burn_digest):
                 continue
+            if mode is ScoutMode.MICRO:
+                if micro_release_rejection_reason(candidate) is not None:
+                    continue
+                if not all(str(candidate.get(key, "")).strip() for key in (
+                    "turning_point", "what_visibly_happens", "why_it_lands"
+                )):
+                    continue
+                urls = candidate.get("evidence_urls")
+                if not isinstance(urls, list) or not any(str(url).strip() for url in urls):
+                    continue
             seen.add(text.casefold())
             labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
             picked.append({**candidate, field: text, "angle": labelled})
-            if len(picked) >= count:
+            if mode is ScoutMode.QA and len(picked) >= count:
                 break
-        return picked or fallback
+        if mode is ScoutMode.MICRO:
+            picked.sort(
+                key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
+                reverse=True,
+            )
+        return picked[:count] or fallback
 
     def next_angle(self, mode: ScoutMode) -> str:
         """Public entry point for the Tier B empty-intent fallback (ui/bridge.py):
@@ -791,47 +841,49 @@ class ScoutWorkflow:
             effort=config.YOUCOM_VERIFY_EFFORT,
         )
         raw_search_payload = _raw_payload(raw)
-        # Sequentially, inside this one worker: verify_selected already runs the
-        # candidates in parallel and a pool nested here would multiply out.
-        # BƯỚC 1: Tải văn bản qua Jina Reader (Tạm thời bỏ qua / skipped for now)
-        # fetched = cited_sources.fetch_cited_sources(candidate)
-        # Thay vào đó, trích xuất trực tiếp các sources và snippets đã được You.com crawl về
-        fetched = cited_sources.extract_sources_from_payload(raw_search_payload, candidate)
-        # BƯỚC 2: So khớp câu trích dẫn cơ học (Tạm thời bỏ qua / skipped for now)
-        # bound = cited_sources.claim_citation(candidate)
-        # if "claim_citation" in candidate:
-        #     if bound is None:
-        #         return (
-        #             EvidenceGate(
-        #                 verdict="inconclusive",
-        #                 reason="claim_citation is missing or malformed",
-        #             ),
-        #             _raw_record(raw),
-        #             "",
-        #         )
-        #     bound_source = next(
-        #         (source for source in fetched if cited_sources.canonical_url(source.url)
-        #          == cited_sources.canonical_url(bound.url)),
-        #         None,
-        #     )
-        #     if bound_source is None or not bound_source.ok:
-        #         return (
-        #             EvidenceGate(
-        #                 verdict="inconclusive",
-        #                 reason="bound citation could not be retrieved",
-        #             ),
-        #             _raw_record(raw),
-        #             "",
-        #         )
-        #     if not cited_sources.quote_matches_source(bound, bound_source):
-        #         return (
-        #             EvidenceGate(
-        #                 verdict="inconclusive",
-        #                 reason="bound quote does not occur in retrieved source text",
-        #             ),
-        #             _raw_record(raw),
-        #             "",
-        #         )
+        # Verification runs in parallel across candidates, so fetch this one's
+        # citations sequentially. A You.com snippet is a safe fallback only when
+        # it comes from the same URL and actually contains the bound quote.
+        fetched = cited_sources.fetch_cited_sources(candidate)
+        bound = cited_sources.claim_citation(candidate)
+        if "claim_citation" in candidate:
+            if bound is None:
+                return (
+                    EvidenceGate(verdict="inconclusive", reason="claim_citation is missing or malformed"),
+                    _raw_record(raw),
+                    "",
+                )
+            bound_index = next(
+                (index for index, source in enumerate(fetched)
+                 if cited_sources.canonical_url(source.url)
+                 == cited_sources.canonical_url(bound.url)),
+                None,
+            )
+            bound_source = fetched[bound_index] if bound_index is not None else None
+            if bound_source is None or not cited_sources.quote_matches_source(bound, bound_source):
+                from_research = next(
+                    (source for source in cited_sources.extract_sources_from_payload(raw_search_payload)
+                     if cited_sources.quote_matches_source(bound, source)),
+                    None,
+                )
+                if from_research is not None and bound_index is not None:
+                    fetched[bound_index] = from_research
+                    bound_source = from_research
+            if bound_source is None or not bound_source.ok:
+                return (
+                    EvidenceGate(verdict="inconclusive", reason="bound citation could not be retrieved"),
+                    _raw_record(raw),
+                    "",
+                )
+            if not cited_sources.quote_matches_source(bound, bound_source):
+                return (
+                    EvidenceGate(
+                        verdict="inconclusive",
+                        reason="bound quote does not occur in retrieved source text",
+                    ),
+                    _raw_record(raw),
+                    "",
+                )
         prompt = bundle.render(
             "evidence_gate",
             user_intent=intent,
@@ -887,6 +939,55 @@ def _artifact_key(candidate_id: str) -> str:
     """A candidate id is model-supplied text, so keep it to characters that are
     safe in a filename before it becomes one."""
     return _UNSAFE_ARTIFACT_CHARS.sub("_", candidate_id) or "candidate"
+
+
+def specific_search_artifact(candidate_id: str) -> str:
+    """Where ``verify_selected`` keeps one candidate's verification round.
+
+    Named once, here, so the project factory reads the file this writes rather
+    than re-deriving the name."""
+    return f"specific/search.{_artifact_key(candidate_id)}.v1.json"
+
+
+def verification_summary(payload: Any) -> str:
+    """A stored verification round as one line: its verdict, then its notes.
+
+    The verdict is the first item that holds one (the round is asked to verify
+    ONE candidate); the notes sit beside the item list. "" when the call
+    returned neither — a failed request, or a payload that is not the verify
+    shape — so a caller can leave the field out instead of writing a blank."""
+    result = _verify_result(payload)
+    items = result.get("candidates")
+    verdict = next(
+        (
+            text
+            for item in (items if isinstance(items, list) else [])
+            if isinstance(item, Mapping) and (text := str(item.get("verdict") or "").strip())
+        ),
+        "",
+    )
+    notes = str(result.get("notes") or "").strip()
+    return " — ".join(part for part in (verdict, notes) if part)
+
+
+def _verify_result(payload: Any) -> Mapping[str, Any]:
+    """The {candidates, notes} object of a verification round, wherever the API
+    nested it (output.content, or a JSON string) — the same walk as
+    _extract_candidates, but it keeps the notes that sit beside the items."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return {}
+    if not isinstance(payload, Mapping):
+        return {}
+    if "candidates" in payload or "notes" in payload:
+        return payload
+    for key in ("output", "content"):
+        found = _verify_result(payload.get(key))
+        if found:
+            return found
+    return {}
 
 
 def _raw_payload(raw: Any) -> Any:
@@ -967,14 +1068,16 @@ def _validate_new_general_candidates(
     candidates: Sequence[dict[str, Any]],
     returned_sources: set[str],
     *,
+    mode: ScoutMode,
+    user_intent: str,
     protected_fingerprints: set[tuple[str, str]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Screen only a freshly produced general batch before it reaches review.
 
     The strict API schema is a request, not a trust boundary. This makes a
-    missing/invented binding visible in a durable artifact and rejects only
-    exact canonical-source+quote duplicates; different quotes from one real
-    page remain legitimate support for different candidates.
+    missing/invented binding visible in a durable artifact. Exact micro issue
+    requests also reject another series or issue, even when that other result
+    has a valid citation. Different quotes from one real page remain distinct.
     """
 
     accepted: list[dict[str, Any]] = []
@@ -990,6 +1093,15 @@ def _validate_new_general_candidates(
         if not fingerprint[0] or fingerprint[0] not in returned_sources:
             rejected.append({"candidate_id": candidate_id, "reason": "claim_citation_url_not_returned"})
             continue
+        if mode is ScoutMode.MICRO:
+            issue_reason = micro_issue_rejection_reason(user_intent, candidate)
+            if issue_reason is not None:
+                rejected.append({"candidate_id": candidate_id, "reason": issue_reason})
+                continue
+            release_reason = micro_release_rejection_reason(candidate, user_intent)
+            if release_reason is not None:
+                rejected.append({"candidate_id": candidate_id, "reason": release_reason})
+                continue
         if fingerprint in seen:
             rejected.append({"candidate_id": candidate_id, "reason": "duplicate_claim_citation"})
             continue

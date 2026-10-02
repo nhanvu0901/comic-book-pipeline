@@ -14,8 +14,6 @@ from config import (COLD_VIEWER_CRITIC, CREATIVE_LLM_MODELS, ENABLE_LOGIC_CRITIC
 from .modes import MODES_BY_KEY
 from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
-from .._embedding import semantic_sim as _semantic_sim
-from .._panel_index import panel_embed_text as _panel_embed_text
 from .story_architect import render_story_map_block, _tokens
 from .beat_split import _verbatim_ok, split_hook_fragments
 
@@ -37,9 +35,8 @@ from .beat_split import _verbatim_ok, split_hook_fragments
 # where OUR viewers dropped off; the competitor data says the ceiling was never the
 # duration, it was the subject + register. Aim at what actually wins.
 #
-# The teaser intro is now a SHORT question echoing the title (~4-9 words, see
-# _INTRO_*_WORDS), so at 3.4 wps: body 191-206 + 4-9 intro = 195-215 final words
-# → ~57-63s. ((191+4)/3.4 ≈ 57s floor, (206+9)/3.4 ≈ 63s ceiling.)
+# The teaser is a short sourced event, setup, or direct question (4-14 words,
+# see _INTRO_*_WORDS). It is added to the body budget, so keep it brief.
 #
 # SINGLE SOURCE OF TRUTH for the word budget. Previously three places disagreed
 # (system prompt said 175-195, this user-message budget said 175-260, and the
@@ -126,20 +123,14 @@ _FINALE_MAX_WORDS = 38   # headroom for the LAST TWO story lines only (rule 8.68
 _TARGET_SENT_LEN = 24    # competitor median (was 14, channel-punchy); median soft-validator
 _PUNCH_MAX_WORDS = 14    # a "punch" sentence: lands one beat hard
 _MIN_PUNCH_SCENES = 1    # keep ONE short line for rhythm; the register is otherwise long
-_HOOK_MIN_WORDS = 8     # BODY cold-open hook (rule 1). LOWERED 14→8: in the mimicked
-                        # shape the teaser question carries the hook, so body scene 1 is
-                        # just the first ordinary story line and needs no length floor.
+_HOOK_MIN_WORDS = 8     # BODY first story line follows the separate spoken teaser.
 _HOOK_MAX_WORDS = 26
 
-# TEASER intro band (the line spoken over the cover, generate_intro → parsed["hook"]).
-# HARD-MIMIC (2026-07-27): every measured competitor hit opens on a SHORT QUESTION that
-# simply echoes the title — "Who is Silver Surfer 2099?" (5w), "Who is Spider-Man 3099?"
-# (5w), "How powerful is Cyclops 2099?" (5w), "How did Absolute Superman become
-# unstoppable?" (7w). No pivot, no foreshadow-promise, no stakes sentence: the curiosity
-# gap lives in the SUBJECT (a famous character in an unfamiliar continuity), so the hook
-# only has to name it. Band is therefore 4-9, not the old 10-20 two-sentence teaser.
+# TEASER intro band (spoken over the cover, generate_intro → parsed["hook"]). The local
+# reference transcripts use different openings: a concrete event, an "After" setup,
+# or a specific question. Permit those shapes without adding a long preamble.
 _INTRO_MIN_WORDS = 4
-_INTRO_MAX_WORDS = 9
+_INTRO_MAX_WORDS = 14
 
 _YOU_QUOTA = 2          # rule 4: "you" family appears at most twice (hook + final line), 0 in body
 _BEAT_COMMENT_CAP = 2   # rule 5: at most two deadpan narrator asides, or they lose impact
@@ -352,38 +343,32 @@ def _reveal_only_names(body_scenes: list[dict]) -> set[str]:
     return {n for n in (late_names - setup_names) if n not in _CAP_STOP}
 
 
-_INTRO_SYSTEM = """You are HookWriter. You produce ONE very short opening QUESTION for a YouTube Short about a comic. It is the first thing the viewer hears.
+_INTRO_SYSTEM = """You are HookWriter. Write the FIRST spoken sentence of a comic recap Short. The viewer should understand the subject and want to hear the next event.
 
-THE SHAPE IS FIXED — DO NOT INVENT A DIFFERENT ONE. Every measured hit of the format this channel is now mimicking (883k / 710k / 580k / 561k / 503k / 469k views) opens on a bare question that simply NAMES THE SUBJECT:
-  ✓ "Who is Silver Surfer 2099?"          (5 words)
-  ✓ "Who is Spider-Man 3099?"             (4 words)
-  ✓ "Who is Deadpool 2099?"               (4 words)
-  ✓ "How powerful is Cyclops 2099?"       (5 words)
-  ✓ "How did Absolute Superman become unstoppable?"  (7 words)
+Build three candidates silently from the supplied PREMISE / PLOT, then return the strongest one. Choose the form that fits the story:
+  - A concrete, odd ACTION or OUTCOME: "Batman and Harley Quinn sleep together."
+  - A sourced setup with a next step: "After kids hire Deadpool to kill Santa, he asks them why."
+  - A direct question about a SPECIFIC event or contradiction, when a question genuinely fits.
+  - "Who is <subject>?" only when discovering that identity/version IS the story's point.
 
-WHY IT IS THIS BARE: the curiosity gap lives in the SUBJECT, not in the sentence. A famous character standing in an unfamiliar continuity is already the hook — the line only has to say the name out loud. Any extra clause dilutes it.
+Those are examples of spoken SHAPES, not facts to transplant into another comic. Do not copy their events or names unless they are in the supplied plot. Among the candidates, prefer the one that makes a concrete promise the next story line can advance. It may start with the consequence or with the setup; do not force a reveal before the story earns it.
 
-CHOOSE ONE OF THREE FORMS:
-  1. "Who is <SUBJECT>?"                       — default. Use unless one below clearly fits better.
-  2. "How powerful is <SUBJECT>?"              — when the story is mainly a power showcase.
-  3. "How did <SUBJECT> become <ADJECTIVE>?"   — when the story is mainly an origin/transformation.
-     e.g. "How did Absolute Superman become unstoppable?"
+Judge the opening as a chain, not this sentence alone: this hook must match the
+specific person-and-event promise of the title/premise, the first body line must
+add a different sourced cause/action/obstacle/mechanism, and the next body line
+must move toward the result. A generic hook that fits many comics fails even if
+it is short. Keep the reveal order supported by the plot.
 
 HARD RULES:
-  - 4-9 words. ONE sentence. Ends with "?".
-  - <SUBJECT> = the character's name AS THE VIDEO WILL CALL THEM, including the
-    continuity tag when they have one ("Silver Surfer 2099", "Spider-Man 3099",
-    "Absolute Superman", "Gambit 2099"). If the character has no tag, just the name.
-  - NO second sentence. NO stakes promise. NO "until" pivot. NO adjectives stacked on
-    the character. NO comma clauses. If your line has a comma, it is wrong.
-  - NEVER name the issue or series ("in X-Men 2099 #3") — the mimicked format never does.
-  - No meta talk ("in this video", "today", "let's see"). No spoilers of the ending.
-  - CONCEALED IDENTITY: if the protagonist's TRUE name is itself the twist, use the
-    BELIEVED identity here, never the real one.
-  - BE TRUE TO THE PLOT — the adjective in form 3 must be something the story actually
-    supports ("unstoppable", "immortal", "broken", "tragic", "relentless"), never invented.
+  - 4-14 words, one natural spoken sentence, no second sentence.
+  - Use the character's name as the video will call them, including a continuity tag when needed. A viewer with no comic knowledge must understand the line on first listen.
+  - EVERY fact, action, number, relationship, and outcome must appear in the supplied plot. Do not infer motives or add stakes. If the plot is thin, choose a narrower question.
+  - Make the hook and next beat fit together: the hook promises the scene; the next sentence must add a NEW sourced event or detail, not repeat this sentence in longer words.
+  - Do not spoil a withheld identity or final reversal. Use the believed identity until the story reveals the true one.
+  - No vague hype ("insane", "unbelievable", "darkest"), meta talk, comic issue title, fake urgency, or generic "everything changed" wording.
+  - Prefer plain verbs and everyday words. Say it out loud before returning it.
 
-Return ONLY JSON, no markdown: {"archetype": "interrogative", "intro_line": "..."}"""
+Return ONLY JSON, no markdown: {"archetype": "<one allowed archetype>", "intro_line": "..."}"""
 
 
 def _fallback_hero(comic_context: dict) -> str:
@@ -474,7 +459,7 @@ def generate_intro(
 ) -> dict:
     """Dedicated pre-write LLM call: classify story type + craft the teaser intro
     line shown over the cover. Returns {"story_type", "intro_line"}; falls back to
-    a deterministic "Ever wonder...?" line if the LLM output is unusable.
+    a fact-safe subject question if the LLM output is unusable.
 
     `avoid_text` = the first body narration line; when given, the prompt forbids
     restating it AND the validator rejects an intro that overlaps it too much (so
@@ -521,10 +506,8 @@ def generate_intro(
         except Exception:
             return False
         # Guarantee benchmark pass: must classify into an allowed hook archetype.
-        # _classify_hook reads only the first 12 words, so the optional rule-1 promise
-        # sentence riding in intro_line never changes the archetype. Word band comes from
-        # the named _INTRO_MIN/MAX_WORDS constants (was a hard-coded 7-18) so the teaser
-        # budget has a single source of truth.
+        # _classify_hook reads the first 12 words. The teaser band is separate
+        # from the body scene budget and accepts several spoken opening shapes.
         if not (_INTRO_MIN_WORDS <= len(line.split()) <= _INTRO_MAX_WORDS
                 and _classify_hook(line) in _ALLOWED_HOOK_ARCHETYPES):
             return False
@@ -552,9 +535,9 @@ def generate_intro(
     except Exception as exc:
         # Deterministic fallback so the pipeline never blocks on the intro.
         hero = _fallback_hero(comic_context)
-        fallback = f"When {hero} woke up, the whole world had already turned against him."
+        fallback = f"What happened to {hero}?"
         log(f"[stage4] intro LLM failed ({type(exc).__name__}); using fallback: {fallback!r}")
-        return {"story_type": "temporal-when", "intro_line": fallback}
+        return {"story_type": "interrogative", "intro_line": fallback}
 
 
 _OUTRO_SYSTEM = """You are OutroWriter. You write the LAST line of a YouTube Short about a comic character — the final sentence the viewer hears before the video ends.
@@ -898,6 +881,7 @@ def write_script(
     log("[stage4] phase C — writing scenes…")
     parsed, write_model = write_scenes(beats, glossary, comic_context, story_pages, mode,
                                        hook_hint=hook_hint, all_pages=all_pages,
+                                       opening_teaser=(intro.get("intro_line") or ""),
                                        model=model, progress=progress, debug_dump=dump,
                                        story_map=story_map, direction=direction,
                                        clarity_fixes=clarity_fixes)
@@ -1079,13 +1063,13 @@ def write_script(
                                direction=direction)
         intro_line = (intro.get("intro_line") or "").strip()
         if _intro_bad(intro_line):
-            # last-resort: the format's default bare question. If the fallback hero name
+            # Last resort: a fact-safe subject question. If the fallback hero name
             # IS the concealed identity (shares a name with reveal_only), naming it would
             # spoil the twist — use a name-free variant instead.
             hero = _fallback_hero(comic_context)
             hero_is_spoiler = any(n.lower() in hero.lower() for n in reveal_only)
-            intro_line = ("Who is the man behind the mask?"
-                          if hero_is_spoiler else f"Who is {hero}?")
+            intro_line = ("Who is this character?"
+                          if hero_is_spoiler else f"What happened to {hero}?")
             intro["intro_line"] = intro_line
             log(f"[stage4]   ⚠ still bad; using fallback question hook: {intro_line!r}")
         else:
@@ -1685,7 +1669,7 @@ def outline_beats(
     # Canonical (wiki/causal) order — NOT page order. The outliner emits beats in
     # story order; we only force COLD_OPEN first + LANDING last. Page is no longer
     # the ordering authority (the comic's layout ≠ story order broke the timeline);
-    # each scene's panel is chosen by content grounding instead.
+    # each scene's panel is picked downstream (Review Beats / Stage 5) instead.
     beats = _order_beats_canonical(beats)
 
     # Page-COVERAGE validation — retry once with bridge instruction if a large page
@@ -1720,126 +1704,15 @@ def outline_beats(
     # a LANDING beat for it so the finale actually lands. Then re-apply bookends.
     beats = _ensure_ending_coverage(beats, comic_context, story_pages, log)
     beats = _order_beats_canonical(beats)
-
-    # Visual grounding: replace the outliner's UNRELIABLE panel-index guess with a
-    # content-matched pick (beat summary ↔ panel descriptions). Sets key_panels
-    # (the VISUAL anchor); does NOT change narration order.
-    beats = _ground_beat_panels(beats, story_pages, progress)
     return beats, mdl_used
-
-
-def _ground_beat_panels(
-    beats: list[Beat],
-    story_pages: list[dict],
-    progress: Callable[[str], None] | None = None,
-) -> list[Beat]:
-    """Pick each beat's key_panel by CONTENT, not the outliner's guess.
-
-    The outliner emits key_panels by guessing panel indices from text — unreliable,
-    so Stage 5 ends up honoring a panel that doesn't depict the beat. Here we pick,
-    among the panels on the beat's own page_refs, the one whose VLM description best
-    matches the beat SUMMARY (a rich, stable sentence — unlike the now-punchy
-    narration). The chosen (page, panel) overwrites key_panels, so `_beat_anchor`
-    and the scene's page_ref/panel_ref become content-grounded and Stage 5's
-    relevance + cross-check lock onto the right panel. Deterministic (embedding),
-    no LLM. Beats whose pages have no usable panel/description keep their anchor.
-
-    STAGE3_NO_EMBED=1 (--no-embed, narration-only test mode) skips this pass
-    entirely: beats keep whatever key_panel the outliner already guessed (or none),
-    no network embed call is made."""
-    log = progress or (lambda _msg: None)
-    from config import stage3_no_embed
-    if stage3_no_embed():
-        log("[stage3] embed skipped (--no-embed): beat-panel grounding "
-            "(keeping outline page hints, no vector re-grounding)")
-        return beats
-    panels_by_page: dict[int, list[dict]] = {}
-    area_by_page: dict[int, int] = {}
-    text_blocks_by_page: dict[int, list[dict]] = {}
-    for p in story_pages or []:
-        pn = int(p.get("page_number", 0) or 0)
-        if pn:
-            panels_by_page[pn] = p.get("panels") or []
-            dims = p.get("image_dimensions") or {}
-            area_by_page[pn] = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
-            text_blocks_by_page[pn] = p.get("text_blocks") or []
-
-    def _is_big_shot(pg, idx) -> bool:
-        pans = panels_by_page.get(pg) or []
-        if not (isinstance(idx, int) and 0 <= idx < len(pans)):
-            return False
-        a = area_by_page.get(pg, 0)
-        return a > 0 and _panel_area_frac(pans[idx], a) >= _BIG_SHOT_FRAC
-
-    # KEEP the outliner's ★BIG-SHOT key_panel when it cited one on the beat's OWN
-    # page_refs (outliner rule :670-675 deliberately points a money-shot beat at its
-    # splash). Re-grounding by description-sim must NOT demote that splash to a small
-    # text-match panel — the recurring "money shot lost" bug (Hulkbuster, transform).
-    # Each big-shot panel is kept for at most ONE beat; everything else re-grounds.
-    kept_keys: set = set()
-    regrounded = 0
-    for beat in beats:
-        kp0 = beat.key_panels[0] if beat.key_panels else None
-        if kp0:
-            kpg, kidx = kp0.get("page"), kp0.get("panel")
-            if (kpg in (beat.page_refs or []) and _is_big_shot(kpg, kidx)
-                    and (kpg, kidx) not in kept_keys):
-                kept_keys.add((kpg, kidx))
-                continue  # keep the outliner's money-shot panel; skip re-grounding
-        summary = (beat.summary or "").strip()
-        if not summary:
-            continue
-        active = {c.split()[0].lower() for c in (beat.characters_active or []) if c}
-        # Search the beat's own pages PLUS one page either side of that range — the
-        # outliner's page_refs are sometimes off by a page, so the true depicting
-        # panel can sit just outside (fixes V4). A small per-page distance penalty
-        # keeps a locality prior: an out-of-range panel must clearly out-match the
-        # in-range ones to win.
-        ref_set = {int(p) for p in (beat.page_refs or []) if int(p) in panels_by_page}
-        if ref_set:
-            lo, hi = min(ref_set), max(ref_set)
-            search_pages = [p for p in range(lo - 1, hi + 2) if p in panels_by_page]
-        else:
-            search_pages = []
-        best: tuple[float, int, int] | None = None  # (score, page, panel_index)
-        for pg in search_pages:
-            dist_penalty = 0.0 if pg in ref_set else 0.04
-            page_tb = text_blocks_by_page.get(pg)
-            for idx, panel in enumerate(panels_by_page.get(pg, [])):
-                # Ground against the SAME rich signal Stage 5 matches on (description +
-                # characters + dominant_emotion + OCR dialog), not description alone —
-                # a panel's dialog often names the exact story moment (an unmasking
-                # line, a reveal) that the visual description misses, so grounding on
-                # description-only can disagree with Stage 5's later panel pick.
-                ptext = _panel_embed_text(panel, page_tb)
-                if not ptext:
-                    continue
-                score = _semantic_sim(summary, ptext) - dist_penalty
-                # small nudge: a panel showing the beat's active characters
-                pchars = {str(c).split()[0].lower() for c in (panel.get("characters") or []) if c}
-                if active and (active & pchars):
-                    score += 0.05 * len(active & pchars)
-                if best is None or score > best[0]:
-                    best = (score, int(pg), idx)
-        if best is not None:
-            prev = beat.key_panels[0] if beat.key_panels else None
-            beat.key_panels = [{"page": best[1], "panel": best[2]}]
-            if not prev or prev.get("page") != best[1] or prev.get("panel") != best[2]:
-                regrounded += 1
-    if regrounded:
-        log(f"[stage4]   grounded {regrounded} beat panel(s) by description match")
-    return beats
 
 
 def _beat_anchor(beat: Beat) -> tuple[int, int]:
     """The deterministic (page_ref, panel_ref) a beat maps to.
 
-    Choice B (unified panel matching, 2026-06-17), revised 2026-07-02 (C2): the
-    panel `_ground_beat_panels` content-matched now travels as a SOFT anchor —
-    Stage 5's `_match_panels` gives it a bonus in the cosine matrix but the
-    Hungarian/greedy assignment (plus VLM rerank) can still override it when the
-    embedding strongly disagrees. Beats without a grounded key_panel keep -1
-    ("whole page"; Stage 5 picks freely).
+    A beat's first key_panel (the outliner's pick) is its anchor. A beat without one
+    keeps its lowest page_ref with panel_ref -1 ("whole page"; the panel is picked
+    later, in Review Beats / Stage 5).
     """
     if beat.key_panels:
         kp = beat.key_panels[0]
@@ -1857,76 +1730,22 @@ def _order_beats_canonical(beats: list[Beat]) -> list[Beat]:
     reading order". That is false when the comic's layout ≠ story order (Venom: the
     LANDING splash sits on page 30 but the CLIMAX kill is on page 31 → page-sort put
     the landing BEFORE the kill). Page-sorting kept re-breaking the timeline. Now
-    that each scene's panel is chosen by CONTENT grounding (`_ground_beat_panels` +
-    Stage 5), narration no longer has to be page-monotonic — so we keep the
-    outliner's emitted order (it is told to emit beats in wiki causal order) and
-    only enforce the two structural invariants that actually matter:
+    that each scene's panel is picked downstream (Review Beats / Stage 5) instead of
+    being implied by page order, narration no longer has to be page-monotonic — so we
+    keep the outliner's emitted order (it is told to emit beats in wiki causal order)
+    and only enforce the two structural invariants that actually matter:
 
       - all COLD_OPEN beat(s) first (in their emitted order),
       - all LANDING beat(s) last (in their emitted order),
       - everything else keeps the outliner's order.
 
-    This fixes LANDING-before-CLIMAX without risking a mid-story reorder. Stage 5's
-    forward-only walk is relaxed to a soft backward penalty (it trusts grounding)."""
+    This fixes LANDING-before-CLIMAX without risking a mid-story reorder."""
     def fn(b: Beat) -> str:
         return (b.function or "").upper().strip()
     cold = [b for b in beats if fn(b) == "COLD_OPEN"]
     land = [b for b in beats if fn(b) == "LANDING"]
     mid = [b for b in beats if fn(b) not in ("COLD_OPEN", "LANDING")]
     return cold + mid + land
-
-
-def _content_align_scenes(
-    scene_texts: list[str],
-    beats: list[Beat],
-    *,
-    log: Callable[[str], None] = lambda _m: None,
-) -> list[int] | None:
-    """Map each scene (by index, IN SCENE ORDER) to its best-CONTENT beat via a 1:1
-    assignment on embedding cosine + a soft positional prior. Returns f where f[i] is
-    the beat index for scene i, or None → caller keeps the old positional mapping.
-
-    This replaces PURE-POSITIONAL scene[i]→beat[i] (which drifts when the writer's
-    scene order slips from beat order — e.g. it opens with a framing line that isn't
-    beat 0, shifting every later page_ref onto a LATER event). Measured: 18/18 scenes
-    off by one on wolverine-debt-of-death; content-align recovers all 18 (sim .74–.93).
-
-    Why this is safe where the OLD beat_id/semantic re-pairing was fragile (see the
-    caller's note): the output keeps SCENE order — only page_ref changes, the text/audio
-    order is untouched — so an early line can never be narrated late. Each scene takes
-    its best beat INDEPENDENTLY (no 1:1 constraint) so two near-duplicate scenes can both
-    point at the same beat (a bijection would have to exile one to a far, wrong beat); the
-    soft positional prior keeps a pick near the diagonal so only a clear cosine win pulls
-    it far. STAGE3_NO_EMBED or a weak/failed embed falls back to positional (degrade soft,
-    never crash offline)."""
-    from config import stage3_no_embed
-    n, m = len(scene_texts), len(beats)
-    if n == 0 or m == 0 or stage3_no_embed():
-        return None
-    try:
-        import numpy as np
-        from .._embedding import embed_batch
-        sv = np.asarray(embed_batch(scene_texts), dtype="float64")
-        bv = np.asarray(embed_batch([f"{b.name or ''}. {b.summary or ''}" for b in beats]),
-                        dtype="float64")
-    except Exception as e:                       # embed server down, etc.
-        log(f"[stage4]   content-align unavailable ({e}) — positional fallback")
-        return None
-    if sv.shape[0] != n or bv.shape[0] != m or not sv.any() or not bv.any():
-        return None
-    sv /= (np.linalg.norm(sv, axis=1, keepdims=True) + 1e-9)
-    bv /= (np.linalg.norm(bv, axis=1, keepdims=True) + 1e-9)
-    cos = sv @ bv.T                              # (n, m) cosine
-    w = float(os.getenv("ANCHOR_ALIGN_POS_WEIGHT", "0.35"))
-    ii = (np.arange(n) / max(1, n - 1))[:, None]
-    jj = (np.arange(m) / max(1, m - 1))[None, :]
-    score = cos - w * np.abs(ii - jj)            # soft diagonal prior
-    f = [int(np.argmax(score[i])) for i in range(n)]
-    mean_cos = float(np.mean([cos[i, f[i]] for i in range(n)]))
-    if mean_cos < float(os.getenv("ANCHOR_ALIGN_MIN_COS", "0.30")):
-        log(f"[stage4]   content-align low confidence (mean cos {mean_cos:.2f}) — positional fallback")
-        return None
-    return f
 
 
 def _anchor_scenes_to_beats(
@@ -1945,9 +1764,9 @@ def _anchor_scenes_to_beats(
     "both-ends aligned, middle surplus dropped" and shipped 3, which read as the writer
     ignoring the new prompt when it had actually complied.
 
-    With scenes_per_beat > 1 the content-align pass is skipped on purpose: the pairing is
-    known by construction (the writer emits an item's two scenes adjacently, in item order),
-    so guessing it from content could only split a pair across two different beats.
+    With scenes_per_beat > 1 the pairing is known by construction (the writer emits an
+    item's two scenes adjacently, in item order), so the scenes are chunked by position,
+    `scenes_per_beat` to a beat.
 
     With scenes_per_beat == 1, scene[i] narrates beat[i] so that:
 
@@ -1973,50 +1792,12 @@ def _anchor_scenes_to_beats(
 
     pool = [s for s in body if str(s.get("text", "")).strip()]
 
-    # CONTENT-ALIGN (primary): map each scene to its best-content beat so a writer
-    # whose scene order slips from beat order (a framing opener, a merged beat) still
-    # gets the RIGHT page_ref instead of a later event's. Iterates SCENES (text/audio
-    # order preserved — only page_ref moves), so the "narrate an early line late"
-    # fragility of the old semantic re-pairing cannot recur. None → positional below.
-    f = (None if scenes_per_beat > 1 else
-         _content_align_scenes([str(s.get("text", "")).strip() for s in pool], beats, log=log))
-    if f is not None:
-        anchored = []
-        used_beats: set[int] = set()
-        for i, src in enumerate(pool):
-            beat = beats[f[i]]
-            page, panel = _beat_anchor(beat)
-            anchored.append({
-                "text": str(src.get("text", "")).strip(),
-                "page_ref": page,
-                "panel_ref": panel,
-                "connective": src.get("connective"),
-                "beat_id": beat.id,
-                "visual_beats": src.get("visual_beats") or [],
-            })
-            used_beats.add(f[i])
-        if outro_src is not None:
-            page, _ = _beat_anchor(beats[-1])
-            anchored.append({
-                "text": str(outro_src.get("text", "")).strip(),
-                "page_ref": page, "panel_ref": -1,
-                "connective": None, "beat_id": beats[-1].id,
-            })
-        gaps = [beats[j].id for j in range(len(beats)) if j not in used_beats]
-        if gaps:
-            log(f"[stage4]   ⚠ {len(gaps)} beat(s) unused by content-align: {gaps}")
-        parsed["scenes"] = anchored
-        parsed["_coverage_gaps"] = gaps
-        parsed["_anchor_pool_count"] = len(pool)
-        log(f"[stage4]   content-aligned {len(pool)} scene(s) to beats")
-        return parsed
-
-    # PURE POSITIONAL (fallback): scene[i] narrates beat[i]. The writer is required (write
-    # prompt) to emit EXACTLY one scene per beat, in beat order, so position is the
-    # reliable mapping. The older beat_id-then-positional pairing and the semantic
-    # re-pairing BOTH proved fragile — they anchored an early event (e.g. "Reed
-    # raised the sonic gun") to a late beat, narrating it at the very end after the
-    # character was already dead, or scrambled the climax. Position can't drift.
+    # POSITIONAL: scene[i] narrates beat[i]. The writer is required (write prompt) to
+    # emit EXACTLY one scene per beat, in beat order, so position is the reliable
+    # mapping. The older beat_id-then-positional pairing and the semantic re-pairing
+    # BOTH proved fragile — they anchored an early event (e.g. "Reed raised the sonic
+    # gun") to a late beat, narrating it at the very end after the character was
+    # already dead, or scrambled the climax. Position can't drift.
     #
     # Keyed by INDEX, not beat.id (2026-07-16 fix): a bridge-retry outline bug let
     # two DIFFERENT beats share the same numeric id. Keying this dict by `.id`
@@ -2122,36 +1903,6 @@ def _anchor_scenes_to_beats(
     parsed["_coverage_gaps"] = gaps
     parsed["_anchor_pool_count"] = len(pool)
     return parsed
-
-
-def reanchor_narration(narration: dict, *, progress: Callable[[str], None] | None = None) -> bool:
-    """Re-run CONTENT anchoring on an EXISTING narration dict IN PLACE: recompute each
-    BODY scene's page_ref/panel_ref from its best-content beat, rebuilding Beat objects
-    from the stored `beats`. Keeps intro/outro and every scene's text + order — so it
-    fixes a narration that drifted under the old positional anchoring WITHOUT re-narrating
-    (the TTS audio stays valid). Returns True if anything changed. No-op (returns False)
-    when embeddings are unavailable or body-scene count != beat count."""
-    log = progress or (lambda _m: None)
-    beats = [Beat(id=int(b.get("id", i)), function=str(b.get("function", "")),
-                  name=str(b.get("name", "")),
-                  page_refs=[int(x) for x in (b.get("page_refs") or [])],
-                  key_panels=b.get("key_panels") or [], summary=str(b.get("summary", "")),
-                  characters_active=b.get("characters_active") or [], cause=str(b.get("cause", "")))
-             for i, b in enumerate(narration.get("beats") or [])]
-    scenes = narration.get("scenes") or []
-    body_idx = [i for i, s in enumerate(scenes)
-                if not s.get("is_intro") and not s.get("is_outro")]
-    f = _content_align_scenes([str(scenes[i].get("text", "")).strip() for i in body_idx],
-                              beats, log=log)
-    if f is None:
-        log("[reanchor] content-align unavailable / count mismatch — no change")
-        return False
-    for k, i in enumerate(body_idx):
-        page, panel = _beat_anchor(beats[f[k]])
-        scenes[i]["page_ref"], scenes[i]["panel_ref"] = page, panel
-        scenes[i]["beat_id"] = beats[f[k]].id
-    log(f"[reanchor] re-anchored {len(body_idx)} body scene(s) by content")
-    return True
 
 
 _ENDING_STOP = {
@@ -2478,44 +2229,38 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      into a short grounded cause clause, or cut it. Never narrate an off-panel detail
      as if the viewer can see it on the current panel.
 
-1) SCENE 1 — DROP THE VIEWER INTO A BIZARRE, CONCRETE SITUATION (no pivot, no tease)
+1) SCENE 1 — CONTINUE THE SPOKEN TEASER WITH THE FIRST SOURCED STORY BEAT
 
-   A short question is spoken over the cover BEFORE your scene 1 ("Who is <SUBJECT>?").
-   That question is the hook and it is written for you — do NOT write another one, and
-   do NOT write a "thought/believed ... until ..." pivot. Your scene 1 is the first
-   STORY line: it drops the viewer straight into the strangest concrete situation the
-   story opens on, stated as fact.
+   A short sentence is spoken over the cover BEFORE your scene 1. It may be an event,
+   a specific question, or an "After ..." setup. You will receive its exact wording.
+   Scene 1 must add a NEW sourced action or detail that makes the teaser worth hearing.
+   Do not answer it with a second hook, rephrase its claim, or restart the story with
+   background the viewer does not need yet. State the first beat as fact.
 
-   Verbatim scene-1 lines from the format being mimicked (measured hits):
-     ✓ "Wade had been chained to a recliner for decades, forced to watch C-SPAN on loop
-        by a woman in a Deadpool suit riding a robotic dragon across New York." (710k)
-     ✓ "Jonah Marlowe was on his deathbed when Mephisto came to him with an offer,
-        immortality and a combination of the power cosmic and hellfire in exchange for
-        his service as Mephisto's herald." (580k)
-     ✓ "Marius Cole was born with one of the most dangerous mutant powers imaginable." (561k)
-     ✓ "After the Masters of Evil killed the Avengers as a statement of dominance,
-        only one survived, Moon Knight." (503k)
+   In the reference transcripts, this beat can start with a strange predicament,
+   an offer with a clear cost, or the aftermath of a fight. Choose the source-backed
+   detail that moves THIS comic forward; do not copy a reference video's wording.
 
-   WHAT THEY HAVE IN COMMON — copy this:
-   - The character's REAL NAME up front (Wade, Jonah Marlowe, Marius Cole) when the
-     story has one. Plain declarative. No question, no "...", no open thread.
+   WHAT THE STRONG OPENINGS HAVE IN COMMON:
+   - Name the actor or use a clear pronoun when the teaser just named them. Plain
+     declarative. No question, no "...", no second tease.
    - A situation strange enough that the viewer needs the next sentence to make sense
      of it. Weirdness does the work a pivot used to do.
-   - NAME THE ODD DETAILS. "chained to a recliner", "C-SPAN on loop", "robotic dragon"
-     — specifics ARE the hook. A generic version of that line is dead on arrival.
+   - Name the odd detail actually present in the beat. A generic judgment is not
+     a substitute for the action that makes this scene unusual.
 
    BANNED in scene 1:
      ✗ "The Goblin unleashes his deadliest plan." (flat, generic, no strange detail)
-     ✗ "In an alternate universe..." (different channel's signature, don't copy)
+     ✗ "In an alternate universe..." on its own, with no person or event yet
      ✗ "Today we're looking at..." / "In today's video" / any framing meta-talk
-     ✗ any trailing "..." or unresolved-promise device — this format never uses them
+     ✗ any trailing "..." that delays the actual event
 
    ZERO PRIOR-KNOWLEDGE RULE (HARD): scene 1 must be fully parseable by a viewer who
    has NEVER read this comic. Introduce every proper noun you use, in the same breath
    ("a woman in a Deadpool suit", "Mephisto came to him with an offer"). Unexplained
    continuity references are the FLOP signature:
      ✗ "Superman became King Omega due to the sacrifice of the Time Trapper." (7.8k — lore soup)
-   The alternate-continuity tag itself ("2099", "Absolute") is fine — the cover question
+   The alternate-continuity tag itself ("2099", "Absolute") is fine — the cover teaser
    already established it.
 
    SCENE 1 = FIRST BEAT ONLY — NO PREVIEW OF LATER EVENTS. Narrate only the first
@@ -3014,19 +2759,13 @@ def _saga_clarity_block(comic_context: dict) -> str:
 
 
 def _orientation_block() -> str:
-    """Opening-orientation rule for EVERY mode: the viewer knows nothing about this
-    comic, so the narration must establish who + where + premise BEFORE the plot's
-    first event (fixes 'who is Thorlief? what story is this?')."""
+    """Give the opening only the context needed to understand its first event."""
     return (
-        "╔═══ ORIENT THE VIEWER FIRST (all modes) ═══╗\n"
-        "The viewer has NOT read this comic and knows NOTHING going in. BEFORE the\n"
-        "story's first event, the OPENING narration scene must ORIENT them in plain\n"
-        "words: WHO the main character is (name + a short who/what tag) AND the WORLD/\n"
-        "PREMISE in one clear phrase. Only AFTER that does the plot start. e.g. don't\n"
-        "open on 'When Thorlief found a body…' — first ground it: 'Thorlief is a\n"
-        "detective in the Thor Corps, a police force of Thor variants on Battleworld —\n"
-        "and when he found a body…'. Never open on a bare name or event the viewer\n"
-        "cannot place.\n"
+        "╔═══ ORIENT THE FIRST EVENT WITHOUT DELAY ═══╗\n"
+        "The viewer has NOT read this comic. Open on the sourced first event, adding\n"
+        "a short who/what tag in the SAME sentence only if the viewer needs it to\n"
+        "follow the action. Explain an unfamiliar name or world as it becomes\n"
+        "relevant; do not make the first scene a list of background facts.\n"
         "ALSO gloss the FIRST mention of any key OBJECT, POWER, or SUBSTANCE with a\n"
         "2-4 word 'what it is' tag — ESPECIALLY when its name could be mistaken for a\n"
         "famous character. e.g. in a Bane comic 'Venom' is the strength DRUG that bulks\n"
@@ -3035,10 +2774,8 @@ def _orientation_block() -> str:
         "serum, device, or power whose plain name a first-time viewer would misread.\n"
         "NAME THE HERO PLAINLY by their familiar identity, not only an in-story title:\n"
         "'Thor, the King of Asgard' — not just 'the new All-Father' (a newcomer must\n"
-        "never wonder 'who, or which version, is this?'). And EXPLAIN THE THREAT'S\n"
-        "ORIGIN up front: before the hero acts, say HOW the villain got their power or\n"
-        "how the danger began (the mechanism the source gives) — never just the result\n"
-        "('X conquered the realms' with no how).\n"
+        "never wonder 'who, or which version, is this?'). Explain the threat's\n"
+        "origin when its sourced cause is needed to understand the next action.\n"
         "╚════════════════════════════════════════════╝\n\n"
     )
 
@@ -3051,6 +2788,7 @@ def write_scenes(
     mode: str,
     *,
     hook_hint: str = "",
+    opening_teaser: str = "",
     all_pages: list[dict] | None = None,
     model: str | None = None,
     progress: Callable[[str], None] | None = None,
@@ -3086,7 +2824,7 @@ def write_scenes(
     # truth is the STORY (wiki plot + story_meaning + notable_moments + verbatim dialog),
     # NOT the VLM panel art. Feeding it panel descriptions made it "tell the pictures"
     # (describe the ART) instead of the story — the VLM tilt. Panel matching is a
-    # post-hoc job for the grounder (_ground_beat_panels), invisible to the writer.
+    # post-hoc job (Review Beats / Stage 5), invisible to the writer.
     story_sources = _story_sources_block(comic_context)
     dialog_block = _dialog_block(story_pages)
     _smap = render_story_map_block(story_map)
@@ -3099,6 +2837,9 @@ def write_scenes(
         + (f"{story_sources}\n\n" if story_sources else "")
         + (f"{lore_block}\n\n" if lore_block else "")
         + f"NARRATION MODE: {mode} — {mode_info.description}\n"
+        + (f"OPENING TEASER ALREADY SPOKEN: {opening_teaser}\n"
+           "Scene 1 must add a new sourced detail or action; do not paraphrase this teaser.\n"
+           if opening_teaser else "")
         + (f"HOOK HINT: {hook_hint}\n" if hook_hint else "")
         + "\n"
         + _orientation_block()

@@ -19,6 +19,7 @@ those falls back to a single-entry batch holding the angle itself, Tier B's
 pre-fix behavior.
 """
 import ui.bridge as bridge
+from datetime import date
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
@@ -234,18 +235,72 @@ def test_micro_mode_uses_the_micro_discover_prompt_qa_uses_the_qa_one(tmp_path):
     assert "LIST of 3 or more separate moments" in qa_client.seen_prompt
     assert "LIST of 3 or more separate moments" not in micro_client.seen_prompt
     assert "MICRO MOMENT" in micro_client.seen_prompt
+    assert "turning_point" in micro_client.seen_schema["properties"]["candidates"]["items"]["properties"]
+    assert "specific action or reveal" in micro_client.seen_prompt
+    assert str(date.today().year) in micro_client.seen_prompt
     assert "MICRO MOMENT" not in qa_client.seen_prompt
 
 
 def test_micro_returns_moments_and_gets_a_batch_too(tmp_path):
     """Micro shares the code path on purpose: five moments, not one."""
     moments = [f"Moment number {n}" for n in range(1, 6)]
-    client = _ScriptedYouCom(candidates=[{"moment": m} for m in moments])
+    client = _ScriptedYouCom(candidates=[{
+        "moment": m, "series_issue_year": f"Hero #{n} ({date.today().year})",
+        "turning_point": "Hero opens the sealed door.",
+        "what_visibly_happens": "Hero opens the sealed door and frees a prisoner.",
+        "why_it_lands": "The prisoner can now leave the room.",
+        "evidence_urls": ["https://publisher.test/hero"],
+    } for n, m in enumerate(moments, 1)])
     workflow = _workflow(tmp_path, client)
 
     batch = workflow.discover_questions(ScoutMode.MICRO)
 
     assert [entry["moment"] for entry in batch] == moments
+
+
+def test_micro_discovery_rejects_old_and_unresolved_issues_before_count(tmp_path):
+    year = date.today().year
+    def candidate(label, issue):
+        return {
+            "moment": label,
+            "series_issue_year": issue,
+            "turning_point": "Hero opens the sealed door.",
+            "what_visibly_happens": "Hero opens the sealed door and frees a prisoner.",
+            "why_it_lands": "The prisoner can now leave the room.",
+            "evidence_urls": ["https://publisher.test/hero"],
+        }
+    client = _ScriptedYouCom(candidates=[
+        candidate("Old", "Hero #1 (2014)"),
+        candidate("Unresolved", f"Hero ({year - 4}) #8"),
+        candidate("Previous", f"Hero #2 ({year - 1})"),
+        candidate("Current", f"Hero ({year - 4}) #9 ({year})"),
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, count=2)
+
+    assert [entry["moment"] for entry in batch] == ["Current", "Previous"]
+    assert [entry["moment"] for entry in _workflow(
+        tmp_path, client
+    ).discover_questions(ScoutMode.MICRO, count=1)] == ["Current"]
+
+
+def test_micro_discovery_skips_thin_unsourced_leads(tmp_path):
+    year = date.today().year
+    client = _ScriptedYouCom(candidates=[
+        {"moment": "An impressive battle", "series_issue_year": f"Hero #1 ({year})",
+         "turning_point": "", "what_visibly_happens": "Hero wins.",
+         "why_it_lands": "A big battle.", "evidence_urls": []},
+        {"moment": "Hero opens the sealed door and frees a prisoner.",
+         "series_issue_year": f"Hero #2 ({year})",
+         "turning_point": "Hero opens the sealed door.",
+         "what_visibly_happens": "Hero opens the door and the prisoner walks out.",
+         "why_it_lands": "The prisoner is no longer trapped.",
+         "evidence_urls": ["https://publisher.test/hero"]},
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO)
+
+    assert [entry["series_issue_year"] for entry in batch] == [f"Hero #2 ({year})"]
 
 
 # ─── the bridge above it ────────────────────────────────────────────────────

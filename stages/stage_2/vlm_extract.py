@@ -375,8 +375,8 @@ def extract_page(
 
 # Crops per page — must cover EVERY described panel of a normal page (same single VLM call
 # either way, just more image parts). Largest-3 sampling let a poisoned description sitting on
-# a SMALL panel skip verification entirely — it then wins Stage-3 grounding on text cosine and
-# anchor-binds the scene to a panel whose pixels show something else.
+# a SMALL panel skip verification entirely — the wrong description then reaches the Stage-3
+# writer's page block and the review tiles as if it were true.
 _VERIFY_SAMPLE_K = 8
 
 

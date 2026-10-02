@@ -5,11 +5,14 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Collection
 
 from PIL import Image, ImageFilter
 
+from utils.lexical_sim import token_jaccard
+
 from .schema import Shot
+from .._panel_index import panel_dialog, page_dialog
 
 
 OUTPUT_W = 1080
@@ -82,12 +85,6 @@ def widen_panels_to_tiers(pages_by_number: dict[int, dict]) -> dict[int, dict]:
         out[pn] = {**page, "panels": widened}
     return out
 
-# ── Semantic text↔panel alignment ───────────────────────────────────────────
-# Cosine similarity from the shared embedding backend (Azure text-embedding-3-large
-# when configured, else local mxbai-embed-large-v1). Far more reliable than lexical
-# overlap ("reverted to mortal form" vs "FIZAPPT"). One model + cache across stages.
-from .._embedding import semantic_sim as _semantic_sim  # noqa: E402
-from .._panel_index import panel_embed_text, panel_dialog, page_dialog  # noqa: E402
 
 PADDING_PCT = 0.05
 # Small (non-highlight) panels are often cropped a touch tight by the detector and
@@ -125,10 +122,6 @@ INPAINT_BUBBLE_TEXT = True
 # `shots.MIRROR_PANELS` directly.
 from config import MIRROR_PANELS  # noqa: F401  (env MIRROR_PANELS=true re-enables)
 from config import PANEL_UPSCALE, REALESRGAN_BIN, REALESRGAN_MODEL
-# Panel TEXT-embed master switch (see config.PANEL_TEXT_EMBED). OFF (default) → the render
-# assigns UNLOCKED scenes deterministically (first panel of page_ref) instead of by cosine, so
-# the whole render is independent of the embedding backend. Bound here so tests can flip it.
-from config import PANEL_TEXT_EMBED  # noqa: F401  (env PANEL_TEXT_EMBED=1 re-enables cosine match)
 # Hints (in a panel's VLM description) that the art contains story-critical
 # readable text baked into the image — a gravestone, a sign, a nameplate. Mirroring
 # such a panel reverses the letters and breaks the reveal (e.g. the 'PETER'
@@ -282,110 +275,11 @@ LOOP_TAIL_SECONDS = float(os.getenv("LOOP_TAIL_SECONDS", "1.0"))
 PANEL_FIT_MODE = os.getenv("PANEL_FIT_MODE", "contain").strip().lower()
 FILL_MAX_AREA_LOSS = float(os.getenv("FILL_MAX_AREA_LOSS", "0.60"))
 
-# ── Pure-vector matcher (2026-06-26, validated: cosine on the richer panel embed beats
-# the lexical hybrid — the embed already encodes chars/dialog/emotion, so lexical
-# double-counts and over-rewards crowded talking-head panels, starving action/climax
-# panels). _match_panels scores each (unit, panel) as:
-#     W_COS·cos(chunk,panel) + W_COS_SCENE·cos(scene,panel) + render_adjust
-# cosine comes from the Stage-2 Qdrant vectors (no re-embed) when available, else an
-# in-memory embed. A unit whose best panel's RAW cosine is below PANEL_COS_FLOOR HOLDS
-# the previous panel rather than showing a wrong one. Tune via PANEL_* env vars.
-W_COS = float(os.getenv("PANEL_W_COS", "7.0"))
-W_COS_SCENE = float(os.getenv("PANEL_W_COS_SCENE", "2.0"))
-PANEL_COS_FLOOR = float(os.getenv("PANEL_COS_FLOOR", "0.38"))
-# Order-FREE content match: each unit takes its best-content panel even if out of page
-# order (fixes narration that interleaves present + backstory, where the depicting panel
-# sits out of order). PANEL_FWD_BIAS is the AMPLITUDE of a per-unit PAGE-ANCHORED prior: a
-# Gaussian bump centred on each unit's OWN page_ref (the Stage-3 beat anchor), added to
-# content. It pulls a line toward the PAGE it is about — forward for a chronological line,
-# BACKWARD for a backstory/twist line. 0 disables (pure content).
-# PANEL_PRIOR_SIGMA_PAGES = bump spread in pages (1.0 → same page 1.0, ±1pg 0.61, ±2pg 0.14).
-PANEL_FWD_BIAS = float(os.getenv("PANEL_FWD_BIAS", "1.0"))
-PANEL_PRIOR_SIGMA_PAGES = float(os.getenv("PANEL_PRIOR_SIGMA_PAGES", "1.0"))
-# Grounded-panel anchor (C2, 2026-07-02): Stage 3's `_ground_beat_panels` already
-# content-matched a beat's SUMMARY (a richer, stable sentence) to one specific
-# panel; a unit whose scene carries that (page_ref, panel_ref) gets a bonus added
-# to its score for exactly that panel. 2.5 ≈ outweighs a cosine deficit up to
-# ~0.35 (W_COS=7) — the grounded panel wins unless the chunk-level cosine STRONGLY
-# disagrees. Still soft: Hungarian/greedy assignment and VLM rerank can override.
-PANEL_ANCHOR_BONUS = float(os.getenv("PANEL_ANCHOR_BONUS", "2.5"))
-# Anchor BINDING (Fix 2, 2026-07-02): the bonus above is a SCORE, and the rest of the
-# heuristic stack (render_adjust salience swings, the PANEL_COS_FLOOR hold, VLM rerank)
-# can and did outweigh it — a whole-page checklist panel beat a cosine-rank-1 anchor.
-# An anchor is an AUTHORIAL decision, not a hint: when ON (default), an anchored unit's
-# panel is PRE-ASSIGNED before Hungarian/greedy runs and skips the cosine floor, VLM
-# rerank, and every tie-break entirely. OFF falls back to the old soft PANEL_ANCHOR_BONUS
-# scoring path (safety valve).
-PANEL_ANCHOR_BIND = os.getenv("PANEL_ANCHOR_BIND", "1").strip().lower() not in ("0", "false", "no", "")
-# Anchor TRUST (Feature C, 2026-07-03): an anchor is only as trustworthy as the PAGE
-# DESCRIPTION that produced it. Stage 2's DESC_VERIFY gate writes a page-level
-# `desc_verified` (False = descriptions still mismatched their own pixels after a
-# re-describe) and the dialog check writes a panel-level `dialog_mismatch` (True = the
-# VLM dialog contradicts Magi OCR). On doom-rocket-raccoon scene 13 a FABRICATED
-# description made Stage 3 anchor a beat to the WRONG panel; ANCHOR_BIND faithfully
-# rendered it and only a human eye caught it. When ON (default) we DON'T hard-bind an
-# anchor whose target panel is UNTRUSTED — we leave the unit un-anchored so it flows
-# through normal content matching AND becomes VLM-rerank-eligible (Feature D). OFF
-# restores the old always-bind behaviour (safety valve; also identical output on old
-# projects that carry no flags at all).
-ANCHOR_TRUST = os.getenv("ANCHOR_TRUST", "1").strip().lower() not in ("0", "false", "no", "")
-# Anchor RE-CHECK (Feature E): a bound anchor normally skips the VLM safety net entirely.
-# But a WRONG Stage-3 page_ref (from positional scene→beat drift) binds a panel whose cosine
-# is far below the best-content panel's — invisible to the net. When the gap
-# max(cosine) − anchor cosine exceeds ANCHOR_DISAGREE_MARGIN, let the VLM re-check the bind
-# too (agreement stays trusted, no SDK call). SDK absent → VLM no-ops → the anchor is kept.
-PANEL_ANCHOR_RECHECK = os.getenv("PANEL_ANCHOR_RECHECK", "1").strip().lower() not in ("0", "false", "no", "")
-ANCHOR_DISAGREE_MARGIN = float(os.getenv("ANCHOR_DISAGREE_MARGIN", "0.18"))
-# FIX 2: spread a scene's fragment siblings across DISTINCT panels of its anchor page (instead of
-# collapsing all onto key_panels[0]). Locked fragments bypass the matcher, so this only touches the
-# unlocked recap fan-out. 0 restores the collapse-to-one behavior.
-FRAGMENT_SPREAD = os.getenv("FRAGMENT_SPREAD", "1").strip().lower() not in ("0", "false", "no", "")
 # ONE_SHOT_PER_LINE: collapse each narration SENTENCE (scene) into ONE held shot (one panel, one
 # continuous motion) instead of one shot per visual-beat clause. Fixes "panels change faster than
 # the voice" — the cut lands only when the line's speech ends. Uses the scene's FIRST pinned panel
 # (matcher fills if unpinned). Default off → byte-identical to the per-clause behaviour.
 ONE_SHOT_PER_LINE = os.getenv("ONE_SHOT_PER_LINE", "0").strip().lower() not in ("0", "false", "no", "")
-# render_adjust (panel size / text-coverage) biases toward bigger / highlight panels and
-# away from tiny/text-wall ones. The old 1.5 clamp kept it a weak near-tie break because a
-# strong size bonus turned the few big panels into "magnets" → wrong matches AND duplicates.
-# The duplicate half is now handled independently by PANEL_UNIQUE (Hungarian 1:1 assignment),
-# so we can favor bigger panels harder without the duplicate blow-up: cap 3.0 + PANEL_SALIENCE_W
-# 3.0 (measured: on size-varied deadpool-batman this lifts median chosen panel area 0.44→0.72
-# while changing only 2/16 picks; on splash-heavy motorstorm it changes 0). Content (W_COS·cos,
-# swing ~3) still leads — size only decides among content-similar panels. 0 disables render_adjust.
-PANEL_RENDER_ADJ_CAP = float(os.getenv("PANEL_RENDER_ADJ_CAP", "3.0"))
-# Big/highlight-panel salience weight fed to _render_adjust: a >=50%-of-page (splash) panel adds
-# +PANEL_SALIENCE_W to its score (then clamped by PANEL_RENDER_ADJ_CAP). Raise to favor larger
-# panels harder; lower toward 0 to make size irrelevant.
-PANEL_SALIENCE_W = float(os.getenv("PANEL_SALIENCE_W", "3.0"))
-# Soft no-reuse: each prior use of a panel subtracts this from its content score for later
-# units. Small enough that a unit with NO good alternative still reuses (two lines about the
-# same moment both hold that panel), large enough that several similar lines (e.g. three
-# "Galactus devours..." beats) spread across DISTINCT near-tie panels instead of repeating
-# one. 0 = unlimited reuse.
-PANEL_REUSE_PENALTY = float(os.getenv("PANEL_REUSE_PENALTY", "3.0"))
-# Hard no-reuse: assign each STORY scene a DISTINCT panel via optimal (Hungarian)
-# assignment on the (content+page-prior) score — no panel is shown for two different
-# scenes. Beats the soft PANEL_REUSE_PENALTY, which a strong "magnet" panel can overpower
-# (it won 4 scenes on Motorstorm). Falls back to the greedy soft path when scenes > panels
-# (uniqueness impossible) or PANEL_UNIQUE=0. The PANEL_COS_FLOOR weak-match HOLD still
-# applies after assignment, so a scene with no good DISTINCT panel holds the previous one.
-PANEL_UNIQUE = os.getenv("PANEL_UNIQUE", "1").strip().lower() not in ("0", "false", "no", "")
-# #6 — VLM panel rerank (Claude SDK vision). When the matcher's best panel for a unit is a
-# LOW-confidence match (raw cos < PANEL_RERANK_COS_CEIL → cosine pick unreliable), a Claude
-# vision judge looks at a shortlist (top-K by score ∪ panels on the unit's page_ref page),
-# reads the cropped panel images, and picks the one that best depicts the line — or NONE →
-# hold. Gated to the few weak units (~3-5 SDK calls). Master 2026-07-24: DEFAULT OFF — panels are
-# hand-picked in review, so the cosine pick (and its SDK-vision rerank) no longer drives the render.
-# PANEL_RERANK=1 re-enables the vision judge for weak cosine picks (needs PANEL_TEXT_EMBED=1 too).
-PANEL_RERANK = os.getenv("PANEL_RERANK", "0").strip().lower() not in ("0", "false", "no", "")
-PANEL_RERANK_COS_CEIL = float(os.getenv("PANEL_RERANK_COS_CEIL", "0.66"))
-PANEL_RERANK_TOPK = int(os.getenv("PANEL_RERANK_TOPK", "5"))
-# Big-shot tie-break: among panels whose biased score is within this many points of the
-# best (i.e. content-similar), prefer the LARGER panel — a big/splash shot renders sharper
-# and reads as a highlight. Content still decides which panels are in the near-tie set, so
-# this never overrides a clear content winner; it only restores visual punch on ties.
-PANEL_SIZE_TIE_MARGIN = float(os.getenv("PANEL_SIZE_TIE_MARGIN", "0.8"))
 # Legacy Q&A SENTENCE-driven render (review/sentence_panels.json → one shot per sentence).
 # Master 2026-07-24: DEFAULT OFF — superseded by the chunk-locked builder (per-fragment locks).
 # When off, build_shots skips the sentence elif branch entirely (byte-identical to no file). The
@@ -395,10 +289,8 @@ SENTENCE_MATCH_ENABLED = os.getenv("SENTENCE_MATCH_ENABLED", "0").strip().lower(
 
 def _apply_review_locks(narration: dict, project: str) -> None:
     """Override a scene's (page_ref, panel_ref) from review/locks.json BEFORE matching, so
-    Master's hand-picked panel flows through the existing PANEL_ANCHOR_BIND path. No-op when
-    there are no locks. (A lock on a DESC_VERIFY-untrusted page won't hard-bind — ANCHOR_TRUST
-    still routes it through content-match + rerank, but the page-prior keeps it on the locked
-    page; rare, and the smallest patch. Upgrade path: pass locked scene ids to bypass trust.)"""
+    Master's hand-picked panel is the anchor _match_panels honours. No-op when there are no
+    locks."""
     try:
         from ..review_gate import load_state, lock_panels
     except Exception:
@@ -585,11 +477,11 @@ def build_shots(
         shots = _build_shots_per_scene(narration, scene_timings, word_timestamps)
 
     # Custom images (Master-added, review UI): OVERRIDE whatever the matcher/builder above
-    # picked for a beat that got a custom image (locked by Master, or argmax-assigned by
-    # cosine — see assign_custom_images). No-op (byte-identical) for any project with no
-    # review/custom/custom_images.json.
+    # picked for a beat that got a custom image (locked by Master, or argmax-assigned by word
+    # overlap with the beat — see assign_custom_images). No-op (byte-identical) for any project
+    # with no review/custom/custom_images.json.
     custom_map = _resolve_custom_images(project, narration) if project else {}
-    # An image that Master ADDED but never LOCKED gets placed by cosine argmax. That guess must
+    # An image that Master ADDED but never LOCKED gets placed by argmax. That guess must
     # never outrank an explicit pick: on power-fantasy-etienne a stray third sidecar entry
     # (beat_key "4:0", added then abandoned) was argmax-assigned to "outro" and painted over the
     # panel Master had locked there (p120/0), so the video closed on a repeat of an earlier image.
@@ -933,17 +825,16 @@ def _build_shots_per_chunk(
     cluster_to_name: dict[int, str] | None = None,
     project: str | None = None,
 ) -> list[Shot]:
-    """TheComicCivilian-style: one shot per caption chunk, with SMART panel
-    selection scoring each candidate panel against the chunk text. Pool spans
-    the scene's page ±1 adjacent pages; never repeats within a scene; falls
-    back to widest pool only when exhausted."""
+    """TheComicCivilian-style: one shot per caption chunk. Each narration unit's panel comes
+    from _match_panels (the scene's anchor panel, else the first panel of its page) unless the
+    writer or Master pinned one."""
     scenes = narration.get("scenes") or []
     scenes_by_id = {int(s.get("scene_id") or i): s for i, s in enumerate(scenes, start=1)}
     groups = _chunks_grouped_by_scene(caption_chunks, scene_timings, scenes_by_id)
 
     # ── Narration-driven panel matching ─────────────────────────────────────
     # Flatten the scenes into ordered narration UNITS (one per visual beat), then
-    # match each unit to its best-content panel via _match_panels.
+    # assign each unit its panel via _match_panels.
     units: list[tuple[dict, list, str, tuple | None]] = []   # (scene, slice_members, match_text, pin)
     for scene, members in groups:
         scene_text = str(scene.get("text", "") or "")
@@ -1041,9 +932,9 @@ def _build_shots_per_chunk(
         _retime_units_to_words(units, word_timestamps)
 
     # WRITER-PICKS-PANEL: a unit whose beat pinned a valid (page,panel) is assigned that panel
-    # DIRECTLY (the writer authored the 1:1 narration↔panel map, so skip the cosine matcher for
+    # DIRECTLY (the writer authored the 1:1 narration↔panel map, so skip the matcher for
     # it). Unpinned units — and a pin to a panel not in the pool — flow through the normal
-    # content matcher. Recap/Q&A beats are strings → every pin is None → matcher_units == units
+    # matcher. Recap/Q&A beats are strings → every pin is None → matcher_units == units
     # in original order → _match_panels sees exactly the old input → byte-identical output.
     pool_by_key: dict | None = None
     assigned: list = [None] * len(units)
@@ -1207,39 +1098,14 @@ def _qa_locks(project: str | None) -> dict:
     return _review_locks(project)
 
 
-def _qa_drawable_moments(project: str | None, pages_by_number: dict[int, dict],
-                         scenes: list[dict]) -> dict[int, str]:
-    """Per-scene drawable_moment (the answer item's precise VISUAL target), resolved through the
-    SAME page_ref→issue→item map review_gate/sentence_match use, so the Q&A chunk query can blend
-    it in (parity with the sentence matcher). {} on any error → queries fall back to narration."""
-    if not project:
-        return {}
-    try:
-        from ..review_gate import _beat_source, _load_json, _project_root
-        root = _project_root(project)
-        comic_ctx = _load_json(root / "comic_context.json")
-        answer_ctx = _load_json(root / "answer_context.json")
-        page_to_issue = {int(p.get("page_number", 0) or 0): str(p.get("issue_label", "") or "")
-                         for p in pages_by_number.values()}
-        multi_issue = len({v for v in page_to_issue.values() if v}) > 1
-        out: dict[int, str] = {}
-        for s in scenes:
-            issue = page_to_issue.get(int(s.get("page_ref", 0) or 0), "") if multi_issue else ""
-            dm = _beat_source(s, comic_ctx, answer_ctx, issue_label=issue).get("drawable_moment", "")
-            out[int(s.get("scene_id") or 0)] = str(dm or "")
-        return out
-    except Exception:
-        return {}
-
-
-# ─── Custom images (Master-added; certain to appear, cosine only picks the BEAT) ──────────
+# ─── Custom images (Master-added; certain to appear, word overlap only picks the BEAT) ─────
 # Design (Master-approved): an image Master adds himself in the review UI is GUARANTEED to
 # show up somewhere in the video — unlike a matched comic panel, it is NEVER filtered out by
-# a cosine floor. Cosine only decides WHICH BEAT it lands on (assign_custom_images), and a
-# Master hand-lock ({"custom_image": path} in locks.json) skips that argmax entirely for that
-# one image. This whole block is a no-op (returns {} / [] immediately) for any project with no
-# review/custom/custom_images.json — so a project that never used this feature renders on the
-# EXACT same path as before it existed.
+# a score threshold. The words a beat shares with the image's description only decide WHICH
+# BEAT it lands on (assign_custom_images), and a Master hand-lock ({"custom_image": path} in
+# locks.json) skips that argmax entirely for that one image. This whole block is a no-op
+# (returns {} / [] immediately) for any project with no review/custom/custom_images.json — so
+# a project that never used this feature renders on the EXACT same path as before it existed.
 
 def _load_custom_images(project: str | None) -> list[dict]:
     """review/custom/custom_images.json → its "images" list ([] if missing/project None/
@@ -1275,40 +1141,10 @@ def _custom_locks(project: str | None) -> dict[str, str]:
     return out
 
 
-def _load_custom_image_vectors(project: str | None) -> dict:
-    """{"review/custom/<file>": np.ndarray} SigLIP vectors for every custom:true point in the
-    project's per-project IMAGE collection — the argmax fallback for a custom image whose VLM
-    describe never completed (no desc → no text cosine). {} on any failure/missing collection/
-    Qdrant down/SigLIP unavailable. Never raises. Loaded lazily by _resolve_custom_images only
-    when some image actually needs it (most runs have a desc and never touch Qdrant here)."""
-    if not project:
-        return {}
-    try:
-        import numpy as np
-        from .. import _img_index, _qdrant
-        c = _qdrant.client()
-        name = _img_index._img_collection_name(project)
-        if not c.collection_exists(name):
-            return {}
-        out: dict = {}
-        offset = None
-        while True:
-            recs, offset = c.scroll(name, limit=256, with_payload=True, with_vectors=True,
-                                    offset=offset)
-            for p in recs:
-                pl = p.payload or {}
-                if pl.get("custom") and p.vector is not None:
-                    out[str(pl.get("image_path", ""))] = np.asarray(p.vector, dtype="float32")
-            if offset is None:
-                break
-        return out
-    except Exception:
-        return {}
-
-
 def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
                          locked: dict[str, str], *,
                          panel_locked: set[str] | None = None,
+                         bookend_keys: Collection[str] = (),
                          score_fn: Callable) -> dict[str, str]:
     """Pure greedy assignment: decide which BEAT each custom image lands on.
 
@@ -1316,17 +1152,22 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     "images" list (each a dict with at least "file"; may carry "desc"). `locked` =
     {beat_key: file} from Master's hand-locks (_custom_locks) — resolved DIRECTLY, no argmax.
     `panel_locked` = set of beat_keys Master locked to comic panels, off-limits to argmax.
+    `bookend_keys` = the beat_keys of the intro/outro rows (see _beat_rows_for_custom).
     `score_fn(beat_text, image_dict) -> float` scores every remaining (beat, image) pair
-    (real caller: cosine on the image's VLM desc, SigLIP-vector fallback — see
-    _score_custom_image; tests inject a stub for determinism, same idiom as this repo's
-    _panel_content_score stubs).
+    (real caller: word overlap between the beat and the image's VLM desc — see
+    _score_custom_image; tests inject a stub for determinism).
 
     Every UNLOCKED image is greedily assigned to its best still-free beat, highest score
-    first — so when two images both want the SAME beat, the higher-cosine one wins it and
+    first — so when two images both want the SAME beat, the higher-scoring one wins it and
     the other falls through to its next-best free beat ("nhiều ảnh tranh 1 beat"). An image
-    that scores 0.0 everywhere (empty beats / totally unavailable embeddings) still gets
-    assigned something if any beat remains free — a custom image is NEVER dropped, only its
-    beat placement can be a coin-flip in the worst case (Master added it → it WILL appear).
+    that scores 0.0 everywhere (no desc yet, or no word in common with any beat) still gets
+    assigned something if any beat remains free — a custom image is NEVER dropped (Master
+    added it → it WILL appear, and he can lock it to the beat he wants). With no evidence
+    for any beat the placement is a tie, and a tie at 0.0 never prefers a BOOKEND row: the
+    image takes the earliest free STORY beat, and the intro hook / outro only when no story
+    beat is free. Dropping an image Master never aimed at the cold-open is the worst way to
+    break that tie. A positive score is never second-guessed: an image that matches the
+    intro best still lands on the intro.
 
     Returns {beat_key: file} — every beat that ends up with a custom image, locked ∪
     argmax-assigned. {} when there are no images or no beats.
@@ -1356,7 +1197,10 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
         f = str(img.get("file"))
         for bk, text in beats:
             pairs.append((float(score_fn(text, img)), f, bk))
-    pairs.sort(key=lambda p: p[0], reverse=True)
+    # Highest score first. Among equal scores the order stays "image order, then story order",
+    # except that a score of 0.0 (no evidence) ranks a bookend row after every story row.
+    bookends = set(bookend_keys or ())
+    pairs.sort(key=lambda p: (-p[0], p[0] <= 0.0 and p[2] in bookends))
 
     assigned_images: set[str] = set()
     for _score, f, bk in pairs:
@@ -1368,43 +1212,35 @@ def assign_custom_images(beats: list[tuple[str, str]], images: list[dict],
     return out
 
 
-def _score_custom_image(beat_text: str, image: dict, *, project: str | None,
-                        siglip_vecs: dict) -> float:
-    """Real scoring for assign_custom_images: cosine(beat_text, image's VLM desc) via the
-    shared text-embed backend (Qwen/Gemini/local, whatever Stage 5 already uses); falls back
-    to SigLIP image-vector · SigLIP text-embed(beat_text) when the image has no desc yet
-    (enrich pending/failed). 0.0 if neither signal is available — never raises."""
-    desc = str(image.get("desc") or "").strip()
-    if desc:
-        try:
-            from .._embedding import semantic_sim
-            return semantic_sim(beat_text, desc)
-        except Exception:
-            return 0.0
-    vec = siglip_vecs.get(str(image.get("file", "")))
-    if vec is None:
-        return 0.0
-    try:
-        import numpy as np
-        from .. import _img_index
-        txt_vecs = _img_index.embed_texts([beat_text])
-        return float(np.dot(vec, txt_vecs[0])) if txt_vecs is not None else 0.0
-    except Exception:
-        return 0.0
+def _score_custom_image(beat_text: str, image: dict) -> float:
+    """Real scoring for assign_custom_images: the share of content words (stopwords dropped,
+    word order ignored) that the beat's text and the image's VLM desc have in common, 0.0-1.0
+    (utils.lexical_sim.token_jaccard). An image with no desc yet (enrichment pending or
+    failed) scores 0.0 on every beat: assign_custom_images still places it, on the earliest
+    free story beat, and Master can hand-lock it to the one he wants. Never raises."""
+    return token_jaccard(beat_text, str(image.get("desc") or ""))
+
+
+def _bookend_rows_for_custom(narration: dict) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """([intro rows], [outro rows]) as (beat_key, text), in the SAME beat_key scheme review_gate
+    writes to locks.json. A fragmented bookend yields ordinary "<sid>:<fi>" keys, so a row's key
+    alone cannot say it is a bookend — this is the one place that knows."""
+    from ..review_gate import bookend_row_keys
+    scenes = narration.get("scenes") or []
+    intro = next((s for s in scenes if s.get("is_intro")), None)
+    outro = next((s for s in scenes if s.get("is_outro")), None)
+    intro_rows = [(bk, txt) for bk, _unit, txt in bookend_row_keys(intro, "intro")] if intro is not None else []
+    outro_rows = [(bk, txt) for bk, _unit, txt in bookend_row_keys(outro, "outro")] if outro is not None else []
+    return intro_rows, outro_rows
 
 
 def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
     """[(beat_key, text), ...] for every beat Master can lock a custom image to, in the SAME
     beat_key scheme review_gate writes to locks.json — so a lock written by the review
     UI and the argmax pool here always agree on identity."""
-    from ..review_gate import bookend_row_keys
     scenes = narration.get("scenes") or []
-    rows: list[tuple[str, str]] = []
-    intro = next((s for s in scenes if s.get("is_intro")), None)
-    outro = next((s for s in scenes if s.get("is_outro")), None)
-    if intro is not None:
-        for bk, _unit, txt in bookend_row_keys(intro, "intro"):
-            rows.append((bk, txt))
+    intro_rows, outro_rows = _bookend_rows_for_custom(narration)
+    rows: list[tuple[str, str]] = list(intro_rows)
     for s in scenes:
         if s.get("is_intro") or s.get("is_outro"):
             continue
@@ -1416,9 +1252,7 @@ def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
                 rows.append((f"{sid}:{fi}", _vb_text(b)))
         else:
             rows.append((str(sid), str(s.get("text", "") or "")))
-    if outro is not None:
-        for bk, _unit, txt in bookend_row_keys(outro, "outro"):
-            rows.append((bk, txt))
+    rows.extend(outro_rows)
     return rows
 
 
@@ -1433,22 +1267,15 @@ def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, st
     root = _project_root(project)
     locked = _custom_locks(project)
     beats = _beat_rows_for_custom(narration)
-    siglip_vecs: dict = {}
-    loaded_siglip = False
-
-    def _score(text, img):
-        nonlocal loaded_siglip, siglip_vecs
-        if not str(img.get("desc") or "").strip() and not loaded_siglip:
-            siglip_vecs = _load_custom_image_vectors(project)
-            loaded_siglip = True
-        return _score_custom_image(text, img, project=project, siglip_vecs=siglip_vecs)
+    bookend_keys = {bk for rows in _bookend_rows_for_custom(narration) for bk, _txt in rows}
 
     from ..review_gate import load_state as _load_review_state
     _locks = (_load_review_state(project) or {}).get("locks") or {} if project else {}
     panel_locked = {k for k, v in _locks.items()
                     if isinstance(v, dict) and not v.get("custom_image")}
 
-    by_key = assign_custom_images(beats, images, locked, panel_locked=panel_locked, score_fn=_score)
+    by_key = assign_custom_images(beats, images, locked, panel_locked=panel_locked,
+                                  bookend_keys=bookend_keys, score_fn=_score_custom_image)
     return {bk: str(root / f) for bk, f in by_key.items()}
 
 
@@ -1792,28 +1619,6 @@ def _merge_locked_segments(segs: list[dict], min_seconds: float) -> list[dict]:
     return merged
 
 
-def _qa_vlm_rerank(picks: list[dict], texts: list[str], cands: list, *, log) -> None:
-    """Feature-D-style VLM rerank for the Q&A LOCKED pool. For each chunk whose chosen locked
-    panel is a WEAK cosine match (score < PANEL_RERANK_COS_CEIL), a Claude vision judge looks at
-    the scene's locked panel ART and picks the one that best depicts the chunk — overriding the
-    cosine pick (fixes "scene not really match": cosine picks within the lock set but doesn't
-    UNDERSTAND the line). The pool is tiny (2-5 locked panels) so this is cheap. Mutates `picks`
-    in place. No-op when the SDK is unavailable (_vlm_rerank → None), or when a pick has no score.
-    Reuses _match_panels' own _vlm_rerank helper — no new rerank logic."""
-    if not cands:
-        return
-    rerank_cands = [(j, cands[j][2], cands[j][1], cands[j][3]) for j in range(len(cands))]
-    for i, p in enumerate(picks):
-        sc = p.get("score")
-        if sc is None or float(sc) >= PANEL_RERANK_COS_CEIL:
-            continue                          # strong (or unscored) match → trust cosine
-        pick = _vlm_rerank(texts[i], rerank_cands, log=log)
-        if pick is None or pick == -1:
-            continue                          # undecided / "none" → keep cosine (panel is Master-locked)
-        key = cands[pick][0]
-        p["page"], p["panel"] = int(key[0]), int(key[1])
-
-
 _SUBJECT_STOPWORDS = frozenset((
     "The", "This", "That", "There", "They", "With", "From", "Doctor", "Man",
     "And", "But", "His", "Her", "Him", "She", "You", "Who", "What", "When",
@@ -1918,11 +1723,9 @@ def _build_shots_per_chunk_locked(
     """Q&A (answer_research) render restricted to each scene's Master-LOCKED panels. Each beat is
     SEGMENTED into K contiguous time-groups where K = min(#locked panels, #chunks, floor(beat_dur /
     QA_MIN_SHOT_SECONDS)) — so every shot lasts ≥ ~QA_MIN_SHOT_SECONDS and a beat shows at most as
-    many panels as Master locked. Each group's text (blended with the scene's drawable_moment) is
-    matched to a DISTINCT locked panel (Hungarian no-reuse via _match_sentences), and a WEAK match
-    is re-judged by a Claude vision rerank over the same tiny locked pool (Feature-D parity via
-    _vlm_rerank, PANEL_RERANK) — fixing "scene not really match". This replaces the old
-    one-shot-per-chunk output (many sub-1s hard-cut Ken-Burns frames = "jump like crazy", Master
+    many panels as Master locked. The groups take the locked panels round-robin (via
+    _match_sentences): distinct panels across the first K groups, then cycling. This replaces the
+    old one-shot-per-chunk output (many sub-1s hard-cut Ken-Burns frames = "jump like crazy", Master
     v3) with a few ≥1.5s distinct-panel holds. Each emitted shot gets a UNIQUE scene_id so the
     assembler dissolves between them (same mechanism as inter-scene dissolve; XFADE_TRANSITION
     default "dissolve").
@@ -1935,17 +1738,13 @@ def _build_shots_per_chunk_locked(
     scenes_by_id = {int(s.get("scene_id") or i): s for i, s in enumerate(scenes, start=1)}
     groups = _chunks_grouped_by_scene(caption_chunks, scene_timings, scenes_by_id)
 
-    from .. import _img_index
-    from .._panel_index import load_vectors
-    from ..review_gate import QA_PANEL_IMG_WEIGHT, lock_panels
+    from ..review_gate import lock_panels
     from ..sentence_match import _match_sentences
 
-    # pool as 4-tuples for _match_sentences / rerank cands; (page,panel)->(panel,src) for the emit.
+    # pool as 4-tuples for _match_sentences; (page,panel)->(panel,src) for the emit.
     pool = _panel_pool(pages_by_number or {})
     cand_by_key = {key: (key, panel, src, tb) for (key, panel, src, tb) in pool}
     entry_by_key = {key: (panel, src) for (key, panel, src, _tb) in pool}
-    panel_vecs = load_vectors(project) if project else {}
-    drawable_by_sid = _qa_drawable_moments(project, pages_by_number or {}, scenes)
 
     # Which scenes have usable locks (>=1 locked panel present in the preprocessed pool). Pool a
     # scene's locks from BOTH its scene-level key "<sid>" AND any per-fragment keys "<sid>:<frag>"
@@ -2038,199 +1837,156 @@ def _build_shots_per_chunk_locked(
         print(f"[stage5] {_kk} pinned by lock p{_key[0]}/{_key[1]}")
 
     # Segment each beat into K contiguous time-groups (K bounded by #locked panels, #chunks, and
-    # beat_dur/min so every shot lasts ≥ ~min), match each group to a DISTINCT locked panel
-    # (Hungarian no-reuse), then VLM-rerank the weak group picks. Trust the SigLIP image blend
-    # more for the visual drawable_moment query (same bump as build_sentence_panels).
+    # beat_dur/min so every shot lasts ≥ ~min), then hand each group a locked panel round-robin.
     segs: list[dict] = []
-    _orig_img_w = _img_index.PANEL_IMG_WEIGHT
-    _img_index.PANEL_IMG_WEIGHT = QA_PANEL_IMG_WEIGHT
-    try:
-        for scene, members in groups:
-            sid = int(scene.get("scene_id") or 1)
-            is_intro = bool(scene.get("is_intro"))
-            is_outro = bool(scene.get("is_outro"))
-            cands = locked_cands.get(sid)
-            _bfrags = [c for c in (scene.get("visual_beats") or []) if _vb_text(c)]
-            if is_intro and intro_panels and len(_bfrags) <= 1:
-                # Multi-panel subject hook: split the intro beat into ≤N contiguous
-                # time-groups (K bounded by beat_dur/min like the body) and show a
-                # distinct top-ranked subject panel in each — a moving intro of the
-                # question's subject instead of one static splash.
-                beat_dur = sum(m[2] for m in members)
-                k = max(1, min(len(intro_panels), len(members),
-                               int(beat_dur / QA_MIN_SHOT_SECONDS) or 1))
-                for (text, _st, dur), (panel, src) in zip(
-                        _partition_chunks(members, k, QA_MIN_SHOT_SECONDS), intro_panels):
-                    segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
-                                 "text": text, "dur": max(0.0, dur),
-                                 "is_intro": True, "is_outro": False})
-                continue
-            if not cands:
-                # Non-locked scene (or outro): one held shot over the whole beat.
-                pair = fb_pair.get(sid)
-                panel, src = pair if pair else (None, "")
-                segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
-                             "text": " ".join(m[0] for m in members).strip(),
-                             "dur": sum(m[2] for m in members),
-                             "is_intro": is_intro, "is_outro": is_outro})
-                continue
-            # A scene that emitted VISUAL BEATS (recap/Q&A now do) splits by FRAGMENT, not by an
-            # even time-share: the number of shots follows the fragments (semantic seams), and each
-            # fragment draws a panel from the locked pool — matched below, reused when Master locked
-            # fewer panels than fragments (still distinct SHOTS, different motion). A scene with no
-            # visual_beats keeps the byte-identical time-partition path. _split_members_by_clause is
-            # verbatim word-position bucketing; frag_idx (the bucket's position BEFORE empty buckets
-            # are dropped == its index into the scene's own visual_beats) rides along on each part so
-            # a PER-FRAGMENT review lock ("<sid>:<frag_idx>") can be matched back to the exact part
-            # it pins (see frag_pin below).
-            frag_texts = [t for t in (_vb_text(b) for b in (scene.get("visual_beats") or [])) if t]
-            parts: list[tuple[str, float, float, int | None]] = []   # (text, start, dur, frag_idx)
-            if len(frag_texts) > 1:
-                parts = [(" ".join(m[0] for m in b).strip(), b[0][1], sum(m[2] for m in b), fi)
-                         for fi, b in enumerate(_split_members_by_clause(members, frag_texts)) if b]
-            if not parts:
-                beat_dur = sum(m[2] for m in members)
-                k = max(1, min(len(cands), len(members), int(beat_dur / QA_MIN_SHOT_SECONDS) or 1))
-                parts = [(t, s, d, None)
-                         for t, s, d in _partition_chunks(members, k, QA_MIN_SHOT_SECONDS)]
-
-            # PER-FRAGMENT PIN (bug fix, 2026-07-21): the review UI can lock ONE panel per FRAGMENT
-            # ("<sid>:<frag_idx>" keys) — Master's own binding, not a hint. The Hungarian match below
-            # is a free re-assignment over the scene's whole locked pool and has no idea a fragment
-            # was individually pinned, so it can (and did, on mephisto-defeated) swap two fragments'
-            # panels. Resolve each part's pin directly; only a key that maps into THIS scene's own
-            # preprocessed pool counts (a stale/foreign key is ignored — matcher fills that fragment
-            # instead, same as an unlocked one).
-            # A CUSTOM-IMAGE lock is a pin too (bug fix, 2026-07-30). Master can replace a
-            # fragment's panel with an image of their own; that lock is shaped
-            # {"custom_image": ..., "source": "custom"} and carries NO "panels" key, so
-            # lock_panels() returns nothing for it. The old loop read that as "this fragment is
-            # unpinned", which dropped the whole scene into the PARTIAL-pin branch below — and
-            # there the matcher assigned a page panel to the very fragments Master had just
-            # replaced. Worse, partial-pin MERGES fragments, breaking the 1-fragment-1-shot
-            # invariant that _apply_custom_images_to_shots relies on to find its target shot, so
-            # the later override silently missed as well. Net effect measured on
-            # broken-adamantium: both of Master's images were absent from final.mp4 while the log
-            # cheerfully said "custom-image: assigned 2 beat(s)".
-            #
-            # A custom fragment needs no (page, panel): render_shot loads the file directly and
-            # ignores panel_bbox. It still needs SOME panel to occupy the slot, so it borrows the
-            # scene's first candidate purely as a placeholder — never rendered, only carried.
-            frag_pin: dict[int, tuple[int, int]] = {}
-            frag_custom: dict[int, str] = {}
-            for _t, _s, _d, fi in parts:
-                if fi is None:
-                    continue
-                lk = locks.get(f"{sid}:{fi}") or {}
-                if isinstance(lk, dict) and lk.get("custom_image"):
-                    from ..review_gate import _project_root
-                    frag_custom[fi] = str(_project_root(project) / str(lk["custom_image"]))
-                    continue
-                ps = lock_panels(lk)
-                if not ps:
-                    continue
-                pkey = (int(ps[0]["page"]), int(ps[0]["panel"]))
-                if pkey in cand_by_key:
-                    frag_pin[fi] = pkey
-
-            if (frag_pin or frag_custom) and all(
-                    fi in frag_pin or fi in frag_custom for _t, _s, _d, fi in parts):
-                # EVERY fragment is individually pinned — Master's per-fragment picks are final.
-                # Skip the matcher, the VLM rerank, AND the no-reuse guard below entirely: those are
-                # heuristics for a FREE assignment and must never override an explicit hand pick
-                # (Master pinning the same panel twice in a row is deliberate, not a duplicate to
-                # dedupe away).
-                for text, _st, dur, fi in parts:
-                    if fi in frag_pin:
-                        _key, panel, src, _tb = cand_by_key[frag_pin[fi]]
-                    else:                        # custom-image fragment: placeholder slot only
-                        _key, panel, src, _tb = cands[0]
-                    segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
-                                 "text": text, "dur": max(0.0, dur),
-                                 "is_intro": is_intro and (fi == 0),
-                                 "is_outro": is_outro and (fi == len(parts) - 1),
-                                 # Bind the image to THIS fragment here, where we still know which
-                                 # fragment it is. The alternative — letting
-                                 # _apply_custom_images_to_shots find it later by ordinal index —
-                                 # only works while 1 fragment == 1 shot, and merging breaks that.
-                                 "custom": frag_custom.get(fi, "")})
-                print(f"[stage5] qa-locked: scene {sid} pinned per-fragment "
-                      f"({len(parts)} shots, no matcher"
-                      + (f", {len(frag_custom)} custom image(s)" if frag_custom else "") + ")")
-                continue
-
-            texts = [p[0] for p in parts]
-            spans = [(p[1], p[1] + p[2]) for p in parts]
-            if frag_pin:
-                # PARTIAL pin: some fragments are individually pinned, the rest are not. Pin those
-                # directly; run the matcher (+ rerank + no-reuse guard) only on the UNPINNED
-                # fragments, over the locked panels NOT already spent on a pin.
-                pinned_idx = {i: frag_pin[fi] for i, (_t, _s, _d, fi) in enumerate(parts)
-                              if fi in frag_pin}
-                free_idx = [i for i in range(len(parts)) if i not in pinned_idx]
-                used_by_pins = set(pinned_idx.values())
-                sub_cands = [c for c in cands if c[0] not in used_by_pins] or cands
-                sub_texts = [texts[i] for i in free_idx]
-                sub_spans = [spans[i] for i in free_idx]
-                sub_picks = _match_sentences(
-                    sub_texts, sub_spans, scene, sub_cands, panel_vecs, project or "",
-                    log=print, drawable_moment=drawable_by_sid.get(sid, ""),
-                    always_assign=True) if free_idx else []
-                if PANEL_RERANK and free_idx:
-                    _qa_vlm_rerank(sub_picks, sub_texts, sub_cands, log=print)
-                picks: list = [None] * len(parts)
-                for i, (pg, pn) in pinned_idx.items():
-                    picks[i] = {"page": pg, "panel": pn}
-                for i, p in zip(free_idx, sub_picks):
-                    picks[i] = p
-                locked_keys = [c[0] for c in sub_cands]
-                used_keys: set = set(used_by_pins)
-                for i in free_idx:
-                    p = picks[i]
-                    key = (p.get("page"), p.get("panel"))
-                    if key in used_keys:
-                        for lk in locked_keys:
-                            if lk not in used_keys:
-                                p["page"], p["panel"] = int(lk[0]), int(lk[1])
-                                key = lk
-                                break
-                    used_keys.add(key)
-                print(f"[stage5] qa-locked: scene {sid} partial pin "
-                      f"({len(pinned_idx)}/{len(parts)} fragments)")
-            else:
-                picks = _match_sentences(texts, spans, scene, cands, panel_vecs, project or "",
-                                         log=print, drawable_moment=drawable_by_sid.get(sid, ""),
-                                         always_assign=True)
-                if PANEL_RERANK:
-                    _qa_vlm_rerank(picks, texts, cands, log=print)
-                # No-reuse across THIS beat: the VLM rerank can collapse two groups onto one
-                # locked panel, and a NON-adjacent repeat (A-B-A) slips past _merge_locked_segments
-                # (adjacent-only) → the same panel renders twice = duplicate scene. Reassign any
-                # duplicate pick to a locked panel not yet used in this beat (K ≤ #locked, so an
-                # unused one always exists) → Master's N locked panels yield up to N DISTINCT shots.
-                locked_keys = [c[0] for c in cands]
-                used_keys = set()
-                for p in picks:
-                    key = (p.get("page"), p.get("panel"))
-                    if key in used_keys:
-                        for lk in locked_keys:
-                            if lk not in used_keys:
-                                p["page"], p["panel"] = int(lk[0]), int(lk[1])
-                                key = lk
-                                break
-                    used_keys.add(key)
-
-            for (text, _st, dur, _fi), p in zip(parts, picks):
-                pair = entry_by_key.get((p["page"], p["panel"])) if p["page"] is not None else None
-                panel, src = pair if pair else (None, "")
+    for scene, members in groups:
+        sid = int(scene.get("scene_id") or 1)
+        is_intro = bool(scene.get("is_intro"))
+        is_outro = bool(scene.get("is_outro"))
+        cands = locked_cands.get(sid)
+        _bfrags = [c for c in (scene.get("visual_beats") or []) if _vb_text(c)]
+        if is_intro and intro_panels and len(_bfrags) <= 1:
+            # Multi-panel subject hook: split the intro beat into ≤N contiguous
+            # time-groups (K bounded by beat_dur/min like the body) and show a
+            # distinct top-ranked subject panel in each — a moving intro of the
+            # question's subject instead of one static splash.
+            beat_dur = sum(m[2] for m in members)
+            k = max(1, min(len(intro_panels), len(members),
+                           int(beat_dur / QA_MIN_SHOT_SECONDS) or 1))
+            for (text, _st, dur), (panel, src) in zip(
+                    _partition_chunks(members, k, QA_MIN_SHOT_SECONDS), intro_panels):
                 segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
                              "text": text, "dur": max(0.0, dur),
-                             "is_intro": is_intro, "is_outro": is_outro})
-    finally:
-        _img_index.PANEL_IMG_WEIGHT = _orig_img_w
+                             "is_intro": True, "is_outro": False})
+            continue
+        if not cands:
+            # Non-locked scene (or outro): one held shot over the whole beat.
+            pair = fb_pair.get(sid)
+            panel, src = pair if pair else (None, "")
+            segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
+                         "text": " ".join(m[0] for m in members).strip(),
+                         "dur": sum(m[2] for m in members),
+                         "is_intro": is_intro, "is_outro": is_outro})
+            continue
+        # A scene that emitted VISUAL BEATS (recap/Q&A now do) splits by FRAGMENT, not by an
+        # even time-share: the number of shots follows the fragments (semantic seams), and each
+        # fragment draws a panel from the locked pool — matched below, reused when Master locked
+        # fewer panels than fragments (still distinct SHOTS, different motion). A scene with no
+        # visual_beats keeps the byte-identical time-partition path. _split_members_by_clause is
+        # verbatim word-position bucketing; frag_idx (the bucket's position BEFORE empty buckets
+        # are dropped == its index into the scene's own visual_beats) rides along on each part so
+        # a PER-FRAGMENT review lock ("<sid>:<frag_idx>") can be matched back to the exact part
+        # it pins (see frag_pin below).
+        frag_texts = [t for t in (_vb_text(b) for b in (scene.get("visual_beats") or [])) if t]
+        parts: list[tuple[str, float, float, int | None]] = []   # (text, start, dur, frag_idx)
+        if len(frag_texts) > 1:
+            parts = [(" ".join(m[0] for m in b).strip(), b[0][1], sum(m[2] for m in b), fi)
+                     for fi, b in enumerate(_split_members_by_clause(members, frag_texts)) if b]
+        if not parts:
+            beat_dur = sum(m[2] for m in members)
+            k = max(1, min(len(cands), len(members), int(beat_dur / QA_MIN_SHOT_SECONDS) or 1))
+            parts = [(t, s, d, None)
+                     for t, s, d in _partition_chunks(members, k, QA_MIN_SHOT_SECONDS)]
 
-    # Safety net: merge any same-panel adjacency (e.g. the VLM collapsed two groups onto one panel)
-    # and absorb a group that still fell under the minimum. Usually a no-op — K already bounds it.
+        # PER-FRAGMENT PIN (bug fix, 2026-07-21): the review UI can lock ONE panel per FRAGMENT
+        # ("<sid>:<frag_idx>" keys) — Master's own binding, not a hint. The matcher below is a
+        # free assignment over the scene's whole locked pool and has no idea a fragment was
+        # individually pinned, so it can (and did, on mephisto-defeated) swap two fragments'
+        # panels. Resolve each part's pin directly; only a key that maps into THIS scene's own
+        # preprocessed pool counts (a stale/foreign key is ignored — matcher fills that fragment
+        # instead, same as an unlocked one).
+        # A CUSTOM-IMAGE lock is a pin too (bug fix, 2026-07-30). Master can replace a
+        # fragment's panel with an image of their own; that lock is shaped
+        # {"custom_image": ..., "source": "custom"} and carries NO "panels" key, so
+        # lock_panels() returns nothing for it. The old loop read that as "this fragment is
+        # unpinned", which dropped the whole scene into the PARTIAL-pin branch below — and
+        # there the matcher assigned a page panel to the very fragments Master had just
+        # replaced. Worse, partial-pin MERGES fragments, breaking the 1-fragment-1-shot
+        # invariant that _apply_custom_images_to_shots relies on to find its target shot, so
+        # the later override silently missed as well. Net effect measured on
+        # broken-adamantium: both of Master's images were absent from final.mp4 while the log
+        # cheerfully said "custom-image: assigned 2 beat(s)".
+        #
+        # A custom fragment needs no (page, panel): render_shot loads the file directly and
+        # ignores panel_bbox. It still needs SOME panel to occupy the slot, so it borrows the
+        # scene's first candidate purely as a placeholder — never rendered, only carried.
+        frag_pin: dict[int, tuple[int, int]] = {}
+        frag_custom: dict[int, str] = {}
+        for _t, _s, _d, fi in parts:
+            if fi is None:
+                continue
+            lk = locks.get(f"{sid}:{fi}") or {}
+            if isinstance(lk, dict) and lk.get("custom_image"):
+                from ..review_gate import _project_root
+                frag_custom[fi] = str(_project_root(project) / str(lk["custom_image"]))
+                continue
+            ps = lock_panels(lk)
+            if not ps:
+                continue
+            pkey = (int(ps[0]["page"]), int(ps[0]["panel"]))
+            if pkey in cand_by_key:
+                frag_pin[fi] = pkey
+
+        if (frag_pin or frag_custom) and all(
+                fi in frag_pin or fi in frag_custom for _t, _s, _d, fi in parts):
+            # EVERY fragment is individually pinned — Master's per-fragment picks are final.
+            # Skip the matcher entirely: it is for a FREE assignment and must never override
+            # an explicit hand pick (Master pinning the same panel twice in a row is
+            # deliberate, not a duplicate to dedupe away).
+            for text, _st, dur, fi in parts:
+                if fi in frag_pin:
+                    _key, panel, src, _tb = cand_by_key[frag_pin[fi]]
+                else:                        # custom-image fragment: placeholder slot only
+                    _key, panel, src, _tb = cands[0]
+                segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
+                             "text": text, "dur": max(0.0, dur),
+                             "is_intro": is_intro and (fi == 0),
+                             "is_outro": is_outro and (fi == len(parts) - 1),
+                             # Bind the image to THIS fragment here, where we still know which
+                             # fragment it is. The alternative — letting
+                             # _apply_custom_images_to_shots find it later by ordinal index —
+                             # only works while 1 fragment == 1 shot, and merging breaks that.
+                             "custom": frag_custom.get(fi, "")})
+            print(f"[stage5] qa-locked: scene {sid} pinned per-fragment "
+                  f"({len(parts)} shots, no matcher"
+                  + (f", {len(frag_custom)} custom image(s)" if frag_custom else "") + ")")
+            continue
+
+        texts = [p[0] for p in parts]
+        spans = [(p[1], p[1] + p[2]) for p in parts]
+        if frag_pin:
+            # PARTIAL pin: some fragments are individually pinned, the rest are not. Pin those
+            # directly; run the matcher only on the UNPINNED fragments, over the locked panels
+            # NOT already spent on a pin.
+            pinned_idx = {i: frag_pin[fi] for i, (_t, _s, _d, fi) in enumerate(parts)
+                          if fi in frag_pin}
+            free_idx = [i for i in range(len(parts)) if i not in pinned_idx]
+            used_by_pins = set(pinned_idx.values())
+            sub_cands = [c for c in cands if c[0] not in used_by_pins] or cands
+            sub_texts = [texts[i] for i in free_idx]
+            sub_spans = [spans[i] for i in free_idx]
+            sub_picks = _match_sentences(sub_texts, sub_spans, sub_cands) if free_idx else []
+            picks: list = [None] * len(parts)
+            for i, (pg, pn) in pinned_idx.items():
+                picks[i] = {"page": pg, "panel": pn}
+            for i, p in zip(free_idx, sub_picks):
+                picks[i] = p
+            print(f"[stage5] qa-locked: scene {sid} partial pin "
+                  f"({len(pinned_idx)}/{len(parts)} fragments)")
+        else:
+            # Round-robin over the beat's locked panels: the first len(cands) shots each take a
+            # distinct panel, and a panel only repeats once the shots outnumber the panels.
+            picks = _match_sentences(texts, spans, cands)
+
+        for (text, _st, dur, _fi), p in zip(parts, picks):
+            pair = entry_by_key.get((p["page"], p["panel"])) if p["page"] is not None else None
+            panel, src = pair if pair else (None, "")
+            segs.append({"sid": sid, "scene": scene, "panel": panel, "src": src,
+                         "text": text, "dur": max(0.0, dur),
+                         "is_intro": is_intro, "is_outro": is_outro})
+
+    # Safety net: merge any same-panel adjacency (e.g. two pinned fragments on one panel) and
+    # absorb a group that still fell under the minimum. Usually a no-op — K already bounds it.
     segs = _merge_locked_segments(segs, QA_MIN_SHOT_SECONDS)
 
     # Emit one shot per merged segment. UNIQUE scene_id per shot → the assembler treats each as
@@ -2327,7 +2083,7 @@ def _build_shots_per_sentence(
     sentence text. A null/unresolvable panel is SPARSE → it REUSES the previous shot's
     panel (a first-ever sparse sentence seeds from the scene's own anchor, else the
     cold-open). The intro (is_intro) and any scene the sentence-match step didn't cover
-    fall back to the normal per-scene pick (cold-open for the intro, content match /
+    fall back to the normal per-scene pick (cold-open for the intro, anchor panel /
     outro-loop otherwise) via _match_panels. Motion, framing and pacing defaults are the
     SAME as the per-scene path — only PANEL, DURATION and CAPTION are sentence-driven."""
     scenes = narration.get("scenes") or []
@@ -2350,7 +2106,7 @@ def _build_shots_per_sentence(
         return (not sc.get("is_intro")) and bool(sp_by_scene.get(sid))
 
     # Fallback scenes (intro / outro / any uncovered scene) → the normal per-scene matcher
-    # in one batch: it handles the cold-open, the outro loop-close, and content matching.
+    # in one batch: it handles the cold-open, the outro loop-close, and the anchor pick.
     fb_units = [(sc, str(sc.get("text", "") or "")) for sc in scenes if not _is_sentence_scene(sc)]
     fb_assigned = (_match_panels(list(fb_units), pages_by_number or {},
                                  cluster_to_name or {}, project=project, narration=narration)
@@ -2684,48 +2440,6 @@ def _split_shot_durations(dur: float) -> list[float]:
     return durs
 
 
-def _render_adjust(panel: dict, page_text_blocks: list[dict] | None,
-                   *, salience_w: float = 4.0) -> float:
-    """Render-quality adjustments (NOT content): penalize tiny panels that must be
-    heavily upscaled, reward big/splash panels as a tie-break, penalize text-wall
-    panels (cluttered + smear under inpaint). Used by the pure-vector matcher
-    (_panel_content_score) to pick the better-RENDERING panel among content-similar
-    candidates."""
-    import math
-    bbox = panel.get("bbox", {}) or {}
-    _pw = int(bbox.get("w", 0) or 0)
-    _ph = int(bbox.get("h", 0) or 0)
-    score = 0.0
-    # Small-panel penalty — upscale factor to fill 1080×1920; >2.5× → blurry giant.
-    panel_scale = max(OUTPUT_W / _pw, OUTPUT_H / _ph) if (_pw > 0 and _ph > 0) else 99.0
-    if panel_scale > 2.5:
-        score -= 3.0 * (panel_scale - 2.5)
-    # Visual salience — page-relative: a >=50% splash gets the full weight.
-    area = _pw * _ph
-    page_area = int(panel.get("_page_area", 0) or 0)
-    if page_area > 0:
-        score += salience_w * min(1.0, (area / page_area) / 0.5)
-    elif area > 50000:
-        score += (salience_w * 0.75) * min(1.0, math.log(area / 50000) / 3.0)
-    # Text-coverage penalty — avoid text-wall panels.
-    _dlg = panel_dialog(panel, page_text_blocks)
-    if area > 0 and _dlg:
-        px, py = int(bbox.get("x", 0) or 0), int(bbox.get("y", 0) or 0)
-        text_area = 0
-        for tb in _dlg:
-            tbb = tb.get("bbox") or {}
-            tx, ty = int(tbb.get("x", 0) or 0), int(tbb.get("y", 0) or 0)
-            tw, th = int(tbb.get("w", 0) or 0), int(tbb.get("h", 0) or 0)
-            ix0, iy0 = max(px, tx), max(py, ty)
-            ix1, iy1 = min(px + _pw, tx + tw), min(py + _ph, ty + th)
-            if ix1 > ix0 and iy1 > iy0:
-                text_area += (ix1 - ix0) * (iy1 - iy0)
-        coverage = text_area / area
-        if coverage > 0.15:
-            score -= min(8.0, 30.0 * (coverage - 0.15))
-    return score
-
-
 def _is_skip_page(page: dict) -> bool:
     """Detect non-story pages that slipped through page_type classification.
     Filters credit/title pages and back-cover promo/ad pages by 3 heuristics:
@@ -3047,7 +2761,7 @@ def _outro_panel(pages_by_number):
     NON-whole-page, low-text STORY panel in the CLOSING third. Mirrors _cold_open_panel
     (which opens on a striking panel). Avoids landing the outro on the final whole-page
     splash, which renders cluttered with no clear subject. Returns (panel, src) or
-    (None, '') to fall back to the content match."""
+    (None, '') to fall back to the scene's own anchor pick."""
     story_pns = sorted(pn for pn, pg in (pages_by_number or {}).items()
                        if pg and not _is_skip_page(pg))
     if not story_pns:
@@ -3079,7 +2793,7 @@ def _outro_panel(pages_by_number):
 def _panel_pool(pages_by_number: dict) -> list:
     """All non-skip panels in READING ORDER (page asc, panel idx asc) across every
     page/issue: [(key, panel_dict, source_image, page_text_blocks)]. Each panel dict
-    carries _page_number/_page_area/index for the content scorer + render tie-break."""
+    carries _page_number (its dialog lookup), _page_area (the frame-1 gate) and index."""
     pool = []
     for pn in sorted(pages_by_number or {}):
         page = pages_by_number.get(pn)
@@ -3089,198 +2803,30 @@ def _panel_pool(pages_by_number: dict) -> list:
         page_tb = page.get("text_blocks") or []
         dims = page.get("image_dimensions") or {}
         parea = int(dims.get("width", 0) or 0) * int(dims.get("height", 0) or 0)
-        # Stage-2 trust flag for the whole page (DESC_VERIFY gate). Stashed on every
-        # panel so _panel_untrusted can read it from the pool entry alone. get() → None
-        # when the gate never ran (old projects) → treated as trusted, identical output.
-        page_dv = page.get("desc_verified")
         for idx, panel in enumerate(page.get("panels") or []):
-            pw = dict(panel)              # copies the panel's own dialog_mismatch flag too
+            pw = dict(panel)
             pw["_page_number"] = pn
             pw["_page_area"] = parea
             pw["index"] = idx
-            pw["_page_desc_verified"] = page_dv
             pool.append(((pn, idx), pw, src, page_tb))
     return pool
 
 
-def _panel_untrusted(panel: dict) -> bool:
-    """A pool panel is UNTRUSTED when Stage 2 flagged it: its PAGE failed DESC_VERIFY
-    (page dict `desc_verified` == False — explicit False only; absent/True = trusted, so
-    old projects with no flag stay trusted) OR the panel's own VLM dialog contradicts Magi
-    OCR ground truth (`dialog_mismatch` truthy). An untrusted panel's (page,idx) anchor is
-    only as reliable as the description that produced it — a fabricated description silently
-    mis-anchored doom-rocket-raccoon scene 13 and ANCHOR_BIND rendered the wrong panel with
-    no VLM check. Feature C uses this to refuse the hard bind; Feature D forces the VLM."""
-    return panel.get("_page_desc_verified") is False or bool(panel.get("dialog_mismatch"))
+def _match_panels(units: list, pages_by_number: dict, cluster_to_name: dict,
+                  *, project: str | None = None, narration: dict | None = None) -> list:
+    """Deterministic panel assignment: Master picks panels by hand in the review UI, so an
+    UNLOCKED unit takes no content match. Each STORY unit → its scene's (page_ref, panel_ref)
+    when that panel is in the pool, else the FIRST panel of page_ref, else the first panel of the
+    NEAREST page. Intro → the cold-open panel, outro → the panel the video opened on (the loop
+    close); both are geometric. Never raises on an empty/absent panel index.
+    units=[(scene,text)] in audio order → [(panel,src)]."""
+    pool = _panel_pool(pages_by_number)
+    n = len(units)
+    if n == 0:
+        return []
+    if not pool:
+        return [(None, "")] * n
 
-
-def _panel_content_score(panel, panel_vec, chunk_vec, scene_vec, page_tb,
-                         *, chunk_text, scene_text):
-    """PURE-VECTOR content match + render tie-break. Returns (score, sim_chunk).
-    cosine comes from the persisted Qdrant vector (panel_vec, no re-embed) when
-    available, else an in-memory embed of the richer panel text. The lexical hybrid
-    (char/dialog/emotion) is deliberately gone — validated worse, see W_COS notes."""
-    import numpy as np
-    if panel_vec is not None and chunk_vec is not None:
-        sim_chunk = max(0.0, float(np.dot(chunk_vec, panel_vec)))
-        sim_scene = (max(0.0, float(np.dot(scene_vec, panel_vec)))
-                     if scene_vec is not None else 0.0)
-    else:
-        ptext = panel_embed_text(panel, page_tb)
-        sim_chunk = _semantic_sim(chunk_text, ptext)
-        sim_scene = _semantic_sim(scene_text, ptext)
-    score = W_COS * sim_chunk + W_COS_SCENE * sim_scene
-    # render_adjust biases toward bigger/highlight panels; bounded by PANEL_RENDER_ADJ_CAP so it
-    # never overrides content, only decides among content-similar panels.
-    radj = _render_adjust(panel, page_tb, salience_w=PANEL_SALIENCE_W)
-    score += max(-PANEL_RENDER_ADJ_CAP, min(PANEL_RENDER_ADJ_CAP, radj))
-    return score, sim_chunk
-
-
-def _blend_image_content(content, pool: list, units: list, project: str | None) -> None:
-    """Feature A — blend a desc-FREE SigLIP IMAGE signal into the `content` matrix IN PLACE.
-
-    WHY: `content` (text cosine on the VLM description) trusts the VLM's WORDS, and the VLM
-    fabricates descriptions from story context — a poisoned description scores a FAKE-HIGH
-    text cosine for the WRONG panel (doom-rocket-raccoon #13). The image cosine (narration
-    line vs the panel's ART pixels, both in SigLIP's joint space) never reads those words, so
-    it can veto a poisoned pick.
-
-    Blend: content[i][j] = (1-w)*text + w*img_mapped, w = PANEL_IMG_WEIGHT.
-      • text stays RAW so a CONFIDENT text lead keeps its magnitude (image is a MINORITY vote
-        at w=0.35 — it flips near-ties / low-confidence picks, not a confidently-agreeing text
-        lead). Min-maxing the text instead would erase confidence (a coin-flip near-tie would
-        masquerade as maximally certain and starve the image signal exactly when it matters).
-      • img_mapped = per-unit min-max of the RAW image cosine (SigLIP cosines cluster in a
-        narrow band, so min-max spreads them) linearly mapped into THIS unit's text span
-        [tmin, tmax]. Mapping onto the text scale keeps the blend on `content`'s ~0-10 point
-        scale so the page prior / anchor bonus / tie-break / reuse-penalty POINTS downstream
-        keep their calibrated magnitude.
-      • Panels with no stored image vector stay NEUTRAL (img == their own text value → the
-        blend leaves them unchanged) rather than being pushed by a bogus 0 cosine.
-
-    Degrades to EXACTLY the text-only path (content untouched) when the channel is off, no
-    image vectors exist, the SigLIP text tower is unavailable, or dims don't line up. `sim`
-    (raw TEXT cosine) is intentionally NOT passed in / NOT touched: the PANEL_COS_FLOOR
-    cascade-hold guard must keep its text semantics (image cosines live on a different scale).
-
-    ponytail: min-max maps onto the text span, so a unit where ALL text scores tie (span≈0)
-    gets no image push. That's the backend-down degenerate case the cascade-hold guard already
-    catches; per-unit ties on real runs are rare. Revisit only if flat-text units show up.
-    """
-    from .. import _img_index   # module import → attributes late-bound (monkeypatchable in tests)
-    if not project or not _img_index.PANEL_IMG_EMBED or not _img_index.img_embed_available():
-        return
-    img_vecs = _img_index.load_image_vectors(project)
-    if not img_vecs:
-        print("[stage5] img-match: no image vectors — text-only")
-        return
-    unit_txt = _img_index.embed_texts([txt for _sc, txt in units])
-    if unit_txt is None:
-        print("[stage5] img-match: SigLIP text tower unavailable — text-only")
-        return
-
-    import numpy as np
-    n, m = content.shape
-    w = float(_img_index.PANEL_IMG_WEIGHT)
-    stored_dim = len(next(iter(img_vecs.values())))
-    if int(unit_txt.shape[1]) != int(stored_dim):
-        # A SigLIP swap since indexing would crash np.dot — skip rather than blend garbage.
-        print(f"[stage5] img-match: text-dim {unit_txt.shape[1]} != stored img-dim {stored_dim} — text-only")
-        return
-
-    keys = [pool[j][0] for j in range(m)]
-    have = np.array([k in img_vecs for k in keys])
-    panel_mat = np.zeros((m, int(stored_dim)), dtype="float32")
-    for j, k in enumerate(keys):
-        if have[j]:
-            panel_mat[j] = img_vecs[k]
-    img_cos = unit_txt @ panel_mat.T                 # [n, m] cosine (both L2-normed)
-
-    blended = 0
-    for i in range(n):
-        row = content[i]
-        tmin, tmax = float(row.min()), float(row.max())
-        span = tmax - tmin
-        if span <= 0 or int(have.sum()) < 2:
-            continue                                 # nothing to reorder / too few image vecs
-        ic = img_cos[i]
-        imin = float(ic[have].min()); imax = float(ic[have].max())
-        ispan = imax - imin
-        if ispan <= 0:
-            continue                                 # image can't discriminate this unit
-        # img in [0,1] over present panels → mapped into [tmin, tmax]; absent panels neutral.
-        img_mapped = np.where(have, tmin + (ic - imin) / ispan * span, row)
-        content[i] = (1.0 - w) * row + w * img_mapped
-        blended += 1
-    if blended:
-        print(f"[stage5] img-match: blended SigLIP image signal into {blended}/{n} units (w={w})")
-
-
-def _vlm_rerank(line: str, cands: list, *, log=print) -> int | None:
-    """#6 VLM judge: crop each candidate panel to PNG and ask a Claude vision agent (Read
-    tool reads the images) which best depicts `line`. cands = [(pool_idx, src, panel,
-    page_tb)]. Returns the chosen pool_idx (override the cosine pick), -1 for "none of these"
-    (caller holds the previous panel), or None when the judge is unavailable / undecided
-    (caller keeps the cosine pick). Never raises."""
-    import re as _re
-    import tempfile
-    import shutil
-    from .._claude_sdk import sdk_available, sdk_complete_vision
-    if not cands or not sdk_available():
-        return None
-    tmpdir = Path(tempfile.mkdtemp(prefix="panel_rerank_"))
-    try:
-        listed = []   # (display_n, pool_idx, png_path)
-        for n, (pidx, src, panel, _page_tb) in enumerate(cands, start=1):
-            outp = tmpdir / f"cand_{n}.png"
-            try:
-                _crop_panel(str(src), panel.get("bbox") or {}, outp, skip_mirror=True)
-            except Exception as exc:
-                log(f"[stage5] rerank crop failed cand {n}: {exc}")
-                continue
-            if outp.exists():
-                listed.append((n, pidx, outp))
-        if len(listed) < 2:
-            return None
-        system = ("You are a comic panel-matching judge. You look at panel ART and decide "
-                  "which single panel best depicts a narration line. When MULTIPLE panels "
-                  "depict the line about equally well, prefer the LARGER / more dramatic "
-                  "(splash) panel — it reads as a highlight. Output ONLY a number.")
-        body = "\n".join(f"{n}. {p}" for n, _pidx, p in listed)
-        user = (
-            f'Narration line: "{line}"\n\n'
-            f"Below are {len(listed)} candidate comic panels as image files. Open (Read) EVERY "
-            f"image, then decide which ONE panel best depicts the narration line. If several "
-            f"fit about equally, pick the LARGER / more dramatic one.\n\n{body}\n\n"
-            "Reply with ONLY a single integer: the number of the best-matching panel, or 0 if "
-            "NONE of them depict the line. No other text."
-        )
-        resp = sdk_complete_vision(system, user, log=log)
-        if not resp:
-            return None
-        mt = _re.search(r"-?\d+", resp)
-        if not mt:
-            return None
-        pick = int(mt.group())
-        if pick <= 0:
-            return -1
-        for n, pidx, _p in listed:
-            if n == pick:
-                return pidx
-        return None
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-def _match_panels_no_embed(units: list, pool: list, pages_by_number: dict, *,
-                           narration: dict | None = None, project: str | None = None,
-                           candidates_out: list | None = None, candidates_k: int = 12) -> list:
-    """Deterministic panel assignment for PANEL_TEXT_EMBED=0 (Master picks by hand; the cosine
-    pick is dead). Each STORY unit → its scene's (page_ref, panel_ref) when that panel is in the
-    pool, else the FIRST panel of page_ref, else the first panel of the NEAREST page. intro →
-    cold-open, outro → loop (both geometric — no embed). candidates_out mode → ALL panels
-    page-sorted (score/cosine 0.0). Never embeds; never raises on an empty/absent panel index."""
     page_js: dict[int, list[int]] = {}
     key_to_j: dict[tuple, int] = {}
     for j, (key, _p, _s, _tb) in enumerate(pool):
@@ -3289,16 +2835,6 @@ def _match_panels_no_embed(units: list, pool: list, pages_by_number: dict, *,
     for pg in page_js:
         page_js[pg].sort(key=lambda jj: int(pool[jj][0][1]))
     sorted_pages = sorted(page_js)
-
-    if candidates_out is not None:
-        rows = sorted(range(len(pool)),
-                      key=lambda jj: (int(pool[jj][0][0]), int(pool[jj][0][1])))[:max(1, candidates_k)]
-        for _ in units:
-            candidates_out.append([
-                {"page": int(pool[j][0][0]), "panel_idx": int(pool[j][0][1]),
-                 "score": 0.0, "cosine": 0.0, "panel": pool[j][1], "src": pool[j][2]}
-                for j in rows])
-        return []
 
     def _pick_j(pref: int, pnref: int):
         if pref > 0 and pnref >= 0 and (pref, pnref) in key_to_j:
@@ -3312,16 +2848,20 @@ def _match_panels_no_embed(units: list, pool: list, pages_by_number: dict, *,
 
     out: list = []
     prev: tuple | None = None
-    for i, (scene, text) in enumerate(units):
+    for i, (scene, _text) in enumerate(units):
         if i == 0 and scene.get("is_intro"):
             cp, csrc = _cold_open_panel(pages_by_number, exclude_keys=set(),
                                         narration=narration, project=project)
             if cp is not None:
-                prev = (cp, csrc); out.append((cp, csrc)); continue
+                prev = (cp, csrc)
+                out.append(prev)
+                continue
         if scene.get("is_outro"):
             op, osrc = out[0] if out else _outro_panel(pages_by_number)
             if op is not None:
-                prev = (op, osrc); out.append((op, osrc)); continue
+                prev = (op, osrc)
+                out.append(prev)
+                continue
         pref = int(scene.get("page_ref", 0) or 0)
         pnref = int(scene.get("panel_ref", -1) if scene.get("panel_ref") is not None else -1)
         j = _pick_j(pref, pnref)
@@ -3329,388 +2869,9 @@ def _match_panels_no_embed(units: list, pool: list, pages_by_number: dict, *,
             out.append(prev if prev is not None else (None, ""))
             continue
         key, panel, src, _tb = pool[j]
-        out.append((panel, src)); prev = (panel, src)
-        print(f"[stage5] no-embed fallback: scene {scene.get('scene_id')} → p{key[0]}/{key[1]}")
-    return out
-
-
-def _match_panels(units: list, pages_by_number: dict, cluster_to_name: dict,
-                  *, project: str | None = None,
-                  candidates_out: list | None = None, candidates_k: int = 12,
-                  narration: dict | None = None) -> list:
-    """Align the narration sequence to the panel sequence by ORDER-FREE content match:
-    each unit takes its BEST-content panel independently (reuse allowed), with a per-unit
-    PAGE-ANCHORED prior — a Gaussian bump centred on the unit's OWN page_ref (the Stage-3
-    beat anchor) — pulling a line toward the page it depicts (forward for a chronological
-    beat, BACKWARD for a backstory/twist beat). Content is scored PURE-VECTOR by
-    _panel_content_score (cosine on the richer panel embed, from the Stage-2 Qdrant vectors
-    when present). A unit whose best panel's raw cosine is below PANEL_COS_FLOOR HOLDS the
-    previous panel rather than showing a wrong one. A unit whose scene carries a grounded/
-    hand (page_ref, panel_ref) anchor is BOUND to that panel when PANEL_ANCHOR_BIND is on
-    (default) — pre-assigned before Hungarian/greedy, bypassing the cosine floor, VLM
-    rerank, and tie-breaks entirely. Cold-open for the intro, outro panel for the closing
-    line. units=[(scene,text)] in audio order → [(panel,src)]."""
-    pool = _panel_pool(pages_by_number)
-    n = len(units)
-    if n == 0:
-        return []
-    if not pool:
-        return [(None, "")] * n
-    m = len(pool)
-
-    # NO-EMBED: Master picks panels by hand → assign deterministically, never touch the embed
-    # backend or Qdrant. Covers the empty-panel_vecs case the PANEL_TEXT_EMBED=0 workflow creates.
-    if not PANEL_TEXT_EMBED:
-        return _match_panels_no_embed(
-            units, pool, pages_by_number, narration=narration, project=project,
-            candidates_out=candidates_out, candidates_k=candidates_k)
-
-    import numpy as np
-    from .._embedding import embed_batch as _embed_batch
-    from .._panel_index import load_vectors
-
-    # Persisted panel vectors (Stage 2 → Qdrant); {} → fall back to in-memory embed.
-    panel_vecs = load_vectors(project) if project else {}
-    unit_vecs = _embed_batch([txt for _sc, txt in units])
-    scene_text_list = [str(sc.get("text", "") or "") for sc, _txt in units]
-    scene_vecs = _embed_batch(scene_text_list)
-    if panel_vecs:
-        print(f"[stage5] panel-match: PURE-VECTOR via {len(panel_vecs)} Qdrant vectors")
-    else:
-        print("[stage5] panel-match: PURE-VECTOR via in-memory embed (no Qdrant index)")
-
-    content = np.full((n, m), -1.0e9, dtype="float64")
-    sim = np.zeros((n, m), dtype="float64")
-    for i, (scene, text) in enumerate(units):
-        cv, sv = unit_vecs[i], scene_vecs[i]
-        for j, (key, panel, _src, page_tb) in enumerate(pool):
-            sc, sc_sim = _panel_content_score(
-                panel, panel_vecs.get(key), cv, sv, page_tb,
-                chunk_text=text, scene_text=scene_text_list[i])
-            content[i][j] = sc
-            sim[i][j] = sc_sim
-
-    # Feature A: blend the desc-free SigLIP image signal into `content` BEFORE the page prior
-    # (below). No-op — content untouched → EXACTLY the text-only path — when the image channel
-    # is unavailable. `sim` (raw TEXT cosine) is left alone so the cosine-floor guard keeps its
-    # text semantics.
-    _blend_image_content(content, pool, units, project)
-
-    # Cascade-HOLD guard: if the embedding backend is down/misconfigured, every
-    # sim is ~0.0 → every story unit falls below PANEL_COS_FLOOR → every scene
-    # silently HOLDs the cold-open panel (a video that shows one panel throughout).
-    # Fail loud instead of shipping a broken render.
-    story_units = [i for i, (sc, _t) in enumerate(units)
-                   if not (sc.get("is_intro") or sc.get("is_outro"))]
-    if len(story_units) >= 5:
-        n_under_floor = sum(1 for i in story_units if float(np.max(sim[i])) < PANEL_COS_FLOOR)
-        frac_under_floor = n_under_floor / len(story_units)
-        if frac_under_floor >= 0.6:
-            raise RuntimeError(
-                f"panel-match: {n_under_floor}/{len(story_units)} story scenes have no panel "
-                f"above cosine floor ({PANEL_COS_FLOOR}) — embedding backend likely down/"
-                f"misconfigured; refusing to render a video where every scene shows the same panel")
-
-    # CONTENT order: each unit takes its BEST-content panel independently —
-    # order-FREE and REUSE-ALLOWED. A backstory line gets the backstory panel even when
-    # it sits out of page order (Doom fix); two consecutive lines about the SAME moment
-    # both hold that panel instead of no-reuse forcing a wrong one onto one of them.
-    # Gemini's discriminative cosine makes a "magnet" panel (top for many different
-    # subjects) unlikely. Per-unit PAGE-ANCHORED prior: each unit's bias is a Gaussian
-    # bump centred on ITS OWN page_ref in PAGE space, so a line is pulled toward the page
-    # it depicts — forward for a chronological beat, BACKWARD for a backstory/twist beat.
-    # A unit with no page_ref (0) gets no positional bias → pure content decides (safe
-    # fallback).
-    biased = content.copy()
-    if PANEL_FWD_BIAS > 0.0 and PANEL_PRIOR_SIGMA_PAGES > 0.0:
-        two_sig2 = 2.0 * PANEL_PRIOR_SIGMA_PAGES * PANEL_PRIOR_SIGMA_PAGES
-        panel_pages = [int(pool[j][0][0]) for j in range(m)]
-        for i, (scene, _t) in enumerate(units):
-            pref = int(scene.get("page_ref", 0) or 0)
-            if pref <= 0:
-                continue
-            for j in range(m):
-                d = panel_pages[j] - pref
-                biased[i][j] += PANEL_FWD_BIAS * float(np.exp(-(d * d) / two_sig2))
-    if not PANEL_ANCHOR_BIND and PANEL_ANCHOR_BONUS > 0.0:
-        pool_key_to_j = {key: j for j, (key, _pan, _src, _tb) in enumerate(pool)}
-        for i, (scene, _t) in enumerate(units):
-            panel_ref = int(scene.get("panel_ref", -1) if scene.get("panel_ref") is not None else -1)
-            if panel_ref < 0:
-                continue
-            page_ref = int(scene.get("page_ref", 0) or 0)
-            j_anchor = pool_key_to_j.get((page_ref, panel_ref))
-            if j_anchor is not None:
-                biased[i][j_anchor] += PANEL_ANCHOR_BONUS
-
-    # Review-gate export: hand back the matcher's OWN ranked shortlist per unit (biased
-    # content+page-prior score, raw cosine), top-`candidates_k`, then RETURN EARLY. The
-    # review UI wants the ranked list, not the final single pick — and must not fire the
-    # VLM rerank (SDK cost) or the assignment. No-op on the render path (candidates_out None).
-    if candidates_out is not None:
-        for i in range(n):
-            row = []
-            for j in [int(x) for x in np.argsort(-biased[i])[:max(1, candidates_k)]]:
-                key, panel, src, _tb = pool[j]
-                row.append({"page": int(key[0]), "panel_idx": int(key[1]),
-                            "score": float(biased[i][j]), "cosine": float(sim[i][j]),
-                            "panel": panel, "src": src})
-            candidates_out.append(row)
-        return []
-
-    # Panel area fraction (size/page) per pool index — for the big-shot tie-break.
-    panel_fracs = []
-    for _key, _pan, _src, _tb in pool:
-        _bb = _pan.get("bbox") or {}
-        _pa = int(_pan.get("_page_area", 0) or 0)
-        _a = int(_bb.get("w", 0) or 0) * int(_bb.get("h", 0) or 0)
-        panel_fracs.append((_a / _pa) if _pa else 0.0)
-    # STORY units only — intro/outro are special-picked below (cold-open / outro panel),
-    # so they neither need nor should consume a story panel.
-    story_rows = [i for i, (sc, _t) in enumerate(units)
-                  if not (sc.get("is_intro") or sc.get("is_outro"))]
-    story_set = set(story_rows)
-    idxs = [0] * n
-
-    # Anchor BIND: pre-assign each anchored unit's panel BEFORE Hungarian/greedy runs, so
-    # no later heuristic can override it. The panel is marked consumed so it drops out of
-    # the assignment pool for the remaining (un-anchored) rows — PANEL_UNIQUE still holds
-    # for them. Two units bound to the SAME panel is a legal authorial repeat: consuming
-    # it twice is a no-op, not an error.
-    anchored: set[int] = set()
-    consumed_panels: set[int] = set()
-    # Units whose authorial anchor was REJECTED by Feature C because the target panel is
-    # UNTRUSTED (desc_verified=False page or dialog_mismatch panel). They flow through
-    # normal content matching below, and Feature D forces them into VLM rerank regardless
-    # of cosine (a poisoned description often yields a HIGH fake cosine — see the loop).
-    distrusted_units: set[int] = set()
-    # Panels already bound to EACH scene's own fragments (FIX 2, see FRAGMENT_SPREAD): a recap
-    # scene fans into several fragment units that all carry the scene's ONE (page_ref, panel_ref),
-    # so binding every one to key_panels[0] shows the SAME panel 2-4× in a row.
-    scene_bound: dict[int, list[int]] = {}   # id(scene) -> panel js already given to its fragments
-    if PANEL_ANCHOR_BIND:
-        pool_key_to_j = {key: j for j, (key, _pan, _src, _tb) in enumerate(pool)}
-        page_js: dict[int, list[int]] = {}   # page_number -> pool indices on that page
-        for j, (key, _pan, _src, _tb) in enumerate(pool):
-            page_js.setdefault(int(key[0]), []).append(j)
-        for i in story_rows:
-            scene, text = units[i]
-            panel_ref = int(scene.get("panel_ref", -1) if scene.get("panel_ref") is not None else -1)
-            if panel_ref < 0:
-                continue
-            page_ref = int(scene.get("page_ref", 0) or 0)
-            j_anchor = pool_key_to_j.get((page_ref, panel_ref))
-            if j_anchor is None:
-                print(f"[stage5] match u{i}: ANCHOR MISS (page {page_ref}, idx {panel_ref}) not in "
-                      f"pool — falling back to content match | {text[:42]!r}")
-                continue
-            # Feature C: don't hard-bind onto an UNTRUSTED panel. The anchor is only as
-            # trustworthy as the page description that produced it, and a fabricated desc
-            # silently mis-anchored a scene once (doom-rocket-raccoon #13). Leave the unit
-            # un-anchored → normal content match + Feature-D VLM rerank get a say.
-            if ANCHOR_TRUST and _panel_untrusted(pool[j_anchor][1]):
-                reason = ("desc_verified=False" if pool[j_anchor][1].get("_page_desc_verified") is False
-                          else "dialog_mismatch")
-                print(f"[stage5] match u{i}: ANCHOR {pool[j_anchor][0]} UNTRUSTED ({reason}) — falling "
-                      f"back to content match + rerank | {text[:42]!r}")
-                distrusted_units.add(i)
-                continue
-            taken = scene_bound.setdefault(id(scene), [])
-            if FRAGMENT_SPREAD and j_anchor in taken:
-                # A sibling fragment already took this exact panel — give THIS fragment a
-                # DISTINCT trusted panel on the SAME page, best-matching its own text. Prefer
-                # a page-panel no scene has bound yet; fall back to any un-taken same-page one.
-                cands = [j for j in page_js.get(page_ref, [])
-                         if j not in taken and not (ANCHOR_TRUST and _panel_untrusted(pool[j][1]))]
-                fresh = [j for j in cands if j not in consumed_panels]
-                pick_from = fresh or cands
-                if pick_from:
-                    alt = max(pick_from, key=lambda j: content[i][j])
-                    print(f"[stage5] match u{i}: ANCHOR spread {pool[j_anchor][0]}→{pool[alt][0]} "
-                          f"(sibling fragment, same page) | {text[:42]!r}")
-                    j_anchor = alt
-                # else: page has no other distinct panel → keep the repeat (nothing better)
-            elif j_anchor in consumed_panels:
-                print(f"[stage5] match u{i}: ANCHOR {pool[j_anchor][0]} reuses a panel already bound "
-                      f"to another scene (authorial repeat, allowed) | {text[:42]!r}")
-            idxs[i] = j_anchor
-            anchored.add(i)
-            consumed_panels.add(j_anchor)
-            taken.append(j_anchor)
-
-    free_rows = [i for i in story_rows if i not in anchored]
-    free_cols = [j for j in range(m) if j not in consumed_panels]
-    if PANEL_UNIQUE and 0 < len(free_rows) <= len(free_cols):
-        # Optimal 1:1 assignment: maximise total (content + page-prior) score with NO panel
-        # reused across story scenes. A tiny size nudge breaks exact ties toward the larger
-        # (splash) panel, mirroring the greedy big-shot tie-break. linear_sum_assignment
-        # MINIMISES, so feed the negated score.
-        from scipy.optimize import linear_sum_assignment
-        score = np.array(
-            [[biased[i][j] + 1e-6 * panel_fracs[j] for j in free_cols] for i in free_rows],
-            dtype="float64")
-        r, c = linear_sum_assignment(-score)
-        for ri, cj in zip(r, c):
-            idxs[free_rows[ri]] = free_cols[cj]
-        for i in range(n):
-            if i not in story_set:
-                idxs[i] = int(np.argmax(biased[i]))   # placeholder — overridden by cold-open/outro
-        print(f"[stage5] panel-match: UNIQUE assignment ({len(free_rows)} scene(s) -> distinct panels, "
-              f"{len(anchored)} bound)")
-    else:
-        # Greedy in narration order with a soft reuse penalty — fallback when scenes > panels
-        # (uniqueness impossible) or PANEL_UNIQUE=0. Each prior use docks PANEL_REUSE_PENALTY so
-        # similar consecutive lines spread across distinct near-tie panels, while a line with no
-        # good alternative still reuses (hold-same-subject). Anchored rows are already assigned
-        # above and skipped here.
-        used: dict[int, int] = {j: 1 for j in consumed_panels}
-        for i in range(n):
-            if i in anchored:
-                continue
-            if i not in story_set:
-                # intro/outro: placeholder pick (overridden by cold-open/outro downstream). Do
-                # NOT let it consume `used` — its phantom reuse-penalty would dock a real story
-                # beat wanting the same panel. The Hungarian branch already excludes non-story
-                # from contention; match that so the two paths pick consistently.
-                idxs[i] = int(np.argmax(biased[i]))
-                continue
-            row = biased[i].copy()
-            for j, cnt in used.items():
-                row[j] -= PANEL_REUSE_PENALTY * cnt
-            j = int(np.argmax(row))
-            # Big-shot tie-break: among panels within PANEL_SIZE_TIE_MARGIN of the best
-            # (content-similar), prefer the LARGER one for visual punch.
-            if PANEL_SIZE_TIE_MARGIN > 0.0 and m > 1:
-                top = float(row[j])
-                near = [k for k in range(m) if float(row[k]) >= top - PANEL_SIZE_TIE_MARGIN]
-                if len(near) > 1:
-                    j = max(near, key=lambda k: panel_fracs[k])
-            idxs[i] = j
-            used[j] = used.get(j, 0) + 1
-
-    # #6 — VLM rerank for LOW-confidence units. The page_ref a beat carries is itself an
-    # LLM guess (Stage-3 outliner reads lossy panel descriptions), so a WRONG page_ref can
-    # bury the correct panel via the prior. Vision is the only ground truth: a Claude judge
-    # views a shortlist (top-K by score ∪ page_ref-page panels) and picks the panel that
-    # best depicts the line (or NONE → hold). Gate fires on off-ref OR prior-overrode picks
-    # (see below) so a wrong page_ref self-corrects — no per-comic page_ref fixes needed.
-    # Standalone-safe (SDK throttles under concurrency).
-    force_hold: set[int] = set()
-    reranked: set[int] = set()
-    if PANEL_RERANK:
-        # Panels already assigned to OTHER story scenes — kept out of each unit's rerank
-        # shortlist so the VLM can't re-pick a used panel and reintroduce a duplicate.
-        assigned_now = set(idxs[r] for r in story_rows) if PANEL_UNIQUE else set()
-        # Feature E: bound anchors whose panel cosine is far below the best-content panel's
-        # (a likely-wrong Stage-3 page_ref) get re-checked by vision too; agreement is trusted.
-        recheck_anchor: set[int] = set()
-        if PANEL_ANCHOR_RECHECK:
-            for i in anchored:
-                if float(np.max(sim[i])) - float(sim[i][idxs[i]]) > ANCHOR_DISAGREE_MARGIN:
-                    recheck_anchor.add(i)
-        for i, (scene, text) in enumerate(units):
-            if scene.get("is_intro") or scene.get("is_outro"):
-                continue
-            if i in anchored and i not in recheck_anchor:
-                continue                                   # bound + cosine agrees → trusted, no VLM
-            j = idxs[i]
-            # Feature D: a unit whose anchor Feature C REJECTED as untrusted MUST get VLM
-            # eyes even if its cosine looks strong. A poisoned description scores a HIGH
-            # FAKE cosine (the bad text matched the bad panel text), so the "strong match →
-            # trust cosine" gate below — and the on-ref/anchor-match trust gate — would skip
-            # exactly the picks we least trust. Distrusted units bypass both and always get a
-            # shortlist + _vlm_rerank (which still no-ops gracefully when the SDK is absent).
-            distrusted = i in distrusted_units
-            if not distrusted and float(sim[i][j]) >= PANEL_RERANK_COS_CEIL:
-                continue                                   # strong match → trust cosine
-            # Low-confidence pick → let the VLM verify, in two cases:
-            #   off-ref     : cosine landed OFF the Stage-3 page_ref page, OR
-            #   prior_overrode: the page_ref Gaussian prior MOVED the pick off cosine's
-            #                   top panel onto a different page (Stage-3's page_ref may be
-            #                   wrong — e.g. it anchored "stirred Eternity" to the wrong
-            #                   page; the prior then buried the correct cosine-top panel).
-            # An on-ref pick where the prior agreed with cosine is trusted (no VLM call).
-            ref = int(scene.get("page_ref", 0) or 0)
-            on_ref = ref > 0 and int(pool[j][0][0]) == ref
-            panel_ref = int(scene.get("panel_ref", -1) if scene.get("panel_ref") is not None else -1)
-            anchor_match = panel_ref >= 0 and pool[j][0] == (ref, panel_ref)
-            cos_top = int(np.argmax(content[i]))           # cosine winner, BEFORE the prior
-            prior_overrode = cos_top != j and int(pool[cos_top][0][0]) != int(pool[j][0][0])
-            if not distrusted and i not in recheck_anchor and (on_ref or anchor_match) and not prior_overrode:
-                continue
-            topk = [int(x) for x in np.argsort(-biased[i])[:PANEL_RERANK_TOPK]]
-            ref_js = [jj for jj in range(m) if int(pool[jj][0][0]) == ref]
-            cand_js = list(dict.fromkeys(topk + ref_js))
-            if PANEL_UNIQUE:
-                # Drop panels owned by other scenes (keep this unit's own pick). If <2 remain,
-                # _vlm_rerank no-ops (returns None) and the unique cosine pick stands.
-                others = assigned_now - {j}
-                cand_js = [c for c in cand_js if c not in others]
-            cands = [(jj, pool[jj][2], pool[jj][1], pool[jj][3]) for jj in cand_js]
-            pick = _vlm_rerank(text, cands)
-            if pick is None:
-                continue                                   # VLM absent/undecided → keep current pick
-                                                           # (a recheck bind stays its trusted anchor)
-            if pick == -1:
-                force_hold.add(i)
-                anchored.discard(i)                        # let the output honor the hold
-                print(f"[stage5] rerank u{i}: VLM→NONE (hold) | {text[:42]!r}")
-            elif pick != j:
-                if PANEL_UNIQUE:
-                    assigned_now.discard(j)
-                    assigned_now.add(pick)
-                idxs[i] = pick
-                reranked.add(i)
-                anchored.discard(i)                        # VLM overruled the bind → normal output
-                print(f"[stage5] rerank u{i}: {pool[j][0]}→{pool[pick][0]} (VLM) | {text[:42]!r}")
-            else:
-                reranked.add(i)                            # VLM confirmed the cosine/anchor pick
-
-    out = []
-    prev: tuple | None = None
-    for i, (scene, text) in enumerate(units):
-        # Cold-open: the teaser opens on a striking OPENING panel, not a content match.
-        # Exclude panels already assigned to story scenes — no duplicate opener.
-        if i == 0 and scene.get("is_intro"):
-            _story_keys = {pool[idxs[r]][0] for r in story_rows}
-            cp, csrc = _cold_open_panel(pages_by_number, exclude_keys=_story_keys, narration=narration,
-                                        project=project)
-            if cp is not None:
-                prev = (cp, csrc)
-                out.append((cp, csrc))
-                print(f"[stage5] match u{i}: COLD-OPEN | {text[:42]!r}")
-                continue
-        # Outro: LOOP-CLOSE — reuse the panel the video OPENED on (unit 0: cold-open
-        # or first story match) so the last narrated frame ≈ frame 1 and the Short's
-        # auto-replay reads as a seamless loop. Falls back to the closing-third focal
-        # pick only when there is nothing before the outro.
-        if scene.get("is_outro"):
-            op, osrc = out[0] if out else _outro_panel(pages_by_number)
-            if op is not None:
-                prev = (op, osrc)
-                out.append((op, osrc))
-                print(f"[stage5] match u{i}: OUTRO-LOOP p{op.get('_page_number')} | {text[:42]!r}")
-                continue
-        j = idxs[i]
-        key, panel, src, _tb = pool[j]
-        if i in anchored:
-            # BOUND: an authorial decision — skip the cosine floor, VLM hold, and every
-            # tie-break entirely. It is truth.
-            out.append((panel, src))
-            prev = (panel, src)
-            print(f"[stage5] match u{i}: ANCHOR {key} | {text[:42]!r}")
-            continue
-        if i in force_hold and prev is not None:
-            out.append(prev)                             # VLM judged none depict it → hold
-            print(f"[stage5] match u{i}: HOLD(vlm-none) | {text[:42]!r}")
-        elif i not in reranked and float(sim[i][j]) < PANEL_COS_FLOOR and prev is not None:
-            out.append(prev)                             # weak cosine, not VLM-chosen → hold
-            print(f"[stage5] match u{i}: HOLD(weak) {key} cos={float(sim[i][j]):.3f} | {text[:42]!r}")
-        else:
-            out.append((panel, src))
-            prev = (panel, src)
-            tag = "ALIGN-VLM" if i in reranked else "ALIGN"
-            print(f"[stage5] match u{i}: {tag} {key} cos={float(sim[i][j]):.3f} score={float(content[i][j]):.1f} | {text[:42]!r}")
+        prev = (panel, src)
+        out.append(prev)
+        print(f"[stage5] panel-match: scene {scene.get('scene_id')} → p{key[0]}/{key[1]}")
     return out
 
 
@@ -4567,8 +3728,6 @@ def _apply_inpaint(crop, filled, boxes: list[dict]):
     region's own background tone, drop it and repaint that tone, which reads as an empty
     bubble — exactly what the panels LaMa handled correctly already look like.
     """
-    import numpy as np
-
     out = crop.copy()
     ch, cw = crop.shape[:2]
     for b in boxes:
@@ -4598,9 +3757,9 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
     dominant cost and a panel is a fraction of the page (~5× faster). PERF (B):
     the cleaned result is cached by (source, bbox, text, mirror) so a panel shown
     across several shots/scenes is inpainted ONCE, then copied."""
+    if not source_image or not Path(source_image).is_file():
+        raise FileNotFoundError(f"source image missing or not a file: {source_image!r}")
     src = Path(source_image)
-    if not src.exists():
-        raise FileNotFoundError(f"source image missing: {src}")
 
     # Crop-window geometry ONCE (PIL header read is cheap) — shared by the cv2 and
     # PIL branches (the pad math was duplicated) and filled into geom_out even on a

@@ -746,6 +746,57 @@ def test_picking_a_question_fills_the_box_and_leaves_the_batch_on_screen(
     # either one firing here is the regression this whole flow exists to prevent.
 
 
+def test_picking_a_micro_moment_keeps_its_issue_metadata_in_research_intent(
+    tmp_path, monkeypatch,
+):
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[[{
+            "moment": "Cyclops faces Darkchild in a duel of truths.",
+            "series_issue_year": "Amazing X-Men #2 (2025)",
+            "character": "Cyclops",
+            "angle": _ANGLES[0],
+        }]],
+    )
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+
+    _by_key(controls, "discovered-questions").on_change(_FakeEvent("0"))
+
+    assert "Cyclops faces Darkchild" in _intent_field(controls).value
+    assert "Amazing X-Men #2 (2025)" in _intent_field(controls).value
+
+
+def test_micro_review_explains_when_research_returns_a_different_issue(tmp_path):
+    from stages.research_scout.issue_identity import micro_issue_rejection_reason
+
+    store = SessionStore(tmp_path / "research_sessions")
+    session = store.create(ScoutMode.MICRO, "Amazing X-Men #2: Cyclops faces Darkchild")
+    session.state = SessionState.CANDIDATE_REVIEW
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": []})
+    reason = micro_issue_rejection_reason(session.user_intent, {
+        "series_issue_year": "DC K.O.: Knightfight #1 (2026)",
+    })
+    store.append_audit(session.id, "general_research_completed", detail={
+        "revision": session.revision,
+        "candidate_validation_rejections": [{
+            "candidate_id": "candidate-1",
+            "reason": reason,
+        }],
+    })
+
+    _page, controls = _build(tmp_path, session)
+
+    shown = _text_content(controls)
+    assert "No matching candidates" in shown
+    assert "Expected Amazing X-Men #2" in shown
+    assert "Knightfight" in shown
+
+
 def test_rerolling_costs_one_call_and_excludes_every_question_already_offered(
     tmp_path, monkeypatch,
 ):
@@ -1252,6 +1303,68 @@ def test_a_candidate_with_no_id_cannot_borrow_another_rounds_verdict(tmp_path):
     (other,) = cards.values()
     assert "No Id At All" in other
     assert "CONFIRMED" not in other
+
+
+def _micro_cards(tmp_path, *candidates):
+    """The text of every candidate card of a micro session under review."""
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="micro-extra-research",
+        mode=ScoutMode.MICRO,
+        user_intent="Find a new micro moment",
+        state=SessionState.CANDIDATE_REVIEW,
+    )
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": list(candidates)})
+    _page, controls = _build(tmp_path, session)
+    return {
+        node.key: _text_content(node)
+        for node in _walk(controls)
+        if str(getattr(node, "key", "")).startswith("candidate-card-")
+    }
+
+
+def test_a_card_shows_what_happens_next_the_context_and_what_the_sources_withhold(tmp_path):
+    cards = _micro_cards(tmp_path, {
+        "id": "a", "title": "The duel in the vault", "summary": "Hero duels Rival.",
+        "aftermath": "Hero loses the duel and keeps the blade.",
+        "context_behind": "Hero took the blade from the vault to settle a debt.",
+        "unrevealed": "The review never says what the twist is.",
+    })
+
+    text = cards["candidate-card-a"]
+    assert "What happens next: Hero loses the duel and keeps the blade." in text
+    assert "Context: Hero took the blade from the vault to settle a debt." in text
+    assert "Not revealed by sources: The review never says what the twist is." in text
+
+
+def test_a_card_leaves_out_the_extra_research_lines_that_are_empty_or_absent(tmp_path):
+    cards = _micro_cards(
+        tmp_path,
+        {"id": "blank", "title": "Blank", "aftermath": "", "context_behind": "   ", "unrevealed": ""},
+        {"id": "older", "title": "Older, before the aftermath ask"},
+    )
+
+    for key in ("candidate-card-blank", "candidate-card-older"):
+        for label in ("What happens next", "Context:", "Not revealed by sources"):
+            assert label not in cards[key], (key, label)
+
+
+def test_a_card_lists_the_pages_the_extra_research_cites(tmp_path):
+    cards = _micro_cards(tmp_path, {
+        "id": "a", "title": "A", "evidence_urls": ["https://aiptcomics.com/duel"],
+        "aftermath": "Hero loses.",
+        "detail_citations": [
+            {"supports": "aftermath", "url": "https://cbr.com/duel", "quote": "Hero loses."},
+            {"supports": "aftermath", "url": "https://aiptcomics.com/duel", "quote": "Hero loses."},
+            "not an object",
+        ],
+    })
+
+    text = cards["candidate-card-a"]
+    assert "Source: https://cbr.com/duel" in text
+    # a page already listed is not listed twice
+    assert text.count("https://aiptcomics.com/duel") == 1
 
 
 def test_the_transcript_records_the_rescout_rather_than_skipping_it(tmp_path):

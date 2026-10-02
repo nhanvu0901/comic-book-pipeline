@@ -25,7 +25,7 @@ def test_pacing_constants():
     assert config.VISUAL_MIN_SHORT_SIDE == 600
 
 
-def test_embedding_visuals_constants_removed():
+def test_visual_search_constants_removed():
     from art_pipeline import config
     for name in ("VISUAL_KEEP_THRESHOLD", "VISUAL_MATCH_MIN",
                  "VISUAL_LICENSE_WHITELIST", "VISUAL_MAX_PER_VIDEO",
@@ -58,7 +58,7 @@ def test_longform_constants():
 def test_dedup_and_card_constants_exist():
     from art_pipeline import config as C
     assert C.ART_LF_SAID_LINES_MAX == 60
-    assert C.ART_LF_DEDUP_THRESHOLD == 0.86
+    assert C.ART_LF_DEDUP_THRESHOLD == 0.70
     assert C.ART_LF_DEDUP_MAX_PASSES == 2
     assert C.ART_LF_CHAPTER_CARDS is True
     assert C.ART_LF_CHAPTER_CARD_SEC == 2.6

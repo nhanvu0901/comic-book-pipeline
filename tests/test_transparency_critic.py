@@ -8,7 +8,6 @@ deterministically: a stranger character / an overstuffed sentence surface as fla
 clean narration returns zero, and an offline LLM (RuntimeError) degrades softly instead
 of crashing."""
 import json
-import pytest
 
 import stages.stage_3.write_script as ws
 from stages.stage_3.schema import Narration, Scene
@@ -67,7 +66,7 @@ def test_overstuffed_sentence_is_flagged_but_light(monkeypatch):
 
 
 def test_offline_llm_degrades_softly(monkeypatch):
-    # call_with_chain raises (SDK unavailable / offline / no-embed) → skip, never crash.
+    # call_with_chain raises (SDK unavailable / offline) → skip, never crash.
     def boom(*a, **k):
         raise RuntimeError("[transparency] all models exhausted")
     monkeypatch.setattr(ws, "call_with_chain", boom)

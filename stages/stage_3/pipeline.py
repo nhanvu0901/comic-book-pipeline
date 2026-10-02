@@ -220,22 +220,6 @@ def save_narration(
     return path
 
 
-def reanchor_project(project_name: str, *, progress: Callable[[str], None] | None = None) -> bool:
-    """Re-run CONTENT anchoring on an existing narration.json (fix drifted page_refs
-    WITHOUT re-narrating), then re-enrich panel metadata + save. Returns True if changed."""
-    from .write_script import reanchor_narration
-    log = progress or (lambda _msg: None)
-    root = get_project_dirs(project_name)["root"]
-    path = root / "narration.json"
-    data = json.loads(path.read_text())
-    if not reanchor_narration(data, progress=log):
-        return False
-    _enrich_scenes_with_panel_metadata(data, root, log)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    log(f"[stage4] re-anchored narration → {path}")
-    return True
-
-
 def _enrich_scenes_with_panel_metadata(
     data: dict,
     project_root: Path,

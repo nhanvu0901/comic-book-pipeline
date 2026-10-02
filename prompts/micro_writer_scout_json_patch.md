@@ -1,5 +1,10 @@
 # PATCH — feed the You.com scout JSON into the Grimframe micro-moment writer
 
+> Historical migration note. The active rules are in
+> `prompts/gemini_micro_moment_writer.md`. Its current Phase 1 allows independently
+> verified `INCONCLUSIVE` leads and does not require four beats; the older
+> thresholds below must not be applied to generated narration prompts.
+
 Apply to `GEMINI PROMPT — GRIMFRAME MICRO-MOMENT WRITER`. Two regions change; everything
 from "# PHASE 2 — WRITE THE SHORT" onward is untouched.
 

@@ -91,7 +91,7 @@ def build(page: ft.Page, state: ArtAppState, *,
             return
         running.visible = True
         narrate_btn.disabled = True
-        narrate_status.value = "Writing narration… (first run loads the embedding model)"
+        narrate_status.value = "Writing narration…"
         narrate_status.color = WARN
         page.update()
         try:

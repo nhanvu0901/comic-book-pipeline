@@ -2,8 +2,9 @@
 comic `PreprocessedPage` schema (one artwork = one page, regions = panels).
 
 Schema parity is the whole trick (spec §4-A3): Stage 5's
-_load_preprocessed_pages() globs preprocessed/page_*.json and the embedding
-panel-picker reads panel descriptions — both work on art unchanged.
+_load_preprocessed_pages() globs preprocessed/page_*.json and the narration
+writer lists each panel's description (art_pipeline/narrate.py) — both work on
+art unchanged.
 
 VLM returns PERCENT bboxes (0-100) — far more reliable than raw pixels —
 which we convert. Validation guard + grid fallback are day-1 features

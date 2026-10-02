@@ -13,6 +13,7 @@ from .youcom import RawCall
 
 class GateFlag(str, Enum):
     EXACT_ISSUE_REQUIRED = "exact_issue_required"
+    TARGET_ISSUE_MISMATCH = "target_issue_mismatch"
     NO_VISUAL_EVENT = "no_visual_event"
     URL_NOT_RETURNED = "url_not_returned"
     DUPLICATE = "duplicate"

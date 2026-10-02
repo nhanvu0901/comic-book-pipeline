@@ -12,6 +12,7 @@ from stages.research_scout.planner import (
     make_plan,
     validate_plan,
 )
+from tests import micro_detail_rules as rules
 
 
 def _plan(**overrides) -> ResearchPlan:
@@ -137,6 +138,16 @@ def test_assemble_prompt_contains_unit_sentence_and_digest_at_end():
     text = assemble_prompt(plan, "DIGEST-CONTENT")
     assert "One candidate per one issue — never merge entries." in text
     assert text.rstrip().endswith("DIGEST-CONTENT")
+
+
+def test_micro_planner_prompt_uses_reference_turn_without_changing_qa():
+    plan = _plan(unit="one comic moment", cardinality="options")
+    qa = assemble_prompt(plan, "digest", user_intent="find a moment")
+    micro = assemble_prompt(plan, "digest", user_intent="find a moment", mode="micro")
+    assert "specific action or reveal" in micro
+    assert "setup" in micro and "consequence" in micro
+    assert "specific action or reveal" not in qa
+    assert qa == assemble_prompt(plan, "digest", user_intent="find a moment", mode="qa")
 
 
 @pytest.mark.parametrize("cardinality,expected_snippet", [
@@ -329,3 +340,112 @@ def test_the_options_cardinality_keeps_variety_without_demanding_volume():
     assert f"about {planner.DISTINCT_SOURCE_TARGET} distinct source pages" in text
     assert "no candidate minimum" in text
     assert "never pad" in text
+
+
+def test_planner_gets_recent_default_only_for_micro():
+    from datetime import date
+
+    micro = planner._user_message("Find a moment", [], "micro")
+    qa = planner._user_message("Find a question", [], "qa")
+    assert str(date.today().year) in micro
+    assert "RECENT MICRO DEFAULT" in planner._request_body("test", micro)["messages"][1]["content"]
+    assert "recently published issues" in planner._request_body("test", micro)["messages"][0]["content"]
+    assert "RECENT MICRO DEFAULT" not in qa
+    assert planner._request_body("test", qa)["messages"][0]["content"] == planner._SYSTEM_PROMPT
+
+
+# ─── Micro asks for the aftermath and the context, Q&A does not ─────────────
+
+
+def _item_props(schema):
+    return schema["properties"]["candidates"]["items"]["properties"]
+
+
+def test_micro_schema_adds_the_aftermath_and_context_fields_and_qa_does_not():
+    plan = _plan(unit="one comic moment", cardinality="options")
+    micro = _item_props(compile_schema(plan, mode="micro"))
+    qa = _item_props(compile_schema(plan, mode="qa"))
+
+    for name in rules.DETAIL_FIELDS:
+        assert name in micro
+        assert name not in qa
+    assert micro["aftermath"] == micro["context_behind"] == micro["unrevealed"] == {"type": "string"}
+
+
+def test_the_qa_schema_is_exactly_what_it_was_before_the_micro_fields():
+    plan = _plan(ranking="most brutal", extra_fields=[
+        PlanField(name="issue_number", type="string", description=""),
+    ])
+    expected = [
+        "title", "summary", "series_issue_year", "what_visibly_happens",
+        "evidence_urls", "claim_citation", "issue_number", "rank_reason",
+    ]
+    assert list(_item_props(compile_schema(plan))) == expected
+    assert compile_schema(plan, mode="qa") == compile_schema(plan)
+
+
+def test_micro_detail_fields_are_strict_and_required_like_every_other_field():
+    schema = compile_schema(_plan(), mode="micro")
+    items = schema["properties"]["candidates"]["items"]
+
+    assert items["additionalProperties"] is False
+    assert set(items["required"]) == set(items["properties"])
+    assert set(rules.DETAIL_FIELDS) <= set(items["required"])
+    citations = items["properties"]["detail_citations"]
+    assert citations["type"] == "array"
+    assert citations["items"]["additionalProperties"] is False
+    assert citations["items"]["required"] == ["supports", "url", "quote"]
+    assert set(citations["items"]["properties"]) == {"supports", "url", "quote"}
+    dumped = json.dumps(schema)
+    assert "minItems" not in dumped and "maxItems" not in dumped
+
+
+@pytest.mark.parametrize("name", rules.DETAIL_FIELDS)
+def test_the_micro_detail_names_are_reserved(name):
+    assert name in planner.RESERVED_FIELD_NAMES
+    fields = [PlanField(name=name, type="string", description="")]
+    assert validate_plan(_plan(extra_fields=fields)) is not None
+
+
+def test_an_unvalidated_extra_field_cannot_replace_a_micro_detail_field():
+    """validate_plan already rejects the name; compile_schema must not depend on
+    the caller having run it, because an overwritten field is silent."""
+    plan = _plan(extra_fields=[PlanField(name="aftermath", type="string_array", description="")])
+    props = _item_props(compile_schema(plan, mode="micro"))
+    assert props["aftermath"] == {"type": "string"}
+
+
+def test_micro_planner_prompt_carries_the_three_rules_and_qa_does_not():
+    plan = _plan(unit="one comic moment", cardinality="options")
+    micro = assemble_prompt(plan, "digest", user_intent="find a moment", mode="micro")
+    qa = assemble_prompt(plan, "digest", user_intent="find a moment")
+
+    assert rules.missing_rules(micro) == []
+    assert rules.in_order(micro)
+    for name in rules.DETAIL_FIELDS:
+        assert name not in qa
+    assert "is not an event" not in qa
+
+
+def test_micro_planner_prompt_pins_the_identity_and_url_formats_the_screens_need():
+    """An end-to-end run lost two scouted answers at the code's own screens: a claim_citation
+    url rebuilt from a page title (not among the sources returned) and a series_issue_year that
+    carried a volume, a cover date and an on-sale date (several years). The micro prompt now
+    asks for the one canonical shape; Q&A never sees it."""
+    plan = _plan(unit="one comic moment", cardinality="options")
+    micro = assemble_prompt(plan, "digest", user_intent="find a moment", mode="micro")
+    qa = assemble_prompt(plan, "digest", user_intent="find a moment")
+
+    assert rules.missing_format_rules(micro) == []
+    assert "Series Title #N" not in qa
+    assert "rebuild a URL" not in qa
+
+
+def test_the_planner_is_told_the_code_already_adds_the_micro_detail_fields():
+    micro = planner._user_message("Find a moment", [], "micro")
+    qa = planner._user_message("Find a question", [], "qa")
+    micro_system = planner._request_body("test", micro)["messages"][0]["content"]
+
+    for name in rules.DETAIL_FIELDS:
+        assert name in micro_system
+    assert planner._request_body("test", qa)["messages"][0]["content"] == planner._SYSTEM_PROMPT

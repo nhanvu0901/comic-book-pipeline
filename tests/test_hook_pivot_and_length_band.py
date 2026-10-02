@@ -31,8 +31,8 @@ def test_length_band_targets_the_competitor_53_61s_video():
     # 2026-08-01) the band moved with it: 1.35 -> 1.10 shrank it to 168-182, then Shorts went
     # to 1.30 and it came back to 199-214. Seconds are the target; words follow the tempo.
     assert (_TARGET_WORDS_MIN, _TARGET_WORDS_MAX) == (199, 214)
-    lo_total = _TARGET_WORDS_MIN + 4    # shortest teaser: "Who is Deadpool 2099?"
-    hi_total = _TARGET_WORDS_MAX + 9    # longest allowed teaser
+    lo_total = _TARGET_WORDS_MIN + 4    # shortest supported teaser
+    hi_total = _TARGET_WORDS_MAX + 14   # concrete event/setup teaser ceiling
     assert 53 <= lo_total / _RECAP_WORDS_PER_SEC <= 56, lo_total / _RECAP_WORDS_PER_SEC
     assert 58 <= hi_total / _RECAP_WORDS_PER_SEC <= 64, hi_total / _RECAP_WORDS_PER_SEC
 

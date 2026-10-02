@@ -38,13 +38,15 @@ as a countdown listicle across multiple comics, rendered by the existing pipelin
 | 1. Answer Research (Stage 1 mode `explore_answer`) | SDK web research answers the question → `answer_context.json`: ≤5 items, each {character/entity, source comic (series+issue), how/why (1-2 sentences), the drawable MOMENT, batcave reader URL} + per-item verification (reuse the verify-twist-endings cross-check pattern). Reuse `_claude_sdk` web machinery + OpenRouter fallback. | M |
 | 2. Writer mode `explore_answer` (plug into existing `MODES_BY_KEY` in stages/stage_3/write_script.py) | Hook = the question (on-screen + spoken); countdown 5→1 with one scene per item; **beat = answer item** (deterministic beat anchoring reused as-is — beat carries page_ref/panel_ref into the source comic); outro = loop/tease. Own word band ~150-180 (constant, not a prompt rewrite). | M |
 | 3. Stage-2 orchestration glue | Take the reader-URL list from answer_context → download as saga (`--saga` with N reader URLs already works post-d55c756); `issue_label` = source comic name. | S |
-- Stage 4 (TTS): unchanged. Stage 5 (render): unchanged — the pure-vector + SigLIP matcher finds the panel
-  matching each fact's text; PANEL_COS_FLOOR holds when nothing matches.
+- Stage 4 (TTS): unchanged. Stage 5 (render): unchanged — Master hand-picks the panel for each item in the
+  Review Beats UI (see the review-gate addendum below); an unlocked scene takes a deterministic panel (its
+  page_ref/panel_ref anchor, else the first panel of its page).
 
 ## #1 risk + mitigation
 Fact → WRONG issue = wrong download = wrong video. Mitigations: (a) per-item verification mandatory in
-Answer Research (multiple sources per item); (b) fail-loud when an item's fact text finds no panel above the
-cosine floor (floor machinery exists); (c) Stage-1 self-ID hardening (roadmap #5) helps here too.
+Answer Research (multiple sources per item); (b) Master hand-picks and approves the panel for every item in the
+Review Beats UI before any TTS/render spend (see the review-gate addendum below); (c) Stage-1 self-ID hardening
+(roadmap #5) helps here too.
 Note the Moon Knight precedent: SDK pulled "Strange #9" for "Moon Knight #9 Stranger" — ambiguous titles WILL
 mis-resolve; verification is not optional.
 
@@ -59,8 +61,9 @@ Master's own example: "Who has survived Ghost Rider's Penance Stare?" — run en
 - Delegation per CLAUDE.md: Fable orchestrates; Opus (deep-reasoner) designs the Stage-1 answer-research
   prompt + verification; Sonnet (fast-worker) does the mode plumbing/tests.
 - ADDITIVE only: new mode keys, new constants; do not touch narrate-mode prompts/flow/validators.
-- All the 2026-07-03/04 upgrades apply automatically (DESC_VERIFY, DIALOG_TRUTH, ANCHOR_TRUST, SigLIP
-  image-match, cold-open scorer, hook rules for the intro line, meme-flip title register).
+- All the 2026-07-03/04 upgrades that still exist apply automatically (DESC_VERIFY, DIALOG_TRUTH, cold-open
+  scorer, hook rules for the intro line, meme-flip title register). ANCHOR_TRUST and the SigLIP image-match were
+  removed with the embedding matcher.
 
 ---
 
@@ -111,10 +114,10 @@ comics too, and is keyed on `comic_context.plot_source == "answer_research"` (no
 
 ## Flow
 1. Run Stage 1→3 (or `answer_pipeline` up through `narrate`). narration.json exists.
-2. `python -m stages.review_gate --project X --build-candidates [--k 10]` → writes
-   `review/candidates.json` + cropped `review/thumbs/pXXX_Y.jpg`. Reuses the EXISTING Stage-5
-   matcher (`shots._match_panels` in candidates-only mode: same content+page-prior scores, no
-   VLM rerank, no assignment). **Needs the LM Studio Qwen embed backend up**, same as Stage 5.
+2. `python -m stages.review_gate --project X --build-candidates` → writes
+   `review/candidates.json` + cropped `review/thumbs/pXXX_Y.jpg`. Lists EVERY panel of each beat's
+   issue, page-sorted, with score 0.0 — nothing is ranked and Master picks by eye, so no embedding
+   backend, LM Studio model or vector store is needed (there is no `--k`; `--all` is the default).
 3. Master opens the review UI (separate `ui/`), reviews narration text + picks a panel per beat,
    approves. The UI writes `review/locks.json`.
 4. Stage 4 (`synthesize_project`) and Stage 5 (`assemble_project`) call
@@ -123,9 +126,8 @@ comics too, and is keyed on `comic_context.plot_source == "answer_research"` (no
    (an edit after approval re-blocks). `--skip-review` bypasses for a normal comic; it is
    IGNORED for answer_research (Q&A) projects.
 5. On render, `build_shots` calls `_apply_review_locks`: a lock for a scene overrides its
-   `(page_ref, panel_ref)` so the EXISTING `PANEL_ANCHOR_BIND` path binds Master's pick.
-   (Caveat: a lock on a DESC_VERIFY-untrusted page won't hard-bind — `ANCHOR_TRUST` still
-   routes it through content-match + the page-prior keeps it on the locked page.)
+   `(page_ref, panel_ref)`, and the deterministic pick in `_match_panels` honors that anchor, so
+   Master's pick renders as chosen.
 
 Stage 4 also AUTO-FORCES when narration.json changed since the cached audio was TTS'd
 (compares the current scene hash against the `narration.tts.sha256` sidecar) — kills the
@@ -146,20 +148,22 @@ stale-audio bug without needing `--force`. `REVIEW_GATE=0` disables the gate ent
 {"generated_at": "<iso>",
  "beats": [{"scene_id": 2, "narration_text": "...", "page_ref": 10, "panel_ref": 0,
             "source": {"title": "...", "issue": "...", "url": "...", "research_urls": ["..."]},
-            "candidates": [{"page": 10, "panel": 0, "score": 9.5,
+            "candidates": [{"page": 10, "panel": 0, "score": 0.0,
                             "thumb": "review/thumbs/p010_0.jpg",
                             "desc": "...", "dialog": "BOOM"}]}]}
 ```
-- One beat per STORY scene (intro/outro excluded — their panels are deterministic cold-open /
-  loop-close, not a matching decision). Candidates are the matcher's own top-`k` ranked panels.
+- One beat per review row: a story scene (or each visual-beat fragment of one), plus an intro and an
+  outro row. Candidates are every panel of the beat's issue, page-sorted; `score` is always 0.0 because
+  nothing is ranked (the field stays so the UI's tile schema is unchanged). The current contract is the
+  module docstring of `stages/review_gate.py`.
 - `source` cites the beat's comic: per answer-item for Q&A (mapped by the `chNN_` page prefix),
   else the single source comic from comic_context.
 
-## FUTURE — web-image fallback (when NO downloaded panel scores above the floor)
+## FUTURE — web-image fallback (when NO downloaded panel shows a beat's fact)
 Not built. Spec for when a beat's fact finds no batcave panel: fetch candidate web images →
 (1) **phash dedupe** to drop near-identical results; (2) reject anything with shorter side <700px
-(upscaling smears under render); (3) **VLM desc** each survivor + **SigLIP text↔image** score
-against the narration line (same joint space as the panel image-match blend); (4) run **Magi ONLY
+(upscaling smears under render); (3) **VLM desc** each survivor + a word-overlap score of that desc
+against the narration line (what `_score_custom_image` does for custom images); (4) run **Magi ONLY
 when the image is itself a comic page** (panel/bubble detection is meaningless on a photo/poster).
 Surface web-sourced candidates in Contract B with a distinct `source` so Master sees the
 provenance before locking. Copyright: keep panels-only preference — web images are a last resort.

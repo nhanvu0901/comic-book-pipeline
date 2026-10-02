@@ -13,10 +13,9 @@ fragment there too instead of holding one panel for a whole 11-12s Q&A scene:
   5. the Q&A chunk-locked builder SPLITS a scene by its fragments (not an even time-share),
      drawing each fragment's panel from Master's locked pool.
 
-No network: embeddings / matcher / thumbs are stubbed the same way the sibling suites do.
+No network: thumbs are stubbed and the candidate pools come from preprocessed page fixtures.
 """
 import json
-import re
 
 import pytest
 
@@ -24,8 +23,6 @@ import config
 import stages.stage_3.explore_answer as ea
 import stages.stage_3.write_script as ws
 import stages.review_gate as rg
-import stages._embedding as _embedding
-import stages._panel_index as _panel_index
 from stages.stage_3.schema import Beat, Glossary
 from stages.stage_5 import shots
 from stages.stage_5.shots import build_shots
@@ -101,22 +98,17 @@ def ws_beat_text(b):
 def test_build_candidates_emits_per_fragment_rows_for_recap(tmp_path, monkeypatch):
     monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
     proj = tmp_path / "recap"
-    proj.mkdir()
+    (proj / "preprocessed").mkdir(parents=True)
     # recap (no "mode": micro; no answer_research) scene carrying verbatim visual_beats
     (proj / "narration.json").write_text(json.dumps({"scenes": [
         {"scene_id": 2, "text": "Frank hunts, then wins.", "page_ref": 10, "panel_ref": 0,
          "visual_beats": ["Frank hunts,", "then wins."]},
     ]}))
-
-    def fake_match(units, pages, cluster, *, project=None, candidates_out=None, candidates_k=12):
-        for _ in units:
-            candidates_out.append([
-                {"page": 10, "panel_idx": 0, "score": 9.0, "cosine": 0.8,
-                 "panel": {"description": "d", "bbox": {"x": 0, "y": 0, "w": 10, "h": 10}},
-                 "src": "p10.png"}])
-        return []
-
-    monkeypatch.setattr(shots, "_match_panels", fake_match)
+    (proj / "preprocessed" / "page_010.json").write_text(json.dumps({
+        "page_number": 10, "source_image": "p10.png", "page_type": "story",
+        "image_dimensions": {"width": 600, "height": 900},
+        "panels": [{"index": 0, "bbox": {"x": 0, "y": 0, "w": 600, "h": 900},
+                    "description": "d", "characters": []}], "text_blocks": []}))
     monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
 
     beats = json.loads(rg.build_candidates("recap", k=5).read_text())["beats"]
@@ -125,6 +117,7 @@ def test_build_candidates_emits_per_fragment_rows_for_recap(tmp_path, monkeypatc
     frag0 = next(b for b in beats if b["beat_key"] == "2:0")
     assert frag0["narration_text"] == "Frank hunts,"                  # fragment text, not whole scene
     assert frag0["pre_selected"] == []                               # string beat → no pin
+    assert all([(c["page"], c["panel"]) for c in b["candidates"]] == [(10, 0)] for b in beats)
 
 
 # ─── 5: Q&A chunk-locked builder splits a scene by its fragments ─────────────
@@ -138,11 +131,14 @@ def _panel_at(y, desc):
     return {"bbox": {"x": 0, "y": y, "w": 600, "h": 900}, "description": desc, "characters": []}
 
 
-def _fake_score(panel, panel_vec, chunk_vec, scene_vec, page_tb, *, chunk_text, scene_text):
-    cw = set(re.findall(r"[a-z]+", (chunk_text or "").lower()))
-    dw = set(re.findall(r"[a-z]+", str(panel.get("description", "")).lower()))
-    sim = min(0.9, 0.3 * len(cw & dw))
-    return sim, sim
+def _no_network(monkeypatch):
+    """Refuse every outbound socket connect, so a stray backend probe can never leave the machine."""
+    import socket
+
+    def _refuse(self, *a, **k):
+        raise ConnectionRefusedError("network is disabled in tests")
+
+    monkeypatch.setattr(socket.socket, "connect", _refuse)
 
 
 def test_qa_locked_splits_by_fragment_from_lock_pool(tmp_path, monkeypatch):
@@ -163,12 +159,8 @@ def test_qa_locked_splits_by_fragment_from_lock_pool(tmp_path, monkeypatch):
         "1:0": {"panels": [{"page": 5, "panel": 0}], "source": "batcave"},
         "1:1": {"panels": [{"page": 5, "panel": 1}], "source": "batcave"}}}))
 
-    monkeypatch.setattr(_embedding, "embed_batch", lambda texts: [None] * len(texts))
-    monkeypatch.setattr(_panel_index, "load_vectors", lambda project: {})
-    monkeypatch.setattr(shots, "_panel_content_score", _fake_score)
-    monkeypatch.setattr(shots, "_blend_image_content", lambda *a, **k: None)
-    monkeypatch.setattr(shots, "PANEL_RERANK", False)
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)
+    _no_network(monkeypatch)
 
     pages = {5: _pg([_panel_at(0, "punisher vomit"), _panel_at(900, "deadpool punch")], "p5.png")}
     # word-aligned caption chunks so _split_members_by_clause buckets one fragment each; ~2.5s each

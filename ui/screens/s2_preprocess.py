@@ -14,11 +14,13 @@ import flet as ft
 
 from ..bridge import asset_src, format_exception, load_preprocessed, run_blocking, run_stage_2
 from ..layout import log_list, primary_button, secondary_button, three_col
+from ..project_log import stage_log_path
 from ..state import AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, STATUS_DONE, STATUS_PENDING,
     SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from stages.stage_3.gemini_prompt import reanchor_narration_to_pages
 from utils.clear_stage import clear_stage_2
 
 
@@ -32,7 +34,8 @@ def build(
     grid_ctl = ft.Container(expand=True)
     detail_ctl = ft.Container(expand=True)
 
-    lv, push_log = log_list(page)
+    lv, push_log = log_list(
+        page, log_path=lambda: stage_log_path(state.project_name, "stage4_preprocess"))
     status_text = ft.Text("", color=TEXT_MUTED, size=12)
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
 
@@ -139,8 +142,9 @@ def build(
             return
 
         render_grid(pages)
-        state.mark_approved(3)
-        state.current_stage = max(state.current_stage, 4)
+        reanchor_narration_to_pages(state.project_name, log=push_log)
+        state.mark_approved(4)
+        state.current_stage = max(state.current_stage, 5)
         save_state(state)
 
         running.visible = False
@@ -174,10 +178,11 @@ def build(
         page.update()
 
     def approve_and_go(_e):
-        state.mark_approved(3)
-        state.current_stage = 4
+        reanchor_narration_to_pages(state.project_name, log=push_log)
+        state.mark_approved(4)
+        state.current_stage = 5
         save_state(state)
-        on_go(4)
+        on_go(5)
 
     # Center + right columns
     center = ft.Column([
@@ -194,7 +199,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 3 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text("STEP 4 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Preprocess Pages", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Detects panels with Magi and asks the vision LLM to extract text, "
@@ -207,8 +212,8 @@ def build(
         ft.Container(height=8),
         secondary_button("Clear preprocessed", _do_clear, icon=ft.Icons.DELETE_OUTLINE),
         ft.Container(height=12),
-        primary_button("Approve & Continue →", approve_and_go,
-                       disabled=not state.is_approved(3)),
+        primary_button("Continue to Stage 5 →", approve_and_go,
+                       disabled=not state.is_approved(4)),
         ft.Container(height=20),
         ft.Text("Selected page", size=10, color=TEXT_MUTED),
         ft.Container(content=detail_ctl, expand=True),
@@ -216,7 +221,7 @@ def build(
 
     return three_col(
         center, right, state=state, on_go=on_go,
-        header_title="Preprocess Pages",
+        header_title="Step 4: Preprocess Pages",
         header_subtitle="Detect panels and extract text from downloaded pages.",
     )
 

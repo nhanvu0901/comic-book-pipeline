@@ -107,7 +107,7 @@ def workflow(tmp_path):
     )
 
 
-def _gate(monkeypatch, workflow, mode=ScoutMode.MICRO, intent="Deadpool healing factor"):
+def _gate(monkeypatch, workflow, mode=ScoutMode.MICRO, intent="Black Panther vs. Deadpool #2 (2018)"):
     """Run one candidate all the way through the gate and hand back the prompt."""
     seen = {}
 
@@ -228,7 +228,7 @@ def test_new_bound_citation_that_cannot_be_fetched_is_inconclusive_without_model
         "stages.research_scout.openrouter_gate.review",
         lambda **kwargs: pytest.fail("an unfetched bound source must not reach the model"),
     )
-    session = workflow.start(ScoutMode.MICRO, "Deadpool healing factor")
+    session = workflow.start(ScoutMode.MICRO, "Black Panther vs. Deadpool #2 (2018)")
     workflow.run_general(session.id)
     workflow.verify_selected(session.id, ["candidate-1"])
 
@@ -239,6 +239,27 @@ def test_new_bound_citation_that_cannot_be_fetched_is_inconclusive_without_model
     )
     assert [gate["verdict"] for gate in written["gates"]] == ["inconclusive"]
     assert "could not be retrieved" in written["gates"][0]["reason"]
+
+
+def test_retrieved_youcom_snippet_can_verify_a_quote_when_reader_fails(
+    monkeypatch, workflow,
+):
+    _stub_fetcher(monkeypatch, {})
+    original = workflow.client.verify_response
+    workflow.client.verify_response = {
+        "output": {
+            "content": original,
+            "sources": [{
+                "url": _CANDIDATE["claim_citation"]["url"],
+                "snippets": [_CANDIDATE["claim_citation"]["quote"]],
+            }],
+        },
+    }
+
+    seen = _gate(monkeypatch, workflow)
+
+    assert "Shuri's scan shows necrotic cells multiplying." in seen["prompt"]
+    assert "COULD NOT FETCH" not in seen["prompt"].split("[1] ")[1].split("[2] ")[0]
 
 
 def test_at_most_three_cited_urls_are_fetched_for_one_candidate(monkeypatch, tmp_path):
@@ -302,7 +323,7 @@ def test_new_bound_citation_with_unmatched_quote_is_inconclusive_without_model_c
         lambda **kwargs: pytest.fail("an unmatched quote must not reach the model"),
     )
 
-    session = flow.start(ScoutMode.MICRO, "Deadpool healing factor")
+    session = flow.start(ScoutMode.MICRO, "Black Panther vs. Deadpool #2 (2018)")
     flow.run_general(session.id)
     flow.verify_selected(session.id, ["candidate-1"])
 
@@ -331,7 +352,7 @@ def test_matched_bound_quote_still_reaches_the_model_and_preserves_rejection(
         lambda **kwargs: EvidenceGate(verdict="rejected", reason="The issue is wrong."),
     )
 
-    session = flow.start(ScoutMode.MICRO, "Deadpool healing factor")
+    session = flow.start(ScoutMode.MICRO, "Black Panther vs. Deadpool #2 (2018)")
     flow.run_general(session.id)
     flow.verify_selected(session.id, ["candidate-1"])
 

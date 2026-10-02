@@ -1,21 +1,15 @@
 """Sentence sub-shot matcher (Q&A / explore_answer mode).
 
-Deterministic like test_review_gate: stub embed_batch (no network), no-op the SigLIP image
-blend, and mock _panel_content_score so a sentence matches the panel whose description shares
-the most words. Covers: lock_panels normalises v1+v2 shapes, sentence splitting merges a short
-countdown label, and build_sentence_panels distributes a beat's sentences across its locked
-panels (matched → page in the chosen set with start<end; weak match / no candidate → null).
+Deterministic and model-free: Master locks the panels by hand, so a beat's sentences are handed
+those panels ROUND-ROBIN. Covers: lock_panels normalises v1+v2 shapes, sentence splitting merges a
+short countdown label, _match_sentences gives distinct panels across the first len(cands)
+sentences then cycles, and build_sentence_panels writes that distribution (a beat with no
+candidate panel → null page/panel, still timed).
 """
 import json
-import re
-
-import pytest
 
 import stages.review_gate as rg
 import stages.sentence_match as sm
-import stages.stage_5.shots as shots
-import stages._embedding as _embedding
-import stages._panel_index as _panel_index
 
 
 # ─── deliverable 1: lock_panels normalises both shapes ───────────────────────
@@ -41,11 +35,49 @@ def test_split_sentences_merges_short_label():
     assert sm._split_sentences("A full sentence here now. Ok.") == ["A full sentence here now. Ok."]
 
 
+# ─── _match_sentences: round-robin over the candidate panels ─────────────────
+
+def _cands(n, page=5):
+    """Candidate 4-tuples (key, panel, src, page_tb). The panels are None on purpose: the
+    distribution must never look at a panel's content."""
+    return [((page, i), None, f"p{page}.png", None) for i in range(n)]
+
+
+def test_match_sentences_round_robin_distinct_then_cycles():
+    n_sent = 7
+    sentences = [f"Sentence number {i} goes here." for i in range(n_sent)]
+    spans = [(float(i), i + 0.9) for i in range(n_sent)]
+    out = sm._match_sentences(sentences, spans, _cands(3))
+
+    picks = [(r["page"], r["panel"]) for r in out]
+    assert picks[:3] == [(5, 0), (5, 1), (5, 2)]            # distinct across the first len(cands)
+    assert len(set(picks[:3])) == 3
+    assert picks[3:] == [(5, 0), (5, 1), (5, 2), (5, 0)]    # then cycling in lock order
+    # the sentences keep their text and time span regardless of which panel they got
+    assert [r["text"] for r in out] == sentences
+    assert [(r["start"], r["end"]) for r in out] == [(float(i), round(i + 0.9, 3)) for i in range(n_sent)]
+    assert all(set(r) == {"text", "start", "end", "page", "panel"} for r in out)
+
+
+def test_match_sentences_fewer_sentences_than_panels_uses_the_first_ones():
+    out = sm._match_sentences(["One two three.", "Four five six."], [(0.0, 1.0), (1.0, 2.0)],
+                              _cands(4))
+    assert [(r["page"], r["panel"]) for r in out] == [(5, 0), (5, 1)]
+
+
+def test_match_sentences_no_candidates_is_all_null_but_still_timed():
+    out = sm._match_sentences(["One two three.", "Four five six."], [(0.0, 1.0), (None, None)], [])
+    assert all(r["page"] is None and r["panel"] is None for r in out)
+    assert (out[0]["start"], out[0]["end"]) == (0.0, 1.0)
+    assert (out[1]["start"], out[1]["end"]) == (None, None)    # nothing to align to → no span
+    assert sm._match_sentences([], [], _cands(2)) == []
+
+
 # ─── fixture builder ─────────────────────────────────────────────────────────
 
 def _write_project(root):
-    """2 story scenes. Scene 10 locks 3 panels on page 5; its sentences should split across
-    them (2 match, 1 weak→null). Scene 11 has no lock and no panel anchor → all sparse."""
+    """2 story scenes. Scene 10 locks 3 panels on page 5; its 3 sentences take them in lock
+    order. Scene 11 has no lock and no panel anchor → all sparse."""
     (root / "review").mkdir(parents=True)
     (root / "preprocessed").mkdir()
 
@@ -80,24 +112,9 @@ def _write_project(root):
     }))
 
 
-def _fake_score(panel, panel_vec, chunk_vec, scene_vec, page_tb, *, chunk_text, scene_text):
-    cw = set(re.findall(r"[a-z]+", (chunk_text or "").lower()))
-    dw = set(re.findall(r"[a-z]+", str(panel.get("description", "")).lower()))
-    sim = min(0.9, 0.15 * len(cw & dw))
-    return sim, sim
-
-
-def _stub(monkeypatch):
-    monkeypatch.setattr(_embedding, "embed_batch", lambda texts: [None] * len(texts))
-    monkeypatch.setattr(_panel_index, "load_vectors", lambda project: {})
-    monkeypatch.setattr(shots, "_panel_content_score", _fake_score)
-    monkeypatch.setattr(shots, "_blend_image_content", lambda *a, **k: None)
-
-
 # ─── deliverable 2 + 3: build_sentence_panels ────────────────────────────────
 
-def test_build_sentence_panels_matches_and_sparse(tmp_path, monkeypatch):
-    _stub(monkeypatch)
+def test_build_sentence_panels_spreads_sentences_over_locked_panels(tmp_path):
     root = tmp_path / "qa"
     _write_project(root)
 
@@ -112,90 +129,18 @@ def test_build_sentence_panels_matches_and_sparse(tmp_path, monkeypatch):
     for sent in s10:
         assert sent["start"] is not None and sent["end"] is not None
         assert sent["start"] < sent["end"]
-    # sentence 0 → panel 0, sentence 1 → panel 1 (page in the chosen lock set)
-    assert (s10[0]["page"], s10[0]["panel"]) == (5, 0)
-    assert (s10[1]["page"], s10[1]["panel"]) == (5, 1)
-    assert s10[0]["score"] >= shots.PANEL_COS_FLOOR
-    # every matched panel is one Master locked
-    chosen = {(5, 0), (5, 1), (5, 2)}
-    for sent in s10:
-        assert sent["page"] is None or (sent["page"], sent["panel"]) in chosen
-    # sentence 2 ("Nothing here otherwise.") matches no description → sparse null
-    assert s10[2]["page"] is None and s10[2]["panel"] is None and s10[2]["score"] is None
+    # 3 sentences over the 3 locked panels → one distinct panel each, in lock order
+    assert [(s["page"], s["panel"]) for s in s10] == [(5, 0), (5, 1), (5, 2)]
 
     # scene 11 has no lock and no panel anchor → every sentence sparse (null), still timed
     s11 = scenes[11]
-    assert s11 and all(x["page"] is None and x["score"] is None for x in s11)
+    assert s11 and all(x["page"] is None and x["panel"] is None for x in s11)
     assert all(x["start"] < x["end"] for x in s11)
 
 
-def test_sentence_query_blends_drawable_moment(monkeypatch):
-    """FIX A: each sentence's match query carries the scene's drawable_moment (the precise visual
-    every sentence of a Q&A beat targets) alongside the sentence text."""
-    seen = []
-
-    def rec_score(panel, pv, cv, sv, ptb, *, chunk_text, scene_text):
-        seen.append(chunk_text)
-        return 0.0, 0.0
-
-    monkeypatch.setattr(_embedding, "embed_batch", lambda t: [None] * len(t))
-    monkeypatch.setattr(shots, "_panel_content_score", rec_score)
-    monkeypatch.setattr(shots, "_blend_image_content", lambda *a, **k: None)
-
-    scene = {"scene_id": 1, "text": "He stood back up."}
-    cands = [((5, 0), {"description": "x"}, "p5.png", [])]
-    sm._match_sentences(["He stood back up."], [(0.0, 1.0)], scene, cands, {}, "proj",
-                        log=lambda *a: None,
-                        drawable_moment="Frank on his knees glaring up at a recoiling Ghost Rider")
-    assert any("Ghost Rider" in c for c in seen)     # drawable_moment reached the sentence query
-    assert any("He stood back up" in c for c in seen)  # sentence text kept
-
-
-def test_pin_keeps_payoff_sentence_on_its_panel(monkeypatch):
-    """PIN FIX (batcave-breach "I AM BANE" splash, 2026-07-09): the beat's drawable_moment describes
-    the splash, so once it is blended into EVERY query that splash column of `content` goes ~uniform
-    and the no-reuse Hungarian can hand the splash to the OPENING group while the payoff sentence
-    (whose own words name it) gets a filler panel. The dm-free pin must keep the strongest pure-text
-    pair — here (payoff group, splash) — so the LAST group wins the splash.
-
-    Numbers (fake score = min(0.9, 0.1*word-overlap)): the dm-blend `content` peaks the splash for the
-    opening group (0.9) over the payoff group (0.8), so the UNPINNED Hungarian optimum sends the splash
-    to group 0. Pure-text (dm removed) the splash's strongest cell is the payoff group (0.7) → pinned."""
-    def _bane_score(panel, pv, cv, sv, ptb, *, chunk_text, scene_text):
-        cw = set(re.findall(r"[a-z]+", (chunk_text or "").lower()))
-        dw = set(re.findall(r"[a-z]+", str(panel.get("description", "")).lower()))
-        sim = min(0.9, 0.1 * len(cw & dw))
-        return sim, sim
-
-    monkeypatch.setattr(_embedding, "embed_batch", lambda t: [None] * len(t))
-    monkeypatch.setattr(shots, "_panel_content_score", _bane_score)
-    monkeypatch.setattr(shots, "_blend_image_content", lambda *a, **k: None)
-
-    splash = ((77, 0), {"description": "nightwing red hood robin hanging dark bane terrify splash"}, "p77.png", [])
-    filler1 = ((50, 0), {"description": "bright batburger daytime restaurant"}, "p50.png", [])
-    filler2 = ((60, 0), {"description": "generic crowd on a street"}, "p60.png", [])
-    cands = [splash, filler1, filler2]                      # splash FIRST (its natural page is late)
-
-    groups = ["But Bane comes to terrify and steal",        # opening
-              "A bright batburger in daytime",              # filler middle
-              "Bane finds Nightwing Red Hood Robin hanging in the dark"]  # payoff (last)
-    spans = [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]
-    dm = "nightwing red hood robin hanging dark bane splash"
-
-    picks = sm._match_sentences(groups, spans, {"scene_id": 4, "text": " ".join(groups)}, cands,
-                                {}, "proj", log=lambda *a: None, drawable_moment=dm,
-                                always_assign=True)
-
-    assert (picks[2]["page"], picks[2]["panel"]) == (77, 0)     # payoff group wins the splash
-    assert (picks[0]["page"], picks[0]["panel"]) != (77, 0)     # NOT the opening group (the defect)
-    assert picks[2]["score"] >= shots.PANEL_COS_FLOOR          # pinned pick keeps a strong score
-    assert len({(p["page"], p["panel"]) for p in picks}) == 3  # still no-reuse (3 distinct panels)
-
-
-def test_no_lock_falls_back_to_scene_anchor(tmp_path, monkeypatch):
+def test_no_lock_falls_back_to_scene_anchor(tmp_path):
     """When a scene has NO lock but a real (page_ref, panel_ref) anchor, that panel is the
     single candidate (backward-compatible with the pre-multi-select world)."""
-    _stub(monkeypatch)
     root = tmp_path / "qa2"
     _write_project(root)
     # drop the lock and give scene 10 a resolvable panel anchor instead
@@ -207,6 +152,5 @@ def test_no_lock_falls_back_to_scene_anchor(tmp_path, monkeypatch):
 
     doc = json.loads(sm.build_sentence_panels(root).read_text())
     s10 = {s["scene_id"]: s["sentences"] for s in doc["scenes"]}[10]
-    # only (5,0) is a candidate → the sentence that mentions it matches there, others null
-    assert (s10[0]["page"], s10[0]["panel"]) == (5, 0)
-    assert all(x["page"] in (5, None) for x in s10)
+    # only (5,0) is a candidate → every sentence takes it (the panel repeats once they outnumber it)
+    assert [(x["page"], x["panel"]) for x in s10] == [(5, 0)] * 3
