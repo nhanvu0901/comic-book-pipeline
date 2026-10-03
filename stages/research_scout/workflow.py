@@ -172,21 +172,29 @@ class ScoutWorkflow:
         self._planner = planner if planner is not None else planner_module.make_plan
         self._policies: dict[ScoutMode, PolicyBundle] = {}
 
-    def start(self, mode: ScoutMode, user_intent: str) -> ResearchSession:
-        return self.store.create(ScoutMode(mode), user_intent)
+    def start(
+        self, mode: ScoutMode, user_intent: str, publication_year: int | None = None,
+    ) -> ResearchSession:
+        return self.store.create(ScoutMode(mode), user_intent, publication_year)
 
     def run_general(self, session_id: str) -> ResearchSession:
         session = self._load_and_transition(session_id, "run_general")
         bundle = self._bundle(session.mode)
         feedback_notes = [f.text for f in session.feedback_log if f.text.strip()]
-        plan = self._planner(session.user_intent, feedback_notes, session.mode.value)
+        selected_year_line = (
+            f"\nPublication year: {session.publication_year} only."
+            if session.mode is ScoutMode.MICRO and session.publication_year is not None
+            else ""
+        )
+        scoped_intent = session.user_intent + selected_year_line
+        plan = self._planner(scoped_intent, feedback_notes, session.mode.value)
         if plan is None:
             # Fallback path — byte-for-byte today's behavior: the mode's fixed
             # template + the fixed schema. _intent_with_feedback folds feedback
             # in here because the planner never saw it on this path.
             prompt = bundle.render(
                 "general",
-                user_intent=_intent_with_feedback(session),
+                user_intent=_intent_with_feedback(session) + selected_year_line,
                 angle=self._angle(bundle, session.mode),
                 count=str(planner_module.DISTINCT_SOURCE_TARGET),
                 digest=self.digest,
@@ -198,14 +206,16 @@ class ScoutWorkflow:
             # Planner path — feedback already reached the planner input above,
             # so it must NOT be folded into the prompt a second time here.
             prompt_text = planner_module.assemble_prompt(
-                plan, self.digest, user_intent=session.user_intent,
+                plan, self.digest, user_intent=scoped_intent,
                 mode=session.mode.value,
             )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
             schema = planner_module.compile_schema(plan, mode=session.mode.value)
             plan_record = {"source": "planner", **plan.model_dump(mode="json")}
         if session.mode is ScoutMode.MICRO:
-            prompt_text += "\n\n" + recent_micro_instruction()
+            prompt_text += "\n\n" + recent_micro_instruction(
+                publication_year=session.publication_year, user_intent=session.user_intent,
+            )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
         raw = self.client.research(
             prompt_text,
@@ -230,7 +240,9 @@ class ScoutWorkflow:
             # from suppressing a fresh candidate with the same source binding.
             kept = [
                 c for c in kept
-                if micro_release_rejection_reason(c, session.user_intent) is None
+                if micro_release_rejection_reason(
+                    c, session.user_intent, publication_year=session.publication_year,
+                ) is None
             ]
         returned_sources = _research_source_urls(payload)
         candidates, validation = _validate_new_general_candidates(
@@ -238,6 +250,7 @@ class ScoutWorkflow:
             returned_sources,
             mode=session.mode,
             user_intent=session.user_intent,
+            publication_year=session.publication_year,
             protected_fingerprints={
                 cited_sources.citation_fingerprint(citation)
                 for candidate in kept
@@ -589,7 +602,8 @@ class ScoutWorkflow:
         return self._policies[mode]
 
     def discover_questions(
-        self, mode: ScoutMode, *, count: int = 5, exclude: Sequence[str] = ()
+        self, mode: ScoutMode, *, count: int = 5, exclude: Sequence[str] = (),
+        publication_year: int | None = None,
     ) -> list[dict[str, Any]]:
         """Tier B of the Stage 1 empty-intent fallback (ui/bridge.py): spend ONE
         research call turning angles into REAL questions/moments before handing
@@ -636,7 +650,9 @@ class ScoutWorkflow:
         )
         prompt_text = prompt.text
         if mode is ScoutMode.MICRO:
-            prompt_text += "\n\n" + recent_micro_instruction()
+            prompt_text += "\n\n" + recent_micro_instruction(
+                publication_year=publication_year,
+            )
         try:
             raw = self.client.research(
                 prompt_text,
@@ -665,7 +681,9 @@ class ScoutWorkflow:
             if is_burned(text, burn_digest):
                 continue
             if mode is ScoutMode.MICRO:
-                if micro_release_rejection_reason(candidate) is not None:
+                if micro_release_rejection_reason(
+                    candidate, publication_year=publication_year,
+                ) is not None:
                     continue
                 if not all(str(candidate.get(key, "")).strip() for key in (
                     "turning_point", "what_visibly_happens", "why_it_lands"
@@ -1070,6 +1088,7 @@ def _validate_new_general_candidates(
     *,
     mode: ScoutMode,
     user_intent: str,
+    publication_year: int | None = None,
     protected_fingerprints: set[tuple[str, str]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Screen only a freshly produced general batch before it reaches review.
@@ -1098,7 +1117,9 @@ def _validate_new_general_candidates(
             if issue_reason is not None:
                 rejected.append({"candidate_id": candidate_id, "reason": issue_reason})
                 continue
-            release_reason = micro_release_rejection_reason(candidate, user_intent)
+            release_reason = micro_release_rejection_reason(
+                candidate, user_intent, publication_year=publication_year,
+            )
             if release_reason is not None:
                 rejected.append({"candidate_id": candidate_id, "reason": release_reason})
                 continue

@@ -278,10 +278,15 @@ def test_micro_discovery_rejects_old_and_unresolved_issues_before_count(tmp_path
 
     batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, count=2)
 
-    assert [entry["moment"] for entry in batch] == ["Current", "Previous"]
+    assert [entry["moment"] for entry in batch] == ["Current"]
     assert [entry["moment"] for entry in _workflow(
         tmp_path, client
     ).discover_questions(ScoutMode.MICRO, count=1)] == ["Current"]
+    selected = _workflow(tmp_path, client).discover_questions(
+        ScoutMode.MICRO, count=2, publication_year=year - 1,
+    )
+    assert [entry["moment"] for entry in selected] == ["Previous"]
+    assert f"Search published issues from {year - 1} only" in client.seen_prompt
 
 
 def test_micro_discovery_skips_thin_unsourced_leads(tmp_path):

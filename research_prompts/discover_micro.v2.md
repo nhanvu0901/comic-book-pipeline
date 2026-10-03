@@ -14,10 +14,11 @@ reversed. These are search leads, not required formulas. A famous character's
 usual rule being broken is a bonus, not a gate.
 
 Prefer a recognizable subject and a promise that a new viewer can understand
-without a lore lecture. For an open-ended scout, search current releases first
-and the previous year's published issues next; the appended RECENT MICRO DEFAULT
-gives the calendar years for this run. A second famous
-character, a loud fight, a fan quote, or an uncovered YouTube lane can improve
+without a lore lecture. For an open-ended scout, search issues published in
+the selected year only; when no year is selected, use the current calendar
+year. The appended RECENT MICRO DEFAULT gives the exact year for this run.
+A second famous character, a loud fight, a fan quote, or an uncovered
+YouTube lane can improve
 rank, but none is mandatory. Quiet decisions and dialogue qualify when the
 source establishes what someone does or says and what changes because of it.
 

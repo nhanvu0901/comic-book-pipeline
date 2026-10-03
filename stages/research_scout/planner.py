@@ -224,9 +224,11 @@ _MICRO_SCOUT_RULES = (
     "- Give the setup, the specific action or reveal that changes the "
     "situation, and its direct consequence. Name who acts or speaks. Reject "
     "abstract claims such as tactical patience without a sourced action.\n"
-    "- For an open-ended scout, prefer published issues from the current year "
-    "and then the previous year; the workflow appends the live year window. "
-    "Honor an explicitly requested older issue, year, or era. A broken "
+    "- For an open-ended scout, use only the selected publication year, or "
+    "the current year when none is selected; the workflow appends the exact year. "
+    "A selected year is exact; report a conflicting named issue rather than "
+    "changing the year. Otherwise honor an explicitly requested older issue, "
+    "year, or era. A broken "
     "character rule, loud spectacle, second famous name, and low YouTube "
     "coverage are ranking bonuses, not mandatory gates.\n"
     "- Keep summary and what_visibly_happens focused on the same scene. Do not "
@@ -453,7 +455,7 @@ def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str
     parts = [str(user_intent), f"MODE HINT: {mode}"]
     if mode == "micro":
         from .micro_recency import recent_micro_instruction
-        parts.append(recent_micro_instruction())
+        parts.append(recent_micro_instruction(user_intent=user_intent))
     notes = [str(note) for note in feedback_notes if str(note).strip()]
     if notes:
         parts.append(
@@ -469,8 +471,9 @@ def _request_body(model: str, user_message: str) -> dict[str, Any]:
     if "MODE HINT: micro" in user_message:
         system_prompt += (
             "\nFor micro mode only, the channel's default scope is recently "
-            "published issues. Honor the live year window in the user message; "
-            "an explicitly requested older issue, year, or era overrides it."
+            "published issues. Honor the exact year in the user message. "
+            "A selected publication year takes priority; otherwise an "
+            "explicitly requested older issue, year, or era may override the default."
             "\nFor micro mode the code also adds aftermath, context_behind, "
             "unrevealed and detail_citations to every candidate and writes the "
             "research rules for them; never choose those names as extra_fields."

@@ -317,10 +317,22 @@ def test_broad_micro_general_filters_old_issues_with_bound_sources(mock_workflow
     validation = json.loads(mock_workflow.store.artifact_path(
         session.id, "general/candidate_validation.rev1.v1.json"
     ).read_text(encoding="utf-8"))
-    assert [candidate["id"] for candidate in candidates] == ["current", "previous"]
+    assert [candidate["id"] for candidate in candidates] == ["current"]
     assert validation["rejected"] == [
         {"candidate_id": "older", "reason": "outside_recent_micro_window"},
+        {"candidate_id": "previous", "reason": "outside_recent_micro_window"},
     ]
+
+    selected = mock_workflow.start(
+        ScoutMode.MICRO, "Find a new micro moment", publication_year=year - 1,
+    )
+    assert mock_workflow.store.load(selected.id).publication_year == year - 1
+    mock_workflow.run_general(selected.id)
+    assert f"Search published issues from {year - 1} only" in mock_workflow.client.seen_prompt
+    selected_candidates = json.loads(mock_workflow.store.artifact_path(
+        selected.id, "general/candidates.v1.json"
+    ).read_text(encoding="utf-8"))["candidates"]
+    assert [candidate["id"] for candidate in selected_candidates] == ["previous"]
 
 
 def test_planner_prompt_keeps_the_original_user_intent_even_when_plan_drifts(tmp_path):

@@ -131,7 +131,9 @@ def _scout_workflow(root: Path | None = None):
     return ScoutWorkflow(store=_scout_store(root), digest=build_scouted_digest())
 
 
-def start_scout_session(mode: str, user_intent: str):
+def start_scout_session(
+    mode: str, user_intent: str, *, publication_year: int | None = None,
+):
     from stages.research_scout.bank_fallback import bank_suggestions_for_mode
     from stages.research_scout.models import ScoutMode
 
@@ -160,14 +162,17 @@ def start_scout_session(mode: str, user_intent: str):
             # Full batch, not count=1: it is the same single research call
             # either way, and asking for one question while handing the prompt
             # all five angles just makes the prompt contradict itself.
-            batch = workflow.discover_questions(scout_mode)
+            batch = workflow.discover_questions(
+                scout_mode, publication_year=publication_year,
+            )
             field = "question" if scout_mode is ScoutMode.QA else "moment"
             intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
-    return workflow.start(scout_mode, intent)
+    return workflow.start(scout_mode, intent, publication_year=publication_year)
 
 
 def discover_questions(
-    mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = ()
+    mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = (),
+    publication_year: int | None = None,
 ) -> list[dict]:
     """Tier B on its own, WITHOUT starting a session — the human-review step
     that stages/youcom_scout.py::is_burned's docstring deliberately relies on.
@@ -189,7 +194,8 @@ def discover_questions(
     from stages.research_scout.models import ScoutMode
 
     return _scout_workflow().discover_questions(
-        ScoutMode(mode), count=count, exclude=tuple(exclude)
+        ScoutMode(mode), count=count, exclude=tuple(exclude),
+        publication_year=publication_year,
     )
 
 

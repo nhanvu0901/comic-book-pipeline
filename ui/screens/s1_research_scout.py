@@ -14,11 +14,13 @@ checkbox round deciding who became the project, with the radio pick discarded.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Callable
 
 import flet as ft
 
 from config import RESEARCH_SESSIONS_ROOT
+from stages.research_scout.micro_recency import issue_publication_year
 from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.stage_1.storage import project_folder_name, slugify
@@ -393,6 +395,8 @@ def _session_created_bubble(session: ResearchSession) -> ft.Control:
     )
     return _user_bubble(ft.Column([
         ft.Text(session.user_intent, size=13, color=TEXT_PRIMARY, selectable=True),
+        *([ft.Text(f"Publication year: {session.publication_year}", size=11,
+                   color=TEXT_MUTED, selectable=True)] if session.publication_year else []),
         chip,
     ], spacing=6))
 
@@ -900,6 +904,7 @@ def build(
             selected_specific.clear()
             selected_specific.update(ids)
         intent_field.value = ""
+        year_field.value = ""
         _forget_suggestions()
         _render_full()
 
@@ -912,6 +917,7 @@ def build(
         state.returned_scout_project = ""
         state.returned_scout_session_id = ""
         intent_field.value = ""
+        year_field.value = ""
         _forget_suggestions()
         _render_full()
 
@@ -934,6 +940,7 @@ def build(
             return
         busy[0] = True
         intent_field.disabled = True
+        year_field.disabled = True
         send_button.disabled = True
         transcript.controls = _render_chat() + [_progress_bubble(label)]
         page.update()
@@ -1004,9 +1011,18 @@ def build(
         questions already offered go along as `exclude` so the model is not paid
         to hand back a batch the user has just turned down."""
         excluded = list(discovered_offered)
+        try:
+            year = _selected_year() if mode == ScoutMode.MICRO.value else None
+        except ValueError as exc:
+            _render_full(error=str(exc))
+            return
         _run_busy(
             f"Finding {_DISCOVER_BATCH} questions…",
-            lambda: discover_questions(mode, count=_DISCOVER_BATCH, exclude=excluded),
+            lambda: discover_questions(
+                mode, count=_DISCOVER_BATCH, exclude=excluded, publication_year=year,
+            ) if mode == ScoutMode.MICRO.value else discover_questions(
+                mode, count=_DISCOVER_BATCH, exclude=excluded,
+            ),
             on_success=_show_discovered,
         )
 
@@ -1023,6 +1039,19 @@ def build(
 
         if session is None or session.state in {SessionState.ARCHIVED, SessionState.COMPLETE}:
             mode = mode_group.value or ScoutMode.QA.value
+            try:
+                year = _selected_year() if mode == ScoutMode.MICRO.value else None
+            except ValueError as exc:
+                _render_full(error=str(exc))
+                return
+            if mode == ScoutMode.MICRO.value and year is not None and text:
+                named_issue_year = issue_publication_year(text)
+                if named_issue_year is not None and named_issue_year != year:
+                    _render_full(error=(
+                        f"Year field is {year}, but the named issue is from "
+                        f"{named_issue_year}. Make the years match."
+                    ))
+                    return
             if not text:
                 # A Tier B batch is already on screen: Send-on-empty is neither a
                 # re-roll (that button says what it costs) nor a reason to put the
@@ -1063,7 +1092,11 @@ def build(
             def _work():
                 if old is not None and old.state not in {SessionState.ARCHIVED, SessionState.COMPLETE}:
                     archive_scout_session(old.id, "Started a new research session")
-                new_session = start_scout_session(mode, text)
+                new_session = (
+                    start_scout_session(mode, text, publication_year=year)
+                    if mode == ScoutMode.MICRO.value
+                    else start_scout_session(mode, text)
+                )
                 return run_scout_general(new_session.id)
 
             state.scout_mode = mode
@@ -1088,6 +1121,18 @@ def build(
         # questions or moments, never both — stale ones from the other mode must
         # not linger, and switching modes counts as a fresh attempt.
         _forget_suggestions()
+        _render_full()
+
+    def _selected_year() -> int | None:
+        raw = str(year_field.value or "").strip()
+        if not raw:
+            return None
+        if len(raw) != 4 or not raw.isascii() or not raw.isdigit():
+            raise ValueError("Enter a four-digit publication year, or leave Year blank.")
+        year = int(raw)
+        if year < 1900 or year > date.today().year:
+            raise ValueError(f"Choose a publication year from 1900 to {date.today().year}.")
+        return year
 
     def _selection_changed(candidate_id: str, checked: bool) -> None:
         if busy[0]:
@@ -1255,6 +1300,7 @@ def build(
             state.scout_session_id = loaded.id
             state.scout_mode = loaded.mode.value
             state.last_prompt = loaded.user_intent
+            year_field.value = ""
             if state.returned_scout_session_id != loaded.id:
                 state.returned_scout_project = ""
                 state.returned_scout_session_id = ""
@@ -1401,8 +1447,12 @@ def build(
         show_mode = session is None or session.state in {SessionState.ARCHIVED, SessionState.COMPLETE}
         intent_field.hint_text = hint
         intent_field.disabled = disabled
+        year_field.disabled = disabled
         send_button.disabled = disabled
-        input_row.controls = ([mode_group] if show_mode else []) + [intent_field, send_button]
+        input_row.controls = ([mode_group] if show_mode else [])
+        if show_mode and mode_group.value == ScoutMode.MICRO.value:
+            input_row.controls.append(year_field)
+        input_row.controls += [intent_field, send_button]
 
     def _apply_render(error: str | None = None) -> None:
         bubbles = _render_chat()
@@ -1440,6 +1490,14 @@ def build(
         multiline=True,
         min_lines=1,
         max_lines=3,
+    )
+    year_field = ft.TextField(
+        key="scout-year",
+        label="Year (optional)",
+        hint_text=f"Blank = {date.today().year}",
+        width=150,
+        border_color=BORDER,
+        focused_border_color=ACCENT,
     )
     send_button = primary_button("Send", _send_click)
     send_button.key = "chat-send"

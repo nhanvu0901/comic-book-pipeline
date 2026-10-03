@@ -658,8 +658,9 @@ def _discover_env(tmp_path, monkeypatch, *, batches):
     calls = []
     queued = list(batches)
 
-    def _fake_discover(mode, *, count=5, exclude=()):
-        calls.append({"mode": mode, "count": count, "exclude": list(exclude)})
+    def _fake_discover(mode, *, count=5, exclude=(), publication_year=None):
+        calls.append({"mode": mode, "count": count, "exclude": list(exclude),
+                      "publication_year": publication_year})
         return queued.pop(0) if queued else []
 
     monkeypatch.setattr(s1_research_scout, "discover_questions", _fake_discover)
@@ -768,6 +769,69 @@ def test_picking_a_micro_moment_keeps_its_issue_metadata_in_research_intent(
 
     assert "Cyclops faces Darkchild" in _intent_field(controls).value
     assert "Amazing X-Men #2 (2025)" in _intent_field(controls).value
+
+
+def test_micro_year_field_reaches_discovery_and_blank_means_current(tmp_path, monkeypatch):
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch, batches=[_batch("A comic moment")],
+    )
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    year_field = _by_key(controls, "scout-year")
+    year_field.value = "2024"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+    assert calls[0]["publication_year"] == 2024
+
+    # A fresh blank field leaves selection to the live current-year default.
+    year_field.value = ""
+    _by_key(controls, "discovered-reroll").on_click(object())
+    _run_recorded_task(page)
+    assert calls[-1]["publication_year"] is None
+
+
+def test_micro_year_field_persists_on_new_research_and_rejects_bad_input(
+    tmp_path, monkeypatch,
+):
+    store = SessionStore(tmp_path / "research_sessions")
+    calls = []
+    created = []
+
+    def fake_start(mode, text, *, publication_year=None):
+        calls.append((mode, text, publication_year))
+        session = store.create(ScoutMode(mode), text, publication_year)
+        created.append(session.id)
+        return session
+
+    def fake_run(session_id):
+        session = store.load(session_id)
+        session.state = SessionState.CANDIDATE_REVIEW
+        store.save(session)
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", fake_start)
+    monkeypatch.setattr(s1_research_scout, "run_scout_general", fake_run)
+    page, controls = _build(tmp_path)
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    _intent_field(controls).value = "Find a moment"
+    year_field = _by_key(controls, "scout-year")
+    year_field.value = "twenty"
+    _send(controls).on_click(object())
+    assert calls == []
+
+    year_field.value = "2024"
+    _intent_field(controls).value = "Hero #2 (2025)"
+    _send(controls).on_click(object())
+    assert calls == []
+
+    _intent_field(controls).value = "Find a moment"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+    assert calls == [("micro", "Find a moment", 2024)]
+    assert store.load(created[0]).publication_year == 2024
 
 
 def test_micro_review_explains_when_research_returns_a_different_issue(tmp_path):
