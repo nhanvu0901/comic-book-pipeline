@@ -10,8 +10,10 @@ No Claude API call is used.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -29,6 +31,7 @@ from stages.stage_3.gemini_prompt import (
     generate_gemini_writer_prompt, parse_and_save_script, saved_script_for_editor,
 )
 from stages.user_errors import UserFacingError
+from stages.research_scout.production_ledger import record_milestone
 from ..clipboard import BLOCKED_HINT, copy_text
 from ..project_log import append_log, load_last_script, save_last_script, stage_log_path
 from utils.clear_stage import clear_stage_3
@@ -266,15 +269,52 @@ def build(
                 raw_text,
                 log=push_log,
             )
-            running.visible = False
-            status_text.value = (
-                f"Narration approved: {narration.get('total_word_count', 0)} words, "
-                f"{len(narration.get('scenes', []))} scenes."
+            narration_path = PROJECTS_ROOT / state.project_name / "narration.json"
+            saved_narration = narration_path.read_bytes()
+            # The marker must identify the artifact that was persisted, rather than
+            # an in-memory return value or the text-box contents.
+            json.loads(saved_narration.decode("utf-8"))
+            narration_sha256 = hashlib.sha256(saved_narration).hexdigest()
+
+            # A newly saved narration invalidates any prior Stage 2 marker until the
+            # ledger has accepted this exact artifact.
+            state.approved.pop("2", None)
+            state.dirty.pop("2", None)
+            state.approved_narration_sha256 = ""
+            save_state(state)
+            milestone = record_milestone(
+                state.project_name, "in_progress", projects_root=PROJECTS_ROOT,
             )
-            status_text.color = SUCCESS
+            local_only = milestone == "read_only" and sys.platform == "darwin"
+            if milestone == "read_only" and not local_only:
+                raise RuntimeError("Central ledger is read-only on this Windows server")
+            if milestone == "unresolved_identity":
+                raise RuntimeError("Project identity is unresolved; correct its saved comic context and retry")
+            if milestone not in {"recorded", "already_recorded", "export_pending", "read_only"}:
+                raise RuntimeError(f"Unexpected ledger result: {milestone}")
+
+            running.visible = False
+            if local_only:
+                status_text.value = (
+                    f"Narration approved locally: {narration.get('total_word_count', 0)} words, "
+                    f"{len(narration.get('scenes', []))} scenes. Central ledger was not updated."
+                )
+                status_text.color = WARN
+            elif milestone == "export_pending":
+                status_text.value = (
+                    f"Narration approved: {narration.get('total_word_count', 0)} words, "
+                    f"{len(narration.get('scenes', []))} scenes. Ledger saved; export sync is pending."
+                )
+                status_text.color = WARN
+            else:
+                status_text.value = (
+                    f"Narration approved: {narration.get('total_word_count', 0)} words, "
+                    f"{len(narration.get('scenes', []))} scenes."
+                )
+                status_text.color = SUCCESS
             page.update()
 
-            state.mark_approved(2)
+            state.mark_approved(2, narration_sha256=narration_sha256)
             state.current_stage = 3
             save_state(state)
             on_go(3)
@@ -284,7 +324,7 @@ def build(
             # below is too short to show that line above the paragraph listing.
             status_text.value = (
                 str(exc).splitlines()[0] if isinstance(exc, UserFacingError)
-                else "Failed to parse/save narration — see log."
+                else f"Stage 2 was not approved; retry Approve & Continue. {exc}"
             )
             status_text.color = DANGER
             for line in format_exception(exc).splitlines():

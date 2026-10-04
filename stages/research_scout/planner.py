@@ -15,6 +15,7 @@ import copy
 import json
 import re
 import socket
+from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
 import urllib.error
@@ -28,7 +29,24 @@ from . import cited_sources
 
 
 _TIMEOUT = 180.0
-_REQUEST_FAILED = object()
+_MAX_FAILURE_MESSAGE_CHARS = 300
+
+
+@dataclass(frozen=True)
+class RequestFailure:
+    status: int | None
+    message: str
+
+    def as_text(self, service: str = "OpenRouter") -> str:
+        prefix = f"{service} HTTP {self.status}: " if self.status is not None else f"{service}: "
+        return (prefix + self.message)[:_MAX_FAILURE_MESSAGE_CHARS]
+
+
+@dataclass(frozen=True)
+class PlanResult:
+    plan: "ResearchPlan | None"
+    error: RequestFailure | None = None
+
 
 _CARDINALITIES = ("exhaustive", "options", "pinpoint")
 _FIELD_TYPES = ("string", "string_array")
@@ -445,26 +463,33 @@ Return ONLY the ResearchPlan JSON — no prose."""
 
 
 def make_plan(user_intent: str, feedback_notes: list[str], mode: str) -> ResearchPlan | None:
-    """Ask config.SCOUT_PLANNER_MODEL to fill a ResearchPlan for one question.
+    """Compatibility wrapper: return only the plan, as callers historically expect."""
+    return make_plan_detailed(user_intent, feedback_notes, mode).plan
+
+
+def make_plan_detailed(
+    user_intent: str, feedback_notes: list[str], mode: str,
+) -> PlanResult:
+    """Ask the planner and preserve a safe reason when falling back.
 
     One repair retry on invalid/unvalidatable JSON (same shape as
-    openrouter_gate.review). Transport failures are never retried. Returns
-    None on any failure — the caller (workflow.run_general) falls back to
-    today's fixed template/schema instead of ever raising.
+    openrouter_gate.review). Transport failures are never retried. This detailed
+    API never raises for an upstream failure; ``make_plan`` keeps the old
+    ``ResearchPlan | None`` contract for injected and legacy callers.
     """
 
     if not config.OPENROUTER_API_KEY:
-        return None
+        return PlanResult(None, RequestFailure(None, "OPENROUTER_API_KEY is not set"))
 
     model = config.SCOUT_PLANNER_MODEL
     user_message = _user_message(user_intent, feedback_notes, mode)
 
     first_content = _request(_request_body(model, user_message), timeout=_TIMEOUT)
-    if first_content is _REQUEST_FAILED:
-        return None
+    if isinstance(first_content, RequestFailure):
+        return PlanResult(None, first_content)
     plan, reason = _parse_plan(first_content)
     if plan is not None:
-        return plan
+        return PlanResult(plan)
 
     repair_message = (
         f"{user_message}\n\nYour previous response was rejected because "
@@ -472,10 +497,15 @@ def make_plan(user_intent: str, feedback_notes: list[str], mode: str) -> Researc
         "fixing exactly that problem."
     )
     repaired_content = _request(_request_body(model, repair_message), timeout=_TIMEOUT)
-    if repaired_content is _REQUEST_FAILED:
-        return None
-    repaired_plan, _ = _parse_plan(repaired_content)
-    return repaired_plan
+    if isinstance(repaired_content, RequestFailure):
+        return PlanResult(None, repaired_content)
+    repaired_plan, repair_reason = _parse_plan(repaired_content)
+    if repaired_plan is not None:
+        return PlanResult(repaired_plan)
+    return PlanResult(
+        None,
+        RequestFailure(None, _safe_error_message(f"invalid plan JSON: {repair_reason}")),
+    )
 
 
 def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str:
@@ -540,16 +570,45 @@ def _request(body: dict[str, Any], *, timeout: float) -> Any:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        socket.timeout,
-        OSError,
-        ValueError,
-    ):
-        return _REQUEST_FAILED
+    except Exception as exc:
+        return _request_failure(exc)
     return _message_content(payload)
+
+
+def _request_failure(exc: Exception) -> RequestFailure:
+    status = exc.code if isinstance(exc, urllib.error.HTTPError) else None
+    message: str | None = None
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            body = exc.read(8192)
+            parsed = json.loads(body.decode("utf-8", errors="replace"))
+            error_obj = parsed.get("error") if isinstance(parsed, Mapping) else None
+            if isinstance(error_obj, Mapping) and isinstance(error_obj.get("message"), str):
+                message = error_obj["message"]
+        except Exception:
+            pass
+    if not message:
+        reason = getattr(exc, "reason", None)
+        text = str(reason if reason is not None else exc)
+        message = "timeout" if _is_timeout(exc, text) else (text or exc.__class__.__name__)
+    return RequestFailure(status, _safe_error_message(message))
+
+
+def _is_timeout(exc: Exception, text: str = "") -> bool:
+    return isinstance(exc, (TimeoutError, socket.timeout)) or any(
+        token in text.casefold() for token in ("timeout", "timed out", "deadline exceeded")
+    )
+
+
+def _safe_error_message(message: str) -> str:
+    """Flatten and redact configured credentials before a reason is persisted."""
+    safe = str(message)
+    api_key = str(config.OPENROUTER_API_KEY or "")
+    if api_key:
+        safe = safe.replace(api_key, "[redacted]")
+    safe = re.sub(r"(?i)Bearer\s+\S+", "Bearer [redacted]", safe)
+    safe = " ".join(safe.split())
+    return (safe or "request failed")[:_MAX_FAILURE_MESSAGE_CHARS]
 
 
 def _message_content(payload: Any) -> Any:

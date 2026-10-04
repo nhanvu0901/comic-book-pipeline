@@ -27,7 +27,7 @@ class _FakeYouCom:
                             "id": f"candidate-{i}",
                             "title": f"Hero {i}",
                             "summary": f"Hero {i} does the thing.",
-                            "series_issue_year": f"Thor #{i} (2024)",
+                            "series_issue_year": f"{('Thor', 'Batman', 'Iron Man', 'X-Men', 'Daredevil')[i - 1]} #{i} (2024)",
                             "what_visibly_happens": f"Hero {i} visibly does the thing.",
                             "evidence_urls": [f"https://source.test/{i}"],
                             "claim_citation": {

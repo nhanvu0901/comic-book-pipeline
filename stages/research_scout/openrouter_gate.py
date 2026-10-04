@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import socket
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 import urllib.error
 import urllib.request
@@ -16,7 +18,20 @@ from .models import EvidenceGate
 
 
 _TIMEOUT = 180.0
-_REQUEST_FAILED = object()
+_MAX_FAILURE_MESSAGE_CHARS = 300
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RequestFailure:
+    status: int | None
+    message: str
+
+    def as_text(self) -> str:
+        prefix = f"OpenRouter HTTP {self.status}: " if self.status is not None else "OpenRouter: "
+        return (prefix + self.message)[:_MAX_FAILURE_MESSAGE_CHARS]
+
+
 _EVIDENCE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -69,8 +84,10 @@ def review(
         ),
         timeout=timeout,
     )
-    if first_content is _REQUEST_FAILED:
-        return EvidenceGate(verdict="inconclusive", reason="OpenRouter request failed")
+    if isinstance(first_content, RequestFailure):
+        reason = first_content.as_text()
+        logger.warning("Evidence gate failed: %s", reason)
+        return EvidenceGate(verdict="inconclusive", reason=reason)
     first_gate = _parse_gate(first_content)
     if first_gate is not None:
         return first_gate
@@ -88,8 +105,10 @@ def review(
         ),
         timeout=timeout,
     )
-    if repaired_content is _REQUEST_FAILED:
-        return EvidenceGate(verdict="inconclusive", reason="OpenRouter repair request failed")
+    if isinstance(repaired_content, RequestFailure):
+        reason = repaired_content.as_text()
+        logger.warning("Evidence gate repair failed: %s", reason)
+        return EvidenceGate(verdict="inconclusive", reason=reason)
     repaired_gate = _parse_gate(repaired_content)
     if repaired_gate is not None:
         return repaired_gate
@@ -142,16 +161,37 @@ def _request(body: dict[str, Any], *, timeout: float) -> Any:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        socket.timeout,
-        OSError,
-        ValueError,
-    ):
-        return _REQUEST_FAILED
+    except Exception as exc:
+        return _request_failure(exc)
     return _message_content(payload)
+
+
+def _request_failure(exc: Exception) -> RequestFailure:
+    status = exc.code if isinstance(exc, urllib.error.HTTPError) else None
+    message: str | None = None
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            body = exc.read(8192)
+            parsed = json.loads(body.decode("utf-8", errors="replace"))
+            error_obj = parsed.get("error") if isinstance(parsed, Mapping) else None
+            if isinstance(error_obj, Mapping) and isinstance(error_obj.get("message"), str):
+                message = error_obj["message"]
+        except Exception:
+            pass
+    if not message:
+        reason = getattr(exc, "reason", None)
+        text = str(reason if reason is not None else exc)
+        is_timeout = isinstance(exc, (TimeoutError, socket.timeout)) or any(
+            token in text.casefold() for token in ("timeout", "timed out", "deadline exceeded")
+        )
+        message = "timeout" if is_timeout else (text or exc.__class__.__name__)
+    safe = str(message)
+    api_key = str(config.OPENROUTER_API_KEY or "")
+    if api_key:
+        safe = safe.replace(api_key, "[redacted]")
+    safe = re.sub(r"(?i)Bearer\s+\S+", "Bearer [redacted]", safe)
+    safe = " ".join(safe.split())[:_MAX_FAILURE_MESSAGE_CHARS] or "request failed"
+    return RequestFailure(status, safe)
 
 
 def _message_content(payload: Any) -> Any:

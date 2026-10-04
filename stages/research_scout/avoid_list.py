@@ -12,6 +12,8 @@ import config
 from utils.lexical_sim import token_jaccard
 
 from . import issue_identity
+from . import ledger_inventory
+from .micro_recency import issue_publication_year
 from .models import ScoutMode
 
 _ISSUE = re.compile(
@@ -55,27 +57,12 @@ def _walk_text(value: Any) -> list[str]:
 
 def _inventory(mode: ScoutMode) -> list[str]:
     root = Path(config.PROJECTS_ROOT)
-    found: list[str] = []
-    if mode is ScoutMode.QA:
-        for path in root.glob("*/answer_context.json"):
-            data = _read_json(path)
-            found.extend(label for text in _walk_text(data) for label in _labels(text))
-    else:
-        for path in root.glob("*/comic_context.json"):
-            data = _read_json(path)
-            found.extend(label for text in _walk_text(data) for label in _labels(text))
-            candidate = data.get("scout_candidate") if isinstance(data, dict) else None
-            if isinstance(candidate, dict):
-                label = str(candidate.get("series_issue_year", "")).strip()
-                if label:
-                    found.append(label)
-        for path in root.glob("*/scout_candidate.json"):
-            candidate = _read_json(path)
-            if isinstance(candidate, dict):
-                label = str(candidate.get("series_issue_year", "")).strip()
-                if label:
-                    found.append(label)
-    if mode is not ScoutMode.QA:
+    mode_value = str(getattr(mode, "value", mode))
+    try:
+        found, _keys, _questions, _status = ledger_inventory.load_production_inventory(mode)
+    except (OSError, ValueError, TypeError):
+        found = []
+    if str(getattr(mode, "value", mode)) == "recap":
         csv_path = Path(getattr(config, "COMIC_CANDIDATES_CSV", root.parent / "comic_candidates.csv"))
         if csv_path.exists():
             try:
@@ -84,7 +71,7 @@ def _inventory(mode: ScoutMode) -> list[str]:
                         found.extend(label for value in row.values() for label in _labels(str(value or "")))
             except OSError:
                 pass
-    if mode is ScoutMode.QA:
+    if mode_value == ScoutMode.QA.value:
         banlist = Path(__file__).resolve().parents[2] / "qa_question_banlist.md"
         if banlist.exists():
             found.extend(label for label in _labels(banlist.read_text(encoding="utf-8", errors="ignore")))
@@ -95,38 +82,57 @@ def relevant_question_avoid_lines(
     mode: ScoutMode | str, user_intent: str = "", extra_held=(), limit: int = 50,
 ) -> list[str]:
     """Question text for discover's question-level burn filter."""
-    path = Path(__file__).resolve().parents[2] / "qa_question_banlist.md"
-    if not path.exists():
-        return [str(item).strip() for item in extra_held if str(item).strip()][:limit]
     result = [str(item).strip() for item in extra_held if str(item).strip()]
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if len(cells) < 2 or not re.match(r"(?:19|20)\d{2}-\d{2}-\d{2}", cells[0]):
-            continue
-        question = re.sub(r"\s+", " ", cells[1])
-        if question:
-            result.append(question)
-    return list(dict.fromkeys(result))[:max(0, min(int(limit), 50))]
-
-
-def _key(label: str) -> tuple[str, str] | None:
+    limit = max(0, min(int(limit), 50))
+    mode_value = str(getattr(mode, "value", mode))
+    if mode_value != ScoutMode.QA.value:
+        return list(dict.fromkeys(result))[:limit]
+    path = Path(__file__).resolve().parents[2] / "qa_question_banlist.md"
     try:
-        parsed = issue_identity._candidate_identity(label)
+        _labels, _keys, questions, _status = ledger_inventory.load_production_inventory(ScoutMode.QA)
+        result.extend(questions)
+    except (OSError, ValueError, TypeError):
+        pass
+    if path.exists():
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) < 2 or not re.match(r"(?:19|20)\d{2}-\d{2}-\d{2}", cells[0]):
+                continue
+            question = re.sub(r"\s+", " ", cells[1])
+            if question:
+                result.append(question)
+    return list(dict.fromkeys(result))[:limit]
+
+
+def _key(label: str) -> tuple[str, str, str] | None:
+    try:
+        parsed = ledger_inventory.micro_identity(label)
     except (TypeError, ValueError):
         return None
     if parsed is None:
         return None
-    return issue_identity._normal_series(parsed.series), parsed.number
+    publication_year = issue_publication_year(label)
+    if publication_year is None:
+        return None
+    return issue_identity._normal_series(parsed.series), parsed.number, str(publication_year)
 
 
-def inventory_issue_keys(mode: ScoutMode | str) -> set[tuple[str, str]]:
+def inventory_issue_keys(mode: ScoutMode | str) -> set[tuple[str, str, str]]:
     """Return every issue key in the local inventory, without the prompt cap.
 
     ``relevant_avoid_lines`` is intentionally limited to 50 entries for prompt
     size. Micro's one-video-per-issue rule is a code gate, so it must consult
     the full inventory independently of which labels rank into that prompt.
     """
-    return {key for label in _inventory(ScoutMode(mode)) if (key := _key(label))}
+    mode_value = str(getattr(mode, "value", mode))
+    keys = {key for label in _inventory(mode) if (key := _key(label))}
+    if mode_value == ScoutMode.MICRO.value:
+        try:
+            _labels, ledger_keys, _questions, _status = ledger_inventory.load_production_inventory(mode)
+            keys.update(ledger_keys)
+        except (OSError, ValueError, TypeError):
+            pass
+    return keys
 
 
 def relevant_avoid_lines(
@@ -134,14 +140,13 @@ def relevant_avoid_lines(
     extra_held=(), limit: int = 50,
 ) -> list[str]:
     """Return up to ``limit`` issue labels, with current held items first."""
-    mode = ScoutMode(mode)
     limit = max(0, min(int(limit), 50))
     held = [str(item).strip() for item in extra_held if str(item).strip()]
     candidates = held + _inventory(mode)
     intent = str(user_intent or "")
     plan_text = str(getattr(plan, "research_prompt", "") or "")
     context = f"{intent} {plan_text}"
-    unique: dict[tuple[str, str] | str, str] = {}
+    unique: dict[tuple[str, str, str] | str, str] = {}
     for label in candidates:
         key = _key(label) or label.casefold()
         unique.setdefault(key, label)

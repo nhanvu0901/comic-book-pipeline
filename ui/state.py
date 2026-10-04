@@ -37,6 +37,7 @@ class AppState:
     current_stage: int = 1
     approved: dict[str, bool] = field(default_factory=dict)  # str keys for JSON
     dirty: dict[str, bool] = field(default_factory=dict)
+    approved_narration_sha256: str = ""
 
     # Stage 1
     last_prompt: str = ""
@@ -63,9 +64,11 @@ class AppState:
     def is_dirty(self, stage: int) -> bool:
         return bool(self.dirty.get(str(stage), False))
 
-    def mark_approved(self, stage: int) -> None:
+    def mark_approved(self, stage: int, *, narration_sha256: str = "") -> None:
         self.approved[str(stage)] = True
         self.dirty[str(stage)] = False
+        if stage == 2:
+            self.approved_narration_sha256 = narration_sha256
 
     def mark_dirty(self, stage: int) -> None:
         self.dirty[str(stage)] = True
@@ -88,6 +91,7 @@ class AppState:
         self.current_stage = 1
         self.approved = {}
         self.dirty = {}
+        self.approved_narration_sha256 = ""
         # This is deliberately project-scoped state, rather than guessing from
         # arbitrary unfinished sessions when Stage 1 is opened later.
         self.returned_scout_project = self.project_name

@@ -91,19 +91,33 @@ def test_avoid_line_parser_canonicalizes_and_expands_ranges():
 
 
 def test_micro_inventory_reads_embedded_and_standalone_scout_candidate(tmp_path, monkeypatch):
+    import hashlib
     import json
     import config
+
+    def approve(project):
+        narration = project / "narration.json"
+        narration.write_text('{"script":"approved"}', encoding="utf-8")
+        (project / "state.json").write_text(json.dumps({
+            "approved": {"2": True},
+            "approved_narration_sha256": hashlib.sha256(narration.read_bytes()).hexdigest(),
+        }), encoding="utf-8")
 
     embedded = tmp_path / "embedded"
     embedded.mkdir()
     (embedded / "comic_context.json").write_text(json.dumps({
         "scout_candidate": {"series_issue_year": "Daredevil #5 (2024)"},
     }), encoding="utf-8")
+    approve(embedded)
     standalone = tmp_path / "standalone"
     standalone.mkdir()
     (standalone / "scout_candidate.json").write_text(json.dumps({
         "series_issue_year": "Jessica Jones #2 (2025)"},
     ), encoding="utf-8")
+    (standalone / "comic_context.json").write_text(json.dumps({
+        "pipeline_mode": "micro_moment",
+    }), encoding="utf-8")
+    approve(standalone)
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
 
     labels = avoid_list._inventory(ScoutMode.MICRO)
@@ -113,6 +127,7 @@ def test_micro_inventory_reads_embedded_and_standalone_scout_candidate(tmp_path,
 
 def test_micro_hard_gate_uses_full_inventory_beyond_prompt_cap(tmp_path, monkeypatch):
     from datetime import date
+    import hashlib
     import json
     import config
 
@@ -125,6 +140,12 @@ def test_micro_hard_gate_uses_full_inventory_beyond_prompt_cap(tmp_path, monkeyp
                 "series_issue_year": f"Inventory Series #{number} ({year})",
             },
         }), encoding="utf-8")
+        narration = project / "narration.json"
+        narration.write_text('{"script":"approved"}', encoding="utf-8")
+        (project / "state.json").write_text(json.dumps({
+            "approved": {"2": True},
+            "approved_narration_sha256": hashlib.sha256(narration.read_bytes()).hexdigest(),
+        }), encoding="utf-8")
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
 
     prompt_lines = avoid_list.relevant_avoid_lines(
@@ -132,7 +153,7 @@ def test_micro_hard_gate_uses_full_inventory_beyond_prompt_cap(tmp_path, monkeyp
     )
     all_keys = avoid_list.inventory_issue_keys(ScoutMode.MICRO)
     assert len(prompt_lines) == 50
-    assert ("inventory series", "60") in all_keys
+    assert ("inventory series", "60", str(year)) in all_keys
 
     candidate = _candidate(60, f"Inventory Series #60 ({year})")
     accepted, validation = _validate_new_general_candidates(
@@ -161,7 +182,7 @@ def test_qa_cross_question_inventory_is_not_a_hard_gate_but_held_is():
         [_candidate(2, "Batman #57 (2024)")], {canonical_url("https://sources.test/2")},
         mode=ScoutMode.QA, user_intent="Which heroes?",
         sources=[{"url": "https://sources.test/2"}],
-        protected_keys={("batman", "57")}, protected_fingerprints=set(),
+        protected_keys={("batman", "57", "2024")}, protected_fingerprints=set(),
     )
     assert held == []
     assert validation["rejected"] == [{"candidate_id": "c2", "reason": "duplicate_issue_key"}]

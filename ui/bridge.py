@@ -282,10 +282,16 @@ def archive_scout_session(session_id: str, reason: str = "Research restarted"):
         )
 
 
-def create_scout_project(session_id: str, project_slug: str, *, override: bool = False) -> str:
+def create_scout_project(
+    session_id: str, project_slug: str, *, override: bool = False,
+    series_diversity_override: bool = False,
+) -> str:
     from stages.research_scout.project_factory import create_project_from_session
 
-    return create_project_from_session(session_id, project_slug, override=override)
+    return create_project_from_session(
+        session_id, project_slug, override=override,
+        series_diversity_override=series_diversity_override,
+    )
 
 
 def return_scout_project_to_research(project_name: str):
@@ -848,8 +854,63 @@ def run_stage_4(
 
 # ─── Stage 5 ────────────────────────────────────────────────────────────────
 
+def _render_signature(path: Path) -> tuple[int, int, int, int, int] | None:
+    from stages.research_scout.production_ledger import render_signature
+    return render_signature(path)
+
+
+def _load_render_marker(project_dir: Path) -> tuple[int, int, int, int, int] | None:
+    from stages.research_scout.production_ledger import _marker_signature
+    return _marker_signature(project_dir)
+
+
+def _mark_render_verified(project_dir: Path, signature: tuple[int, int, int, int, int],
+                          log: Callable[[str], None]) -> None:
+    marker_path = project_dir / "final.mp4.verified.json"
+    try:
+        write_json_atomic(marker_path, {"verified_final_signature": list(signature)})
+    except Exception as exc:
+        log(f"[bridge] final.mp4 is valid, but its durable render sidecar could not be saved: {exc}")
+
+
+def _record_render_milestone(project_name: str, log: Callable[[str], None]) -> None:
+    from stages.research_scout.production_ledger import record_milestone
+
+    try:
+        result = record_milestone(project_name, "produced", projects_root=PROJECTS_ROOT)
+    except Exception as exc:
+        log(f"[bridge] final.mp4 rendered, but the production ledger update failed; retry ledger reconciliation: {exc}")
+        return
+    if result == "read_only":
+        log("[bridge] final.mp4 rendered; central ledger is read-only here, and this local project remains in scout inventory.")
+    elif result == "export_pending":
+        log("[bridge] final.mp4 rendered and ledger event saved, but export refresh failed; retry ledger export.")
+    elif result == "unresolved_identity":
+        log("[bridge] final.mp4 rendered, but its comic identity could not be resolved for the ledger.")
+
+
+def _verify_render_and_record(project_name: str, log: Callable[[str], None], *,
+                              prior_signature: tuple[int, int, int, int, int] | None = None,
+                              require_fresh: bool = False) -> Path:
+    project_dir = PROJECTS_ROOT / project_name
+    final = project_dir / "final.mp4"
+    signature = _render_signature(final)
+    if signature is None:
+        raise RuntimeError("Render finished but final.mp4 is missing or empty")
+    if require_fresh and signature == prior_signature and _load_render_marker(project_dir) != signature:
+        raise RuntimeError("Stage 5 returned success but did not produce a fresh or previously verified final.mp4")
+    from stages.research_scout.production_ledger import is_verified_final
+    if not is_verified_final(project_dir):
+        raise RuntimeError("Render finished but final.mp4 failed MP4 verification")
+    _mark_render_verified(project_dir, signature, log)
+    _record_render_milestone(project_name, log)
+    return final
+
 def run_stage_5(project_name: str, log: Callable[[str], None]) -> str:
     from stages.stage_5.pipeline import assemble_project
+
+    project_dir = PROJECTS_ROOT / project_name
+    prior_signature = _render_signature(project_dir / "final.mp4")
 
     import builtins
     original = print
@@ -858,7 +919,10 @@ def run_stage_5(project_name: str, log: Callable[[str], None]) -> str:
         final = assemble_project(project_name, force=True)
     finally:
         builtins.print = original
-    return str(final)
+    verified = _verify_render_and_record(
+        project_name, log, prior_signature=prior_signature, require_fresh=True,
+    )
+    return str(verified)
 
 
 # ─── Stage 6: Review & Edit (storyboard) ───────────────────────────────────
@@ -1001,6 +1065,9 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     import subprocess
     import sys
 
+    project_dir = PROJECTS_ROOT / project_name
+    prior_signature = _render_signature(project_dir / "final.mp4")
+
     # Master is explicitly re-rendering edited narration from Stage 7 (Review & Edit).
     # Sync the review gate's narration_sha1 so ensure_reviewed recognises Master's explicit approval.
     try:
@@ -1041,9 +1108,9 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     env.pop("CLAUDE_SDK_MODEL", None)
     _run([py, "-m", "stages.stage_5", "--project", project_name, "--force"], env)
 
-    final = PROJECTS_ROOT / project_name / "final.mp4"
-    if not final.exists():
-        raise RuntimeError("Stage 5 finished but final.mp4 is missing")
+    final = _verify_render_and_record(
+        project_name, log, prior_signature=prior_signature, require_fresh=True,
+    )
     return str(final)
 
 

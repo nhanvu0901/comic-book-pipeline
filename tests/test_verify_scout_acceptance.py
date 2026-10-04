@@ -5,7 +5,7 @@ import pytest
 import config
 from scripts import verify_scout_acceptance as harness
 from stages.research_scout import planner as planner_module
-from stages.research_scout.planner import ResearchPlan
+from stages.research_scout.planner import PlanResult, ResearchPlan
 
 
 def test_dry_run_uses_offline_fixture_and_writes_only_safe_aggregates(tmp_path, monkeypatch):
@@ -77,10 +77,10 @@ def test_live_path_uses_production_planner_by_default_but_makes_no_network(tmp_p
     plan_calls = []
     monkeypatch.setattr(harness, "YouComClient", FakeYouCom)
     monkeypatch.setattr(config, "SCOUT_TOPUP_ROUNDS", 0)
-    monkeypatch.setattr(planner_module, "make_plan", lambda *args: (
-        plan_calls.append(args) or ResearchPlan(
+    monkeypatch.setattr(planner_module, "make_plan_detailed", lambda *args: (
+        plan_calls.append(args) or PlanResult(plan=ResearchPlan(
             unit="one comic issue", cardinality="exhaustive", research_prompt="Find qualifying issues.",
-        )
+        ))
     ))
 
     report = harness.run_acceptance(live=True, report_path=tmp_path / "live-mock.json")

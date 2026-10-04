@@ -136,6 +136,248 @@ def test_approve_is_disabled_for_qa_with_two_selected_items(tmp_path):
     assert approve.disabled is True
 
 
+def test_qa_diversity_warning_updates_with_ticks_and_lists_parseable_series(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-series-warning", mode=ScoutMode.QA, user_intent="Who won?",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b"],
+    )
+    store.save(session)
+    store.append_audit(session.id, "general_research_completed", detail={"revision": 1})
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+        {"id": "a", "series_issue_year": "Thor #1 (2024)"},
+        {"id": "b", "series_issue_year": "Thor #2 (2024)"},
+        {"id": "c", "series_issue_year": "Iron Man #1 (2024)"},
+    ]})
+    _page, controls = _build(tmp_path, session)
+    _by_key(controls, "select-c").on_change(_FakeEvent(True))
+
+    text = _text_content(controls)
+    assert "3 selected issues cover 2 series" in text
+    assert "Thor" in text and "Iron Man" in text
+
+
+def test_series_diversity_detail_uses_parsed_series_and_qa_count(monkeypatch):
+    candidates = {
+        "a": {"series_issue_year": "Thor #1 (2024)"},
+        "b": {"series_issue_year": "Thor #2 (2024)"},
+        "c": {"series_issue_year": "Iron Man #1 (2024)"},
+        "d": {"series_issue_year": "Unparseable title"},
+    }
+    two_series = s1_research_scout._series_diversity_detail(ScoutMode.QA, ["a", "b", "c"], candidates)
+    assert two_series["warning"] is True
+    assert two_series["count"] == 2
+    assert len(two_series["series"]) == 2
+    three_series = s1_research_scout._series_diversity_detail(
+        ScoutMode.QA, ["a", "c", "d"],
+        {**candidates, "d": {"series_issue_year": "X-Men #1 (2024)"}},
+    )
+    assert three_series["warning"] is False
+    malformed = s1_research_scout._series_diversity_detail(ScoutMode.QA, ["a", "b", "d"], candidates)
+    assert malformed["count"] == 1
+    assert malformed["warning"] is True
+    micro = s1_research_scout._series_diversity_detail(ScoutMode.MICRO, ["a"], candidates)
+    assert micro["warning"] is False
+    monkeypatch.setattr(
+        s1_research_scout, "_candidate_identity",
+        lambda _label: (_ for _ in ()).throw(ValueError("malformed issue label")),
+    )
+    assert s1_research_scout._series_diversity_detail(
+        ScoutMode.QA, ["a", "b", "c"], candidates,
+    )["count"] == 2
+
+
+def test_approve_with_series_warning_requires_explicit_confirmation(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-series-confirm", mode=ScoutMode.QA, user_intent="Who won?",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.append_audit(session.id, "general_research_completed", detail={"revision": 1})
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+        {"id": cid, "series_issue_year": f"Thor #{i} (2024)"}
+        for i, cid in enumerate(("a", "b", "c"), 1)
+    ]})
+    calls = []
+
+    def approve(session_id, candidate_ids=None):
+        calls.append((session_id, candidate_ids))
+        updated = store.load(session_id)
+        updated.state = SessionState.PRODUCTION_GATES
+        updated.selected_specific_candidate_ids = list(candidate_ids or [])
+        return store.save(updated)
+
+    monkeypatch.setattr(s1_research_scout, "approve_scout_selection", approve)
+    page, controls = _build(tmp_path, session)
+    _by_key(controls, "approve-selected").on_click(object())
+    assert not calls
+    assert page.dialogs
+    assert page.dialogs[-1].title.value == "Still create project?"
+
+    confirm = next(button for button in _buttons(page.dialogs[-1])
+                   if _label(button) == "Create anyway")
+    confirm.on_click(object())
+    _run_recorded_task(page)
+    assert calls == [(session.id, ["a", "b", "c"])]
+
+
+def test_reloaded_underdiverse_session_reconfirms_at_create_separately_from_gate_override(
+    tmp_path, monkeypatch,
+):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-series-reload", mode=ScoutMode.QA, user_intent="Who won?",
+        state=SessionState.PRODUCTION_GATES,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+        {"id": cid, "series_issue_year": f"Thor #{i} (2024)"}
+        for i, cid in enumerate(("a", "b", "c"), 1)
+    ]})
+    store.write_artifact(session.id, "specific/evidence_gate.v1.json", {"gates": [
+        {"candidate_id": cid, "verdict": "inconclusive", "reader_url": f"https://batcave.biz/reader/{i}/2",
+         "flags": [], "reason": "needs review"}
+        for i, cid in enumerate(("a", "b", "c"), 1)
+    ]})
+    created = []
+    monkeypatch.setattr(
+        s1_research_scout, "create_scout_project",
+        lambda session_id, project_slug, **kwargs: created.append((session_id, project_slug, kwargs)) or project_slug,
+    )
+    page, controls = _build(tmp_path, session)
+
+    _by_key(controls, "override-gates").on_change(_FakeEvent(True))
+    _by_key(controls, "create-project").on_click(object())
+    assert not created
+    assert page.dialogs[-1].title.value == "Still create project?"
+
+    next(button for button in _buttons(page.dialogs[-1])
+         if _label(button) == "Create anyway").on_click(object())
+    _run_recorded_task(page)
+
+    assert created == [(session.id, "who_won", {
+        "override": True, "series_diversity_override": True,
+    })]
+
+
+def test_resuming_another_session_does_not_reuse_series_diversity_consent(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path / "research_sessions")
+    first = ResearchSession(
+        id="qa-consent-first", mode=ScoutMode.QA, user_intent="First?",
+        state=SessionState.CANDIDATE_REVIEW, selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    second = ResearchSession(
+        id="qa-consent-second", mode=ScoutMode.QA, user_intent="Second?",
+        state=SessionState.PRODUCTION_GATES, selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    for session in (first, second):
+        store.save(session)
+        store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+            {"id": cid, "series_issue_year": f"Thor #{i} (2024)"}
+            for i, cid in enumerate(("a", "b", "c"), 1)
+        ]})
+    store.append_audit(first.id, "general_research_completed", detail={"revision": 1})
+    approved = []
+
+    def approve(session_id, candidate_ids=None):
+        approved.append(session_id)
+        loaded = store.load(session_id)
+        loaded.state = SessionState.PRODUCTION_GATES
+        return store.save(loaded)
+
+    created = []
+    monkeypatch.setattr(s1_research_scout, "approve_scout_selection", approve)
+    monkeypatch.setattr(s1_research_scout, "create_scout_project",
+                        lambda session_id, slug, **kwargs: created.append(session_id) or slug)
+    page, controls = _build(tmp_path, first)
+    _by_key(controls, "approve-selected").on_click(object())
+    next(button for button in _buttons(page.dialogs[-1])
+         if _label(button) == "Create anyway").on_click(object())
+    _run_recorded_task(page)
+    assert approved == [first.id]
+
+    _by_key(controls, f"resume-session-{second.id}").on_click(object())
+    _run_recorded_task(page)
+    dialogs_before_create = len(page.dialogs)
+    tasks_before_create = len(page.tasks)
+    _by_key(controls, "create-project").on_click(object())
+
+    assert not created
+    assert len(page.dialogs) == dialogs_before_create + 1
+    assert len(page.tasks) == tasks_before_create
+    assert page.dialogs[-1].title.value == "Still create project?"
+
+
+def test_selection_change_clears_gate_override_even_if_new_selection_still_needs_it(
+    tmp_path,
+):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-gate-consent-change", mode=ScoutMode.QA, user_intent="Who won?",
+        state=SessionState.CANDIDATE_REVIEW,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.append_audit(session.id, "general_research_completed", detail={"revision": 1})
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+        {"id": cid, "series_issue_year": f"Series {i} #{i} (2024)"}
+        for i, cid in enumerate(("a", "b", "c", "d"), 1)
+    ]})
+    store.write_artifact(session.id, "specific/evidence_gate.v1.json", {"gates": [
+        {"candidate_id": cid, "verdict": "inconclusive",
+         "reader_url": f"https://batcave.biz/reader/{i}/2", "flags": [],
+         "reason": "needs review"}
+        for i, cid in enumerate(("a", "b", "c", "d"), 1)
+    ]})
+    _page, controls = _build(tmp_path, session)
+
+    _by_key(controls, "override-gates").on_change(_FakeEvent(True))
+    _by_key(controls, "select-a").on_change(_FakeEvent(False))
+    _by_key(controls, "select-d").on_change(_FakeEvent(True))
+
+    assert _by_key(controls, "override-gates").value is False
+
+
+def test_back_keeps_gate_consent_for_same_selection_but_change_clears_it(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-gate-consent-back", mode=ScoutMode.QA, user_intent="Who won?",
+        state=SessionState.PRODUCTION_GATES,
+        selected_specific_candidate_ids=["a", "b", "c"],
+    )
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+        {"id": cid, "series_issue_year": f"Series {i} #{i} (2024)"}
+        for i, cid in enumerate(("a", "b", "c", "d"), 1)
+    ]})
+    store.write_artifact(session.id, "specific/evidence_gate.v1.json", {"gates": [
+        {"candidate_id": cid, "verdict": "inconclusive",
+         "reader_url": f"https://batcave.biz/reader/{i}/2", "flags": [],
+         "reason": "needs review"}
+        for i, cid in enumerate(("a", "b", "c", "d"), 1)
+    ]})
+    monkeypatch.setattr(s1_research_scout, "can_override_production_gates", lambda *_a, **_k: True)
+    page, controls = _build(tmp_path, session)
+
+    _by_key(controls, "override-gates").on_change(_FakeEvent(True))
+    _by_key(controls, "back-to-candidates").on_click(object())
+    _run_recorded_task(page)
+
+    # Returning to the candidate list keeps consent when the session and
+    # selected set are unchanged, matching the existing Back/Forward UX.
+    assert _by_key(controls, "override-gates").value is True
+
+    # Consent is scoped to the selected set, so changing it requires fresh
+    # confirmation even when the replacement still has inconclusive gates.
+    _by_key(controls, "select-a").on_change(_FakeEvent(False))
+    _by_key(controls, "select-d").on_change(_FakeEvent(True))
+    assert _by_key(controls, "override-gates").value is False
+
+
 def test_approve_passes_the_three_current_ui_selections_to_the_workflow(tmp_path, monkeypatch):
     """The current checkbox ticks, rather than stale disk state, own approval."""
     store = SessionStore(tmp_path / "research_sessions")
@@ -146,8 +388,11 @@ def test_approve_passes_the_three_current_ui_selections_to_the_workflow(tmp_path
     store.save(session)
     store.write_artifact(
         session.id, "general/candidates.v1.json",
-        {"candidates": [{"id": candidate_id, "title": candidate_id.upper()}
-                        for candidate_id in ("a", "b", "c")]},
+        {"candidates": [
+            {"id": candidate_id, "title": candidate_id.upper(),
+             "series_issue_year": f"{series} #1 (2024)"}
+            for candidate_id, series in zip(("a", "b", "c"), ("Batman", "Thor", "Iron Man"))
+        ]},
     )
     captured = {}
 
@@ -181,7 +426,11 @@ def test_tick_order_is_the_video_order_and_each_tick_shows_its_number(tmp_path, 
     ids = ("candidate-2", "candidate-10", "candidate-1", "candidate-3")
     store.write_artifact(
         session.id, "general/candidates.v1.json",
-        {"candidates": [{"id": candidate_id, "title": candidate_id.upper()} for candidate_id in ids]},
+        {"candidates": [
+            {"id": candidate_id, "title": candidate_id.upper(),
+             "series_issue_year": f"Series {i} #1 (2024)"}
+            for i, candidate_id in enumerate(ids, 1)
+        ]},
     )
     captured = {}
 
@@ -228,7 +477,48 @@ def test_bubbles_from_an_earlier_round_show_titles_not_raw_ids(tmp_path):
     text = _text_content(controls)
     assert "Round One Title: INCONCLUSIVE" in text
     assert "#1 Round One Title" in text
-    assert "candidate-1:" not in text
+
+
+def test_current_general_round_shows_safe_planner_fallback_notice(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-planner-fallback", mode=ScoutMode.QA, user_intent="Who won?",
+        state=SessionState.CANDIDATE_REVIEW,
+    )
+    store.save(session)
+    store.append_audit(session.id, "general_research_completed", detail={
+        "revision": 1,
+        "plan_source": "fallback",
+        "planner_error": {"status": "timeout", "message": "Planner timed out; using fallback plan."},
+    })
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": []})
+
+    _page, controls = _build(tmp_path, session)
+
+    text = _text_content(controls)
+    assert "Planner timed out; using fallback plan." in text
+    assert any(getattr(node, "key", None) == "planner-fallback-warning" for node in _walk(controls))
+
+
+def test_superseded_general_round_does_not_show_planner_fallback_notice(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(
+        id="qa-old-planner-fallback", mode=ScoutMode.QA, user_intent="Who won?",
+        state=SessionState.CANDIDATE_REVIEW, revision=2,
+    )
+    store.save(session)
+    store.append_audit(session.id, "general_research_completed", detail={
+        "revision": 1,
+        "plan_source": "fallback",
+        "planner_error": {"status": "timeout", "message": "Old planner timeout."},
+    })
+    store.append_audit(session.id, "general_research_completed", detail={"revision": 2})
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": []})
+
+    _page, controls = _build(tmp_path, session)
+
+    assert "Old planner timeout." not in _text_content(controls)
+    assert not any(getattr(node, "key", None) == "planner-fallback-warning" for node in _walk(controls))
 
 
 def test_right_rail_scrolls_so_every_session_stays_reachable(tmp_path):
@@ -1582,9 +1872,13 @@ def test_create_project_turns_a_typed_title_into_a_safe_folder_name(tmp_path, mo
         selected_specific_candidate_ids=["a", "b", "c"],
     )
     store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [
+        {"id": cid, "series_issue_year": f"{series} #{i} (2024)"}
+        for i, (cid, series) in enumerate(zip(("a", "b", "c"), ("Batman", "Thor", "Iron Man")), 1)
+    ]})
     created = []
     monkeypatch.setattr(s1_research_scout, "create_scout_project",
-                        lambda session_id, slug, override=False: created.append(slug) or slug)
+                        lambda session_id, slug, **kwargs: created.append(slug) or slug)
     # _finish_create_project saves state.json under PROJECTS_ROOT; keep it off the real one.
     monkeypatch.setattr(s1_research_scout, "save_state", lambda _state: None)
     page, controls = _build(tmp_path, session)

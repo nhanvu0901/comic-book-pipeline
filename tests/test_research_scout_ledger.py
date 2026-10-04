@@ -1,4 +1,5 @@
 import json
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -166,6 +167,12 @@ def test_project_import_is_repeatable_and_keeps_qa_issue_sets(tmp_path):
             {"series_issue_year": "Detective Comics #1000 (2019)"},
         ],
     }), encoding="utf-8")
+    narration = project / "narration.json"
+    narration.write_text('{"script":"approved"}', encoding="utf-8")
+    (project / "state.json").write_text(json.dumps({
+        "approved": {"2": True},
+        "approved_narration_sha256": hashlib.sha256(narration.read_bytes()).hexdigest(),
+    }), encoding="utf-8")
     ledger = windows_ledger(tmp_path / "ledger")
     first = ledger.import_projects(projects)
     again = ledger.import_projects(projects)
@@ -211,3 +218,14 @@ def test_read_only_client_reads_database_and_cannot_mutate(tmp_path, monkeypatch
     with pytest.raises(LedgerWriteDisabledError):
         client.append_event({"mode": "micro", "kind": "produced", "key": "batman|2016|78"})
     assert client.count_events() == 1
+
+
+def test_append_milestone_uses_stable_id_real_timestamp_and_reports_insert(tmp_path):
+    ledger = windows_ledger(tmp_path)
+    event = {"mode": "micro", "kind": "in_progress", "key": "batman|2016|77"}
+    first, inserted = ledger.append_milestone(event, "stable-milestone-id")
+    again, inserted_again = ledger.append_milestone(event, "stable-milestone-id")
+    assert inserted is True and inserted_again is False
+    assert first["id"] == again["id"] == "stable-milestone-id"
+    assert first["ts"] != ""
+    assert ledger.count_events() == 1

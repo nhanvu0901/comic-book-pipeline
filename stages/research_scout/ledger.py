@@ -212,6 +212,23 @@ class Ledger:
 
         return self._write(insert)
 
+    def append_milestone(self, event: Mapping[str, Any], milestone_id: str) -> tuple[dict[str, Any], bool]:
+        """Insert a workflow milestone once, preserving its first real timestamp."""
+        normalized = _normalize_event(event)
+        if not milestone_id or not str(milestone_id).strip():
+            raise LedgerSchemaError("milestone_id must not be empty")
+        row = {"id": str(milestone_id), "ts": str(event.get("ts") or _now()), **normalized}
+
+        def insert(connection: sqlite3.Connection):
+            cursor = connection.execute(
+                f"INSERT OR IGNORE INTO events ({','.join(_DB_COLUMNS)}) VALUES ({','.join('?' for _ in _DB_COLUMNS)})",
+                [self._db_value(name, row[name]) for name in _DB_COLUMNS],
+            )
+            stored = self._decode_row(connection.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone())
+            return stored, cursor.rowcount == 1
+
+        return self._write(insert)
+
     def append_events(self, events: Iterable[Mapping[str, Any]]) -> ImportResult:
         rows = [_event_row(event) for event in events]
 
@@ -384,55 +401,71 @@ class Ledger:
         return self._import_records(records)
 
     def import_projects(self, projects_root: str | Path) -> ImportResult:
-        """Conservatively snapshot existing project contexts; never edits projects."""
+        """Backfill only Stage 2 approvals and verified final renders, idempotently."""
+        self._require_writer()
         root = Path(projects_root)
-        records = []
-        for context_path in sorted(root.glob("*/answer_context.json")):
+        scanned = inserted = skipped = 0
+        from . import production_ledger
+
+        for project in sorted(path for path in root.iterdir() if path.is_dir()) if root.exists() else ():
+            answer_path = project / "answer_context.json"
+            context_path = project / "comic_context.json"
+            if not answer_path.is_file() and not context_path.is_file():
+                continue
+            scanned += 1
             try:
-                context = json.loads(context_path.read_text(encoding="utf-8"))
+                narration_path = project / "narration.json"
+                narration = json.loads(narration_path.read_text(encoding="utf-8"))
+                valid_narration = isinstance(narration, (dict, list))
             except (OSError, json.JSONDecodeError):
-                continue
-            issue_keys = []
-            for item in context.get("items", []) if isinstance(context, dict) else []:
-                if not isinstance(item, dict):
-                    continue
-                value = item.get("series_issue_year") or item.get("comic") or item.get("issue") or ""
-                key = _issue_key(str(value))
-                if key and item.get("series_start_year") and not key.split("|")[1]:
-                    key = f"{key.split('|')[0]}|{item['series_start_year']}|{key.split('|')[2]}"
-                if key:
-                    issue_keys.append(key)
-            question = str(context.get("question") or context.get("title") or context_path.parent.name)
-            records.append({"mode": "qa", "kind": "produced", "key": "", "keys": issue_keys,
-                            "label": question, "text": question, "scope": "item",
-                            "refs": {"project": context_path.parent.name, "source": "answer_context.json"}})
-        for context_path in sorted(root.glob("*/comic_context.json")):
+                valid_narration = False
+            except (UnicodeDecodeError, TypeError):
+                valid_narration = False
+            state = None
             try:
-                context = json.loads(context_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(context, dict) or (context_path.parent / "answer_context.json").exists():
-                continue
-            micro = context.get("scout_candidate")
-            if not micro and (context_path.parent / "scout_candidate.json").exists():
+                state = json.loads((project / "state.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            approved = bool(
+                isinstance(state, dict)
+                and isinstance(state.get("approved"), dict)
+                and state["approved"].get("2") is True
+                and valid_narration
+            )
+            expected_hash = str(state.get("approved_narration_sha256") or "").strip() if isinstance(state, dict) else ""
+            if approved and expected_hash:
                 try:
-                    micro = json.loads((context_path.parent / "scout_candidate.json").read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    micro = None
-            value = ""
-            if isinstance(micro, dict):
-                value = str(micro.get("series_issue_year") or "")
-            if not value:
-                value = str(context.get("series_issue_year") or context.get("title") or "")
-            key = _issue_key(value)
-            start_year = context.get("series_start_year")
-            if key and start_year and not key.split("|")[1]:
-                key = f"{key.split('|')[0]}|{start_year}|{key.split('|')[2]}"
-            if not key:
+                    actual_hash = hashlib.sha256(narration_path.read_bytes()).hexdigest()
+                except OSError:
+                    approved = False
+                else:
+                    approved = actual_hash == expected_hash
+            rendered = production_ledger.is_verified_final(project)
+            if not rendered and not approved:
+                skipped += 1
                 continue
-            records.append({"mode": "micro" if micro else "recap", "kind": "produced", "key": key,
-                            "label": value, "scope": "item", "refs": {"project": context_path.parent.name, "source": "comic_context.json"}})
-        return self._import_records(records)
+            kind = "produced" if rendered else "in_progress"
+            event = production_ledger.project_event(project.name, kind, projects_root=root)
+            if event is None:
+                skipped += 1
+                continue
+            identity_data = {"mode": event["mode"], "project": project.name, "kind": kind}
+            if kind == "in_progress":
+                identity_data["narration_sha256"] = event["refs"]["narration_sha256"]
+            milestone_id = hashlib.sha256(_canonical_json(identity_data).encode("utf-8")).hexdigest()
+            _stored, was_inserted = self.append_milestone(event, milestone_id)
+            if was_inserted:
+                inserted += 1
+            else:
+                skipped += 1
+        if inserted:
+            try:
+                self.export_jsonl(self.db_path.with_name("export.jsonl"))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"legacy project events are committed in SQLite, but export refresh failed; retry export: {exc}"
+                ) from exc
+        return ImportResult(scanned=scanned, inserted=inserted, skipped=skipped)
 
 
 def shadow_state(ledger: Ledger, mode: str, key: str) -> dict[str, Any]:

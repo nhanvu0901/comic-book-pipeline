@@ -102,3 +102,77 @@ def test_backup_refuses_existing_destination_without_overwriting(tmp_path):
         assert existing.read_bytes() == b"preserve"
     finally:
         monkeypatch.undo()
+
+
+def _write_project(project, *, approved=False, rendered=False):
+    import hashlib
+    import shutil
+    import subprocess
+    import pytest
+    project.mkdir(parents=True)
+    (project / "comic_context.json").write_text(json.dumps({
+        "series": "A Series", "issue": 1, "year": 2024,
+    }))
+    narration = project / "narration.json"
+    narration.write_text('{"scenes":[{"script":"saved"}]}')
+    if approved:
+        (project / "state.json").write_text(json.dumps({
+            "approved": {"2": True},
+            "approved_narration_sha256": hashlib.sha256(narration.read_bytes()).hexdigest(),
+        }))
+    if rendered:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg or not shutil.which("ffprobe"):
+            pytest.skip("ffmpeg/ffprobe unavailable")
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.04",
+                        "-c:v", "mpeg4", "-y", str(project / "final.mp4")], check=True, timeout=15)
+
+
+def test_import_approved_vs_rendered_vs_bare(tmp_path):
+    from stages.research_scout.production_ledger import record_milestone
+    projects = tmp_path / "projects"
+    _write_project(projects / "approved", approved=True)
+    _write_project(projects / "rendered", rendered=True)
+    bare = projects / "bare"
+    bare.mkdir()
+    (bare / "comic_context.json").write_text(json.dumps({"title": "No milestone"}))
+
+    ledger = Ledger(tmp_path / "ledger.db", _writer_guard=lambda: True)
+    result = ledger.import_projects(projects)
+    rows = {event["refs"]["project"]: event["kind"] for event in ledger.events()}
+    assert rows == {"approved": "in_progress", "rendered": "produced"}
+    assert result.scanned == 3
+    assert result.inserted == 2
+    assert record_milestone(
+        "approved", "in_progress", projects_root=projects, ledger=ledger,
+    ) == "already_recorded"
+
+
+def test_repeated_import_is_idempotent(tmp_path):
+    projects = tmp_path / "projects"
+    _write_project(projects / "approved", approved=True)
+    _write_project(projects / "rendered", rendered=True)
+    ledger = Ledger(tmp_path / "ledger.db", _writer_guard=lambda: True)
+    first = ledger.import_projects(projects)
+    second = ledger.import_projects(projects)
+    assert first.inserted == 2
+    assert second.inserted == 0
+    assert second.skipped == 2
+    assert ledger.count_events() == 2
+
+
+def test_project_import_exports_once_after_batch(tmp_path):
+    projects = tmp_path / "projects"
+    _write_project(projects / "approved", approved=True)
+    _write_project(projects / "rendered", rendered=True)
+
+    class ExportCountingLedger(Ledger):
+        export_calls = 0
+
+        def export_jsonl(self, destination):
+            self.export_calls += 1
+            return super().export_jsonl(destination)
+
+    ledger = ExportCountingLedger(tmp_path / "ledger.db", _writer_guard=lambda: True)
+    ledger.import_projects(projects)
+    assert ledger.export_calls == 1

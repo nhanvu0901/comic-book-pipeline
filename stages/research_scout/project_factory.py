@@ -21,7 +21,7 @@ from .errors import ScoutUserError
 from .issue_identity import micro_issue_rejection_reason
 from .models import ResearchSession, ScoutMode, SessionState
 from .storage import SessionStore
-from .workflow import specific_search_artifact, verification_summary
+from .workflow import _selected_series_detail, specific_search_artifact, verification_summary
 
 
 @dataclass(frozen=True)
@@ -188,7 +188,8 @@ def _describe(report: _CandidateVerdict) -> str:
 
 
 def create_project_from_session(
-    session_id: str, project_slug: str, *, override: bool = False
+    session_id: str, project_slug: str, *, override: bool = False,
+    series_diversity_override: bool = False,
 ) -> str:
     """Materialise one confirmed research session and mark it created last.
 
@@ -196,6 +197,8 @@ def create_project_from_session(
     flag, a missing issue number — after the user has explicitly confirmed
     them, and is recorded in the audit. It can never wave through a duplicate
     selection, an issue mismatch, or a gate that could not be assigned.
+    ``series_diversity_override`` is a separate, explicit consent for a Q&A
+    selection covering fewer than three parsed series.
     """
 
     store = SessionStore(config.RESEARCH_SESSIONS_ROOT)
@@ -231,6 +234,18 @@ def create_project_from_session(
         for index, candidate_id in enumerate(session.selected_specific_candidate_ids)
     ]
 
+    diversity = _selected_series_detail(
+        session.mode,
+        session.selected_specific_candidate_ids,
+        {candidate_id: candidates[candidate_id]
+         for candidate_id in session.selected_specific_candidate_ids
+         if candidate_id in candidates},
+    )
+    if diversity["series_diversity_warning"] and not series_diversity_override:
+        raise ScoutUserError(
+            "Q&A selection has insufficient series diversity; confirm the override to create the project."
+        )
+
     unresolved_reader_urls: list[dict] = []
     if session.mode is ScoutMode.QA:
         research = _qa_research(session, selected)
@@ -257,6 +272,12 @@ def create_project_from_session(
                 "unresolved_reader_urls": unresolved_reader_urls,
             },
         )
+    if diversity["series_diversity_warning"] and series_diversity_override:
+        store.append_audit(session.id, "series_diversity_overridden", detail={
+            **diversity,
+            "series_diversity_override": True,
+            "candidate_ids": list(session.selected_specific_candidate_ids),
+        })
     session.created_project = project_slug
     store.save(session, event="project_created", detail={"project": project_slug})
     return project_slug

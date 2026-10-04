@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -151,6 +152,7 @@ ALLOWED = {
 # threads are enough and verify_selected stays synchronous for bridge.run_blocking.
 _MAX_GATE_WORKERS = 5
 _UNSAFE_ARTIFACT_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+logger = logging.getLogger(__name__)
 
 
 class InvalidTransition(ScoutUserError):
@@ -170,6 +172,7 @@ class ScoutWorkflow:
         # Tests inject a stub here; only run_general ever calls it — the real
         # default hits OpenRouter, which config.load_dotenv() means is a live
         # key in this process, so nothing but run_general may reach it.
+        self._uses_detailed_planner = planner is None
         self._planner = planner if planner is not None else planner_module.make_plan
         self._policies: dict[ScoutMode, PolicyBundle] = {}
 
@@ -199,7 +202,32 @@ class ScoutWorkflow:
             else ""
         )
         scoped_intent = session.user_intent + selected_year_line
-        plan = self._planner(scoped_intent, feedback_notes, session.mode.value)
+        planner_error: str | None = None
+        planner_error_detail: dict[str, int | str] | None = None
+        if self._uses_detailed_planner:
+            plan_result = planner_module.make_plan_detailed(
+                scoped_intent, feedback_notes, session.mode.value,
+            )
+            plan = plan_result.plan
+            if plan is None and plan_result.error is not None:
+                failure = plan_result.error
+                planner_error = failure.as_text()
+                if failure.message.casefold() == "timeout":
+                    planner_error_detail = {
+                        "status": "timeout",
+                        "message": "Planner timed out; using fallback plan.",
+                    }
+                else:
+                    planner_error_detail = {
+                        "status": (
+                            failure.status if failure.status is not None else
+                            "invalid_plan_json" if failure.message.startswith("invalid plan JSON:") else
+                            "error"
+                        ),
+                        "message": failure.message[:300],
+                    }
+        else:
+            plan = self._planner(scoped_intent, feedback_notes, session.mode.value)
         avoid_lines = avoid_list.relevant_avoid_lines(
             session.mode, session.user_intent, plan, extra_held=held_labels,
         )
@@ -222,6 +250,9 @@ class ScoutWorkflow:
             prompt_text, prompt_hash = prompt.text, prompt.sha256
             schema = general_output_schema(session.mode)
             plan_record: dict[str, Any] = {"source": "fallback"}
+            if planner_error:
+                plan_record["planner_error"] = planner_error
+                logger.warning("Scout planner failed; using fallback prompt: %s", planner_error)
         else:
             # Planner path — feedback already reached the planner input above,
             # so it must NOT be folded into the prompt a second time here.
@@ -427,6 +458,8 @@ class ScoutWorkflow:
                 "topup_not_needed"
             ),
         }
+        if planner_error:
+            detail["planner_error"] = planner_error_detail
         if plan is not None:
             detail["plan_summary"] = f"{plan.unit} · {plan.cardinality}" + (
                 f" · ranked: {plan.ranking}" if plan.ranking else ""
@@ -1229,15 +1262,20 @@ def _research_source_rows(payload: Any) -> list[dict[str, Any]]:
     return [dict(source) for source in sources if isinstance(source, Mapping)] if isinstance(sources, list) else []
 
 
-def _issue_key(label: str) -> tuple[str, str] | None:
-    from .issue_identity import _candidate_identity, _normal_series
+def _issue_key(label: str) -> tuple[str, str, str] | None:
+    from .issue_identity import _normal_series
+    from .ledger_inventory import micro_identity
+    from .micro_recency import issue_publication_year
     try:
-        identity = _candidate_identity(str(label or ""))
+        identity = micro_identity(str(label or ""))
     except (TypeError, ValueError):
         return None
     if identity is None:
         return None
-    return _normal_series(identity.series), identity.number
+    publication_year = issue_publication_year(str(label or ""))
+    if publication_year is None:
+        return None
+    return _normal_series(identity.series), identity.number, str(publication_year)
 
 
 def _series_key(label: str) -> str | None:
@@ -1300,7 +1338,7 @@ def _validate_new_general_candidates(
     user_intent: str,
     publication_year: int | None = None,
     sources: Sequence[Mapping[str, Any]] = (),
-    protected_keys: set[tuple[str, str]] | None = None,
+    protected_keys: set[tuple[str, str, str]] | None = None,
     protected_fingerprints: set[tuple[str, str]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Screen only a freshly produced general batch before it reaches review.
@@ -1314,7 +1352,7 @@ def _validate_new_general_candidates(
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
     seen = set(protected_fingerprints)
-    seen_issue_keys: set[tuple[str, str]] = set(protected_keys or ())
+    seen_issue_keys: set[tuple[str, str, str]] = set(protected_keys or ())
     explicit_period = bool(_NAMED_HISTORICAL_ERA_RE.search(user_intent)) or any(
         int(year) < 2010 for year in _YEAR_RE.findall(user_intent)
     )

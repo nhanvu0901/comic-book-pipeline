@@ -21,9 +21,10 @@ import flet as ft
 
 from config import RESEARCH_SESSIONS_ROOT
 from stages.research_scout.micro_recency import issue_publication_year
-from stages.research_scout.issue_identity import _candidate_identity, _normal_series
+from stages.research_scout.issue_identity import _candidate_identity
 from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
+from stages.research_scout.workflow import _series_key
 from stages.stage_1.storage import project_folder_name, slugify
 from stages.user_errors import NothingToDeleteError
 
@@ -286,6 +287,27 @@ def _selection_count_valid(mode: ScoutMode, selected) -> bool:
     return (3 <= len(selected) <= 5) if mode is ScoutMode.QA else len(selected) == 1
 
 
+def _series_diversity_detail(mode: ScoutMode, candidate_ids, candidates: dict[str, dict]) -> dict:
+    """Describe parsed series in the live selection using the shared issue parser."""
+    series: dict[str, str] = {}
+    for candidate_id in candidate_ids:
+        candidate = candidates.get(candidate_id, {})
+        label = str(candidate.get("series_issue_year", ""))
+        key = _series_key(label)
+        if key:
+            try:
+                identity = _candidate_identity(label)
+            except (TypeError, ValueError):
+                identity = None
+            series.setdefault(key, identity.series.strip() if identity else key.replace("-", " "))
+    warning = mode is ScoutMode.QA and 3 <= len(candidate_ids) <= 5 and len(series) < 3
+    return {
+        "count": len(series),
+        "warning": warning,
+        "series": list(series.values()),
+    }
+
+
 def _resolve_title(candidate_id: str, candidates: list[dict]) -> str:
     for index, candidate in enumerate(candidates):
         if _candidate_id(candidate, index) == candidate_id:
@@ -519,6 +541,7 @@ def build(
     # Override is DECIDED here but APPLIED at creation time (project_factory), so
     # the tick has to survive the hop from candidate review to production gates.
     override_holder = [False]
+    series_diversity_override_holder = [False]
     # Per-card progress from verify_selected's worker threads. Display only —
     # on_result must never write to the store.
     verifying: set[str] = set()
@@ -541,6 +564,27 @@ def build(
         slug_holder[0] = None
         slug_session_id[0] = ""
         slug_value[0] = ""
+
+    def _show_series_diversity_confirmation(diversity: dict, selected_count: int, on_confirm) -> None:
+        names = ", ".join(diversity["series"]) or "no parsed series"
+
+        def _confirm(event) -> None:
+            page.pop_dialog()
+            on_confirm(event)
+
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Still create project?", selectable=True),
+            content=ft.Text(
+                f"These {selected_count} selected issues cover {diversity['count']} series ({names}). "
+                "Q&A answers usually need at least 3 different series. Continue anyway?",
+                selectable=True,
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _event: page.pop_dialog()),
+                primary_button("Create anyway", _confirm, icon=ft.Icons.CHECK),
+            ],
+        ))
 
     def _forget_suggestions() -> None:
         bank_shown[0] = False
@@ -618,20 +662,7 @@ def build(
         )
         approve_button.key = "approve-selected"
 
-        controls: list[ft.Control] = [*cards, verify_button]
-        if session.mode is ScoutMode.QA and 3 <= len(selected_specific) <= 5:
-            candidate_map = {_candidate_id(c, i): c for i, c in enumerate(candidates)}
-            series = set()
-            for candidate_id in selected_specific:
-                candidate = candidate_map.get(candidate_id, {})
-                identity = _candidate_identity(str(candidate.get("series_issue_year", "")))
-                if identity:
-                    series.add(_normal_series(identity.series))
-            if len(series) < 3:
-                controls.append(ft.Text(
-                    f"Selected issues cover {len(series)} series; Q&A works best across 3 or more series.",
-                    size=11, color=WARN, selectable=True,
-                ))
+        controls: list[ft.Control] = [*cards]
         kept = _confirmed_selected(session, gates)
         if kept:
             rescout = secondary_button(
@@ -662,7 +693,16 @@ def build(
                 value=override_holder[0],
                 on_change=_override_changed,
             ))
-        controls.append(approve_button)
+        candidate_map = {_candidate_id(c, i): c for i, c in enumerate(candidates)}
+        diversity = _series_diversity_detail(session.mode, selected_specific.as_list(), candidate_map)
+        controls.append(ft.Row([verify_button, approve_button], spacing=8))
+        if diversity["warning"]:
+            names = ", ".join(diversity["series"]) or "no parsed series"
+            controls.append(ft.Text(
+                f"{len(selected_specific)} selected issues cover {diversity['count']} series — "
+                f"Q&A answers need at least 3 different series. Series: {names}",
+                key="series-diversity-warning", size=11, color=WARN, selectable=True,
+            ))
         return ft.Column(controls, spacing=8)
 
     def _general_completed_bubble(
@@ -696,6 +736,26 @@ def build(
                 if isinstance(item, dict) and item.get("reason"):
                     notes.append(ft.Text(str(item["reason"]), size=11, color=WARN, selectable=True))
             content = ft.Column([*notes, content], spacing=6)
+        planner_error = detail.get("planner_error")
+        if is_current and detail.get("plan_source") == "fallback" and planner_error:
+            if isinstance(planner_error, dict):
+                status = str(planner_error.get("status") or "").strip()
+                message = str(planner_error.get("message") or "").strip()
+                problem = " · ".join(part for part in (status, message) if part)
+            else:
+                problem = str(planner_error).strip()
+            if problem:
+                content = ft.Column([
+                    ft.Container(
+                        key="planner-fallback-warning",
+                        content=ft.Text(f"Planner fallback: {problem}", size=11, color=WARN, selectable=True),
+                        padding=8,
+                        bgcolor=BG_PANEL,
+                        border=ft.border.all(1, BORDER),
+                        border_radius=6,
+                    ),
+                    content,
+                ], spacing=6)
         plan_summary = detail.get("plan_summary")
         if not plan_summary:
             return _scout_bubble(content)
@@ -732,7 +792,9 @@ def build(
         create_button = primary_button(
             "Create project", _create_project_click, icon=ft.Icons.CREATE_NEW_FOLDER,
         )
+        create_button.key = "create-project"
         back_button = secondary_button("← Back to candidates", _back_to_candidates_click)
+        back_button.key = "back-to-candidates"
         headline = (
             "Selection locked in — continuing despite the production warnings. Missing reader URLs must be repaired in Stage 2."
             if override_holder[0]
@@ -915,6 +977,9 @@ def build(
         # candidates that are no longer on screen.
         ids = getattr(result, "selected_specific_candidate_ids", None)
         if ids is not None:
+            if list(ids) != selected_specific.as_list():
+                series_diversity_override_holder[0] = False
+                override_holder[0] = False
             selected_specific.clear()
             selected_specific.update(ids)
         intent_field.value = ""
@@ -926,6 +991,7 @@ def build(
         selected_specific.clear()
         verifying.clear()
         override_holder[0] = False
+        series_diversity_override_holder[0] = False
         _reset_production_form()
         session_holder[0] = None
         state.returned_scout_project = ""
@@ -1160,10 +1226,10 @@ def build(
             selected_specific.add(candidate_id)
         else:
             selected_specific.discard(candidate_id)
-        # A tick that no longer needs overriding must not keep a stale consent.
-        gates = load_scout_gates(session.id, root=RESEARCH_SESSIONS_ROOT) if session else []
-        if not _needs_override(selected_specific, gates):
-            override_holder[0] = False
+        series_diversity_override_holder[0] = False
+        # Consent is tied to the exact selected set, even if the replacement
+        # selection still has a soft gate that needs override.
+        override_holder[0] = False
         _render_full()
 
     def _override_changed(event) -> None:
@@ -1243,17 +1309,32 @@ def build(
         session = session_holder[0]
         if not session or not _selection_count_valid(session.mode, selected_specific):
             return
-        # The ticks own the approval, not whatever the last verify left on disk.
         ids = selected_specific.as_list()
-        _run_busy(
-            "Locking the selection in…",
-            lambda: approve_scout_selection(session.id, ids),
-        )
+        candidates = load_scout_candidates(session.id, root=RESEARCH_SESSIONS_ROOT)
+        candidate_map = {_candidate_id(c, i): c for i, c in enumerate(candidates)}
+        diversity = _series_diversity_detail(session.mode, ids, candidate_map)
+
+        def _approve() -> None:
+            _run_busy(
+                "Locking the selection in…",
+                lambda: approve_scout_selection(session.id, ids),
+            )
+
+        if not diversity["warning"] or series_diversity_override_holder[0]:
+            _approve()
+            return
+
+        def _confirm_diversity(_event) -> None:
+            series_diversity_override_holder[0] = True
+            _approve()
+
+        _show_series_diversity_confirmation(diversity, len(ids), _confirm_diversity)
 
     def _back_to_candidates_click(_e) -> None:
         session = session_holder[0]
         if not session:
             return
+        series_diversity_override_holder[0] = False
         _run_busy("Returning to the candidates…", lambda: back_scout_candidates(session.id))
 
     def _create_project_click(_e) -> None:
@@ -1269,13 +1350,33 @@ def build(
         if not project_slug:
             _render_full(error="Enter a project name before creating the project.")
             return
-        _run_busy(
-            "Creating project…",
-            lambda: create_scout_project(
-                session.id, project_slug, override=override_holder[0]
-            ),
-            on_success=_finish_create_project,
+        candidates = load_scout_candidates(session.id, root=RESEARCH_SESSIONS_ROOT)
+        candidate_map = {_candidate_id(c, i): c for i, c in enumerate(candidates)}
+        diversity = _series_diversity_detail(
+            session.mode, session.selected_specific_candidate_ids, candidate_map,
         )
+
+        def _create() -> None:
+            _run_busy(
+                "Creating project…",
+                lambda: create_scout_project(
+                    session.id, project_slug,
+                    override=override_holder[0],
+                    series_diversity_override=series_diversity_override_holder[0],
+                ),
+                on_success=_finish_create_project,
+            )
+
+        if diversity["warning"] and not series_diversity_override_holder[0]:
+            def _confirm_create(_event) -> None:
+                series_diversity_override_holder[0] = True
+                _create()
+
+            _show_series_diversity_confirmation(
+                diversity, len(session.selected_specific_candidate_ids), _confirm_create,
+            )
+            return
+        _create()
 
     def _run_general_click(_e) -> None:
         session = session_holder[0]
@@ -1322,6 +1423,7 @@ def build(
             selected_specific.update(loaded.selected_specific_candidate_ids)
             verifying.clear()
             override_holder[0] = False
+            series_diversity_override_holder[0] = False
             if slug_session_id[0] != loaded.id:
                 _reset_production_form()
             _apply_session_and_render(loaded)
