@@ -8,6 +8,8 @@ from stages.research_scout import cited_sources
 from stages.research_scout.models import EvidenceGate, ScoutMode, SessionState
 from stages.research_scout.planner import PlanField, ResearchPlan
 from stages.research_scout.storage import SessionStore
+from stages.research_scout.errors import ScoutUserError
+from stages.research_scout.youcom import RawCall
 from stages.research_scout.workflow import InvalidTransition, ScoutWorkflow
 from tests import micro_detail_rules as rules
 
@@ -22,13 +24,14 @@ class _FakeYouCom:
                             "id": candidate_id,
                             "title": f"{candidate_id.upper()} Hulk moment",
                             "summary": "A visible event.",
+                            "series_issue_year": f"Hero {candidate_id.upper()} #{index} (2026)",
                             "claim_citation": {
                                 "url": f"https://source.test/{candidate_id}",
                                 "quote": "Evidence sentence.",
                             },
                             "evidence_urls": [f"https://source.test/{candidate_id}"],
                         }
-                        for candidate_id in ("a", "b", "c")
+                        for index, candidate_id in enumerate(("a", "b", "c"), start=1)
                     ]
                 },
                 "sources": [
@@ -70,10 +73,11 @@ def _no_reader_network(monkeypatch):
     yield
 
 @pytest.fixture
-def mock_workflow(tmp_path):
+def mock_workflow(tmp_path, monkeypatch):
     # config.py load_dotenv()s real API keys, so an uninjected planner would hit
     # OpenRouter for real during every test — inject a stub that always falls
     # back, keeping every existing test on the fallback path with zero network risk.
+    monkeypatch.setattr(config, "SCOUT_TOPUP_ROUNDS", 0)
     return ScoutWorkflow(
         store=SessionStore(tmp_path),
         client=_FakeYouCom(),
@@ -109,6 +113,84 @@ def _verified_micro(mock_workflow):
     session = mock_workflow.start(ScoutMode.MICRO, "new Hulk moment")
     mock_workflow.run_general(session.id)
     return mock_workflow.verify_selected(session.id, ["a"])
+
+
+class _ResearchSequence:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def research(self, *args, **kwargs):
+        self.calls += 1
+        return self.responses.pop(0)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RawCall(api="research", payload={"echo": "sensitive prompt"}, error="HTTP 422",
+                status_code=422, response_text="sensitive prompt"),
+        RawCall(api="research", payload={}, error="request failed: URLError"),
+    ],
+    ids=["http-4xx", "network"],
+)
+def test_primary_research_failure_keeps_draft_retryable_without_writing_candidates(
+    tmp_path, monkeypatch, failure,
+):
+    monkeypatch.setattr(config, "SCOUT_TOPUP_ROUNDS", 0)
+    success = RawCall(api="research", payload=_FakeYouCom().general_response)
+    client = _ResearchSequence(failure, success)
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=client, planner=lambda *a, **k: None,
+    )
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+
+    with pytest.raises(ScoutUserError) as caught:
+        workflow.run_general(session.id)
+
+    message = str(caught.value)
+    assert "ready to retry" in message
+    assert "sensitive prompt" not in message
+    if failure.status_code:
+        assert "HTTP 422" in message
+    else:
+        assert "URLError" in message
+    after_failure = workflow.store.load(session.id)
+    assert after_failure.state is SessionState.GENERAL_DRAFT
+    assert after_failure.revision == 1
+    assert not workflow.store.artifact_path(session.id, "general/research.v1.json").exists()
+    assert not workflow.store.artifact_path(session.id, "general/candidates.v1.json").exists()
+
+    retried = workflow.run_general(session.id)
+    assert retried.state is SessionState.CANDIDATE_REVIEW
+    assert client.calls == 2
+
+
+def test_topup_failure_keeps_primary_candidates_and_records_failure_status(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(config, "SCOUT_TOPUP_ROUNDS", 1)
+    primary = RawCall(api="research", payload=_FakeYouCom().general_response)
+    topup = RawCall(api="research", payload={}, error="request failed: URLError")
+    client = _ResearchSequence(primary, topup)
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=client, planner=lambda *a, **k: None,
+    )
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+
+    completed = workflow.run_general(session.id)
+
+    stored = json.loads(
+        workflow.store.artifact_path(session.id, "general/candidates.v1.json").read_text()
+    )["candidates"]
+    event = workflow.store.artifact_path(session.id, "audit.jsonl")
+    details = [json.loads(line) for line in event.read_text().splitlines()]
+    completion = next(item for item in details if item["event"] == "general_research_completed")
+    assert completed.state is SessionState.CANDIDATE_REVIEW
+    assert len(stored) == 3
+    assert completion["detail"]["topup_error"] == "request failed: URLError"
+    assert completion["detail"]["lane_status"] == "topup_failed"
+    assert completion["detail"]["lane_exhausted"] is False
 
 
 def test_run_general_sends_strict_schema_and_configured_effort(mock_workflow):
@@ -172,23 +254,26 @@ def test_new_general_round_rejects_only_an_exact_canonical_source_quote_duplicat
     mock_workflow.client.general_response = {
         "output": {
             "content": {"candidates": [
-                {
-                    "title": "First",
-                    "claim_citation": {
+                    {
+                        "title": "First",
+                        "series_issue_year": "Hulk Alpha #1 (2024)",
+                        "claim_citation": {
                         "url": "https://source.test/page?utm_source=scout",
                         "quote": "First supported sentence.",
                     },
                 },
-                {
-                    "title": "Padded copy",
-                    "claim_citation": {
+                    {
+                        "title": "Padded copy",
+                        "series_issue_year": "Hulk Alpha #1 (2024)",
+                        "claim_citation": {
                         "url": "https://source.test/page#same-page",
                         "quote": "First supported sentence.",
                     },
                 },
-                {
-                    "title": "Different supported claim",
-                    "claim_citation": {
+                    {
+                        "title": "Different supported claim",
+                        "series_issue_year": "Hulk Beta #2 (2024)",
+                        "claim_citation": {
                         "url": "https://source.test/page",
                         "quote": "A different supported sentence.",
                     },
@@ -215,7 +300,7 @@ def test_new_general_round_rejects_only_an_exact_canonical_source_quote_duplicat
         "First", "Different supported claim",
     ]
     assert validation["rejected"] == [
-        {"candidate_id": "candidate-2", "reason": "duplicate_claim_citation"},
+        {"candidate_id": "candidate-2", "reason": "duplicate_issue_key"},
     ]
 
 
@@ -613,7 +698,8 @@ def test_planner_path_puts_extra_field_and_rank_reason_in_schema_and_prompt(tmp_
     assert "rank_reason" in item_props
 
     prompt = workflow.client.seen_prompt
-    assert "One candidate per one character — never merge entries." in prompt
+    assert prompt.startswith("HARD RULES")
+    assert "One candidate per distinct comic-book issue" in prompt
     assert "Sweep EVERY retrieved source" in prompt
     assert "most brutal" in prompt
 
@@ -683,6 +769,7 @@ def test_general_audit_detail_has_plan_source_fallback_and_no_summary(mock_workf
     ][-1]
 
     assert completed["detail"]["plan_source"] == "fallback"
+    assert completed["detail"]["effort"] == config.YOUCOM_GENERAL_EFFORT
     assert "plan_summary" not in completed["detail"]
 
 
@@ -729,6 +816,41 @@ def test_verify_selected_writes_one_keyed_gate_per_selected_candidate(monkeypatc
     artifact = _gates_on_disk(mock_workflow, session.id)
     assert [gate["candidate_id"] for gate in artifact["gates"]] == ["a", "b", "c"]
     assert updated.selected_specific_candidate_ids == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize(
+    ("labels", "series_count", "warning"),
+    [
+        (["Batman #1 (2024)", "Batman #2 (2024)", "Batman #3 (2024)"], 1, True),
+        (["Batman #1 (2024)", "Batman #2 (2024)", "Robin #1 (2024)"], 2, True),
+        (["Batman #1 (2024)", "Robin #1 (2024)", "Nightwing #1 (2024)"], 3, False),
+    ],
+)
+def test_verify_and_approve_audit_selected_series_diversity(
+    monkeypatch, mock_workflow, labels, series_count, warning,
+):
+    monkeypatch.setattr("stages.research_scout.openrouter_gate.review", _confirmed)
+    session = mock_workflow.start(ScoutMode.QA, "Batman questions")
+    mock_workflow.run_general(session.id)
+    candidates_path = mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json",
+    )
+    artifact = json.loads(candidates_path.read_text(encoding="utf-8"))
+    for candidate, label in zip(artifact["candidates"], labels):
+        candidate["series_issue_year"] = label
+    candidates_path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    mock_workflow.verify_selected(session.id, ["a", "b", "c"])
+    mock_workflow.approve_selected(session.id)
+
+    events = [json.loads(line) for line in (
+        mock_workflow.store.session_dir(session.id) / "audit.jsonl"
+    ).read_text(encoding="utf-8").splitlines()]
+    verify = next(e for e in events if e["event"] == "candidates_verified")
+    approve = next(e for e in events if e["event"] == "selection_approved")
+    for event in (verify, approve):
+        assert event["detail"]["selected_series_count"] == series_count
+        assert event["detail"]["series_diversity_warning"] is warning
 
 
 def test_the_workflow_owns_candidate_id_and_never_echoes_the_model_back(monkeypatch, mock_workflow):

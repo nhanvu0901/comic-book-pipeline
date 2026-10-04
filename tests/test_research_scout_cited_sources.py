@@ -275,6 +275,54 @@ def test_fetch_cited_sources_of_an_uncited_candidate_is_empty(monkeypatch):
     assert cs.fetch_cited_sources({"title": "no citations"}) == []
 
 
+def test_match_key_folds_www_trailing_slash_tracking_and_mediawiki_underscores():
+    assert cs.match_key("https://www.marvel.fandom.com/wiki/Thing_Vol_1_2/") == cs.match_key(
+        "http://marvel.fandom.com/wiki/Thing%20Vol%201%202?utm_source=x"
+    )
+
+
+def test_rebind_url_t1_and_t2_and_refuses_numeric_mismatch():
+    rows = [{"url": "https://www.marvel.fandom.com/wiki/Thing_Vol_1_2/"}]
+    direct = cs.rebind_citation_url("http://marvel.fandom.com/wiki/Thing_Vol_1_2", rows)
+    assert direct == cs.URLRebind(rows[0]["url"], "t1_match_key")
+
+    rows = [{"url": "https://marvel.fandom.com/wiki/Thing_Vol_1_2_New_Slug"}]
+    assert cs.rebind_citation_url(
+        "https://marvel.fandom.com/wiki/Thing_Vol_1_2_Old_Slug", rows
+    ) == cs.URLRebind(rows[0]["url"], "t2_structural_id")
+    mismatch = [{"url": "https://marvel.fandom.com/wiki/Thing_Vol_1_1_Old_Slug"}]
+    assert cs.rebind_citation_url(
+        "https://marvel.fandom.com/wiki/Thing_Vol_1_2_New_Slug", mismatch
+    ) is None
+
+
+def test_rebind_t2_uses_the_same_host_aliases_as_match_key():
+    rows = [{"url": "https://marvel.fandom.com/wiki/Thing_Vol_1_2_New_Slug"}]
+    assert cs.rebind_citation_url(
+        "https://m.marvel.fandom.com/wiki/Thing_Vol_1_2_Old_Slug", rows
+    ) == cs.URLRebind(rows[0]["url"], "t2_structural_id")
+
+
+def test_rebind_t2_handles_mobile_league_of_comic_geeks_host():
+    rows = [{"url": "https://leagueofcomicgeeks.com/comic/1234/new-slug"}]
+    assert cs.rebind_citation_url(
+        "https://m.leagueofcomicgeeks.com/comic/1234/old-slug", rows
+    ) == cs.URLRebind(rows[0]["url"], "t2_structural_id")
+
+
+def test_rebind_url_t3_requires_unique_quote_snippet():
+    quote = "The sentence from the retrieved source."
+    rows = [
+        {"url": "https://cbr.com/real", "snippets": [quote]},
+        {"url": "https://cbr.com/other", "snippets": ["Different sentence."]},
+    ]
+    assert cs.rebind_citation_url("https://cbr.com/rewritten", rows, quote) == cs.URLRebind(
+        "https://cbr.com/real", "t3_unique_snippet"
+    )
+    rows.append({"url": "https://cbr.com/duplicate", "snippets": [quote]})
+    assert cs.rebind_citation_url("https://cbr.com/rewritten", rows, quote) is None
+
+
 # ─── How the two kinds of evidence are labelled for the gate ────────────────
 
 _SEARCH = {"results": {"web": [{"url": "https://reddit.com/r/comics/1"}]}}

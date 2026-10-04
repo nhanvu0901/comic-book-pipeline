@@ -1,3 +1,8 @@
+HARD RULES — non-negotiable:
+1. Discover one real comic-book scene from one published issue per moment; never use movie, TV, game, toy, arc, or issue-range candidates.
+2. Respect a user-selected publication year exactly; otherwise honor an explicit requested period, or use the current year.
+3. Do not invent questions or moments. Return only sourced candidates.
+
 # Discover micro-moment research scout
 
 Find {count} DIFFERENT comic-book MICRO MOMENTS for a 35–50 second Short.
@@ -53,7 +58,5 @@ EXCLUDE — already offered to this user and turned down. Do not return these
 moments or rewordings of them:
 {exclude}
 
-Use the supplied digest as prior context.
-
-SCOUTED DIGEST:
-{digest}
+ALREADY DONE — avoid these relevant prior moments/issues:
+{avoid}

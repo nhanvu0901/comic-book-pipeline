@@ -171,6 +171,26 @@ def compile_schema(plan: ResearchPlan, mode: str = "") -> dict[str, Any]:
     }
 
 
+# Hard eligibility rules are code-owned and always lead the research prompt.
+_HARD_RULES = {
+    "qa": (
+        "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
+        '1. One candidate = ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid.\n'
+        '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later.\n'
+        "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
+        '4. Report what DID happen in a specific issue, never hypotheticals such as "who could".\n'
+        "5. Return every supported qualifying issue, up to 15; prefer distinct series, but never pad with weak or unsupported entries."
+    ),
+    "micro": (
+        "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
+        "1. One candidate = ONE scene or tightly connected sequence from ONE real published comic-book ISSUE; write `series_issue_year` exactly as `Series Title #N (YYYY)`. Movies, TV, games, toys, multi-issue arcs, and issue ranges are invalid.\n"
+        "2. Use the selected publication year exactly when supplied; otherwise use the current year as the default recency window (`micro_recency`). Honor an explicitly requested older year or era when no selected year overrides it.\n"
+        "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
+        "4. Name who acts, the concrete action or reveal, and its direct consequence, each supported by a retrieved page.\n"
+        "5. Return up to 10 distinct supported scenes; never pad with weak or unsupported entries."
+    ),
+}
+
 # Invariant rules every research round relies on, regardless of plan — adapted
 # from research_prompts/general_qa.v2.md. The planner's own research_prompt
 # must NOT restate these; folding them in twice would just pad the prompt.
@@ -301,7 +321,8 @@ _CARDINALITY_BLOCKS: dict[str, str] = {
 
 
 def assemble_prompt(
-    plan: ResearchPlan, digest: str, *, user_intent: str = "", mode: str = ""
+    plan: ResearchPlan, digest: str = "", *, user_intent: str = "", mode: str = "",
+    avoid_lines: tuple[str, ...] | list[str] = (),
 ) -> str:
     """Deterministic prompt assembly — pure code, no LLM call.
 
@@ -311,6 +332,7 @@ def assemble_prompt(
     """
 
     sections = [
+        _HARD_RULES["micro" if mode == "micro" else "qa"],
         _MICRO_INVARIANT_RULES if mode == "micro" else _INVARIANT_RULES,
     ]
     if user_intent:
@@ -319,8 +341,9 @@ def assemble_prompt(
             "The user intent is authoritative. Keep the requested comic, issue, "
             "and scope even if the planner instruction or digest suggests another."
         )
+    unit = "distinct comic-book issue" if mode != "micro" else "distinct issue-scene"
     sections.extend([
-        f"One candidate per {plan.unit} — never merge entries.",
+        f"One candidate per {unit} — never merge entries.",
         _CARDINALITY_BLOCKS[plan.cardinality],
     ])
     if plan.ranking.strip():
@@ -332,7 +355,11 @@ def assemble_prompt(
         sections.append(_MICRO_SCOUT_RULES)
         sections.append(_MICRO_DETAIL_RULES)
     sections.append(plan.research_prompt)
-    sections.append(f"SCOUTED DIGEST:\n{digest}")
+    if avoid_lines:
+        sections.append(
+            "ALREADY DONE — do not return these issues. They have already been used; "
+            "every candidate must be a different issue:\n" + "\n".join(avoid_lines[:50])
+        )
     return "\n\n".join(sections)
 
 
@@ -387,7 +414,7 @@ evidence_urls, claim_citation). Each is {name: lowercase_snake_case, type: "stri
 "string_array", description}.
 - research_prompt: the research instruction specific to this question.
 
-NEVER narrow a scope the Master did not narrow. Do not add qualifiers such as \
+NEVER narrow a scope the Master did not narrow. The channel baseline publication policy is 2010 or later; this is not a question-specific narrowing. "Modern" means published in 2010 or later, never post-1985 or post-Crisis. Do not add qualifiers such as \
 one continuity only, a date range, a publisher line, "main canon", or \
 "explicitly shown on-panel" unless the question itself states them — silent \
 narrowing throws away real answers (measured: adding "main continuity" and \
@@ -453,6 +480,8 @@ def make_plan(user_intent: str, feedback_notes: list[str], mode: str) -> Researc
 
 def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str:
     parts = [str(user_intent), f"MODE HINT: {mode}"]
+    if mode == "qa":
+        parts.append("Channel policy: issues are published 2010 or later unless the question itself names another period. Modern means 2010 or later.")
     if mode == "micro":
         from .micro_recency import recent_micro_instruction
         parts.append(recent_micro_instruction(user_intent=user_intent))

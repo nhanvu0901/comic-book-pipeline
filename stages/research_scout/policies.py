@@ -26,6 +26,7 @@ _ALLOWED_PLACEHOLDERS = frozenset(
         "angles",
         "count",
         "exclude",
+        "avoid",
         "digest",
         "candidate",
         "raw_evidence",
@@ -34,7 +35,7 @@ _ALLOWED_PLACEHOLDERS = frozenset(
 _TEMPLATE_FILES = {
     "general": {
         ScoutMode.QA: "general_qa.v2.md",
-        ScoutMode.MICRO: "general_micro.v1.md",
+        ScoutMode.MICRO: "general_micro.v2.md",
     },
     "specific": {
         # v2 asks the Research API to go and verify one candidate, so it takes
@@ -87,7 +88,7 @@ class PolicyBundle:
 
         return cls(
             mode=selected_mode,
-            source_profiles=_load_json("source_profiles.v1.json"),
+            source_profiles=_load_json("source_profiles.v2.json"),
             general_angles=_load_json("general_angles.v1.json"),
             gates=_load_json("gates.v1.json"),
         )

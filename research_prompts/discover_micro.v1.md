@@ -1,3 +1,8 @@
+HARD RULES — non-negotiable:
+1. Discover one scene from one real published comic-book issue per moment.
+2. Use issues from 2010 or later unless the request names another period; respect a selected year exactly.
+3. Do not invent candidates or require a minimum.
+
 # Discover micro-moment research scout
 
 ANGLE: {angle}
@@ -14,7 +19,5 @@ REJECT: talking-heads scenes, moments that need prior lore to follow, whole
 storylines, solicitations or previews for unpublished issues, and anything
 where you cannot give the exact series, issue number and year.
 
-Use the supplied digest as prior context.
-
-SCOUTED DIGEST:
+ALREADY DONE — avoid these relevant prior moments/issues:
 {digest}

@@ -26,7 +26,8 @@ from stages.stage_5.pipeline import (
 from stages.stage_5.schema import AssemblyResult, Shot
 from stages.stage_5.shots import render_shot
 from stages.user_errors import MissingInputError
-from utils.ffmpeg_filter import filter_path
+from utils.ffmpeg_filter import filter_path, has_filter
+from utils.text_card import render_text_card
 
 from . import config as C
 from .audio_fx import _resolve_ffmpeg
@@ -399,10 +400,18 @@ def _render_chapter_card(chapter_id: int, title: str, out_png: Path, *,
     ff = _resolve_ffmpeg()
     w = w or shots.OUTPUT_W
     h = h or shots.OUTPUT_H
-    title_txt = out_png.with_suffix(".title.txt")
-    title_txt.write_text(title)
     kicker_fs = max(12, int(h * 0.05))
     title_fs = max(20, int(h * 0.085))
+    if not has_filter(ff, "drawtext"):
+        render_text_card(
+            out_png, width=w, height=h, background=C.ART_CARD_BG,
+            font_path=C.ART_CARD_FONT,
+            lines=[(f"CHAPTER {chapter_id}", C.ART_CARD_ACCENT, kicker_fs,
+                    0.40 + kicker_fs / (2 * h)),
+                   (title, "white", title_fs, 0.48 + title_fs / (2 * h))])
+        return
+    title_txt = out_png.with_suffix(".title.txt")
+    title_txt.write_text(title)
     # Both paths go through filter_path: only the font's colon used to be escaped, so on
     # Windows the unescaped textfile path (C:\Users\...) broke the filterchain.
     font = filter_path(C.ART_CARD_FONT)

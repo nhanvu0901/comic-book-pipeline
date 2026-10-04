@@ -1,0 +1,29 @@
+{
+  "general_research": {
+    "domains": [
+      "marvel.fandom.com",
+      "dc.fandom.com",
+      "comicbookroundup.com",
+      "aiptcomics.com",
+      "comics.org",
+      "cbr.com",
+      "comicbook.com",
+      "leagueofcomicgeeks.com",
+      "screenrant.com",
+      "reddit.com"
+    ],
+    "purpose": "Discover broad candidate questions and moments from comic-focused sources."
+  },
+  "specific_web_search": {
+    "domains": [
+      "marvel.fandom.com",
+      "dc.fandom.com",
+      "comicbookroundup.com",
+      "aiptcomics.com",
+      "multiversitycomics.com",
+      "cbr.com",
+      "leagueofcomicgeeks.com"
+    ],
+    "purpose": "Verify a selected candidate with targeted web searches. No reddit.com: it is where fans argue, not where an issue number and year are established, and at count=8 it crowded every other domain out. A Reddit URL a candidate cites itself is still fetched as one of its citations."
+  }
+}

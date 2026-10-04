@@ -1,12 +1,14 @@
+HARD RULES — non-negotiable:
+1. Verify one real published comic-book issue, not a movie, TV episode, game, toy, or multi-issue arc.
+2. Require one exact issue number and publication year; ranges are invalid.
+3. The issue must be from 2010 or later unless the question itself names another period.
+
 # Specific Q&A evidence scout
 
 Validate and enrich this proposed Q&A candidate against the raw research:
 
 USER INTENT: {user_intent}
 ANGLE: {angle}
-DIGEST:
-{digest}
-
 CANDIDATE:
 {candidate}
 

@@ -1,3 +1,8 @@
+HARD RULES — non-negotiable:
+1. Verify ONE real published comic-book issue, not a movie, TV episode, game, toy, or multi-issue arc.
+2. Require an exact single issue number and publication year. A range such as #1-5 is invalid.
+3. The issue must be from 2010 or later unless the question itself names another period.
+
 # Specific Q&A verification research
 
 Verify ONE proposed candidate. Do not enumerate alternatives and do not improve
@@ -6,9 +11,6 @@ issue, holds up.
 
 USER INTENT: {user_intent}
 ANGLE: {angle}
-DIGEST:
-{digest}
-
 CANDIDATE:
 {candidate}
 

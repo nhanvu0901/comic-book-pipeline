@@ -30,6 +30,23 @@ def test_micro_asks_for_one_issue_not_a_list(tmp_path, monkeypatch):
         assert "DIGEST" in p, "the already-done digest must be carried in"
 
 
+def test_legacy_scout_context_fails_clearly_instead_of_truncating(monkeypatch):
+    monkeypatch.setattr(
+        Y, "build_scouted_digest", lambda: ["x" * (Y.MAX_SCOUTED_CONTEXT_CHARS + 1)]
+    )
+    with pytest.raises(ValueError, match="Legacy scout context.*maximum"):
+        Y._scouted_context_text()
+
+
+def test_legacy_research_rejects_overlong_prompt_before_network(monkeypatch):
+    def should_not_call(*args, **kwargs):
+        raise AssertionError("overlong prompt must fail before API call")
+
+    monkeypatch.setattr(Y.urllib.request, "urlopen", should_not_call)
+    with pytest.raises(ValueError, match="40,001 characters"):
+        Y.research("fixture", "x" * (Y.MAX_RESEARCH_PROMPT_CHARS + 1), "standard", {})
+
+
 def test_every_angle_is_searched_separately(tmp_path, monkeypatch):
     """You.com only finds what its own plan step thinks to search for — the module's own
     recall lesson — so the fan-out has to be ours, one query per angle."""

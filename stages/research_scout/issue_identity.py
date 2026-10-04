@@ -48,7 +48,11 @@ def _strip_qualifiers(value: str) -> str:
 
 def _normal_issue(value: str) -> str:
     head, dot, tail = value.partition(".")
-    return str(int(head)) + (dot + tail.lower() if dot else "")
+    numeric = re.match(r"\d+", head)
+    if numeric is None:
+        return value.casefold()
+    suffix = head[numeric.end():]
+    return str(int(numeric.group())) + suffix.lower() + (dot + tail.lower() if dot else "")
 
 
 def _normal_series(value: str) -> str:

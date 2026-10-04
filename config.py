@@ -43,8 +43,21 @@ YOUCOM_RESEARCH_EFFORT = os.getenv("YOUCOM_RESEARCH_EFFORT", "standard")
 # confirming one item each deserve the deep pass. A single knob made the cheap
 # phase as expensive as the others or the expensive ones as shallow.
 YOUCOM_DISCOVER_EFFORT = os.getenv("YOUCOM_DISCOVER_EFFORT", YOUCOM_RESEARCH_EFFORT)
-YOUCOM_GENERAL_EFFORT = os.getenv("YOUCOM_GENERAL_EFFORT", "deep")
+YOUCOM_GENERAL_EFFORT = os.getenv("YOUCOM_GENERAL_EFFORT", "standard")
 YOUCOM_VERIFY_EFFORT = os.getenv("YOUCOM_VERIFY_EFFORT", "deep")
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    """Read an integer environment setting, falling back and clamping safely."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+# The scout may make at most one top-up call; set to 0 to disable it.
+SCOUT_TOPUP_ROUNDS = _bounded_int_env("SCOUT_TOPUP_ROUNDS", 1, 0, 1)
 
 _DEFAULT_LLM_CHAIN = (
     "minimax/minimax-m2.5:free,"

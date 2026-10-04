@@ -36,12 +36,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 API = "https://api.you.com/v1/research"
+MAX_RESEARCH_PROMPT_CHARS = 40_000
+MAX_SCOUTED_CONTEXT_CHARS = 32_000
 
 # The 8 whitelisted sources (Master 2026-08-04): legit comic sources + Reddit, no YouTube.
 DOMAINS = [
     "marvel.fandom.com", "dc.fandom.com", "comicbookroundup.com",
     "aiptcomics.com", "multiversitycomics.com", "cbr.com",
-    "leagueofcomicgeeks.com", "reddit.com",
+    "comicbook.com", "leagueofcomicgeeks.com", "screenrant.com", "reddit.com",
 ]
 
 # ─── SCOUTED digest — built fresh from the files of record on every run ─────────
@@ -91,36 +93,26 @@ def _csv_lines() -> list[str]:
     return out
 
 
-def build_scouted_digest() -> str:
+def build_scouted_digest() -> list[str]:
+    """Return legacy done-list entries for CLI callers, without prompt text."""
     produced = _project_questions()
     banned = _banlist_lines()
     recap = _csv_lines()
-    parts = [
-        "=== ALREADY DONE — NEVER PROPOSE THESE, NOR RE-SKINS ===",
-        "(re-skin = same question with synonyms, same subject + same power, "
-        "same answer set reordered)",
-        "",
-        "PRODUCED QUESTIONS / PROJECTS:",
-        *[f"- {q}" for q in produced],
-        "",
-        "BANNED / REJECTED / PRODUCED (from the ban list, with reasons where they matter):",
-        *[f"- {q}" for q in banned],
-    ]
-    if recap:
-        parts += ["", "RECAP-LANE TITLES ALREADY HANDLED:", *[f"- {t}" for t in recap]]
-    parts += [
-        "",
-        "HARD RULES (these killed candidates before):",
-        "- Answer must span 3+ DIFFERENT comics, each item published 2010+, "
-        "subject A-tier famous",
-        "- 'Who CAN beat X' hypotheticals are not questions — only 'who DID, "
-        "in a specific issue'",
-        "- Talking-heads moments, cute gags without stakes, lore-required moments: "
-        "all rejected before",
-    ]
-    digest = "\n".join(parts)
-    # input hard cap is 40k chars; leave >30k headroom for the task text
-    return digest[:9000]
+    # Keep only data entries. Stage 1 assembles its own small relevant avoid
+    # block; legacy CLI consumers can render these as needed.
+    return [*produced, *banned, *recap]
+
+
+def _scouted_context_text() -> str:
+    """Render CLI prior-work context with room left for the actual task prompt."""
+    value = build_scouted_digest()
+    text = "\n".join(str(item) for item in value) if isinstance(value, (list, tuple)) else str(value)
+    if len(text) > MAX_SCOUTED_CONTEXT_CHARS:
+        raise ValueError(
+            f"Legacy scout context is {len(text):,} characters; "
+            f"maximum is {MAX_SCOUTED_CONTEXT_CHARS:,}. Reduce the prior-work list and retry."
+        )
+    return text
 
 
 # ─── shared API call ─────────────────────────────────────────────────────────────
@@ -139,6 +131,11 @@ def _schema(item_props: dict, extra_root: dict | None = None) -> dict:
 
 
 def research(key: str, prompt: str, effort: str, schema: dict) -> dict:
+    if len(prompt) > MAX_RESEARCH_PROMPT_CHARS:
+        raise ValueError(
+            f"You.com Research prompt is {len(prompt):,} characters; "
+            f"maximum is {MAX_RESEARCH_PROMPT_CHARS:,}."
+        )
     body = json.dumps({
         "input": prompt, "research_effort": effort,
         "source_control": {"include_domains": DOMAINS},
@@ -272,7 +269,7 @@ _CONFIRM_PROPS = {
 
 
 def run_discover(key: str, outdir: Path, effort: str) -> None:
-    digest = build_scouted_digest()
+    digest = _scouted_context_text()
     rows, kept = [], []
     for i, angle in enumerate(DISCOVER_ANGLES, 1):
         prompt = (
@@ -418,7 +415,7 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
 
     default_window = years is None
     years = years or recent_micro_instruction()
-    digest = build_scouted_digest()
+    digest = _scouted_context_text()
     rows, kept = [], []
     for i, angle in enumerate(MICRO_ANGLES, 1):
         prompt = (
@@ -676,7 +673,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.cmd == "digest":
-        print(build_scouted_digest())
+        print("\n".join(build_scouted_digest()))
         return
     key = _load_key()
     outdir = REPO / "scout_runs" / datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")

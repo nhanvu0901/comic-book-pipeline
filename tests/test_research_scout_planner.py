@@ -133,11 +133,13 @@ def test_compile_schema_never_contains_min_or_max_items():
 # ─── assemble_prompt ────────────────────────────────────────────────────────
 
 
-def test_assemble_prompt_contains_unit_sentence_and_digest_at_end():
+def test_assemble_prompt_leads_with_hard_rules_and_places_avoid_lines_after_plan():
     plan = _plan(unit="one issue")
-    text = assemble_prompt(plan, "DIGEST-CONTENT")
-    assert "One candidate per one issue — never merge entries." in text
-    assert text.rstrip().endswith("DIGEST-CONTENT")
+    text = assemble_prompt(plan, avoid_lines=["Batman #57 (2024)"])
+    assert text.startswith("HARD RULES")
+    assert "One candidate per distinct comic-book issue — never merge entries." in text
+    assert text.rstrip().endswith("Batman #57 (2024)")
+    assert "SCOUTED DIGEST" not in text
 
 
 def test_micro_planner_prompt_uses_reference_turn_without_changing_qa():
@@ -326,10 +328,13 @@ def test_both_research_routes_ask_for_source_breadth_without_a_candidate_floor()
             user_intent="Which heroes?",
             angle="power failure",
             count=target,
-            digest="none",
+            avoid="none",
         )
-        assert f"about {target} distinct source pages" in fallback.text, mode
-        assert "no candidate minimum" in fallback.text, mode
+        if mode is ScoutMode.QA:
+            assert f"about {target} distinct source pages" in fallback.text, mode
+            assert "no candidate minimum" in fallback.text, mode
+        else:
+            assert "HARD RULES" in fallback.text
         assert "never pad" in fallback.text, mode
         assert "claim_citation" in fallback.text, mode
 
@@ -437,7 +442,7 @@ def test_micro_planner_prompt_pins_the_identity_and_url_formats_the_screens_need
     qa = assemble_prompt(plan, "digest", user_intent="find a moment")
 
     assert rules.missing_format_rules(micro) == []
-    assert "Series Title #N" not in qa
+    assert "Series Title #N" in qa
     assert "rebuild a URL" not in qa
 
 

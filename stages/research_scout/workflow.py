@@ -14,6 +14,7 @@ from typing import Any, Callable
 import config
 
 from . import cited_sources
+from . import issue_identity
 from .issue_identity import micro_issue_rejection_reason
 from .micro_recency import (
     issue_publication_year,
@@ -22,6 +23,8 @@ from .micro_recency import (
 )
 from . import openrouter_gate
 from . import planner as planner_module
+from . import avoid_list
+from . import ledger_shadow
 from .errors import ScoutUserError
 from .models import EvidenceGate, FeedbackNote, ResearchSession, ScoutMode, SessionState
 from .planner import ResearchPlan
@@ -160,12 +163,10 @@ class ScoutWorkflow:
         store: SessionStore | None = None,
         client: YouComClient | None = None,
         *,
-        digest: str = "",
         planner: Callable[[str, list[str], str], ResearchPlan | None] | None = None,
     ):
         self.store = store or SessionStore(config.RESEARCH_SESSIONS_ROOT)
         self.client = client or YouComClient()
-        self.digest = digest
         # Tests inject a stub here; only run_general ever calls it — the real
         # default hits OpenRouter, which config.load_dotenv() means is a live
         # key in this process, so nothing but run_general may reach it.
@@ -180,7 +181,18 @@ class ScoutWorkflow:
     def run_general(self, session_id: str) -> ResearchSession:
         session = self._load_and_transition(session_id, "run_general")
         bundle = self._bundle(session.mode)
+        prior_candidates = self._candidates_by_id(session)
+        held_candidates = [
+            prior_candidates[cid] for cid in session.kept_candidate_ids
+            if cid in prior_candidates
+        ]
+        held_labels = [str(c.get("series_issue_year", "")).strip() for c in held_candidates]
         feedback_notes = [f.text for f in session.feedback_log if f.text.strip()]
+        for note in feedback_notes:
+            held_labels.extend(re.findall(
+                r"\(([^()]+?#\s*\d+(?:\.\d+)?[A-Za-z]?\s*\(\d{4}\))\)",
+                note,
+            ))
         selected_year_line = (
             f"\nPublication year: {session.publication_year} only."
             if session.mode is ScoutMode.MICRO and session.publication_year is not None
@@ -188,6 +200,14 @@ class ScoutWorkflow:
         )
         scoped_intent = session.user_intent + selected_year_line
         plan = self._planner(scoped_intent, feedback_notes, session.mode.value)
+        avoid_lines = avoid_list.relevant_avoid_lines(
+            session.mode, session.user_intent, plan, extra_held=held_labels,
+        )
+        held_session_keys = {key for label in held_labels if (key := _issue_key(label))}
+        protected_keys = held_session_keys | (
+            avoid_list.inventory_issue_keys(session.mode)
+            if session.mode is ScoutMode.MICRO else set()
+        )
         if plan is None:
             # Fallback path — byte-for-byte today's behavior: the mode's fixed
             # template + the fixed schema. _intent_with_feedback folds feedback
@@ -197,7 +217,7 @@ class ScoutWorkflow:
                 user_intent=_intent_with_feedback(session) + selected_year_line,
                 angle=self._angle(bundle, session.mode),
                 count=str(planner_module.DISTINCT_SOURCE_TARGET),
-                digest=self.digest,
+                avoid="\n".join(avoid_lines),
             )
             prompt_text, prompt_hash = prompt.text, prompt.sha256
             schema = general_output_schema(session.mode)
@@ -206,8 +226,8 @@ class ScoutWorkflow:
             # Planner path — feedback already reached the planner input above,
             # so it must NOT be folded into the prompt a second time here.
             prompt_text = planner_module.assemble_prompt(
-                plan, self.digest, user_intent=scoped_intent,
-                mode=session.mode.value,
+                plan, user_intent=scoped_intent,
+                mode=session.mode.value, avoid_lines=avoid_lines,
             )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
             schema = planner_module.compile_schema(plan, mode=session.mode.value)
@@ -217,12 +237,24 @@ class ScoutWorkflow:
                 publication_year=session.publication_year, user_intent=session.user_intent,
             )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
-        raw = self.client.research(
-            prompt_text,
-            schema,
-            bundle.source_profiles.get("general_research"),
-            effort=config.YOUCOM_GENERAL_EFFORT,
-        )
+        try:
+            raw = self.client.research(
+                prompt_text,
+                schema,
+                bundle.source_profiles.get("general_research"),
+                effort=config.YOUCOM_GENERAL_EFFORT,
+            )
+        except Exception as exc:
+            raise ScoutUserError(
+                f"General research request failed ({exc.__class__.__name__}). "
+                "The session is ready to retry."
+            ) from None
+        primary_error = _raw_call_error(raw)
+        if primary_error:
+            raise ScoutUserError(
+                f"General research request failed ({primary_error}). "
+                "The session is ready to retry."
+            )
         payload = _raw_payload(raw)
         candidates = _extract_candidates(payload, prefix=_revision_prefix(session.revision))
         # Candidates held over from the previous round go in FRONT, under the ids
@@ -244,19 +276,84 @@ class ScoutWorkflow:
                     c, session.user_intent, publication_year=session.publication_year,
                 ) is None
             ]
-        returned_sources = _research_source_urls(payload)
+        source_rows = _research_source_rows(payload)
+        returned_sources = {
+            canonical for row in source_rows
+            if isinstance(row.get("url"), str)
+            and (canonical := cited_sources.canonical_url(row["url"]))
+        }
+        shadow_candidates = [dict(candidate) for candidate in candidates]
         candidates, validation = _validate_new_general_candidates(
             candidates,
             returned_sources,
             mode=session.mode,
             user_intent=session.user_intent,
             publication_year=session.publication_year,
+            sources=source_rows,
+            protected_keys=protected_keys,
             protected_fingerprints={
                 cited_sources.citation_fingerprint(citation)
                 for candidate in kept
                 if (citation := cited_sources.claim_citation(candidate)) is not None
             },
         )
+        shadow_legacy_rejections = list(validation["rejected"])
+        topup_used = False
+        topup_error: str | None = None
+        topup_succeeded = False
+        minimum = 5 if session.mode is ScoutMode.QA else 3
+        if getattr(config, "SCOUT_TOPUP_ROUNDS", 1) > 0 and _should_top_up(session.mode, candidates, minimum):
+            topup_used = True
+            new_avoid = list(dict.fromkeys(
+                avoid_lines + [str(c.get("series_issue_year", "")).strip() for c in candidates]
+            ))[:50]
+            topup_prompt = prompt_text + (
+                "\n\nALREADY RETURNED OR USED IN THIS SESSION — do not repeat these issues:\n"
+                + "\n".join(new_avoid)
+            )
+            try:
+                topup_raw = self.client.research(
+                    topup_prompt, schema, bundle.source_profiles.get("general_research"),
+                    effort="standard",
+                )
+                topup_error = _raw_call_error(topup_raw)
+            except Exception as exc:
+                topup_raw = RawCall(
+                    api="research", payload={},
+                    error=f"request failed: {exc.__class__.__name__}",
+                )
+                topup_error = _raw_call_error(topup_raw)
+            self.store.write_artifact(session.id, "general/topup.research.v1.json", _raw_record(topup_raw))
+            if not topup_error:
+                topup_succeeded = True
+                topup_payload = _raw_payload(topup_raw)
+                topup_rows = _research_source_rows(topup_payload)
+                topup_candidates = _extract_candidates(
+                    topup_payload, prefix=f"topup-r{session.revision}-",
+                )
+                shadow_candidates.extend(dict(candidate) for candidate in topup_candidates)
+                protected_issue_keys = {
+                    key for candidate in candidates
+                    if (key := _issue_key(str(candidate.get("series_issue_year", ""))))
+                } | protected_keys
+                topup_candidates, topup_validation = _validate_new_general_candidates(
+                    topup_candidates,
+                    {cited_sources.canonical_url(str(row.get("url", ""))) for row in topup_rows},
+                    mode=session.mode, user_intent=session.user_intent,
+                    publication_year=session.publication_year, sources=topup_rows,
+                    protected_keys=protected_issue_keys,
+                    protected_fingerprints={
+                        cited_sources.citation_fingerprint(citation)
+                        for candidate in candidates
+                        if (citation := cited_sources.claim_citation(candidate)) is not None
+                    },
+                )
+                shadow_legacy_rejections.extend(topup_validation["rejected"])
+                candidates.extend(topup_candidates)
+                validation["topup_rejected"] = topup_validation["rejected"]
+                validation["input_candidate_count"] += topup_validation["input_candidate_count"]
+                validation["rejected"].extend(topup_validation["rejected"])
+                returned_sources |= {cited_sources.canonical_url(str(row.get("url", ""))) for row in topup_rows}
         if session.mode is ScoutMode.MICRO:
             candidates.sort(
                 key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
@@ -293,6 +390,17 @@ class ScoutWorkflow:
                 "rejected": validation["rejected"],
             },
         )
+        # The ledger is observational only in this phase: its snapshot is read
+        # after legacy filtering, and its decisions never alter accepted cards.
+        self.store.write_artifact(
+            session.id,
+            f"general/ledger_shadow.rev{session.revision}.v1.json",
+            ledger_shadow.build_shadow_report(
+                shadow_candidates,
+                shadow_legacy_rejections,
+                mode=session.mode.value,
+            ),
+        )
         # Plan artifact every round, fallback rounds too — reruns stay reconstructable.
         self.store.write_artifact(
             session.id,
@@ -303,12 +411,21 @@ class ScoutWorkflow:
         detail: dict[str, Any] = {
             "prompt_hash": prompt_hash,
             "source_api": getattr(raw, "api", "research"),
-            "effort": config.YOUCOM_RESEARCH_EFFORT,
+            "effort": config.YOUCOM_GENERAL_EFFORT,
             "revision": session.revision,
             "plan_source": plan_record["source"],
             "returned_source_count": len(returned_sources),
             "accepted_bound_source_count": len(accepted_bound_sources),
             "candidate_validation_rejections": validation["rejected"],
+            "topup_used": topup_used,
+            "topup_error": topup_error,
+            "lane_exhausted": topup_succeeded and _should_top_up(session.mode, candidates, minimum),
+            "lane_status": (
+                "topup_failed" if topup_error else
+                "exhausted" if topup_succeeded and _should_top_up(session.mode, candidates, minimum) else
+                "sufficient" if topup_succeeded else
+                "topup_not_needed"
+            ),
         }
         if plan is not None:
             detail["plan_summary"] = f"{plan.unit} · {plan.cardinality}" + (
@@ -416,6 +533,7 @@ class ScoutWorkflow:
                 "verified": sorted(gates),
                 "verdicts": {cid: gate.verdict for cid, gate in gates.items()},
                 "failed": {cid: str(exc) for cid, exc in failures.items()},
+                **_selected_series_detail(session.mode, ids, candidates),
             },
         )
 
@@ -451,8 +569,12 @@ class ScoutWorkflow:
         # gives up. Carried-over gates are reused, never re-bought.
         self._write_gates(session_id, ids)
         session.state = SessionState.PRODUCTION_GATES
+        candidates = self._candidates_by_id(session)
         return self.store.save(
-            session, event="selection_approved", detail={"candidate_ids": list(ids)}
+            session, event="selection_approved", detail={
+                "candidate_ids": list(ids),
+                **_selected_series_detail(session.mode, ids, candidates),
+            }
         )
 
     def back_to_candidates(self, session_id: str) -> ResearchSession:
@@ -641,12 +763,15 @@ class ScoutWorkflow:
         fallback = [{field: angle, "angle": angle, "fallback": True}]
 
         excluded = [str(item).strip() for item in exclude if str(item).strip()]
+        question_avoid = avoid_list.relevant_question_avoid_lines(
+            mode, " ".join(angles), extra_held=excluded, limit=50,
+        )
         prompt = bundle.render(
             "discover",
             angles="\n".join(f"- {a}" for a in angles),
             count=str(count),
             exclude="\n".join(f"- {item}" for item in excluded) or "- (nothing yet)",
-            digest=self.digest,
+            avoid="\n".join(question_avoid),
         )
         prompt_text = prompt.text
         if mode is ScoutMode.MICRO:
@@ -668,10 +793,7 @@ class ScoutWorkflow:
         # One digest for both jobs: the produced/banned lanes we always avoid,
         # plus whatever this session has already shown. is_burned's loose token
         # overlap is what stops a re-roll returning the same lane re-worded.
-        burn_digest = "\n".join(
-            [line for line in [self.digest] if line]
-            + [f"- {item}" for item in excluded]
-        )
+        burn_digest = "\n".join(f"- {line}" for line in question_avoid)
         picked: list[dict[str, Any]] = []
         seen: set[str] = set()
         for index, candidate in enumerate(_extract_candidates(_raw_payload(raw))):
@@ -849,7 +971,7 @@ class ScoutWorkflow:
             "specific",
             user_intent=intent,
             angle=angle,
-            digest=self.digest,
+            digest="",
             candidate=json.dumps(candidate, ensure_ascii=False),
         )
         raw = self.client.research(
@@ -906,7 +1028,7 @@ class ScoutWorkflow:
             "evidence_gate",
             user_intent=intent,
             angle=angle,
-            digest=self.digest,
+            digest="",
             candidate=json.dumps(candidate, ensure_ascii=False),
             raw_evidence=cited_sources.build_raw_evidence(fetched, raw_search_payload),
         )
@@ -1014,6 +1136,22 @@ def _raw_payload(raw: Any) -> Any:
     return getattr(raw, "payload", raw)
 
 
+def _raw_call_error(raw: Any) -> str | None:
+    """Return a bounded diagnostic without including upstream response bodies."""
+    error = getattr(raw, "error", None)
+    if not error:
+        return None
+    status_code = getattr(raw, "status_code", None)
+    try:
+        status = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        status = None
+    # RawCall.error is normally a short status or exception-class message.
+    # Treat arbitrary client implementations as untrusted and strip controls.
+    safe_error = " ".join(str(error).split())[:160]
+    return f"HTTP {status}: {safe_error}" if status else safe_error or "upstream error"
+
+
 def _raw_record(raw: Any) -> dict[str, Any]:
     return {
         "api": getattr(raw, "api", ""),
@@ -1082,6 +1220,78 @@ def _research_source_urls(payload: Any) -> set[str]:
     }
 
 
+def _research_source_rows(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, Mapping):
+        return []
+    output = payload.get("output")
+    container = output if isinstance(output, Mapping) else payload
+    sources = container.get("sources")
+    return [dict(source) for source in sources if isinstance(source, Mapping)] if isinstance(sources, list) else []
+
+
+def _issue_key(label: str) -> tuple[str, str] | None:
+    from .issue_identity import _candidate_identity, _normal_series
+    try:
+        identity = _candidate_identity(str(label or ""))
+    except (TypeError, ValueError):
+        return None
+    if identity is None:
+        return None
+    return _normal_series(identity.series), identity.number
+
+
+def _series_key(label: str) -> str | None:
+    from .issue_identity import _candidate_identity, _normal_series
+    try:
+        identity = _candidate_identity(str(label or ""))
+    except (TypeError, ValueError):
+        return None
+    return _normal_series(identity.series) if identity is not None else None
+
+
+def _selected_series_detail(
+    mode: ScoutMode,
+    candidate_ids: Sequence[str],
+    candidates: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Audit distinct parsed series and flag a narrow Q&A selection."""
+    series = {
+        key
+        for candidate_id in candidate_ids
+        if (candidate := candidates.get(candidate_id)) is not None
+        if (key := _series_key(str(candidate.get("series_issue_year", ""))))
+    }
+    count = len(series)
+    return {
+        "selected_series_count": count,
+        "series_diversity_warning": (
+            mode is ScoutMode.QA and 3 <= len(candidate_ids) <= 5 and count < 3
+        ),
+    }
+
+
+def _should_top_up(mode: ScoutMode, candidates: Sequence[Mapping[str, Any]], minimum: int) -> bool:
+    if len(candidates) < minimum:
+        return True
+    if mode is ScoutMode.QA:
+        return len({series for candidate in candidates
+                    if (series := _series_key(str(candidate.get("series_issue_year", ""))))}) < 3
+    return False
+
+
+_NON_COMIC_RE = re.compile(
+    r"\b(movie|film|tv|television|season|episode|video\s+game|gameplay|animated\s+series|toy)\b",
+    re.I,
+)
+_QA_ISSUE_RE = re.compile(r"#\s*\d+(?:\.\d+)?(?![\w.-])")
+_QA_RANGE_RE = re.compile(r"#\s*\d+(?:\.\d+)?\s*[-–—]\s*\d")
+_NAMED_HISTORICAL_ERA_RE = re.compile(
+    r"\b(?:golden age|silver age|bronze age|classic|historical|older comics?)\b",
+    re.I,
+)
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
 def _validate_new_general_candidates(
     candidates: Sequence[dict[str, Any]],
     returned_sources: set[str],
@@ -1089,6 +1299,8 @@ def _validate_new_general_candidates(
     mode: ScoutMode,
     user_intent: str,
     publication_year: int | None = None,
+    sources: Sequence[Mapping[str, Any]] = (),
+    protected_keys: set[tuple[str, str]] | None = None,
     protected_fingerprints: set[tuple[str, str]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Screen only a freshly produced general batch before it reaches review.
@@ -1102,9 +1314,28 @@ def _validate_new_general_candidates(
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
     seen = set(protected_fingerprints)
+    seen_issue_keys: set[tuple[str, str]] = set(protected_keys or ())
+    explicit_period = bool(_NAMED_HISTORICAL_ERA_RE.search(user_intent)) or any(
+        int(year) < 2010 for year in _YEAR_RE.findall(user_intent)
+    )
     for candidate in candidates:
         candidate_id = str(candidate.get("id", ""))
         citation = cited_sources.claim_citation(candidate)
+        if citation is None:
+            rejected.append({"candidate_id": candidate_id, "reason": "missing_claim_citation"})
+            continue
+        if sources and not any(
+            cited_sources.canonical_url(str(source.get("url", "")))
+            == cited_sources.canonical_url(citation.url)
+            for source in sources
+        ):
+            rebind = getattr(cited_sources, "rebind_citation_url", None)
+            match = rebind(citation.url, sources, citation.quote) if callable(rebind) else None
+            if match is not None:
+                candidate["rebound_from"] = citation.url
+                candidate["rebound_reason"] = match.reason
+                candidate["claim_citation"] = {**candidate["claim_citation"], "url": match.url}
+                citation = cited_sources.claim_citation(candidate)
         if citation is None:
             rejected.append({"candidate_id": candidate_id, "reason": "missing_claim_citation"})
             continue
@@ -1123,10 +1354,30 @@ def _validate_new_general_candidates(
             if release_reason is not None:
                 rejected.append({"candidate_id": candidate_id, "reason": release_reason})
                 continue
+        else:
+            label = str(candidate.get("series_issue_year", "")).strip()
+            identity = issue_identity._candidate_identity(label)
+            if (identity is None or not identity.year
+                    or len(_QA_ISSUE_RE.findall(label)) != 1
+                    or _QA_RANGE_RE.search(label)):
+                rejected.append({"candidate_id": candidate_id, "reason": "qa_issue_unparsed"})
+                continue
+            if _NON_COMIC_RE.search(label) or _NON_COMIC_RE.search(str(candidate.get("title", ""))):
+                rejected.append({"candidate_id": candidate_id, "reason": "qa_not_comic"})
+                continue
+            if identity.year and int(identity.year) < 2010 and not explicit_period:
+                rejected.append({"candidate_id": candidate_id, "reason": "qa_pre_2010"})
+                continue
+        issue_key = _issue_key(str(candidate.get("series_issue_year", "")))
+        if issue_key is not None and issue_key in seen_issue_keys:
+            rejected.append({"candidate_id": candidate_id, "reason": "duplicate_issue_key"})
+            continue
         if fingerprint in seen:
             rejected.append({"candidate_id": candidate_id, "reason": "duplicate_claim_citation"})
             continue
         seen.add(fingerprint)
+        if issue_key is not None:
+            seen_issue_keys.add(issue_key)
         accepted.append(candidate)
     return accepted, {
         "input_candidate_count": len(candidates),

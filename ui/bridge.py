@@ -124,11 +124,8 @@ def _scout_store(root: Path | None = None):
 
 def _scout_workflow(root: Path | None = None):
     from stages.research_scout.workflow import ScoutWorkflow
-    from stages.youcom_scout import build_scouted_digest
 
-    # Without the digest the prompt renders "SCOUTED DIGEST:" empty and the scout
-    # happily re-proposes produced/banned questions (found 2026-08-21).
-    return ScoutWorkflow(store=_scout_store(root), digest=build_scouted_digest())
+    return ScoutWorkflow(store=_scout_store(root))
 
 
 def start_scout_session(

@@ -68,6 +68,12 @@ playground/
 *.log
 *.err
 
+# Windows-owned scout ledger database and snapshots (commit export.jsonl only)
+/data/ledger/ledger.db
+/data/ledger/ledger.db-wal
+/data/ledger/ledger.db-shm
+/data/ledger/backups/
+
 # Scratch spaces and local assistant caches
 .scratch/
 scratch/

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import PROJECTS_ROOT
-from utils.ffmpeg_filter import filter_path
+from utils.ffmpeg_filter import filter_path, has_filter
 from ..review_gate import ensure_reviewed
 from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
@@ -879,6 +879,23 @@ def _build_outro_card(out_path: Path, *, duration: float, logo: str | None,
         W, H = 1080, 1920
         name = _ass_drawtext_escape(channel_name.upper())
         sub = _ass_drawtext_escape(f"SUBSCRIBE FOR MORE  {handle}")
+        if not has_filter(ff, "drawtext"):
+            from utils.text_card import render_text_card
+            png = out_path.with_suffix(".png")
+            render_text_card(
+                png, width=W, height=H, background="#0A0A0A", font_path=font,
+                logo_path=logo, logo_width=360, logo_center_y=H // 2 - 200,
+                lines=[(channel_name.upper(), "white", 96, 0.5 + 120 / H),
+                       (f"SUBSCRIBE FOR MORE  {handle}", "#CC2222", 44,
+                        0.5 + 260 / H)])
+            try:
+                _run([ff, "-y", "-loop", "1", "-framerate", str(FPS), "-i", str(png),
+                      "-t", f"{duration}", "-c:v", "libx264", "-preset", "medium",
+                      "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(FPS), "-an",
+                      str(out_path)])
+            finally:
+                png.unlink(missing_ok=True)
+            return out_path
         # base dark canvas
         inputs = ["-f", "lavfi", "-i", f"color=c=0x0A0A0A:s={W}x{H}:d={duration}:r={FPS}"]
         filters = []

@@ -21,6 +21,7 @@ import flet as ft
 
 from config import RESEARCH_SESSIONS_ROOT
 from stages.research_scout.micro_recency import issue_publication_year
+from stages.research_scout.issue_identity import _candidate_identity, _normal_series
 from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.stage_1.storage import project_folder_name, slugify
@@ -618,6 +619,19 @@ def build(
         approve_button.key = "approve-selected"
 
         controls: list[ft.Control] = [*cards, verify_button]
+        if session.mode is ScoutMode.QA and 3 <= len(selected_specific) <= 5:
+            candidate_map = {_candidate_id(c, i): c for i, c in enumerate(candidates)}
+            series = set()
+            for candidate_id in selected_specific:
+                candidate = candidate_map.get(candidate_id, {})
+                identity = _candidate_identity(str(candidate.get("series_issue_year", "")))
+                if identity:
+                    series.add(_normal_series(identity.series))
+            if len(series) < 3:
+                controls.append(ft.Text(
+                    f"Selected issues cover {len(series)} series; Q&A works best across 3 or more series.",
+                    size=11, color=WARN, selectable=True,
+                ))
         kept = _confirmed_selected(session, gates)
         if kept:
             rescout = secondary_button(
@@ -1493,8 +1507,8 @@ def build(
     )
     year_field = ft.TextField(
         key="scout-year",
-        label="Year (optional)",
-        hint_text=f"Blank = {date.today().year}",
+        label="Micro year (optional)",
+        hint_text=f"Micro uses {date.today().year} when blank",
         width=150,
         border_color=BORDER,
         focused_border_color=ACCENT,

@@ -779,6 +779,8 @@ def test_micro_year_field_reaches_discovery_and_blank_means_current(tmp_path, mo
     mode.value = "micro"
     mode.on_change(_FakeEvent("micro"))
     year_field = _by_key(controls, "scout-year")
+    assert year_field.label == "Micro year (optional)"
+    assert year_field.disabled is False
     year_field.value = "2024"
     _send(controls).on_click(object())
     _run_recorded_task(page)
@@ -789,6 +791,44 @@ def test_micro_year_field_reaches_discovery_and_blank_means_current(tmp_path, mo
     _by_key(controls, "discovered-reroll").on_click(object())
     _run_recorded_task(page)
     assert calls[-1]["publication_year"] is None
+
+    # Returning to QA hides the Micro-only control so its value cannot look like
+    # a Q&A year filter. The send path also keeps QA's publication_year unset.
+    mode.value = "qa"
+    mode.on_change(_FakeEvent("qa"))
+    assert not any(getattr(node, "key", None) == "scout-year" for node in _walk(controls))
+
+
+def test_qa_mode_hides_micro_year_control_and_does_not_forward_a_year(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path / "research_sessions")
+    calls = []
+    created = []
+
+    def fake_start(mode, text, *, publication_year=None):
+        calls.append((mode, text, publication_year))
+        session = store.create(ScoutMode(mode), text, publication_year)
+        created.append(session.id)
+        return session
+
+    def fake_run(session_id):
+        session = store.load(session_id)
+        session.state = SessionState.CANDIDATE_REVIEW
+        store.save(session)
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", fake_start)
+    monkeypatch.setattr(s1_research_scout, "run_scout_general", fake_run)
+    page, controls = _build(tmp_path)
+    mode = _by_key(controls, "scout-mode")
+    assert mode.value == "qa"
+    assert not any(getattr(node, "key", None) == "scout-year" for node in _walk(controls))
+
+    _intent_field(controls).value = "Which heroes have lifted Mjolnir?"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+
+    assert calls == [("qa", "Which heroes have lifted Mjolnir?", None)]
+    assert store.load(created[0]).publication_year is None
 
 
 def test_micro_year_field_persists_on_new_research_and_rejects_bad_input(

@@ -11,6 +11,7 @@ corrupted the plain feedback re-run that already shipped.
 import json
 
 import pytest
+import config
 
 from stages.research_scout import cited_sources
 from stages.research_scout.models import EvidenceGate, ScoutMode, SessionState
@@ -46,7 +47,7 @@ class _FakeYouCom:
             candidates.append({
                 "title": title,
                 "summary": f"{title} visibly happens.",
-                "series_issue_year": f"{title} #1 (2001)",
+                "series_issue_year": f"{title} #1 (2024)",
                 "what_visibly_happens": f"{title} lands a punch.",
                 "evidence_urls": [url],
                 "claim_citation": {
@@ -90,9 +91,10 @@ def _no_reader_network(monkeypatch):
     yield
 
 @pytest.fixture
-def workflow(tmp_path):
+def workflow(tmp_path, monkeypatch):
     # config.py load_dotenv()s real API keys, so an uninjected planner would hit
     # OpenRouter for real — the stub keeps every test on the fallback path.
+    monkeypatch.setattr(config, "SCOUT_TOPUP_ROUNDS", 0)
     return ScoutWorkflow(
         store=SessionStore(tmp_path),
         client=_FakeYouCom(),
@@ -503,4 +505,3 @@ def test_rescout_keeping_selected_rejects_empty_selection(workflow):
 
     with pytest.raises(Exception, match="select at least one candidate"):
         workflow.rescout_keeping_selected(session.id, [])
-

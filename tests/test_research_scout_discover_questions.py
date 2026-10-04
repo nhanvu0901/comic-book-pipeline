@@ -53,8 +53,8 @@ class _ScriptedYouCom:
         return type("RawCall", (), {"api": "research", "payload": payload, "error": None})()
 
 
-def _workflow(tmp_path, client, digest=""):
-    return ScoutWorkflow(store=SessionStore(tmp_path), client=client, digest=digest)
+def _workflow(tmp_path, client):
+    return ScoutWorkflow(store=SessionStore(tmp_path), client=client)
 
 
 def _qa_angles():
@@ -108,7 +108,7 @@ def test_count_caps_the_batch(tmp_path):
 
 
 def test_burned_candidates_are_dropped_and_the_rest_survive(tmp_path):
-    # The digest line is an EXACT copy of the candidate text, guaranteeing
+    # The excluded question is an EXACT copy of the candidate text, guaranteeing
     # is_burned()'s token-overlap check (>=60% containment, >=2 non-format
     # shared tokens) fires on that one and only that one.
     burned = "Times Superman's invulnerability failed against kryptonite radiation"
@@ -116,9 +116,9 @@ def test_burned_candidates_are_dropped_and_the_rest_survive(tmp_path):
         {"question": burned},
         {"question": "Which villains have escaped Arkham through the front door?"},
     ])
-    workflow = _workflow(tmp_path, client, digest=f"- {burned}")
+    workflow = _workflow(tmp_path, client)
 
-    batch = workflow.discover_questions(ScoutMode.QA)
+    batch = workflow.discover_questions(ScoutMode.QA, exclude=[burned])
 
     assert [entry["question"] for entry in batch] == [
         "Which villains have escaped Arkham through the front door?"
@@ -173,10 +173,10 @@ def test_a_client_exception_falls_back_to_the_angle_and_never_raises(tmp_path):
 def test_an_all_burned_result_falls_back_to_the_angle(tmp_path):
     burned_text = "Times Superman's invulnerability failed against kryptonite radiation"
     client = _ScriptedYouCom(candidates=[{"question": burned_text}])
-    workflow = _workflow(tmp_path, client, digest=f"- {burned_text}")
+    workflow = _workflow(tmp_path, client)
     angle = workflow.next_angle(ScoutMode.QA)
 
-    batch = workflow.discover_questions(ScoutMode.QA)
+    batch = workflow.discover_questions(ScoutMode.QA, exclude=[burned_text])
 
     assert [entry["question"] for entry in batch] == [angle]
     assert batch[0]["fallback"] is True
@@ -194,18 +194,16 @@ def test_a_real_batch_is_never_flagged_as_a_fallback(tmp_path):
 # ─── the prompt and the schema actually sent ────────────────────────────────
 
 
-def test_the_prompt_carries_every_angle_the_digest_and_the_exclusions(tmp_path):
+def test_the_prompt_carries_every_angle_and_the_exclusions_without_legacy_digest(tmp_path):
     """One rotated angle bought one lane per call. Feeding all five angles is
     what makes five DIFFERENT questions out of the same single research call."""
-    digest = "- Already produced: some unrelated moment"
     client = _ScriptedYouCom(candidates=[{"question": "A fresh question nobody asked yet"}])
-    workflow = _workflow(tmp_path, client, digest=digest)
+    workflow = _workflow(tmp_path, client)
 
     workflow.discover_questions(ScoutMode.QA, exclude=["An already-rejected question?"])
 
     for angle in _qa_angles():
         assert angle in client.seen_prompt
-    assert digest in client.seen_prompt
     assert "An already-rejected question?" in client.seen_prompt
 
 
@@ -232,7 +230,8 @@ def test_micro_mode_uses_the_micro_discover_prompt_qa_uses_the_qa_one(tmp_path):
 
     # Wording lifted from run_discover / run_micro (stages/youcom_scout.py) —
     # each mode's distinguishing phrase must land in the prompt actually sent.
-    assert "LIST of 3 or more separate moments" in qa_client.seen_prompt
+    assert "LIST of 3 or more separate moments" not in qa_client.seen_prompt
+    assert "Do not impose a minimum number of series" in qa_client.seen_prompt
     assert "LIST of 3 or more separate moments" not in micro_client.seen_prompt
     assert "MICRO MOMENT" in micro_client.seen_prompt
     assert "turning_point" in micro_client.seen_schema["properties"]["candidates"]["items"]["properties"]
