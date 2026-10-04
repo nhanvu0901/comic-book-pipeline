@@ -212,9 +212,9 @@ def run_acceptance(*, live: bool, report_path: Path | None = None, fallback_only
         "planner_mode": "fallback_only" if fallback_only or not live else "production_planner",
         "accepted_candidate_scope": "new candidates only; carried held cards are excluded",
         "seed_fidelity_note": (
-            "Batman wording is copied from docs/research/2026-10-03-youcom-large-prompt-test.md; "
+            "Batman wording is copied from todo/qa-scout/2026-10-03-youcom-large-prompt-test.md; "
             "the other five question texts reconstruct the topic summaries in "
-            "docs/research/2026-10-03-scout-strategy-ab-test.md, so per-seed and aggregate "
+            "todo/qa-scout/2026-10-03-scout-strategy-ab-test.md, so per-seed and aggregate "
             "statistical metrics are indicative only."
         ),
         "acceptance_evaluated": acceptance_evaluated,

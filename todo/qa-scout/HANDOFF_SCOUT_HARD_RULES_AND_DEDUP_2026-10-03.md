@@ -2,7 +2,7 @@
 
 **Trạng thái: chưa code.** Tài liệu này mô tả đầy đủ những gì cần đổi, ở đâu, vì sao, và kiểm thế nào. Code base: nhánh `feat/scout-single-selection-flow` @ `358b504`; Mac, origin và server Windows cùng ở commit này. Số dòng trong tài liệu tính ở commit đó; kiểm lại trước khi sửa.
 
-Tài liệu này thay cho `TODO_QA_SCOUT_2026-10-02.md` và `DESIGN_DONE_LEDGER_2026-10-02.md` (đã gộp vào đây). Bằng chứng gốc, có số liệu và nguồn, nằm ở `docs/research/2026-10-0*.md`.
+Tài liệu này thay cho `TODO_QA_SCOUT_2026-10-02.md` và `DESIGN_DONE_LEDGER_2026-10-02.md` (đã gộp vào đây). Bằng chứng gốc, có số liệu và nguồn, nằm ở `todo/qa-scout/2026-10-0*.md`.
 
 ---
 
@@ -318,12 +318,12 @@ Theo quyết định 1, **chỉ server Windows ghi**.
 
 ## 7. Việc ngoài code
 - **Khởi động lại UI server** trên Windows để nạp `.env` mới (đã xoá `SCOUT_PLANNER_MODEL` / `SCOUT_EVIDENCE_MODEL` không hợp lệ; planner đã trả HTTP 200 với `deepseek/deepseek-v4-flash`). UI đang chạy từ trước khi sửa `.env` nên vẫn dùng cấu hình cũ.
-- Commit tài liệu này và `docs/research/`.
+- Commit tài liệu này và `todo/qa-scout/`.
 
 ## 8. Tham chiếu
-- `docs/research/2026-10-02-done-memory-architecture.md`: kiến trúc bộ nhớ, lớp lưu trữ, định danh comic.
-- `docs/research/2026-10-02-youcom-dedup-and-exclusion.md`: You.com API, giá, lọc trùng, gắn lại URL.
-- `docs/research/2026-10-02-context-loading-papers.md`: paper về nạp context cho agent tìm kiếm.
-- `docs/research/2026-10-02-novelty-search-papers.md`: paper về tìm kiếm hướng tới cái mới và chia ô.
-- `docs/research/2026-10-03-youcom-large-prompt-test.md`: đo prompt lớn và danh sách tránh.
-- `docs/research/2026-10-03-scout-strategy-ab-test.md`: A/B chiến lược scout.
+- `todo/qa-scout/2026-10-02-done-memory-architecture.md`: kiến trúc bộ nhớ, lớp lưu trữ, định danh comic.
+- `todo/qa-scout/2026-10-02-youcom-dedup-and-exclusion.md`: You.com API, giá, lọc trùng, gắn lại URL.
+- `todo/qa-scout/2026-10-02-context-loading-papers.md`: paper về nạp context cho agent tìm kiếm.
+- `todo/qa-scout/2026-10-02-novelty-search-papers.md`: paper về tìm kiếm hướng tới cái mới và chia ô.
+- `todo/qa-scout/2026-10-03-youcom-large-prompt-test.md`: đo prompt lớn và danh sách tránh.
+- `todo/qa-scout/2026-10-03-scout-strategy-ab-test.md`: A/B chiến lược scout.
