@@ -313,12 +313,15 @@ def preprocess_project(
     *,
     progress: Callable[[str], None] | None = None,
     force_refresh: bool = False,
+    start_page: int = 1,
 ) -> list[dict]:
     """
     Run preprocessing on already-downloaded comic pages.
     Reads raw_comic/manifest.json written by the download stage.
     Returns list of page dicts (also written to disk as individual JSON files).
     """
+    if isinstance(start_page, bool) or not isinstance(start_page, int) or start_page < 1:
+        raise ValueError("Start page must be a positive integer.")
     log = progress or print
 
     project_root = get_project_dirs(project_name)["root"]
@@ -358,6 +361,12 @@ def preprocess_project(
             global_page_num += 1
             flat.append((global_page_num, label, img_path))
 
+    last_page = flat[-1][0] if flat else 0
+    if start_page > last_page and (flat or start_page > 1):
+        raise ValueError(f"Start page {start_page} exceeds last downloaded page {last_page}.")
+    if start_page > 1:
+        log(f"[preprocess] starting at global page {start_page} of {last_page}")
+
     log(f"[preprocess] {len(flat)} total page(s); batch_size={VLM_BATCH_SIZE}")
     if not VLM_EXTRACT:
         log("[preprocess] VLM_EXTRACT=0 → Magi-only (no OpenRouter desc)")
@@ -367,16 +376,27 @@ def preprocess_project(
     for pn, label, img_path in flat:
         h = image_hash(img_path)
         cached = None if force_refresh else load_cached(project_root, pn, h, img_path, log=log)
-        if cached is not None and cached.get("skip_reason") == "vlm_failure":
+        before_start = pn < start_page
+        if cached is not None and cached.get("skip_reason") == "vlm_failure" and not before_start:
             cached = None  # invalidate prior failures so we retry with batch
         if cached is not None and _refresh_cached_identity(cached, label=label, image_path=img_path):
-            save_cached(project_root, pn, h, cached)
-            log(f"[preprocess]   ↻ cache relabel p{pn:03d} → {label} ({img_path.name})")
-        page_states.append({"pn": pn, "label": label, "img": img_path, "hash": h, "cached": cached})
+            if not before_start:
+                save_cached(project_root, pn, h, cached)
+                log(f"[preprocess]   ↻ cache relabel p{pn:03d} → {label} ({img_path.name})")
+        page_states.append({"pn": pn, "label": label, "img": img_path, "hash": h,
+                            "cached": cached, "before_start": before_start})
 
     cached_count = sum(1 for s in page_states if s["cached"] is not None)
-    log(f"[preprocess] cache: {cached_count}/{len(page_states)} pages have valid results — "
-        f"{len(page_states) - cached_count} need VLM")
+    if start_page == 1:
+        log(f"[preprocess] cache: {cached_count}/{len(page_states)} pages have valid results — "
+            f"{len(page_states) - cached_count} need VLM")
+    else:
+        selected_states = [s for s in page_states if not s["before_start"]]
+        selected_cached = sum(1 for s in selected_states if s["cached"] is not None)
+        preserved_cached = sum(1 for s in page_states if s["before_start"] and s["cached"] is not None)
+        log(f"[preprocess] cache from p{start_page}: {selected_cached}/{len(selected_states)} selected pages "
+            f"have valid results — {len(selected_states) - selected_cached} need processing; "
+            f"preserving {preserved_cached} earlier cache(s)")
 
     # The cache key is the IMAGE hash alone — deliberately, since Master toggles config
     # (VLM on/off per Q&A rules, gutter split, …) between runs on the same project, and
@@ -410,7 +430,7 @@ def preprocess_project(
     from config import MAGI_BATCH_SIZE
     from .panel_detect import detect_full_batch
     magi_by_pn: dict[int, dict] = {}
-    _uncached = [ps for ps in page_states if ps["cached"] is None]
+    _uncached = [ps for ps in page_states if ps["cached"] is None and not ps["before_start"]]
     if _uncached and MAGI_BATCH_SIZE > 1:
         log(f"[preprocess] ▶ Magi batch-detect {len(_uncached)} uncached page(s) "
             f"(batch={MAGI_BATCH_SIZE})")
@@ -438,6 +458,22 @@ def preprocess_project(
     n = len(page_states)
     while i < n:
         s = page_states[i]
+        if s["before_start"]:
+            if s["cached"] is not None:
+                log(f"[preprocess]   ✓ preserved cache p{s['pn']:03d} before selected start")
+                results.append(s["cached"])
+                prev_page_dict = s["cached"]
+                prev_image_path = s["img"]
+                summary = (s["cached"].get("page_summary") or "").strip()
+                if summary and not running_state:
+                    running_state = summary[:240]
+            else:
+                # Never use an older cached page as immediate continuity across a gap.
+                prev_page_dict = None
+                prev_image_path = None
+                running_state = ""
+            i += 1
+            continue
         if s["cached"] is not None:
             log(f"[preprocess]   ✓ cache hit p{s['pn']:03d} ({s['img'].name})")
             results.append(s["cached"])
@@ -605,12 +641,22 @@ def preprocess_project(
 
     log(f"[preprocess] running_state final: {running_state[:200]}")
     _prune_stale_page_cache(project_root, page_states, log=log)
-    _reclassify_mid_doc_covers(results, project_root, log)
-    _demote_credits_pages(results, project_root, log)
-    _demote_backmatter_tail(results, project_root, log)
+    protected_pages = {s["pn"] for s in page_states if s["before_start"]}
+    _reclassify_mid_doc_covers(
+        results, project_root, log, protected_page_numbers=protected_pages,
+        issue_bounds=_issue_bounds, total_pages=last_page,
+    )
+    _demote_credits_pages(results, project_root, log, protected_page_numbers=protected_pages)
+    _demote_backmatter_tail(
+        results, project_root, log, protected_page_numbers=protected_pages,
+        issue_bounds=_issue_bounds,
+    )
 
     # v5 Phase 2: resolve Magi cluster_ids → character names via VLM
-    _resolve_clusters_after_preprocess(results, project_root, log)
+    if start_page == 1:
+        _resolve_clusters_after_preprocess(results, project_root, log)
+    else:
+        log("[preprocess] partial run — skipping cluster naming until all pages are available")
 
     story_count = sum(1 for r in results if r.get("is_story_page"))
     log(f"[preprocess] done — {len(results)} pages processed, {story_count} story pages")
@@ -627,7 +673,10 @@ def preprocess_project(
     # safety net that replaces the human hand-fix from the Moon Knight #9 incident
     # (see identity_check module docstring). Never raises Stage 2.
     try:
-        _run_identity_repair(project_root, results, log, force_refresh=force_refresh)
+        if start_page == 1:
+            _run_identity_repair(project_root, results, log, force_refresh=force_refresh)
+        else:
+            log("[identity] partial run — skipping project identity repair until all pages are available")
     except Exception as exc:
         log(f"[identity]   repair hook crashed unexpectedly: {type(exc).__name__}: {exc}")
 
@@ -645,9 +694,12 @@ def preprocess_project(
     try:
         ctx = json.loads((project_root / "comic_context.json").read_text())
         if str(ctx.get("plot_source") or "") == "answer_research":
-            from ..subject_panels import build_subject_panels
-            answer_ctx = json.loads((project_root / "answer_context.json").read_text())
-            build_subject_panels(project_name, answer_ctx, results, log=log)
+            if start_page == 1:
+                from ..subject_panels import build_subject_panels
+                answer_ctx = json.loads((project_root / "answer_context.json").read_text())
+                build_subject_panels(project_name, answer_ctx, results, log=log)
+            else:
+                log("[subject-panels] partial run — keeping existing ranking until a full run")
     except Exception as exc:
         (log or print)(f"[subject-panels] skipped (error): {exc}")
 
@@ -746,7 +798,10 @@ def _issue_page_ranges(pages: list[dict]) -> dict[str, tuple[int, int]]:
 
 
 def _reclassify_mid_doc_covers(
-    pages: list[dict], project_root: Path, log: Callable[[str], None]
+    pages: list[dict], project_root: Path, log: Callable[[str], None], *,
+    protected_page_numbers: set[int] | None = None,
+    issue_bounds: dict[str, tuple[int, int]] | None = None,
+    total_pages: int | None = None,
 ) -> None:
     """A real cover sits at the edges of the issue. A page tagged 'cover' in the middle is
     almost always a misclassified splash — flip it to story so Narration can use it.
@@ -757,15 +812,19 @@ def _reclassify_mid_doc_covers(
     polluting the panel pool/cold-open. Fix: a cover within the first ~2 pages of ITS OWN
     issue_label range is still legitimate; only a cover mid-ISSUE (the original bug) flips.
     Single issue → one range == the whole doc → identical to the original check."""
-    total = max((int(p.get("page_number", 0) or 0) for p in pages), default=0)
+    protected_page_numbers = protected_page_numbers or set()
+    total = total_pages if total_pages is not None else max(
+        (int(p.get("page_number", 0) or 0) for p in pages), default=0)
     if total < 5:
         return
-    ranges = _issue_page_ranges(pages)
+    ranges = issue_bounds or _issue_page_ranges(pages)
     multi_issue = len(ranges) > 1
     for p in pages:
         if p.get("page_type") != "cover":
             continue
         pn = int(p.get("page_number", 0) or 0)
+        if pn in protected_page_numbers:
+            continue
         if multi_issue:
             issue_start, _issue_end = ranges.get(str(p.get("issue_label", "") or ""), (pn, pn))
             if pn - issue_start <= 1 or pn >= total:
@@ -784,7 +843,8 @@ def _reclassify_mid_doc_covers(
 
 
 def _demote_credits_pages(
-    pages: list[dict], project_root: Path, log: Callable[[str], None]
+    pages: list[dict], project_root: Path, log: Callable[[str], None], *,
+    protected_page_numbers: set[int] | None = None,
 ) -> None:
     """Demote any 'story' page whose FINAL merged text reads like a title/credits/
     recap page (issue-title logo + creative-team credits + recap blurb). The inline
@@ -801,8 +861,12 @@ def _demote_credits_pages(
     regardless of what else is on the page, so a page with real multi-panel dialogue must
     win over the phrase match — only a page with NO real story content of its own (the
     hero-splash-reused credits page this function targets) gets demoted."""
+    protected_page_numbers = protected_page_numbers or set()
     for p in pages:
         if not p.get("is_story_page"):
+            continue
+        pn = int(p.get("page_number", 0) or 0)
+        if pn in protected_page_numbers:
             continue
         from .._panel_index import page_dialog
         corpus = " ".join(str(tb.get("text", "")) for tb in page_dialog(p))
@@ -810,7 +874,6 @@ def _demote_credits_pages(
             continue
         if _has_strong_story_signal(p):
             continue
-        pn = int(p.get("page_number", 0) or 0)
         log(f"[preprocess] credits/title text on p{pn:03d} → demoting story→skip (not a story panel)")
         p["page_type"] = "skip"
         p["is_story_page"] = False
@@ -907,7 +970,9 @@ def _find_tail_cut(issue_pages: list[dict], half: float) -> int | None:
 
 
 def _demote_backmatter_tail(
-    pages: list[dict], project_root: Path, log: Callable[[str], None]
+    pages: list[dict], project_root: Path, log: Callable[[str], None], *,
+    protected_page_numbers: set[int] | None = None,
+    issue_bounds: dict[str, tuple[int, int]] | None = None,
 ) -> None:
     """Demote every story page that follows the first GENUINE terminal back-matter page
     in the BACK HALF of the issue. General: keyed on page position + an already-detected
@@ -927,10 +992,11 @@ def _demote_backmatter_tail(
     range, so issue #4/#5's own tails are found (and only THEIR own tails trimmed) instead
     of inheriting issue #3's cutoff. Single issue → one range == the whole doc → runs the
     untouched original algorithm (byte-identical)."""
+    protected_page_numbers = protected_page_numbers or set()
     numbers = [int(p.get("page_number", 0) or 0) for p in pages]
     if not numbers:
         return
-    ranges = _issue_page_ranges(pages)
+    ranges = issue_bounds or _issue_page_ranges(pages)
     if len(ranges) <= 1:
         half = max(numbers) * 0.5
         cut = _find_tail_cut(pages, half)
@@ -938,7 +1004,7 @@ def _demote_backmatter_tail(
             return
         for p in pages:
             pn = int(p.get("page_number", 0) or 0)
-            if pn <= cut or not p.get("is_story_page"):
+            if pn <= cut or pn in protected_page_numbers or not p.get("is_story_page"):
                 continue
             _demote_backmatter_tail_one(p, project_root, cut, log)
         return
@@ -951,7 +1017,7 @@ def _demote_backmatter_tail(
             continue
         for p in issue_pages:
             pn = int(p.get("page_number", 0) or 0)
-            if pn <= cut or not p.get("is_story_page"):
+            if pn <= cut or pn in protected_page_numbers or not p.get("is_story_page"):
                 continue
             _demote_backmatter_tail_one(p, project_root, cut, log)
 

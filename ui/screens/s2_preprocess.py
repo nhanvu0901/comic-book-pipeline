@@ -38,6 +38,13 @@ def build(
         page, log_path=lambda: stage_log_path(state.project_name, "stage4_preprocess"))
     status_text = ft.Text("", color=TEXT_MUTED, size=12)
     running = ft.ProgressRing(visible=False, width=18, height=18, stroke_width=2)
+    start_page_field = ft.TextField(
+        label="Start at page",
+        value="1",
+        width=150,
+        keyboard_type=ft.KeyboardType.NUMBER,
+        hint_text="Global page number",
+    )
 
     summary_text = ft.Text("", size=12, color=TEXT_MUTED)
 
@@ -120,7 +127,7 @@ def build(
     # Cached pages if any — otherwise the placeholder, not a blank pane.
     render_grid(load_preprocessed(state.project_name) if state.project_name else [])
 
-    async def _execute():
+    async def _execute(start_page: int):
         if not state.project_name:
             status_text.value = "No project loaded — go back to Stage 1."
             status_text.color = DANGER
@@ -132,10 +139,12 @@ def build(
         page.update()
 
         try:
-            pages = await run_blocking(run_stage_2, state.project_name, push_log)
+            pages = await run_blocking(
+                run_stage_2, state.project_name, push_log, start_page=start_page,
+            )
         except Exception as e:
             running.visible = False
-            status_text.value = "Failed — see log."
+            status_text.value = str(e) if isinstance(e, ValueError) else "Failed — see log."
             status_text.color = DANGER
             push_log(format_exception(e))
             page.update()
@@ -148,13 +157,27 @@ def build(
         save_state(state)
 
         running.visible = False
-        status_text.value = f"Preprocessing complete — {len(pages)} pages."
+        status_text.value = (
+            f"Preprocessing complete — {len(pages)} pages."
+            if start_page == 1 else
+            f"Preprocessing complete from page {start_page} — "
+            f"{sum(int(p.get('page_number', 0) or 0) >= start_page for p in pages)} pages processed; "
+            "earlier caches retained."
+        )
         status_text.color = SUCCESS
         page.update()
         on_state_change()
 
     def run_click(_e):
-        page.run_task(_execute)
+        raw_start = str(start_page_field.value or "").strip()
+        if not raw_start.isdecimal() or int(raw_start) < 1:
+            start_page_field.error_text = "Enter a positive whole page number."
+            status_text.value = start_page_field.error_text
+            status_text.color = DANGER
+            page.update()
+            return
+        start_page_field.error_text = None
+        page.run_task(_execute, int(raw_start))
 
     def _show_snack(msg: str):
         sb = ft.SnackBar(content=ft.Text(msg))
@@ -208,6 +231,7 @@ def build(
             size=12, color=TEXT_MUTED,
         ),
         ft.Container(height=16),
+        start_page_field,
         primary_button("Run Preprocessing", run_click, icon=ft.Icons.PLAY_ARROW),
         ft.Container(height=8),
         secondary_button("Clear preprocessed", _do_clear, icon=ft.Icons.DELETE_OUTLINE),

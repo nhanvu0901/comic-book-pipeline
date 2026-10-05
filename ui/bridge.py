@@ -614,9 +614,11 @@ def load_raw_pages(project_name: str) -> list[dict]:
 
 # ─── Stage 3: Preprocess ──────────────────────────────────────────────────
 
-def run_stage_2(project_name: str, log: Callable[[str], None]) -> list[dict]:
+def run_stage_2(
+    project_name: str, log: Callable[[str], None], *, start_page: int = 1,
+) -> list[dict]:
     from stages.stage_2 import preprocess_project
-    return preprocess_project(project_name, progress=log, force_refresh=False)
+    return preprocess_project(project_name, progress=log, force_refresh=False, start_page=start_page)
 
 
 def load_preprocessed(project_name: str) -> list[dict]:
