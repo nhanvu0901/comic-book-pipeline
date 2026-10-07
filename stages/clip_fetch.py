@@ -1,6 +1,7 @@
 """Find, fetch and pick video clips for Stage 5 clip shots (see stages/stage_5/clips.py).
 
     python -m stages.clip_fetch search "green lantern animated series mogo"
+    python -m stages.clip_fetch moment "Kilowog fights Hal Jordan"      # shortlist + time windows
     python -m stages.clip_fetch fetch "https://www.youtube.com/watch?v=gKiT1ekWIAA" --project my-proj
     python -m stages.clip_fetch sheet projects/my-proj/review/clips/gKiT1ekWIAA.mp4 --start 60 --end 80 --every 0.5
     python -m stages.clip_fetch beats --project my-proj
@@ -9,6 +10,9 @@
     python -m stages.clip_fetch sync --project my-proj      # fetch entries that only have a URL
 
 search → You.com Web Search (stages.research_scout.youcom), restricted to youtube.com.
+moment → several phrasings of a described moment → every video they find, ranked by how well it
+         matches, each with candidate windows from chapters, subtitles and "most replayed"
+         peaks (read from metadata; nothing is downloaded).
 fetch  → yt-dlp (node JS runtime, merged to mp4) into <project>/review/clips/src/, then ALWAYS
          transcoded to <project>/review/clips/<id>.mp4 (H.264 yuv420p, constant 30 fps, short
          side <= 1080, AAC kept for previewing) — sources arrive as AV1/VP9 at any frame rate.
@@ -50,7 +54,8 @@ def _api_key() -> str:
 
 
 def parse_search_results(payload) -> list[dict]:
-    """You.com Search payload → [{"title","url","snippet","is_video"}], deduped by URL, in
+    """You.com Search payload → [{"title","url","snippet","is_video"}], deduped by video id
+    (the same video comes back as watch?v=, m.youtube.com and ?pp= variants) or URL, in
     response order (web results, then news)."""
     results = payload.get("results") if isinstance(payload, dict) else None
     rows: list = []
@@ -65,9 +70,10 @@ def parse_search_results(payload) -> list[dict]:
         if not isinstance(r, dict):
             continue
         url = str(r.get("url") or "").strip()
-        if not url or url in seen:
+        key = video_id(url) or url
+        if not url or key in seen:
             continue
-        seen.add(url)
+        seen.add(key)
         snips = r.get("snippets") or []
         snippet = str(r.get("description") or (snips[0] if snips else "") or "")
         out.append({"title": str(r.get("title") or ""), "url": url,
@@ -84,6 +90,273 @@ def youtube_search(query: str, *, client=None) -> list[dict]:
     if not call.ok:
         raise RuntimeError(f"You.com search failed: {call.error}")
     return parse_search_results(call.payload)
+
+
+def video_id(url: str) -> str | None:
+    """The 11-character YouTube id of a watch/shorts/embed/youtu.be URL, else None."""
+    if not _VIDEO_URL.search(url or ""):
+        return None
+    m = _YT_ID.search(url)
+    return m.group(1) if m else None
+
+
+# ─── moment search: several candidates, several timing signals ──────────────────
+# One query + "most replayed" picks ONE spot in ONE video. A moment search instead asks a few
+# phrasings, keeps every video they return, and reads three independent timing signals per
+# video without downloading it: chapters and subtitle lines that share words with the
+# description, and the "most replayed" peaks. Videos rank by how well their title/description
+# match the description and how many phrasings found them; the replay graph is one signal
+# among three, never the ranking.
+
+def _stem(w: str) -> str:
+    for suf in ("ing", "ed", "es", "s"):
+        if len(w) > len(suf) + 3 and w.endswith(suf):
+            return w[: -len(suf)]
+    return w
+
+
+def _terms(text: str) -> set[str]:
+    from utils.lexical_sim import content_words
+    return {_stem(w) for w in content_words(text)}
+
+
+def moment_queries(desc: str, extra: list[str] | tuple = ()) -> list[str]:
+    """The phrasings a moment search sends: the description as given, as a scene clip, and as
+    animation — then any caller-supplied ones. Deduped, order kept."""
+    out: list[str] = []
+    for q in (desc, f"{desc} scene clip", f"{desc} animated", *extra):
+        q = " ".join(str(q).split())
+        if q and q not in out:
+            out.append(q)
+    return out
+
+
+def gather_candidates(queries: list[str], *, search=youtube_search, log=print) -> list[dict]:
+    """Run every query, keep each VIDEO once (by id) with how many queries found it ("hits")
+    and its best rank. Sorted by hits, then best rank. A failed query is logged and skipped."""
+    by_id: dict[str, dict] = {}
+    for q in queries:
+        try:
+            rows = search(q)
+        except RuntimeError as exc:
+            log(f"[moment] query failed ({exc}): {q}")
+            continue
+        for rank, r in enumerate(r for r in rows if r.get("is_video")):
+            vid = video_id(r["url"])
+            if not vid:
+                continue
+            c = by_id.setdefault(vid, {"id": vid, "url": f"https://www.youtube.com/watch?v={vid}",
+                                       "title": r.get("title", ""), "snippet": r.get("snippet", ""),
+                                       "hits": 0, "best_rank": rank})
+            c["hits"] += 1
+            c["best_rank"] = min(c["best_rank"], rank)
+    return sorted(by_id.values(), key=lambda c: (-c["hits"], c["best_rank"]))
+
+
+_CUE = re.compile(r"(?:(\d+):)?(\d\d):(\d\d)[.,](\d+)\s+-->\s+(?:(\d+):)?(\d\d):(\d\d)[.,](\d+)")
+
+
+def parse_vtt(text: str) -> list[tuple[float, float, str]]:
+    """WebVTT → [(start, end, text)], tags stripped, consecutive repeats (auto-caption
+    roll-up) collapsed."""
+    def t(h, m, s, frac):
+        return int(h or 0) * 3600 + int(m) * 60 + int(s) + float(f"0.{frac}")
+    cues: list[tuple[float, float, str]] = []
+    lines = (text or "").splitlines()
+    i = 0
+    while i < len(lines):
+        m = _CUE.search(lines[i])
+        if not m:
+            i += 1
+            continue
+        a, b = t(*m.groups()[:4]), t(*m.groups()[4:])
+        i += 1
+        body = []
+        while i < len(lines) and lines[i].strip():
+            body.append(re.sub(r"<[^>]+>", "", lines[i]).strip())
+            i += 1
+        txt = " ".join(x for x in body if x)
+        if txt and not (cues and cues[-1][2] == txt):
+            cues.append((a, b, txt))
+    return cues
+
+
+def heatmap_peaks(heatmap: list | None, duration: float, *, k: int = 3,
+                  min_value: float = 0.35, min_gap: float = 8.0) -> list[tuple[float, float]]:
+    """[(centre_seconds, value)] of up to k local maxima of YouTube's "most replayed" graph,
+    strongest first, at least min_gap apart. The opening seconds are skipped: every video's
+    graph starts high because playback starts there, which says nothing about the content."""
+    segs = [(float(h["start_time"]), float(h["end_time"]), float(h["value"]))
+            for h in heatmap or [] if isinstance(h, dict) and "value" in h]
+    head = max(3.0, 0.02 * (duration or 0))
+    peaks = []
+    for i, (a, b, v) in enumerate(segs):
+        if a < head or v < min_value:
+            continue
+        prev = segs[i - 1][2] if i else -1.0
+        nxt = segs[i + 1][2] if i + 1 < len(segs) else -1.0
+        if v >= prev and v >= nxt:
+            peaks.append(((a + b) / 2, v))
+    chosen: list[tuple[float, float]] = []
+    for c, v in sorted(peaks, key=lambda p: -p[1]):
+        if all(abs(c - c2) >= min_gap for c2, _ in chosen):
+            chosen.append((round(c, 1), round(v, 2)))
+        if len(chosen) == k:
+            break
+    return chosen
+
+
+def find_moments(desc: str, info: dict, cues: list | None = None, *, k: int = 3) -> list[dict]:
+    """Up to k candidate windows in one video, strongest first, each with the reason it was
+    picked: a chapter or a subtitle line sharing words with the description, or a most-replayed
+    peak. [] when the video gives no timing signal at all."""
+    q = _terms(desc)
+    # Words the TITLE already has (usually the characters' names) say what the whole video is
+    # about, not where in it the moment is — a line naming "Hal Jordan" proves nothing in a
+    # video titled "Hal Jordan vs Kilowog". So a chapter or subtitle must share at least one
+    # of the REMAINING description words (the action: "fights", "dies", "saves"...).
+    locate = q - _terms(info.get("title") or "")
+    need = 1 if len(q) <= 2 else 2
+
+    def hit(text: str) -> set[str]:
+        shared = q & _terms(text)
+        ok = bool(shared & locate) if locate else len(shared) >= need
+        return shared if ok else set()
+
+    dur = float(info.get("duration") or 0)
+    out: list[dict] = []
+    for ch in info.get("chapters") or []:
+        shared = hit(ch.get("title", ""))
+        if shared:
+            a = float(ch.get("start_time") or 0)
+            b = min(float(ch.get("end_time") or a + 10), a + 10)
+            out.append({"start": round(a, 1), "end": round(b, 1), "strength": 0.6 + 0.1 * len(shared),
+                        "why": f"chapter \"{ch.get('title', '')}\""})
+    for a, b, txt in cues or []:
+        shared = hit(txt)
+        if shared:
+            out.append({"start": round(max(0.0, a - 1), 1), "end": round(min(dur or b + 2, b + 2), 1),
+                        "strength": 0.5 + 0.1 * len(shared), "why": f"subtitle \"{txt[:70]}\""})
+    for c, v in heatmap_peaks(info.get("heatmap"), dur):
+        out.append({"start": round(max(0.0, c - 3), 1), "end": round(min(dur or c + 3, c + 3), 1),
+                    "strength": v, "why": f"most replayed ({v:.2f})"})
+    out.sort(key=lambda m: -m["strength"])
+    picked: list[dict] = []
+    for m in out:                                   # drop windows overlapping a stronger one
+        if all(m["end"] <= p["start"] or m["start"] >= p["end"] for p in picked):
+            picked.append(m)
+        if len(picked) == k:
+            break
+    return sorted(picked, key=lambda m: m["start"])
+
+
+def score_video(desc: str, cand: dict, info: dict, moments: list[dict], n_queries: int) -> dict:
+    """The ranking, with its parts so the list can say WHY: description match (title counts
+    more than description/tags), how many phrasings found the video, whether it has a timing
+    signal, a scene-clip length (30s-10min) and >=720p. A heuristic for ordering a shortlist
+    a human picks from, not a gate — nothing is dropped for a low score."""
+    q = _terms(desc) or {""}
+    title = _terms(info.get("title") or cand.get("title", ""))
+    body = _terms(" ".join([info.get("description") or cand.get("snippet", ""),
+                            " ".join(info.get("tags") or [])]))
+    match = 0.7 * len(q & title) / len(q) + 0.3 * len(q & (title | body)) / len(q)
+    consensus = cand.get("hits", 1) / max(1, n_queries)
+    timing = min(1.0, max((m["strength"] for m in moments), default=0.0))
+    dur = float(info.get("duration") or 0)
+    length_fit = 1.0 if 30 <= dur <= 600 else (0.5 if dur and dur <= 1200 else 0.0)
+    res = 1.0 if (info.get("height") or 0) >= 720 else 0.0
+    score = 0.45 * match + 0.25 * consensus + 0.15 * timing + 0.1 * length_fit + 0.05 * res
+    return {"score": round(score, 3), "match": round(match, 2), "consensus": f"{cand.get('hits', 1)}/{n_queries}",
+            "timing": round(timing, 2)}
+
+
+_SUB_LANGS = ("en", "en-US", "en-GB", "en-orig")
+
+
+def video_metadata(url: str, work_dir: Path, *, timeout: int = 120) -> tuple[dict, list]:
+    """(yt-dlp info dict, subtitle cues) for one video WITHOUT downloading it. Two calls on
+    purpose: the info JSON comes from --dump-single-json, which does not depend on subtitles —
+    with both in one call a subtitle HTTP 429 (YouTube rate-limits caption requests) aborted
+    the whole video. Subtitles are then fetched only when the video has English ones, and any
+    failure there just means no subtitle signal. Raises when the info itself can't be read
+    (private / removed / blocked)."""
+    base = [*_ytdlp_cmd(), "--skip-download", "--no-playlist", "--js-runtimes", "node"]
+    res = subprocess.run([*base, "--dump-single-json", url],
+                         capture_output=True, text=True, timeout=timeout)
+    try:
+        info = json.loads(res.stdout or "")
+    except ValueError:
+        tail = " ".join((res.stderr or "").split())[-160:]
+        raise RuntimeError(f"no metadata ({tail or 'private, removed or blocked?'})") from None
+    langs = [lg for lg in _SUB_LANGS
+             if lg in (info.get("subtitles") or {}) or lg in (info.get("automatic_captions") or {})]
+    cues: list = []
+    if langs:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run([*base, "--write-subs", "--write-auto-subs", "--sub-langs", langs[0],
+                            "--sub-format", "vtt", "-o", str(work_dir / "%(id)s.%(ext)s"), url],
+                           capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
+        vtts = sorted(work_dir.glob("*.vtt"))
+        if vtts:
+            cues = parse_vtt(vtts[0].read_text(encoding="utf-8", errors="replace"))
+    return info, cues
+
+
+def moment_search(desc: str, *, limit: int = 8, extra_queries: list[str] | tuple = (),
+                  search=youtube_search, metadata=video_metadata, log=print) -> list[dict]:
+    """The shortlist: up to `limit` videos, best first, each with its candidate windows."""
+    from concurrent.futures import ThreadPoolExecutor
+    queries = moment_queries(desc, extra_queries)
+    cands = gather_candidates(queries, search=search, log=log)[:limit]
+    log(f"[moment] {len(queries)} queries → {len(cands)} video(s); reading their metadata")
+
+    def one(c):
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                info, cues = metadata(c["url"], Path(td))
+        except Exception as exc:
+            return {**c, "error": str(exc)[:200]}
+        moments = find_moments(desc, info, cues)
+        row = {**c, "title": info.get("title") or c["title"],
+               "channel": info.get("channel") or info.get("uploader") or "",
+               "duration": round(float(info.get("duration") or 0), 1),
+               "height": info.get("height"), "subtitles": bool(cues),
+               "vertical": bool(info.get("width") and info.get("height")
+                                and info["height"] > info["width"]),
+               "moments": moments}
+        row.update(score_video(desc, c, info, moments, len(queries)))
+        return row
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        rows = list(pool.map(one, cands))
+    ok = sorted((r for r in rows if "error" not in r), key=lambda r: -r["score"])
+    return ok + [r for r in rows if "error" in r]
+
+
+def format_moments(rows: list[dict]) -> str:
+    out = []
+    for i, r in enumerate(rows, 1):
+        if "error" in r:
+            out.append(f"{i:2d}. (unavailable) {r['url']}  — {r['error']}")
+            continue
+        d = r["duration"]
+        out.append(f"{i:2d}. [{r['score']:.2f}] {r['title']}\n"
+                   f"    {r['url']}  {r['channel']} · {int(d // 60)}:{int(d % 60):02d} · "
+                   f"{r.get('height') or '?'}p{' vertical' if r.get('vertical') else ''} · "
+                   f"match {r['match']:.2f} · found by {r['consensus']} queries"
+                   f"{' · subtitles' if r.get('subtitles') else ''}")
+        if r["moments"]:
+            for m in r["moments"]:
+                span = f"{m['start']:.1f}–{m['end']:.1f}s"
+                out.append(f"      {span:<16} {m['why']}")
+        elif d and d <= 120:
+            out.append("      (no timing signal — short clip, the whole video is the scene)")
+        else:
+            out.append("      (no timing signal — fetch it and read the contact sheet)")
+    return "\n".join(out)
 
 
 # ─── fetch + normalise ──────────────────────────────────────────────────────────
@@ -383,6 +656,12 @@ def main(argv: list[str] | None = None) -> int:
     ad.add_argument("--crop-cx", type=float, default=None, help="9:16 window centre x, 0-1")
     ad.add_argument("--crop-cy", type=float, default=None, help="9:16 window centre y, 0-1")
 
+    mo = sub.add_parser("moment", help="shortlist videos + candidate windows for a described moment")
+    mo.add_argument("description", help='the moment, e.g. "Kilowog fights Hal Jordan"')
+    mo.add_argument("--limit", type=int, default=8, help="videos to examine (default 8)")
+    mo.add_argument("--query", action="append", default=[], help="extra phrasing (repeatable)")
+    mo.add_argument("--json", action="store_true")
+
     b = sub.add_parser("beats", help="list the project's beat keys and their clips")
     b.add_argument("--project", required=True)
 
@@ -402,6 +681,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{i:2d}. {r['title']}\n    {r['url']}\n    {r['snippet']}")
             if not rows:
                 print("no video results (try --all, or a different query)")
+        return 0
+    if a.cmd == "moment":
+        rows = moment_search(a.description, limit=a.limit, extra_queries=a.query)
+        print(json.dumps(rows, indent=2, ensure_ascii=False) if a.json else format_moments(rows))
         return 0
     if a.cmd == "fetch":
         root = _root(a.project)

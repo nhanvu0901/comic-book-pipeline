@@ -597,3 +597,133 @@ def test_fetch_normalizes_any_codec_and_frame_rate(tmp_path, monkeypatch):
     again = clip_fetch.fetch_clip("https://www.youtube.com/watch?v=zzzzzzzzzzz",
                                   tmp_path / "clips", sheet=False, log=lambda m: None)
     assert again["raw"] == ""                                 # cached: no second download
+
+
+# ─── moment search (several candidates, several timing signals) ─────────────────
+
+def test_search_results_dedupe_one_video_across_url_variants():
+    rows = clip_fetch.parse_search_results({"results": {"web": [
+        {"url": "https://www.youtube.com/watch?v=jAPzdoz6Cko", "title": "a"},
+        {"url": "https://www.youtube.com/watch?v=jAPzdoz6Cko&pp=0gcJCdgAo7VqN5tD", "title": "b"},
+        {"url": "https://m.youtube.com/watch?v=jAPzdoz6Cko", "title": "c"},
+        {"url": "https://www.youtube.com/@channel", "title": "d"}]}})
+    assert [r["title"] for r in rows] == ["a", "d"]
+
+
+def test_moment_queries_add_phrasings_and_dedupe():
+    assert clip_fetch.moment_queries("A fights B", ["A fights B", "A vs B"]) == [
+        "A fights B", "A fights B scene clip", "A fights B animated", "A vs B"]
+
+
+def test_gather_candidates_counts_how_many_queries_found_each_video():
+    vid = lambda i: {"url": f"https://www.youtube.com/watch?v={i * 11}", "title": i, "is_video": True}
+    answers = {"q1": [vid("a"), vid("b")], "q2": [vid("b")], "q3": RuntimeError("HTTP 500")}
+
+    def search(q):
+        if isinstance(answers[q], Exception):
+            raise answers[q]
+        return answers[q]
+
+    logs = []
+    out = clip_fetch.gather_candidates(["q1", "q2", "q3"], search=search, log=logs.append)
+    assert [(c["id"], c["hits"]) for c in out] == [("b" * 11, 2), ("a" * 11, 1)]
+    assert any("q3" in m for m in logs)
+
+
+def test_parse_vtt_strips_tags_and_rollup_repeats():
+    vtt = ("WEBVTT\n\n00:00:01.000 --> 00:00:03.500\n<c>Gwen</c> no!\n\n"
+           "00:03.500 --> 00:05.000\nGwen no!\n\n00:01:05.000 --> 00:01:07.250\nhold on\n")
+    assert clip_fetch.parse_vtt(vtt) == [(1.0, 3.5, "Gwen no!"), (65.0, 67.25, "hold on")]
+
+
+def test_heatmap_peaks_skip_the_opening_and_stay_apart():
+    hm = [{"start_time": t, "end_time": t + 2, "value": v} for t, v in
+          [(0, 1.0), (2, 0.2), (10, 0.5), (12, 0.9), (14, 0.85), (16, 0.3), (40, 0.6), (42, 0.2)]]
+    assert clip_fetch.heatmap_peaks(hm, 60.0) == [(13.0, 0.9), (41.0, 0.6)]
+    assert clip_fetch.heatmap_peaks(hm, 60.0, k=1) == [(13.0, 0.9)]
+    assert clip_fetch.heatmap_peaks([], 60.0) == []
+
+
+def test_find_moments_uses_chapters_subtitles_and_replays_without_overlap():
+    info = {"duration": 120.0,
+            "chapters": [{"start_time": 0, "end_time": 20, "title": "Intro"},
+                         {"start_time": 20, "end_time": 80, "title": "The fight with Kilowog"}],
+            "heatmap": [{"start_time": t, "end_time": t + 2, "value": v}
+                        for t, v in [(0, 1.0), (24, 0.4), (90, 0.9), (92, 0.3)]]}
+    cues = [(60.0, 62.0, "Kilowog fights Hal"), (100.0, 101.0, "unrelated words")]
+    ms = clip_fetch.find_moments("Kilowog fights Hal Jordan", info, cues)
+    assert [m["why"].split()[0] for m in ms] == ["chapter", "subtitle", "most"]
+    assert [m["start"] for m in ms] == [20.0, 59.0, 88.0]
+
+
+def test_score_video_prefers_the_matching_title_but_drops_nothing():
+    cand = {"hits": 1}
+    good = clip_fetch.score_video("Kilowog fights Hal Jordan", cand,
+                                  {"title": "Hal Jordan vs Kilowog fight", "duration": 150,
+                                   "height": 1080}, [], 3)
+    poor = clip_fetch.score_video("Kilowog fights Hal Jordan", cand,
+                                  {"title": "Top 10 Lanterns", "duration": 150, "height": 1080}, [], 3)
+    assert good["score"] > poor["score"] > 0
+    assert good["consensus"] == "1/3"
+
+
+def test_moment_search_returns_a_ranked_shortlist_with_windows():
+    urls = {q: [{"url": f"https://www.youtube.com/watch?v={v}", "title": v, "is_video": True}
+                for v in vids]
+            for q, vids in {"Kilowog fights Hal": ["AAAAAAAAAAA", "BBBBBBBBBBB"],
+                            "Kilowog fights Hal scene clip": ["BBBBBBBBBBB", "CCCCCCCCCCC"],
+                            "Kilowog fights Hal animated": ["BBBBBBBBBBB"]}.items()}
+    meta = {
+        "AAAAAAAAAAA": ({"title": "Green Lantern best moments", "duration": 900, "height": 720}, []),
+        "BBBBBBBBBBB": ({"title": "Hal fights Kilowog", "duration": 147, "height": 1080,
+                         "heatmap": [{"start_time": 44, "end_time": 46, "value": 0.6}]}, []),
+    }
+
+    def metadata(url, _dir):
+        vid = clip_fetch.video_id(url)
+        if vid not in meta:
+            raise RuntimeError("private video")
+        return meta[vid]
+
+    rows = clip_fetch.moment_search("Kilowog fights Hal", search=lambda q: urls[q],
+                                    metadata=metadata, log=lambda m: None)
+    assert [r["id"] for r in rows] == ["BBBBBBBBBBB", "AAAAAAAAAAA", "CCCCCCCCCCC"]
+    assert rows[0]["moments"][0]["why"].startswith("most replayed")
+    assert "error" in rows[-1]
+    text = clip_fetch.format_moments(rows)
+    assert "found by 3/3 queries" in text and "(unavailable)" in text
+
+
+def test_a_line_that_only_repeats_the_title_names_is_not_a_moment():
+    """In a video titled "Hal Jordan vs Kilowog" every line can name Hal Jordan; only a line
+    carrying the rest of the description (the action) locates the moment."""
+    info = {"title": "Hal Jordan vs Kilowog", "duration": 100.0}
+    cues = [(10.0, 12.0, "Hal Jordan, you reek of fear"), (40.0, 42.0, "you think you can fight me")]
+    ms = clip_fetch.find_moments("Kilowog fights Hal Jordan", info, cues)
+    assert [m["start"] for m in ms] == [39.0]
+
+
+def test_video_metadata_survives_a_subtitle_rate_limit(tmp_path, monkeypatch):
+    calls = []
+
+    class Res:
+        def __init__(self, out="", err=""):
+            self.stdout, self.stderr, self.returncode = out, err, 0
+
+    def fake_run(cmd, **_k):
+        calls.append(cmd)
+        if "--dump-single-json" in cmd:
+            return Res(json.dumps({"id": "kP5Cn03Q5WU", "title": "t", "duration": 147,
+                                   "subtitles": {"en": [{}]}}))
+        return Res(err="ERROR: Unable to download video subtitles for 'en': HTTP Error 429")
+
+    monkeypatch.setattr(clip_fetch.subprocess, "run", fake_run)
+    info, cues = clip_fetch.video_metadata("https://www.youtube.com/watch?v=kP5Cn03Q5WU", tmp_path)
+    assert info["duration"] == 147 and cues == []
+    assert len(calls) == 2                                    # info first, subtitles separately
+
+    def no_info(cmd, **_k):
+        return Res(err="ERROR: Private video")
+    monkeypatch.setattr(clip_fetch.subprocess, "run", no_info)
+    with pytest.raises(RuntimeError, match="Private video"):
+        clip_fetch.video_metadata("https://www.youtube.com/watch?v=kP5Cn03Q5WU", tmp_path)

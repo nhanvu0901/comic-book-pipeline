@@ -13,6 +13,10 @@ Code: `stages/stage_5/clips.py` (manifest, thứ tự ưu tiên, gắn clip vào
 # 1) Tìm clip trên YouTube qua You.com Web Search (cần YDC_API_KEY trong env hoặc .env)
 python -m stages.clip_fetch search "Green Lantern The Animated Series official clip DC Kids"
 
+# 1b) Hoặc tìm theo KHOẢNH KHẮC: nhiều video, mỗi video vài cửa sổ thời gian kèm lý do
+#     (chapter / phụ đề khớp mô tả / đỉnh "Most replayed"), không tải video
+python -m stages.clip_fetch moment "Kilowog fights Hal Jordan"
+
 # 2) Tải + transcode về projects/<p>/review/clips/<id>.mp4 + contact sheet <id>_sheet.jpg
 python -m stages.clip_fetch fetch "https://www.youtube.com/watch?v=gKiT1ekWIAA" --project <p>
 
@@ -104,6 +108,21 @@ có `desc` không bao giờ chiếm beat đã có panel lock, custom image hay c
   giãn bước).
 - `<id>.json` cạnh clip lưu title/channel/source_url; `add` tự điền `source_url` từ file này.
 
-## 7. Chưa làm (ngoài phạm vi MVP)
+## 7. Lệnh `moment`: tìm theo khoảnh khắc
+
+- Gửi 3 cách diễn đạt (mô tả, "+ scene clip", "+ animated"; thêm `--query` nếu muốn), gộp mọi video
+  tìm được theo video ID, đọc metadata của tối đa `--limit` (mặc định 8) video **mà không tải**.
+- Mỗi video có tối đa 3 cửa sổ, mỗi cửa sổ ghi lý do:
+  - chapter có tên khớp mô tả;
+  - câu phụ đề khớp mô tả (phải chứa từ của mô tả mà tiêu đề KHÔNG có, thường là hành động như
+    "fights", "dies", "save"; tên nhân vật có mặt khắp video nên không đủ);
+  - đỉnh "Most replayed" (bỏ vài giây đầu: video nào cũng cao ở đó).
+- Xếp video theo: độ khớp tiêu đề/mô tả (45%), số cách diễn đạt cùng tìm ra (25%), có tín hiệu thời
+  gian (15%), độ dài giống clip cảnh 30s–10 phút (10%), ≥720p (5%). Đây là thứ tự cho Master chọn,
+  không loại video nào. Video dọc được gắn nhãn `vertical`.
+- Phụ đề hay bị YouTube giới hạn (HTTP 429): khi đó video vẫn có trong danh sách, chỉ mất tín hiệu
+  phụ đề.
+
+## 8. Chưa làm (ngoài phạm vi MVP)
 
 Tự khớp clip với beat, gắn nhãn VLM, thư viện clip dùng chung, UI review cho clip.
