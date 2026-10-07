@@ -53,6 +53,18 @@ class Shot:
     # + matcher run (see assign_custom_images); render_shot loads this file directly instead
     # of cropping panel_bbox out of source_image when it's non-empty.
     custom_image: str = ""
+    # VIDEO CLIP shot (opt-in, review/clips/clips.json — see stage_5.clips). Non-empty
+    # clip_path = render this shot from a trimmed, muted, 9:16-fitted video clip instead of the
+    # Ken Burns panel; the panel/custom image fields above stay filled as the FALLBACK if the
+    # clip fails to render. All empty (default) = the panel path, byte-identical.
+    clip_path: str = ""          # absolute path of the local clip file
+    clip_in: float = 0.0         # in-point, seconds in the clip file
+    clip_out: float = 0.0        # out-point, seconds; 0 = play as long as the shot needs
+    clip_crop: dict = field(default_factory=dict)   # optional subject-crop hint (clips.parse_crop)
+    clip_id: str = ""            # manifest entry id, for logs/credits
+    clip_source_url: str = ""    # credit only
+    # Why this shot did NOT render its clip (resolve or render failure) — written to shots.json.
+    clip_fallback: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

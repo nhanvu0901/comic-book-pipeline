@@ -107,6 +107,12 @@ def assemble_project(
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             log(f"[stage5] cluster_to_name.json unreadable: {exc}")
 
+    # Video clips (opt-in): fetch any manifest entry that only names a source_url, so build_shots
+    # finds a local file. No review/clips/clips.json → returns at once. Never raises.
+    if not panels_only:
+        from .clips import prefetch_clips
+        prefetch_clips(project_name, log=log)
+
     shots = build_shots(
         narration,
         scene_timings=scene_timings,
@@ -176,7 +182,9 @@ def assemble_project(
         if sp.exists() and not force:
             log(f"[stage5] reusing {sp.name}")
         else:
-            if not getattr(s, "custom_image", None) and (not s.source_image or not Path(s.source_image).is_file()):
+            # A clip shot checks its fallback panel only if the clip fails (render_shot).
+            if (not getattr(s, "custom_image", None) and not getattr(s, "clip_path", "")
+                    and (not s.source_image or not Path(s.source_image).is_file())):
                 raise RuntimeError(
                     f"Shot {s.shot_id} has invalid source_image: {s.source_image!r}. "
                     "Comic pages may not be downloaded or preprocessed. "
@@ -190,6 +198,11 @@ def assemble_project(
     # upscale factor) so we can inspect "why did this shot pick that panel"
     # without re-running. Flags shots upscaled ≥3× (too-zoomed candidates).
     _write_shots_log(shots, caption_chunks, shots_dir, root / "shots.json", log)
+    wanted = [s for s in shots if getattr(s, "clip_path", "") or getattr(s, "clip_fallback", "")]
+    if wanted:
+        fell = [s.shot_id for s in wanted if s.clip_fallback]
+        log(f"[stage5] clips: {len(wanted) - len(fell)}/{len(wanted)} clip shot(s) rendered"
+            + (f", panel fallback on shot(s) {fell} (reasons in shots.json)" if fell else ""))
 
     from config import (ENABLE_OUTRO_CARD, OUTRO_CARD_SECONDS, CHANNEL_NAME,
                         CHANNEL_HANDLE, CHANNEL_LOGO_PATH)
@@ -264,6 +277,7 @@ def _write_shots_log(shots, caption_chunks, shots_dir, out_path, log):
     downstream reads it."""
     import re
     from PIL import Image
+    from .clips import shot_log_entry
     from .shots import OUTPUT_W, OUTPUT_H
 
     def _page_of(src: str) -> int | None:
@@ -301,6 +315,9 @@ def _write_shots_log(shots, caption_chunks, shots_dir, out_path, log):
             "scale_factor": scale,
             "upscale_warning": bool(scale and scale >= 3.0),
         })
+        clip = shot_log_entry(s)
+        if clip:
+            entries[-1]["clip"] = clip
     out_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
     n_warn = sum(1 for e in entries if e["upscale_warning"])
     log(f"[stage5] wrote shots.json ({len(entries)} shots, {n_warn} with upscale_warning ≥3×)")

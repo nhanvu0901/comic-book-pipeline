@@ -518,6 +518,13 @@ def build_shots(
                 f"was not merged away."
             )
 
+    # Video clips (opt-in, review/clips/clips.json — see stage_5.clips for the precedence): stamp
+    # a clip onto the beats the manifest names, ON TOP of the panel/custom image chosen above,
+    # which stays on the shot as the clip's fallback. No manifest → the same list, untouched.
+    if project:
+        from .clips import apply_clip_manifest
+        shots = apply_clip_manifest(shots, project, narration, custom_beats=set(custom_map))
+
     # SHOT_MAX_SECONDS (micro_moment v2): cap held shots so no panel freezes. No-op (returns the
     # list unchanged) when the knob is 0 → byte-identical to the old behavior. Runs BEFORE
     # _close_loop so the loop-clone lands on the FINAL fragment (a short ~LOOP_TAIL_SECONDS tail).
@@ -628,12 +635,12 @@ def _time_split_shots(shots: list[Shot], max_seconds: float, *, loop_tail: float
         head = round(dur - tail_eff, 3)
         out = list(shots[:-1])
         for k, d in enumerate((head, tail_eff)):
-            out.append(replace(
+            out.append(_advance_clip(replace(
                 last, shot_id=len(shots) - 1 + k, duration_seconds=d,
                 panel_bbox=dict(last.panel_bbox),
                 text_bboxes=list(getattr(last, "text_bboxes", None) or []),
                 char_bboxes=list(getattr(last, "char_bboxes", None) or []),
-            ))
+            ), head if k else 0.0))
         return out
     tail = min(loop_tail, max_seconds) if loop_tail > 0 else 0.0
     out: list[Shot] = []
@@ -644,14 +651,22 @@ def _time_split_shots(shots: list[Shot], max_seconds: float, *, loop_tail: float
         durs = _plan_split_durations(float(s.duration_seconds), max_seconds, want_tail)
         for k, d in enumerate(durs):
             motion = s.motion if len(durs) == 1 else _SUBSHOT_FRAMINGS[k % len(_SUBSHOT_FRAMINGS)]
-            out.append(replace(
+            out.append(_advance_clip(replace(
                 s, shot_id=nid, duration_seconds=d, motion=motion,
                 panel_bbox=dict(s.panel_bbox),
                 text_bboxes=list(getattr(s, "text_bboxes", None) or []),
                 char_bboxes=list(getattr(s, "char_bboxes", None) or []),
-            ))
+            ), sum(durs[:k])))
             nid += 1
     return out
+
+
+def _advance_clip(shot: Shot, seconds: float) -> Shot:
+    """A time-split fragment of a CLIP shot starts where the previous fragment stopped, so the
+    clip plays on continuously instead of restarting at every cut. No-op for a panel shot."""
+    if seconds and (shot.clip_path or shot.clip_id):
+        shot.clip_in = round(shot.clip_in + seconds, 3)
+    return shot
 
 
 def _close_loop(shots: list[Shot]) -> None:
@@ -686,6 +701,10 @@ def _close_loop(shots: list[Shot]) -> None:
     last.char_bboxes = list(getattr(first, "char_bboxes", None) or [])
     last.no_mirror = getattr(first, "no_mirror", False)
     last.custom_image = getattr(first, "custom_image", "")
+    # An opening CLIP is echoed too (its first moments replay under the closing line); an
+    # outro clip on the last shot gives way to the echo exactly like an outro panel does.
+    from .clips import copy_clip_fields
+    copy_clip_fields(last, first)
     last.motion = "zoom_out"
 
 
@@ -2969,9 +2988,22 @@ def render_shot(
     progress: Callable[[str], None] | None = None,
     corner_logo: Path | None = None,
 ) -> Path:
-    """Render one Ken Burns shot to MP4."""
+    """Render one Ken Burns shot to MP4 — or, for a clip shot, the trimmed video clip, falling
+    back to the Ken Burns panel when the clip fails for ANY reason (recorded in clip_fallback)."""
     ff = _require_ffmpeg()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if getattr(shot, "clip_path", ""):
+        from .clips import render_clip_shot
+        try:
+            return render_clip_shot(shot, out_path, corner_logo=corner_logo, progress=progress)
+        except Exception as exc:
+            shot.clip_fallback = f"{type(exc).__name__}: {' '.join(str(exc).split())[:400]}"
+            (progress or print)(f"[stage5] ⚠ shot {shot.shot_id:03d}: clip '{shot.clip_id}' "
+                                f"failed ({shot.clip_fallback[:160]}) — rendering its panel instead")
+            if not shot.custom_image and not (shot.source_image and Path(shot.source_image).is_file()):
+                raise RuntimeError(
+                    f"Shot {shot.shot_id}: clip failed ({shot.clip_fallback}) and its fallback "
+                    f"panel source_image {shot.source_image!r} does not exist") from exc
     work_dir = work_dir or out_path.parent / "_panels"
     work_dir.mkdir(parents=True, exist_ok=True)
 
