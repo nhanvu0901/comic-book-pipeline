@@ -1,7 +1,7 @@
 """Find, fetch and pick video clips for Stage 5 clip shots (see stages/stage_5/clips.py).
 
     python -m stages.clip_fetch search "green lantern animated series mogo"
-    python -m stages.clip_fetch moment "Kilowog fights Hal Jordan"      # shortlist + time windows
+    python -m stages.clip_fetch moment "Kilowog fights Hal Jordan" --html moments.html
     python -m stages.clip_fetch fetch "https://www.youtube.com/watch?v=gKiT1ekWIAA" --project my-proj
     python -m stages.clip_fetch sheet projects/my-proj/review/clips/gKiT1ekWIAA.mp4 --start 60 --end 80 --every 0.5
     python -m stages.clip_fetch beats --project my-proj
@@ -326,6 +326,8 @@ def moment_search(desc: str, *, limit: int = 8, extra_queries: list[str] | tuple
                "height": info.get("height"), "subtitles": bool(cues),
                "vertical": bool(info.get("width") and info.get("height")
                                 and info["height"] > info["width"]),
+               "thumbnail": info.get("thumbnail") or "",
+               "embeddable": info.get("playable_in_embed", True) is not False,
                "moments": moments}
         row.update(score_video(desc, c, info, moments, len(queries)))
         return row
@@ -334,6 +336,68 @@ def moment_search(desc: str, *, limit: int = 8, extra_queries: list[str] | tuple
         rows = list(pool.map(one, cands))
     ok = sorted((r for r in rows if "error" not in r), key=lambda r: -r["score"])
     return ok + [r for r in rows if "error" in r]
+
+
+def moments_html(sections: list[tuple[str, list[dict]]]) -> str:
+    """A self-contained review page: one section per searched description, one card per video
+    with an embedded player; each candidate window is a button that plays exactly that span
+    (embed start/end). A video whose owner disabled embedding shows its thumbnail and a link.
+    Every card links to YouTube at the window's start, so nothing depends on the embed."""
+    from html import escape as e
+
+    def card(i: int, r: dict) -> str:
+        if "error" in r:
+            return (f'<div class="card bad"><b>{i}. unavailable</b><br>'
+                    f'<a href="{e(r["url"])}" target="_blank">{e(r["url"])}</a><br>'
+                    f'<small>{e(r["error"])}</small></div>')
+        vid, d = r["id"], r.get("duration") or 0
+        first = (r.get("moments") or [{"start": 0, "end": 0}])[0]
+        start = int(first["start"])
+        player = (f'<iframe id="p-{e(vid)}" src="https://www.youtube.com/embed/{e(vid)}?start={start}'
+                  f'" allow="autoplay; encrypted-media" allowfullscreen '
+                  f'referrerpolicy="strict-origin-when-cross-origin"></iframe>'
+                  if r.get("embeddable", True) else
+                  f'<a href="{e(r["url"])}&t={start}s" target="_blank"><img src="{e(r.get("thumbnail", ""))}" '
+                  f'alt=""><span class="note">embedding disabled — opens on YouTube</span></a>')
+        moments = "".join(
+            f'<li><button onclick="play(\'{e(vid)}\',{int(m["start"])},{int(math.ceil(m["end"]))})">'
+            f'▶ {m["start"]:.1f}–{m["end"]:.1f}s</button> {e(m["why"])} '
+            f'<a href="https://www.youtube.com/watch?v={e(vid)}&t={int(m["start"])}s" target="_blank">↗</a></li>'
+            for m in r.get("moments") or [])
+        if not moments:
+            moments = ("<li class=note>no timing signal — short clip, the whole video is the scene</li>"
+                       if d and d <= 120 else
+                       "<li class=note>no timing signal — fetch it and read the contact sheet</li>")
+        tags = " · ".join(x for x in (
+            r.get("channel", ""), f"{int(d // 60)}:{int(d % 60):02d}",
+            f"{r.get('height') or '?'}p" + (" vertical" if r.get("vertical") else ""),
+            f"match {r['match']:.2f}", f"found by {r['consensus']} queries",
+            "subtitles" if r.get("subtitles") else "") if x)
+        return (f'<div class="card"><div class="head"><span class="score">{r["score"]:.2f}</span> '
+                f'<b>{i}. <a href="{e(r["url"])}" target="_blank">{e(r["title"])}</a></b>'
+                f'<div class="meta">{e(tags)}</div></div>{player}<ul>{moments}</ul></div>')
+
+    body = "".join(
+        f'<h2>{e(desc)} <small>({len(rows)} videos)</small></h2><div class="grid">'
+        + "".join(card(i, r) for i, r in enumerate(rows, 1)) + "</div>"
+        for desc, rows in sections)
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>Moment search</title>
+<style>
+body{{background:#111;color:#ddd;font:14px -apple-system,Segoe UI,sans-serif;margin:16px}}
+h2{{color:#fff;margin:28px 0 10px}} h2 small{{color:#888;font-weight:normal}}
+a{{color:#8cf}} .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:14px}}
+.card{{background:#1c1c1c;border:1px solid #333;border-radius:8px;padding:10px}} .bad{{opacity:.6}}
+.head b{{font-size:15px}} .meta{{color:#999;font-size:12px;margin:4px 0 8px}}
+.score{{background:#2a6;color:#fff;border-radius:4px;padding:1px 6px;font-weight:bold}}
+iframe,.card img{{width:100%;aspect-ratio:16/9;border:0;border-radius:6px;background:#000;display:block}}
+ul{{list-style:none;padding:0;margin:8px 0 0}} li{{margin:4px 0}}
+button{{background:#333;color:#fff;border:1px solid #555;border-radius:4px;padding:2px 8px;cursor:pointer}}
+button:hover{{background:#2a6}} .note{{color:#999;font-style:italic}}
+</style></head><body><h1>Moment search</h1>{body}
+<script>
+function play(id,a,b){{document.getElementById('p-'+id).src=
+  'https://www.youtube.com/embed/'+id+'?autoplay=1&start='+a+'&end='+b;}}
+</script></body></html>"""
 
 
 def format_moments(rows: list[dict]) -> str:
@@ -657,10 +721,12 @@ def main(argv: list[str] | None = None) -> int:
     ad.add_argument("--crop-cy", type=float, default=None, help="9:16 window centre y, 0-1")
 
     mo = sub.add_parser("moment", help="shortlist videos + candidate windows for a described moment")
-    mo.add_argument("description", help='the moment, e.g. "Kilowog fights Hal Jordan"')
+    mo.add_argument("description", nargs="+",
+                    help='the moment, e.g. "Kilowog fights Hal Jordan" (several = several searches)')
     mo.add_argument("--limit", type=int, default=8, help="videos to examine (default 8)")
     mo.add_argument("--query", action="append", default=[], help="extra phrasing (repeatable)")
     mo.add_argument("--json", action="store_true")
+    mo.add_argument("--html", help="also write a review page with embedded players to this path")
 
     b = sub.add_parser("beats", help="list the project's beat keys and their clips")
     b.add_argument("--project", required=True)
@@ -683,8 +749,17 @@ def main(argv: list[str] | None = None) -> int:
                 print("no video results (try --all, or a different query)")
         return 0
     if a.cmd == "moment":
-        rows = moment_search(a.description, limit=a.limit, extra_queries=a.query)
-        print(json.dumps(rows, indent=2, ensure_ascii=False) if a.json else format_moments(rows))
+        sections = [(d, moment_search(d, limit=a.limit, extra_queries=a.query))
+                    for d in a.description]
+        for d, rows in sections:
+            if len(sections) > 1 and not a.json:
+                print(f"\n=== {d}")
+            print(json.dumps(rows, indent=2, ensure_ascii=False) if a.json else format_moments(rows))
+        if a.html:
+            out = Path(a.html)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(moments_html(sections), encoding="utf-8")
+            print(f"\nreview page: {out}")
         return 0
     if a.cmd == "fetch":
         root = _root(a.project)

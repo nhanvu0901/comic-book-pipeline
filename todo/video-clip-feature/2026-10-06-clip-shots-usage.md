@@ -16,6 +16,9 @@ python -m stages.clip_fetch search "Green Lantern The Animated Series official c
 # 1b) Hoặc tìm theo KHOẢNH KHẮC: nhiều video, mỗi video vài cửa sổ thời gian kèm lý do
 #     (chapter / phụ đề khớp mô tả / đỉnh "Most replayed"), không tải video
 python -m stages.clip_fetch moment "Kilowog fights Hal Jordan"
+#     nhiều cảnh một lần + trang xem trong trình duyệt (player nhúng, bấm từng cửa sổ để phát đúng đoạn)
+python -m stages.clip_fetch moment "Kilowog fights Hal Jordan" "Gwen Stacy dies when Spider-Man tries to save her" \
+    --html projects/_moment_review/moments.html
 
 # 2) Tải + transcode về projects/<p>/review/clips/<id>.mp4 + contact sheet <id>_sheet.jpg
 python -m stages.clip_fetch fetch "https://www.youtube.com/watch?v=gKiT1ekWIAA" --project <p>

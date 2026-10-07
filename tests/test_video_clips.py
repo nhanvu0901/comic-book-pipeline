@@ -727,3 +727,23 @@ def test_video_metadata_survives_a_subtitle_rate_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(clip_fetch.subprocess, "run", no_info)
     with pytest.raises(RuntimeError, match="Private video"):
         clip_fetch.video_metadata("https://www.youtube.com/watch?v=kP5Cn03Q5WU", tmp_path)
+
+
+def test_moments_html_embeds_players_and_falls_back_to_links():
+    rows = [
+        {"id": "AAAAAAAAAAA", "url": "https://www.youtube.com/watch?v=AAAAAAAAAAA",
+         "title": "Hal <vs> Kilowog", "channel": "c", "duration": 147, "height": 1080,
+         "match": 0.75, "consensus": "2/3", "score": 0.8, "embeddable": True,
+         "moments": [{"start": 43.6, "end": 49.6, "why": "most replayed (0.56)"}]},
+        {"id": "BBBBBBBBBBB", "url": "https://www.youtube.com/watch?v=BBBBBBBBBBB",
+         "title": "No embed", "channel": "c", "duration": 300, "height": 720, "match": 0.5,
+         "consensus": "1/3", "score": 0.5, "embeddable": False, "thumbnail": "https://i/t.jpg",
+         "moments": []},
+        {"id": "CCCCCCCCCCC", "url": "https://www.youtube.com/watch?v=CCCCCCCCCCC", "error": "private"},
+    ]
+    page = clip_fetch.moments_html([("Kilowog fights Hal Jordan", rows)])
+    assert 'src="https://www.youtube.com/embed/AAAAAAAAAAA?start=43"' in page
+    assert "play('AAAAAAAAAAA',43,50)" in page
+    assert "Hal &lt;vs&gt; Kilowog" in page                      # titles are escaped
+    assert 'watch?v=BBBBBBBBBBB&t=0s' in page and "embedding disabled" in page
+    assert "unavailable" in page and "private" in page
