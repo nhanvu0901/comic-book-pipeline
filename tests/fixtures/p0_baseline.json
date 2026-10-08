@@ -1,6 +1,23 @@
 {
-  "project": "baseline_fixture_p0",
-  "shots_json_sha256": "8ea9e272e1e809b51b9d19ad0b937c1638a3054b0c2e8c8c1e0df0eae1086ac5",
-  "video_silent_sha256": "c29fa5791d49be4dc0531853f62c7d1091d51a1d133ed2b3f695073a29a74b48",
-  "note": "P0 baseline captured right after whip fix with seeded whip choice"
+  "note": "P0 byte-identity baseline, one entry per platform, each captured by running commit 6788212 ON that platform (scripts/p0_baseline_capture.py) \u2014 never derived from HEAD.",
+  "platforms": {
+    "darwin|ffmpeg-8.0.1|x264-core165-r3222": {
+      "captured_at": "2026-10-08T14:20:45+00:00",
+      "commit": "6788212435d42c45a30bd92db49f48e7a4707ee8",
+      "scenarios": {
+        "legacy_clip": {
+          "shots_json_sha256": "e7b7a88419c74f8210bb5250a4bb743ddb3a71267f3bbd104817504c7919e9e5",
+          "video_silent_sha256": "cf3d8c47a67dbed4af391ce4d72e5ddfccaea7d0b93d5c85155cb09a5497abbe"
+        },
+        "plain": {
+          "shots_json_sha256": "8ea9e272e1e809b51b9d19ad0b937c1638a3054b0c2e8c8c1e0df0eae1086ac5",
+          "video_silent_sha256": "c29fa5791d49be4dc0531853f62c7d1091d51a1d133ed2b3f695073a29a74b48"
+        },
+        "whip": {
+          "shots_json_sha256": "ff3658d8dea92750a99c7826b433f2458dd529ae6a0ddd02bb3d499d80d3934c",
+          "video_silent_sha256": "ced8432dab8a471ca1693b1fe63041c6df445ab3fdecf947e5e9f3ea39c51200"
+        }
+      }
+    }
+  }
 }

@@ -29,55 +29,16 @@ def _probe_video(path: Path) -> dict:
 @needs_ffmpeg
 def test_flag_off_byte_identical_to_baseline(monkeypatch):
     """
-    User override rule #1 & #4:
-    With the flag OFF (ENABLE_VIDEO_CLIPS default 0) the stable path stays byte-identical.
+    User override rule #1 & #4: with the flag OFF (ENABLE_VIDEO_CLIPS default 0) the stable path stays
+    byte-identical. The comparison itself lives in tests/test_p0_baseline.py (per-platform baseline
+    captured from 6788212); here the flag is forced OFF explicitly and the same scenarios must agree.
     """
+    from tests import p0_scenarios
     monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", False)
-
-    fixture_record = json.loads(Path("tests/fixtures/p0_baseline.json").read_text())
-    proj_dir = Path("projects/p0_baseline_fixture")
-    proj_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        p1 = proj_dir / "page_1.png"
-        p2 = proj_dir / "page_2.png"
-        arr1 = np.full((1800, 1200, 3), 40, dtype=np.uint8)
-        arr1[200:800, 200:1000] = [200, 100, 50]
-        Image.fromarray(arr1).save(p1)
-
-        arr2 = np.full((1800, 1200, 3), 60, dtype=np.uint8)
-        arr2[300:900, 100:900] = [50, 150, 220]
-        Image.fromarray(arr2).save(p2)
-
-        s1 = Shot(shot_id=0, scene_id=1, duration_seconds=1.0,
-                  panel_bbox={"x": 200, "y": 200, "w": 800, "h": 600},
-                  source_image=str(p1), motion="zoom_in", caption_text="Intro beat")
-        s2 = Shot(shot_id=1, scene_id=1, duration_seconds=1.0,
-                  panel_bbox={"x": 200, "y": 200, "w": 800, "h": 600},
-                  source_image=str(p1), motion="pan_down", caption_text="Next beat")
-        s3 = Shot(shot_id=2, scene_id=2, duration_seconds=1.0,
-                  panel_bbox={"x": 100, "y": 300, "w": 800, "h": 600},
-                  source_image=str(p2), motion="zoom_out", caption_text="Climax beat")
-
-        shot_list = [s1, s2, s3]
-        shots_dir = proj_dir / "shots"
-        shot_paths = []
-        for s in shot_list:
-            p = shots.render_shot(s, shots_dir / f"shot_{s.shot_id:03d}.mp4")
-            shot_paths.append(p)
-
-        shots_json = proj_dir / "shots.json"
-        pipeline._write_shots_log(shot_list, [], shots_dir, shots_json, lambda m: None)
-
-        silent_mp4 = proj_dir / "video_silent.mp4"
-        pipeline._assemble_video(shot_list, shot_paths, silent_mp4, project=fixture_record["project"])
-
-        h_json = hashlib.sha256(shots_json.read_bytes()).hexdigest()
-        h_mp4 = hashlib.sha256(silent_mp4.read_bytes()).hexdigest()
-
-        assert h_json == fixture_record["shots_json_sha256"], "shots.json sha256 mismatch with flag OFF"
-        assert h_mp4 == fixture_record["video_silent_sha256"], "video_silent.mp4 sha256 mismatch with flag OFF"
-    finally:
-        shutil.rmtree(proj_dir, ignore_errors=True)
+    entry = json.loads(Path("tests/fixtures/p0_baseline.json").read_text())["platforms"].get(p0_scenarios.platform_key())
+    if entry is None:
+        pytest.skip("no 6788212 baseline for this platform (see tests/test_p0_baseline.py)")
+    assert p0_scenarios.run_all(Path("projects")) == entry["scenarios"]
 
 
 @needs_ffmpeg
