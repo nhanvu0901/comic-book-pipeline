@@ -398,3 +398,31 @@ def test_explain_answer_marker_accepts_natural_phrasings(final):
     scenes = [_scene("Alice Park in Deep Station (2011)."), _scene("a"),
               _scene("Bob Chen in Cold Orbit (2016)."), _scene(final)]
     assert not sq._validate_screen_scenes(scenes, _items(), "explain", band=(1, 999), scene_max=42)
+
+
+def test_contract_with_the_p3_visual_beat_planner(proj, monkeypatch):
+    """Forward contract with video-qa/p3-visual (skipped until stages/stage_5/screen_beats.py is
+    merged): its beat rows / timeline windows are planned straight from this narration."""
+    planner = pytest.importorskip("stages.stage_5.screen_beats", reason="video-qa/p3-visual not merged")
+    nar, _ = _run(proj, monkeypatch, _good_llm())
+    narration = json.loads(json.dumps(nar.to_dict()))
+    context = json.loads((proj / "screen_context.json").read_text())
+
+    rows = planner.screen_beat_rows(narration, context)
+    for scene in narration["scenes"]:
+        mine = [r for r in rows if r.scene_id == scene["scene_id"]]
+        assert mine, scene["text"]
+        assert _tokens(" ".join(r.text for r in mine)) == _tokens(scene["text"])
+        assert [r.query for r in mine] == [b["query"] for b in scene["visual_beats"]]   # explicit queries win
+    assert rows[0].is_intro and rows[-1].is_outro
+    assert len({r.key for r in rows}) == len(rows)                                      # clip keys are unique
+
+    t, timings = 0.0, []
+    for scene in narration["scenes"]:
+        dur = scene["word_count"] / 3.4
+        timings.append({"scene_id": scene["scene_id"], "start": t, "end": t + dur})
+        t += dur
+    windows = planner.plan_windows(narration, timings, audio_duration=t, screen_context=context)
+    assert windows and sum(w.frames for w in windows) / 30 >= t           # video covers the audio
+    covered = [k for w in windows for k in w.keys]
+    assert covered == [r.key for r in rows]                               # every beat lands in a shot, in order
