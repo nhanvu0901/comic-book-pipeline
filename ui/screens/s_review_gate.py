@@ -38,68 +38,68 @@ import config
 from config import MUSIC_GENRE, MUSIC_GENRES, PROJECTS_ROOT
 
 
+def _project_dir(project: str) -> Path:
+    return Path(config.PROJECTS_ROOT) / project
+
+
 def _load_clips_manifest(project: str) -> dict[str, dict]:
-    manifest_file = Path(config.PROJECTS_ROOT) / project / "review" / "clips" / "clips.json"
-    if not manifest_file.exists():
-        return {}
-    try:
-        data = json.loads(manifest_file.read_text("utf-8"))
-        return {
-            str(c.get("beat")): c
-            for c in data.get("clips", [])
-            if c.get("beat") and c.get("enabled", True) is not False
-        }
-    except Exception:
-        return {}
+    """{beat_key: clip entry} of the project's enabled clip entries (review/clips/clips.json)."""
+    from stages.stage_5.clips import read_manifest_doc
+    return {
+        str(c.get("beat")): c
+        for c in read_manifest_doc(_project_dir(project)).get("clips", [])
+        if isinstance(c, dict) and c.get("beat") and c.get("enabled", True) is not False
+    }
 
 
 def _remove_clip_for_beat(project: str, beat_key: str) -> None:
-    manifest_file = Path(config.PROJECTS_ROOT) / project / "review" / "clips" / "clips.json"
-    if not manifest_file.exists():
-        return
-    try:
-        data = json.loads(manifest_file.read_text("utf-8"))
-        clips = [c for c in data.get("clips", []) if str(c.get("beat")) != str(beat_key)]
-        data["clips"] = clips
-        manifest_file.write_text(json.dumps(data, indent=2), "utf-8")
-    except Exception:
-        pass
+    """Roll one beat back to its comic panel: drop its clip entry."""
+    from stages.stage_5.clips import remove_beat_clip
+    remove_beat_clip(_project_dir(project), beat_key)
 
 
 def _load_beat_durations(project: str) -> dict[str, float]:
-    for p in [
-        Path(config.PROJECTS_ROOT) / project / "review" / "tts_status.json",
-        Path(config.PROJECTS_ROOT) / project / "cache" / "tts" / "status.json",
-    ]:
-        if p.exists():
-            try:
-                data = json.loads(p.read_text("utf-8"))
-                durs = data.get("beat_durations")
-                if durs:
-                    return durs
-            except Exception:
-                pass
-    return {}
+    """{beat_key: seconds} the background TTS has measured so far (the ONE status file)."""
+    from stages.stage_4.tts_status import read_status
+    durs = read_status(_project_dir(project)).get("beat_durations") or {}
+    return {str(k): float(v) for k, v in durs.items() if isinstance(v, (int, float))}
 
 
 def clear_project_locks_and_clips(project: str, locks_doc: dict | None = None) -> dict:
-    """Clear all panel and MP4 selections for the project when narration changes (flag ON)."""
+    """ENABLE_VIDEO_CLIPS=1: the narration changed, so EVERY selection of the project goes — all
+    panel/custom-image locks AND all MP4 clips — because a clip is cut to a beat's exact duration and
+    any edit shifts the timeline under all of them. Un-approves, persists locks.json, deletes the
+    clip manifest, and has the background TTS re-plan (it re-synthesizes only the sentences whose
+    text changed; the rest come from its cache). Returns the cleared locks doc."""
+    from stages.stage_5.clips import clear_manifest
     if locks_doc is None:
         locks_doc = load_review_locks(project)
     locks_doc["locks"] = {}
-    clips_file = Path(config.PROJECTS_ROOT) / project / "review" / "clips" / "clips.json"
-    if clips_file.exists():
-        try:
-            clips_file.unlink()
-        except OSError:
-            pass
+    locks_doc["approved"] = False
+    locks_doc["approved_at"] = None
+    clear_manifest(_project_dir(project))
     save_review_locks(project, locks_doc)
     try:
-        from stages.stage_4.background_tts import start_background_tts
-        start_background_tts(project)
+        from stages.stage_4.background_tts import request_resync
+        request_resync(project)
     except Exception as exc:
-        logger.warning("start_background_tts failed during invalidation: %s", exc)
+        logger.warning("background TTS resync failed after the narration changed: %s", exc)
     return locks_doc
+
+
+def _dur_label(seconds: float | None) -> str:
+    """The beat-duration chip: the measured length, or a placeholder until the TTS reaches the beat."""
+    return f"{seconds:.1f}s" if seconds else "…s"
+
+
+def _narration_fingerprint(doc: dict | None) -> str:
+    """sha of everything about the script a clip/TTS timeline depends on: each scene's id, text and
+    fragments. A save that changed none of it must not wipe the project's selections."""
+    import hashlib
+    scenes = (doc or {}).get("scenes") or []
+    key = [(s.get("scene_id"), s.get("text"), s.get("visual_beats")) for s in scenes]
+    return hashlib.sha256(json.dumps(key, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
 
 from ..bridge import (
     image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
@@ -812,12 +812,18 @@ def build(
 
         try:
             from ..web_routes import add_moment_picked_listener
+
             def _on_moment_picked(payload: dict):
-                if payload.get("project") == project:
-                    bk = str(payload.get("beat"))
-                    clips_by_beat[bk] = payload
-                    _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
-            add_moment_picked_listener(_on_moment_picked)
+                if payload.get("project") != project:
+                    return
+                bk = str(payload.get("beat"))
+                if payload.get("state") == "error":
+                    _show_snack(f"Beat {bk}: {payload.get('message') or 'không chọn được clip'}")
+                    return
+                clips_by_beat[bk] = payload
+                _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
+            # keyed by this page + project: a screen that rebuilds replaces its listener, not stacks one
+            add_moment_picked_listener(_on_moment_picked, key=(id(page), project))
         except Exception as exc:
             logger.warning("Failed to register moment picked listener: %s", exc)
 
@@ -827,6 +833,7 @@ def build(
         locks.clear()
         clear_project_locks_and_clips(project, locks_doc)
         clips_by_beat.clear()
+        beat_durations.clear()
 
     status_text = ft.Text("", size=12, color=TEXT_MUTED)
     # per-beat control refs (keyed by beat_key) so a lock/dup change repaints just that card
@@ -1160,9 +1167,11 @@ def build(
         # were edited: apply_fragment_edits re-derives that scene's text from its fragments,
         # so a per-scene write there would just be overwritten.
         frag_sids = {sid for sid, _ in frag_edits}
+        fp_before = _narration_fingerprint(current)
         apply_scene_text_edits(current, edited_text, skip=frag_sids)
         dropped: list = []
         apply_fragment_edits(current, frag_edits, dropped_out=dropped)
+        script_changed = _narration_fingerprint(current) != fp_before
         save_narration_edits(project, current)
         nonlocal narration, locks
         narration = current
@@ -1181,7 +1190,7 @@ def build(
         locks_doc["approved"] = False
         locks_doc["approved_at"] = None
         save_review_locks(project, locks_doc)
-        if config.ENABLE_VIDEO_CLIPS:
+        if config.ENABLE_VIDEO_CLIPS and (script_changed or dropped):
             _clear_all_locks_and_clips()
             _show_snack("Đã lưu narration — video clips flag bật: đã reset toàn bộ panel & MP4 locks.")
             on_state_change()
@@ -1617,11 +1626,7 @@ def build(
                 def _rollback_mp4(_e, bk=beat_key):
                     _remove_clip_for_beat(project, bk)
                     clips_by_beat.pop(bk, None)
-                    _refresh_beat_card(bk)
-                    try:
-                        page.update()
-                    except Exception:
-                        pass
+                    _rebuild(f"Beat {bk}: quay lại dùng comic panel", dirty=frozenset({bk}))
                 header_icons.append(ft.IconButton(
                     ft.Icons.UNDO, icon_size=16, icon_color=WARN,
                     tooltip="Hủy MP4 (quay lại dùng comic panel)",
@@ -1651,9 +1656,13 @@ def build(
             ft.Text(_anchor_label(beat.get("page_ref"), beat.get("panel_ref")),
                     size=10, color=TEXT_MUTED, font_family="Menlo"),
         ]
-        beat_dur = beat_durations.get(beat_key)
-        if beat_dur:
-            header_items.append(ft.Text(f"{beat_dur:.1f}s", size=10, color=ACCENT, font_family="Menlo"))
+        if config.ENABLE_VIDEO_CLIPS:
+            # The beat's exact length in the cached audio — empty until the background TTS reaches
+            # it, filled in live by _poll_beat_durations as chunks land.
+            dur_text = ft.Text(_dur_label(beat_durations.get(beat_key)), size=10, color=ACCENT,
+                               font_family="Menlo", tooltip="Thời lượng beat theo giọng đọc (TTS nền)")
+            card_refs[beat_key]["dur_text"] = dur_text
+            header_items.append(dur_text)
         header_items.extend([
             ft.Container(expand=True),
             *header_icons,
@@ -2110,6 +2119,36 @@ def build(
         _build_card_controls(),
         spacing=12, expand=True, padding=ft.padding.symmetric(horizontal=28, vertical=16),
     )
+
+    async def _poll_beat_durations():
+        """ENABLE_VIDEO_CLIPS: fill each card's duration chip as the background TTS measures its beat,
+        so Master watches the exact lengths appear. Ends when this screen is no longer mounted."""
+        strikes = 0
+        while True:
+            await asyncio.sleep(2.0)
+            try:
+                cards.page                                  # raises RuntimeError while unmounted
+                strikes = 0
+            except RuntimeError:
+                strikes += 1
+                if strikes >= 5:
+                    return
+                continue
+            fresh = _load_beat_durations(project)
+            if fresh != beat_durations:
+                beat_durations.clear()
+                beat_durations.update(fresh)
+                for key, refs in card_refs.items():
+                    chip = refs.get("dur_text")
+                    new_label = _dur_label(fresh.get(key))
+                    if chip is not None and chip.value != new_label:
+                        chip.value = new_label
+                        try:
+                            chip.update()
+                        except Exception:
+                            pass
+    if config.ENABLE_VIDEO_CLIPS:
+        page.run_task(_poll_beat_durations)
 
     # ─── Approve / Un-approve ───────────────────────────────────────────────
     continue_btn = primary_button(

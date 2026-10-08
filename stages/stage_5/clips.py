@@ -53,6 +53,7 @@ import math
 import os
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -92,6 +93,63 @@ class ClipEntry:
 
 def manifest_path(project_root: Path) -> Path:
     return Path(project_root) / MANIFEST_REL
+
+
+# The review UI (Flet), the /moments_review web routes and Stage 5 all touch clips.json, from
+# different threads: every read-modify-write below holds this lock and writes atomically.
+_MANIFEST_LOCK = threading.RLock()
+
+
+def read_manifest_doc(project_root: Path) -> dict:
+    """The raw clips.json document ({"clips": [...]}), a fresh empty one when absent/unreadable."""
+    try:
+        doc = json.loads(manifest_path(project_root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"clips": []}
+    if not isinstance(doc, dict) or not isinstance(doc.get("clips"), list):
+        return {"clips": []}
+    return doc
+
+
+def _write_manifest_doc(project_root: Path, doc: dict) -> None:
+    from utils.atomic_json import write_json_atomic
+    write_json_atomic(manifest_path(project_root), doc)
+
+
+def upsert_beat_clip(project_root: Path, entry: dict) -> None:
+    """Make `entry` THE clip of its beat: any older entry for that beat is replaced outright (not
+    merged — a stale "end" must not survive a re-pick), every other beat's entry is left alone."""
+    beat = str(entry.get("beat") or "")
+    with _MANIFEST_LOCK:
+        doc = read_manifest_doc(project_root)
+        doc["clips"] = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) == beat)]
+        doc["clips"].append(entry)
+        _write_manifest_doc(project_root, doc)
+
+
+def remove_beat_clip(project_root: Path, beat: str) -> bool:
+    """Roll a beat back to its panel: drop its clip entry. True when there was one."""
+    with _MANIFEST_LOCK:
+        if not manifest_path(project_root).exists():
+            return False
+        doc = read_manifest_doc(project_root)
+        kept = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) == str(beat))]
+        if len(kept) == len(doc["clips"]):
+            return False
+        doc["clips"] = kept
+        _write_manifest_doc(project_root, doc)
+        return True
+
+
+def clear_manifest(project_root: Path) -> bool:
+    """Drop EVERY clip selection of the project (the narration changed). The downloaded section
+    files stay on disk — a re-pick of the same moment finds them cached."""
+    with _MANIFEST_LOCK:
+        p = manifest_path(project_root)
+        if not p.exists():
+            return False
+        p.unlink()
+        return True
 
 
 def _num(v) -> float | None:
