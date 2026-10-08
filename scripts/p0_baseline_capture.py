@@ -29,10 +29,16 @@ def main() -> int:
     ap.add_argument("--expect-commit", default="6788212")
     args = ap.parse_args()
     repo = Path(args.repo).resolve()
+    out = Path(args.out).resolve()          # before the chdir below: a relative --out is relative to HERE
     head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     if not head.startswith(args.expect_commit):
         print(f"refusing: {repo} is at {head[:12]}, not {args.expect_commit} — a baseline must come from the baseline commit",
               file=sys.stderr)
+        return 2
+    dirty = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "--", "stages", "config.py", "utils"],
+                           capture_output=True, text=True).stdout.strip()
+    if dirty:
+        print(f"refusing: the baseline checkout has local changes:\n{dirty}", file=sys.stderr)
         return 2
     os.chdir(repo)                       # scenario paths are cwd-relative, as in the tests
     sys.path.insert(0, str(repo))
@@ -43,7 +49,6 @@ def main() -> int:
     assert Path(p.__file__).resolve().is_relative_to(repo), f"stages imported from {p.__file__}, not the checkout"
     key = mod.platform_key()
     values = mod.run_all(Path("projects"))
-    out = Path(args.out)
     doc = json.loads(out.read_text()) if out.exists() else {}
     doc.setdefault("platforms", {})[key] = {
         "commit": head, "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
