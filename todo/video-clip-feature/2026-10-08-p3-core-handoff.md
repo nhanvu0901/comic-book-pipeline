@@ -44,6 +44,19 @@ python -m stages.screen_pipeline --project endgame_time_travel --start-at render
 pytest -m integration tests/test_screen_qa_integration.py -s                          # live; skipped without YDC_API_KEY+OPENROUTER_API_KEY
 ```
 
+## Evidence (2026-10-08)
+
+* Mac: full suite on the merged head — 2267 passed, 16 skipped, 0 failed (no `.env` in the worktree).
+* Windows (`D:\code\cbp-video-test-p3c`, prod venv read-only, flag OFF, `POST_ATEMPO` from `.env` = 1.15):
+  * unit tests for the 4 screen modules: 79 passed;
+  * LIVE `pytest -m integration tests/test_screen_qa_integration.py` (Endgame question): **passed in 248 s**
+    — 5 grounded items, 12 scenes (hook + 5x2 + outro), title + year cited, `{text, query}` beats;
+  * TTS step (`--start-at tts`, local Chatterbox on CPU, review gate approved the way a UI approve would):
+    OK, 12 chunks, 53.9 s of audio after atempo 1.15 (~4.5 min wall);
+  * render step (`--start-at render` on p3-core merged with p3-visual, no clips picked so all 19 shots are text cards):
+    OK, `final.mp4` 1080x1920 30 fps, 53.9 s video / 53.93 s audio.
+* The forward-contract test `test_contract_with_the_p3_visual_beat_planner` is skipped on this branch alone and passes on p3-core + p3-visual merged.
+
 ## Needs the integrator / p3-visual (cross-branch)
 
 1. **Drop `SCREEN_QA = "screen_qa"` from p3-visual's `config.py`** (it re-adds the `s1_identify` KeyError on merge; nothing uses it).
