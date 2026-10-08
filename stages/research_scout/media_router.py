@@ -15,6 +15,7 @@ from .router_schema import QuestionRouteResponse
 logger = logging.getLogger(__name__)
 
 DEFAULT_ROUTER_MODEL = "google/gemini-2.5-flash-lite"
+_MAX_ANSWER_TOKENS = 2500
 
 _SCHEMA_PROMPT = json.dumps(QuestionRouteResponse.model_json_schema(), indent=2)
 
@@ -32,6 +33,8 @@ Comic source reference (comic_series / comic_issue / comic_year):
 - Whenever an item is based on, adapts, or originates from a comic, fill comic_series with that comic's series (or event/mini-series) title and comic_year with the year it started, even when the search results only mention the screen work.
 - Fill comic_issue only if you are sure of the exact issue number; otherwise leave it null. Never guess an issue number.
 - Leave all three null ONLY when the item has no comic counterpart at all (a story that exists only on screen).
+
+Keep the answer short: at most 6 items, at most 3 evidence_urls per item, and a reason of one short sentence.
 
 You must output strictly valid JSON matching this schema:
 {_SCHEMA_PROMPT}
@@ -91,6 +94,7 @@ def route_media_source(
             messages=messages,
             response_format={"type": "json_object"},
             temperature=0.0,
+            max_tokens=_MAX_ANSWER_TOKENS,
         )
         content = resp.choices[0].message.content or ""
         try:

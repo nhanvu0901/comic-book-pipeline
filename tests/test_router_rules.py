@@ -154,6 +154,41 @@ def test_no_comic_reference_means_nothing_is_looked_up_and_no_issue_1_is_invente
     edges.chapters.assert_not_called()
 
 
+def test_an_inconclusive_batcave_lookup_keeps_the_safe_comic_route_and_skips_the_clip_search():
+    # Seen on the Windows server: a transient batcave failure was read as "no such comic" and a
+    # Civil War question went to screen_qa. A lookup that could not finish must never say "absent".
+    film_only = _llm(_item("film", "youtube", comic_series="Civil War", comic_issue=1, comic_year=2006))
+    logs: list[str] = []
+    with _Edges() as edges:
+        edges.search.side_effect = RuntimeError("batcave search 'Civil War' answered status=503")
+        decision = decide_route("q", search_results=[], client=film_only, log=logs.append)
+
+    assert decision.route == "comic_qa"
+    assert decision.batcave_checks[0].inconclusive is True
+    assert decision.clips_found is None
+    edges.clips.assert_not_called()
+    assert any("inconclusive" in r.lower() for r in decision.reasons)
+    assert "inconclusive" in json.dumps(decision.to_dict()).lower()
+
+
+def test_one_inconclusive_ref_does_not_hide_a_found_one():
+    film_only = _llm(_item("film", "youtube", comic_series="Civil War", comic_year=2006),
+                     _item("film", "youtube", comic_series="Civil War Aftermath"))
+    with _Edges() as edges:
+        edges.search.side_effect = [RuntimeError("503"), list(CIVIL_WAR_HITS)]
+        decision = decide_route("q", search_results=[], client=film_only, log=lambda m: None)
+    assert decision.route == "comic_qa"
+    assert [c.found for c in decision.batcave_checks] == [False, True]
+
+
+def test_definite_absence_on_every_ref_still_allows_screen_qa():
+    film_only = _llm(_item("film", "youtube", comic_series="Nothing Like It", comic_year=1999))
+    with _Edges(hits=[]):
+        decision = decide_route("q", search_results=[], client=film_only, log=lambda m: None)
+    assert decision.route == "screen_qa"
+    assert decision.batcave_checks[0].inconclusive is False
+
+
 def test_no_clips_found_keeps_the_safe_comic_route():
     film_only = _llm(_item("film", "youtube"))
     with _Edges(clips=[]):

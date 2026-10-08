@@ -107,3 +107,21 @@ def test_system_prompt_asks_for_the_comic_source_and_forbids_guessing_the_issue(
     assert "even when the search results only" in instructions
     # unknown issue -> null, never a guess
     assert "never guess" in instructions
+
+
+def test_router_call_caps_the_answer_length_and_the_prompt_asks_for_a_short_one():
+    # On the Windows server 2 of 3 answers were cut off mid-JSON ("EOF while parsing a string"):
+    # each cost a retry. Ask for a short answer and give the call an explicit output budget.
+    from stages.research_scout.media_router import SYSTEM_PROMPT
+
+    mock_client = MagicMock()
+    payload = {"question": "q", "items": []}
+    mock_client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(payload)))])
+    route_media_source("q", [], client=mock_client)
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert kwargs["max_tokens"] >= 2000
+    instructions = SYSTEM_PROMPT.split("You must output strictly valid JSON")[0].lower()
+    assert "at most 3 evidence_urls" in instructions
+    assert "short" in instructions

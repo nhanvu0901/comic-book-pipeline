@@ -287,11 +287,14 @@ def _parse_source_comic(source_comic: str) -> tuple[str, str, str]:
     return name, year, issue
 
 
-def _batcave_search(query: str, *, log=print) -> list[tuple[str, str, str]]:
+def _batcave_search(query: str, *, log=print, strict: bool = False) -> list[tuple[str, str, str]]:
     """POST batcave's DLE search; return [(news_id, slug, series_url)] deduped.
 
     Reuses the scraper's already-solved session (guard cookies) — url_mode.py
-    likewise imports the scraper's private helpers, so this follows precedent."""
+    likewise imports the scraper's private helpers, so this follows precedent.
+
+    `strict=True` raises on a non-200 answer instead of returning [] — callers that must
+    tell "batcave has nothing" from "batcave did not answer" (the media router) use it."""
     from utils.comic_scraper.readcomiconline import _get_session, SITE_BASE
     sess = _get_session()
     r = sess.post(f"{SITE_BASE}/index.php?do=search",
@@ -299,6 +302,8 @@ def _batcave_search(query: str, *, log=print) -> list[tuple[str, str, str]]:
                   timeout=25)
     if r.status_code != 200:
         log(f"[answer-resolve] batcave search {query!r} -> status={r.status_code}")
+        if strict:
+            raise RuntimeError(f"batcave search {query!r} answered status={r.status_code}")
         return []
     hits: list[tuple[str, str, str]] = []
     seen: set[str] = set()

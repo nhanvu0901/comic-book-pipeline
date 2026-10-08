@@ -34,12 +34,15 @@ class BatcaveCheck:
     issue: int | None
     year: int | None
     note: str = ""
+    # True when the lookup could not be completed (guard/5xx/timeout): that says nothing
+    # about whether the comic exists, so callers must not read it as "not on batcave".
+    inconclusive: bool = False
 
     def describe(self) -> str:
         what = f"{self.series} #{self.issue}" if self.issue is not None else f"{self.series} (issue number unknown)"
         if self.year:
             what += f" ({self.year})"
-        verdict = "found" if self.found else "not found"
+        verdict = "found" if self.found else ("INCONCLUSIVE" if self.inconclusive else "not found")
         return f"{verdict} at {self.level} level: {what}" + (f" — {self.note}" if self.note else "")
 
 
@@ -52,14 +55,18 @@ def _year_matched_series(
     series_name: str,
     year_str: str,
     log: Callable[[str], None],
+    problems: list[str] | None = None,
 ) -> Iterator[tuple[str, list[dict]]]:
     """Yield (series_url, chapters) for each candidate volume of `series_name` whose
     year is compatible with `year_str`. Disambiguates by slug year, falling back to
-    the chapters' own titles ('(YYYY-)') because many slugs are legacy numeric ids."""
+    the chapters' own titles ('(YYYY-)') because many slugs are legacy numeric ids.
+    Anything that stops the lookup from completing is appended to `problems`."""
+    problems = problems if problems is not None else []
     try:
-        hits = _batcave_search(series_name, log=log)
+        hits = _batcave_search(series_name, log=log, strict=True)
     except Exception as exc:  # noqa: BLE001 - network/guard errors mean "can't verify"
         log(f"[batcave-verifier] search error for {series_name!r}: {exc}")
+        problems.append(f"search failed: {type(exc).__name__}: {exc}")
         return
 
     if not hits:
@@ -70,6 +77,7 @@ def _year_matched_series(
             issues = discover_issues(series_url)
         except Exception as exc:  # noqa: BLE001
             log(f"[batcave-verifier] discover_issues failed on {series_url}: {exc}")
+            problems.append(f"chapter listing failed on {series_url}: {type(exc).__name__}")
             continue
         if not issues:
             continue
@@ -99,21 +107,14 @@ def _reader_ids(chapter: dict, series_url: str) -> tuple[str | int, str | int]:
     return news_id, chapter_id
 
 
-def verify_batcave_issue(
+def _verify_issue(
     series_name: str,
     issue_number: str | int | float,
-    year: int | str | None = None,
-    *,
-    ping_pages: bool = False,
-    log: Callable[[str], None] = logger.info,
+    year: int | str | None,
+    ping_pages: bool,
+    log: Callable[[str], None],
+    problems: list[str],
 ) -> bool:
-    """Verify whether a specific comic series issue actually exists on Batcave.
-
-    1. Disambiguates series by name & publication year.
-    2. Discovers chapters for candidate series.
-    3. Matches exact issue number.
-    4. Optionally verifies chapter page data.
-    """
     cleaned_name = series_name.strip()
     if not cleaned_name:
         return False
@@ -123,7 +124,7 @@ def verify_batcave_issue(
     except (ValueError, TypeError):
         return False
 
-    for series_url, issues in _year_matched_series(cleaned_name, _year_text(year), log):
+    for series_url, issues in _year_matched_series(cleaned_name, _year_text(year), log, problems):
         matched_chapter = None
         for ch in issues:
             n = _chapter_issue_number(ch)
@@ -138,11 +139,35 @@ def verify_batcave_issue(
             from utils.comic_scraper.readcomiconline import _ajax_chapter_images
             news_id, chapter_id = _reader_ids(matched_chapter, series_url)
             reader_url = matched_chapter.get("url") or series_url
-            if not _ajax_chapter_images(reader_url, news_id, chapter_id):
+            # one retry: the AJAX endpoint answers [] on any hiccup, which must not
+            # make a real issue look dead
+            if not (_ajax_chapter_images(reader_url, news_id, chapter_id)
+                    or _ajax_chapter_images(reader_url, news_id, chapter_id)):
                 continue
         return True
 
     return False
+
+
+def verify_batcave_issue(
+    series_name: str,
+    issue_number: str | int | float,
+    year: int | str | None = None,
+    *,
+    ping_pages: bool = False,
+    log: Callable[[str], None] = logger.info,
+) -> bool:
+    """Verify whether a specific comic series issue actually exists on Batcave.
+
+    1. Disambiguates series by name & publication year.
+    2. Discovers chapters for candidate series.
+    3. Matches exact issue number.
+    4. Optionally verifies chapter page data.
+
+    Returns False both for "not there" and for "could not check" — use
+    `check_batcave_comic` when the difference matters.
+    """
+    return _verify_issue(series_name, issue_number, year, ping_pages, log, [])
 
 
 def check_batcave_comic(
@@ -163,19 +188,25 @@ def check_batcave_comic(
     if not name:
         return BatcaveCheck(False, "series", "", issue, year_int, "no series name given")
 
+    level = "issue" if issue is not None else "series"
+    problems: list[str] = []
     try:
         if issue is not None:
-            ok = verify_batcave_issue(name, issue, year_int, ping_pages=ping_pages, log=log)
-            note = "issue exists" + (" and its pages answer" if ping_pages else "") if ok else \
+            ok = _verify_issue(name, issue, year_int, ping_pages, log, problems)
+            note = ("issue exists" + (" and its pages answer" if ping_pages else "")) if ok else \
                 "issue not found on batcave"
-            return BatcaveCheck(ok, "issue", name, issue, year_int, note)
-
-        for _series_url, _issues in _year_matched_series(name, _year_text(year), log):
-            return BatcaveCheck(True, "series", name, None, year_int,
-                                "series+year exists on batcave; issue number unknown, issue not verified")
-        return BatcaveCheck(False, "series", name, None, year_int,
-                            "series+year not found on batcave (issue number unknown)")
+        else:
+            ok = any(True for _ in _year_matched_series(name, _year_text(year), log, problems))
+            note = ("series+year exists on batcave; issue number unknown, issue not verified" if ok
+                    else "series+year not found on batcave (issue number unknown)")
     except Exception as exc:  # noqa: BLE001 - a lookup failure must not crash routing
         log(f"[batcave-verifier] check failed for {name!r}: {type(exc).__name__}: {exc}")
-        return BatcaveCheck(False, "issue" if issue is not None else "series", name, issue, year_int,
-                            f"lookup error: {type(exc).__name__}")
+        problems.append(f"{type(exc).__name__}: {exc}")
+        ok, note = False, "lookup error"
+
+    if ok:
+        return BatcaveCheck(True, level, name, issue, year_int, note)
+    if problems:
+        return BatcaveCheck(False, level, name, issue, year_int,
+                            "lookup inconclusive — " + "; ".join(problems), inconclusive=True)
+    return BatcaveCheck(False, level, name, issue, year_int, note)
