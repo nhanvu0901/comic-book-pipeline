@@ -50,6 +50,17 @@ flet>=0.84,<1.0
 flet-audio>=0.84
 flet-video>=0.84
 
+# === Video clips in Q&A (ENABLE_VIDEO_CLIPS=1) + the media router ===
+# The clip picker is a FastAPI app that serves Flet as ASGI under `python -m ui --lan` (flag ON only;
+# flag OFF keeps the plain ft.run path). All three already ship with flet's web extras — pinned here so
+# a fresh venv has them.
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.5            # the router's typed schema
+# Section downloads (--download-sections): YouTube returns HTTP 403 to older builds — 2026.07.04 fails,
+# 2026.08.19 works. Keep it current, or point YTDLP_BIN at a standalone yt-dlp.exe.
+yt-dlp>=2026.08.19
+
 # Stage 5 clause-anchored panel slicing (2026-06-18)
 spacy>=3.8
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
