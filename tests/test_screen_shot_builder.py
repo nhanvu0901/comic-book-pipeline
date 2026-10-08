@@ -15,6 +15,7 @@ from stages.stage_5.screen_shots import ScreenShot, build_shots_for_screen_qa
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "screen_qa_project"
 FPS = 30
+ABS = Path(__file__).resolve().parent / "abs_fake"      # absolute on every OS; never touched
 TIMINGS = [
     {"scene_id": 1, "start": 0.0, "end": 4.2},
     {"scene_id": 2, "start": 4.2, "end": 8.1},
@@ -81,7 +82,7 @@ def test_empty_narration_builds_nothing():
 # ─── clips: P1's manifest, review beat keys ───────────────────────────────────
 
 def _manifest(**over):
-    return [{"id": "c-first", "file": "/clips/a.mp4", "beat": "1:0", "start": 1.5, "end": 4.0,
+    return [{"id": "c-first", "file": str(ABS / "a.mp4"), "beat": "1:0", "start": 1.5, "end": 4.0,
              "source_url": "https://youtu.be/AAAAAAAAAAA", **over}]
 
 
@@ -90,7 +91,7 @@ def test_a_clip_on_the_first_fragment_lands_on_the_first_shot_not_the_second(nar
     have put this clip on fragment 1:1."""
     shots = build_shots_for_screen_qa(narration, TIMINGS, clips_manifest=_manifest())
     by = _by_key(shots)
-    assert by["1:0"].clip_path == "/clips/a.mp4" and by["1:0"].clip_id == "c-first"
+    assert by["1:0"].clip_path == str(ABS / "a.mp4") and by["1:0"].clip_id == "c-first"
     assert by["1:0"].clip_in == 1.5 and by["1:0"].clip_out == 4.0
     assert not by["1:1"].clip_path or by["1:1"] is by["1:0"]
 
@@ -110,9 +111,9 @@ def test_a_clip_on_a_single_fragment_bookend_uses_the_legacy_intro_key():
          "visual_beats": [{"text": "Hook line.", "query": "q"}]},
         {"scene_id": 2, "text": "Body of the answer here.", "target_seconds": 3.0},
         {"scene_id": 3, "text": "Closing line.", "is_outro": True, "target_seconds": 2.0}]}
-    man = [{"id": "ci", "file": "/c/i.mp4", "beat": "intro", "start": 0, "end": 2},
-           {"id": "co", "file": "/c/o.mp4", "beat": "outro", "start": 0, "end": 2},
-           {"id": "cb", "file": "/c/b.mp4", "beat": "2", "start": 0, "end": 3}]
+    man = [{"id": "ci", "file": str(ABS / "i.mp4"), "beat": "intro", "start": 0, "end": 2},
+           {"id": "co", "file": str(ABS / "o.mp4"), "beat": "outro", "start": 0, "end": 2},
+           {"id": "cb", "file": str(ABS / "b.mp4"), "beat": "2", "start": 0, "end": 3}]
     shots = build_shots_for_screen_qa(nar, None, clips_manifest=man)
     assert [s.clip_id for s in shots] == ["ci", "cb", "co"]
 
@@ -125,11 +126,11 @@ def test_a_stale_beat_key_is_skipped_not_fatal(narration):
 
 def test_backup_clip_is_stamped_from_the_manifest_entry(narration):
     man = _manifest(source_start=61.0, backup={
-        "id": "b1", "file": "/clips/backup.mp4", "start": 0.0, "end": 3.0,
+        "id": "b1", "file": str(ABS / "backup.mp4"), "start": 0.0, "end": 3.0,
         "source_url": "https://youtu.be/BBBBBBBBBBB", "source_start": 200.0})
     shots = build_shots_for_screen_qa(narration, TIMINGS, clips_manifest=man)
     s = _by_key(shots)["1:0"]
-    assert (s.backup_clip_path, s.backup_clip_id) == ("/clips/backup.mp4", "b1")
+    assert (s.backup_clip_path, s.backup_clip_id) == (str(ABS / "backup.mp4"), "b1")
     assert s.backup_clip_out == 3.0 and s.backup_source_start == 200.0
     assert s.clip_source_start == 61.0
 
@@ -176,9 +177,9 @@ def test_a_clip_outranks_a_still_on_the_same_beat_and_keeps_it_as_the_fallback(t
     (root / "review" / "clips" / "clips.json").write_text(json.dumps({"clips": [
         {"id": "x", "file": "review/clips/x.mp4", "beat": "2:0", "start": 0, "end": 2}]}))
     shots = build_shots_for_screen_qa(narration, TIMINGS, project_root=root,
-                                      custom_images={"2:0": "/abs/still.png"})
+                                      custom_images={"2:0": str(ABS / "still.png")})
     s = _by_key(shots)["2:0"]
-    assert s.clip_id == "x" and s.custom_image == "/abs/still.png"
+    assert s.clip_id == "x" and s.custom_image == str(ABS / "still.png")
 
 
 def test_screen_context_is_loaded_from_the_project_folder(tmp_path, narration):
