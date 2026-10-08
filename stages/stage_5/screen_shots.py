@@ -576,7 +576,9 @@ def run_screen_qa_pipeline(
         else:
             render_screen_shot(s, sp, work_dir=shots_dir / "_work", corner_logo=corner_logo,
                                screen_context=screen_context, project_root=root, progress=log)
-            meta.write_text(json.dumps({"sig": shot_signature(s, corner_logo), "level": s.render_level,
+            # the signature taken BEFORE the render: a level-2 render rewrites the shot's clip
+            # fields, and the next run starts again from the manifest's (primary) ones
+            meta.write_text(json.dumps({"sig": sig, "level": s.render_level,
                                         "clip_fallback": s.clip_fallback, "notes": s.level_notes}),
                             encoding="utf-8")
         shot_paths.append(sp)
