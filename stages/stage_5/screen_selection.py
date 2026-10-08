@@ -260,9 +260,19 @@ def sync_with_narration(project_root) -> bool:
 
 def tts_status(project_root) -> dict:
     """The background-TTS progress doc: {"completed": bool, "scene_durations": {sid: sec},
-    "beat_durations": {...}}. One path — <project>/cache/tts/status.json, where the runner
-    (stages.stage_4.background_tts) writes it and /api/beat_tts_status reads it."""
-    doc = _read(_root(project_root) / "cache" / "tts" / "status.json", {})
+    "beat_durations": {beat_key: sec}, ...}.
+
+    ONE status path: stages.stage_4.tts_status (P1) owns it — projects/<p>/review/tts_status.json,
+    written by the background runner and read by the review gate and the /moments_review routes.
+    Until that module is merged into the branch the same documented path is read directly."""
+    root = _root(project_root)
+    try:
+        from ..stage_4 import tts_status as _tts
+    except ImportError:
+        doc = _read(root / "review" / "tts_status.json", {})
+    else:
+        doc = _tts.read_status(root)
+    doc = dict(doc) if isinstance(doc, dict) else {}
     doc.setdefault("completed", False)
     doc.setdefault("scene_durations", {})
     doc.setdefault("beat_durations", {})
@@ -270,11 +280,19 @@ def tts_status(project_root) -> dict:
 
 
 def beat_seconds(project_root, narration: dict, screen_context: dict | None = None) -> dict[str, float]:
-    """{beat_key: seconds} from the real TTS durations when the runner has produced them, else
+    """{beat_key: seconds} — the real TTS durations when the runner has produced them (its own
+    per-beat numbers where it has them, else this module's split of the scene durations), else
     the writer's estimate."""
     from .screen_beats import estimate_beat_seconds
-    return estimate_beat_seconds(narration, tts_status(project_root).get("scene_durations") or None,
-                                 screen_context)
+    st = tts_status(project_root)
+    out = estimate_beat_seconds(narration, st.get("scene_durations") or None, screen_context)
+    for key, v in (st.get("beat_durations") or {}).items():
+        try:
+            if key in out and float(v) > 0:
+                out[key] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 # ─── backup clip ────────────────────────────────────────────────────────────────
