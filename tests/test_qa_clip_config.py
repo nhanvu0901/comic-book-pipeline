@@ -3,6 +3,18 @@ import importlib
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _code_defaults_not_dotenv(monkeypatch):
+    """config.py runs load_dotenv() on import, so on a machine with a .env (the Windows server's has
+    POST_ATEMPO=1.15 and more) a reload would test the .env, not the code defaults these tests are about.
+    Neutralise it for the reload, and put config back exactly as the real environment defines it after."""
+    import config
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
+    yield
+    monkeypatch.undo()
+    importlib.reload(config)
+
+
 def test_default_flags_off(monkeypatch):
     monkeypatch.delenv("ENABLE_VIDEO_CLIPS", raising=False)
     monkeypatch.delenv("CLIP_SPEED_MIN", raising=False)
