@@ -1,396 +1,357 @@
-# IMPLEMENTATION PLAN: Tích Hợp Video Clips Vào Pipeline Q&A
+# IMPLEMENTATION PLAN: Tích Hợp Video Clips Vào Pipeline Q&A (Phân Chia Worker & Delivery Option A)
 
-| Kế hoạch | Trạng thái | Ngày lập | Phiên bản |
+| Kế hoạch | Trạng thái | Ngày cập nhật | Phiên bản |
 |---|---|---|---|
-| `todo/video-clip-feature/2026-10-07-video-qa-plan.md` | Bản kế hoạch chi tiết (Chờ Master duyệt) | 2026-10-07 | 1.0 |
+| `todo/video-clip-feature/2026-10-07-video-qa-plan.md` | Bản kế hoạch chi tiết (Master Decisions a/b, 13 Fixes & Worker Allocation) | 2026-10-08 | 2.0 |
 
 ---
 
-## 1. Quy Trình Phân Phối & Nguyên Tắc An Toàn (Delivery Guidelines)
+## 1. Quy Trình Phân Phối (Delivery Option A) & Phân Chia Nhân Sự (Worker Allocation)
 
-1. **Chỉ thực thi khi Master đồng ý**: Đây là tài liệu kế hoạch. Không chỉnh sửa bất kỳ dòng code nào cho đến khi Master phê duyệt.
-2. **Quy trình triển khai (Gated Delivery)**:
-   $$\text{Viết Code} \longrightarrow \text{Test trên Windows Checkout phụ} \longrightarrow \text{Commit \& Push} \longrightarrow \text{Demo Master trên Server}$$
-3. **Môi trường Server độc lập**:
-   - Mọi thao tác kiểm thử trên Windows Server được thực hiện qua SSH tunnel vào thư mục clone phụ: `D:\code\cbp-video-test`.
-   - Tuyệt đối không can thiệp thư mục production `D:\code\comic-book-pipeline` và không thay đổi cấu hình firewall.
-4. **Bảo toàn nhánh ổn định (Zero-Regression Guard)**:
-   - Mọi task tác động vào đường chạy ổn định (stable path) đều được bảo vệ bằng guard/flag. Khi flag `ENABLE_VIDEO_CLIPS=0` hoặc project không có manifest clip, đầu ra của pipeline phải **byte-identical (SHA256 trùng khớp 100%)**.
+### 1.1. Phân Chia Công Việc Đa Luồng Giữa Các Worker
+Dự án được phân rã cho các worker chuyên biệt cùng phối hợp trên Git repository chung:
+
+| Worker / Session | Phạm vi phụ trách | Nhánh làm việc | Nhiệm vụ chi tiết |
+|---|---|---|---|
+| **`video-qa/p1-verify`** | P1 Review & Windows E2E | `video-qa/p1-verify` | Review các task P1, chạy test suite hồi quy hybrid và thực hiện kiểm thử E2E trên Windows Server. |
+| **`video-qa/p3-core`** | P3 Core Infrastructure | `video-qa/p3-core` | Xây dựng các module P3 mới: CLI (`stages/screen_pipeline.py`), Research (`stages/stage_1/screen_research.py`), Narration (`stages/stage_3/screen_script.py`). |
+| **`video-qa/p3-visual`** | P3 Visual & Fallbacks | `video-qa/p3-visual` | Xây dựng Shot Builder P3 mới (`stages/stage_5/screen_shots.py`), chuỗi Fallback 4 cấp độ không crash, giao diện Screen UI. |
+| **`comic-book-pipeline-12`** | P2 & Integrator | `feat/video-qa-hybrid` | Hoàn thiện P2 (Batcave issue verifier, Router rules) và đóng vai trò **Integrator**: merge các nhánh worker, giải quyết conflict, chạy full suite và quản lý deploy. |
+
+### 1.2. Quy Trình Phân Phối Gated Delivery (Option A)
+1. Các worker phát triển trên nhánh riêng (tách từ `feat/video-qa-hybrid@5c60eef`).
+2. Integrator (`comic-book-pipeline-12`) merge các nhánh vào `feat/video-qa-hybrid`, giải quyết xung đột, chạy kiểm thử toàn bộ.
+3. Chạy test trên thư mục riêng trên Windows Server qua SSH tunnel: `D:\code\cbp-video-test-int` (cổng `8562`).
+4. Push nhánh `feat/video-qa-hybrid`.
+5. **DỪNG LẠI CHỜ PHÊ DUYỆT CỦA MASTER (Gated Checkpoint)**.
+6. **CHỈ SAU KHI MASTER ĐỒNG Ý RÕ RÀNG**: Pull code vào thư mục production `D:\code\comic-book-pipeline`, khởi động lại UI trên cổng `8550` với flag `ENABLE_VIDEO_CLIPS=1` để demo cho Master. Tuyệt đối không can thiệp thư mục production hay firewall trước khi có lệnh.
 
 ---
 
-## 2. Giai Đoạn P0: Chuẩn Bị & Sửa Lỗi Whip-Bridge Transition
+## 2. Giai Đoạn P0: Sửa Lỗi Whip Bridge & Thu Thập Baseline Byte-Identical
 
-Mục tiêu: Thiết lập nhánh tích hợp và sửa dứt điểm lỗi vệt sọc đứng tại điểm nối giữa video clip và panel.
+Mục tiêu: Sửa dứt điểm lỗi vệt sọc đứng bằng phản chiếu gương (mirroring) và chốt baseline byte-identity.
 
 ### Task 0.1: Thiết Lập Nhánh Tích Hợp & Môi Trường Thử Nghiệm
-- **Phân loại**: ADDITIVE (Không ảnh hưởng code).
+- **Phân loại**: ADDITIVE.
+- **Worker**: Integrator (`comic-book-pipeline-12`).
 - **Files to touch**: Git repository branches.
-- **Nội dung thực hiện**: Tạo nhánh tích hợp `feat/video-qa-hybrid` từ điểm mốc `ao/comic-book-pipeline-3/root`. Thiết lập checkout phụ tại `D:\code\cbp-video-test` trên Windows Server.
-- **Tests written FIRST**: N/A (Thao tác quản lý mã nguồn).
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**:
-  - Nhánh mới tạo sạch sẽ, đầy đủ 50 tests hiện tại của `tests/test_video_clips.py` pass 100%.
-  - Windows Server clone thành công nhánh phụ vào `D:\code\cbp-video-test`, venv hoạt động tốt.
+- **Nội dung thực hiện**: Tạo nhánh tích hợp `feat/video-qa-hybrid` từ mốc `ao/comic-book-pipeline-3/root`. Setup checkout phụ tại `D:\code\cbp-video-test` trên Windows Server.
+- **Tiêu chí nghiệm thu**: 50 tests hiện tại của `tests/test_video_clips.py` pass 100%.
 
-### Task 0.2: Sửa Lỗi Vệt Sọc Đứng Trong Whip-Bridge Transition
-- **Phân loại**: TOUCHES STABLE PATH (Áp dụng cho mọi hiệu ứng whip transition).
-- **Guard / Cơ chế bảo vệ**: Hàm toán học xử lý padding biên; giữ nguyên tổng thời lượng bridge và mốc thời gian mượn của cảnh kề (`pipeline.py:631-649`).
+### Task 0.2: Sửa Lỗi Vệt Sọc Đứng Bằng Phản Chiếu Mirroring (Fix 6)
+- **Phân loại**: TOUCHES STABLE PATH (`stages/stage_5/pipeline.py:706-720`).
+- **Guard**: Tổng thời lượng bridge và mốc audio mượn của cảnh kề giữ nguyên (`pipeline.py:631-649`).
+- **Worker**: Integrator.
 - **Files to touch**: `stages/stage_5/pipeline.py` (Dòng 706–720).
 - **Nội dung thực hiện**:
-  - Tại `_shift_up`: Bỏ cơ chế crop 1px row đáy `img.crop((0, OUTPUT_H - 1, OUTPUT_W, OUTPUT_H)).resize(...)`. Thay bằng trích xuất dải biên đa hàng (`min(px, 32)` px) áp dụng bilinear interpolation để triệt tiêu sọc đơn sắc kéo dài.
-  - Tại `_shift_from_below`: Sửa tương tự cho dải biên đỉnh đối xứng.
+  - **TUYỆT ĐỐI KHÔNG DÙNG STRETCHING**: Bỏ toàn bộ việc kéo giãn 1 hàng pixel đáy.
+  - Lấp khoảng trống `px` bằng cách trích xuất dải biên đa hàng và lật đối xứng gương (**MIRRORING / REFLECT**) qua trục ngang (`Image.FLIP_TOP_BOTTOM`).
+  - Sửa đối xứng cho cả `_shift_up` và `_shift_from_below`.
 - **Tests written FIRST (TDD)**:
-  - Tạo `tests/test_whip_bridge.py`:
-    - `test_shift_up_no_vertical_streaks()`: Sinh ảnh test có độ dốc màu dọc, gọi `_shift_up(img, px=40)`. Kiểm tra độ lệch chuẩn của gradient vùng đáy $> 0$ (không bị 1 hàng pixel lặp lại giống hệt nhau).
-    - `test_shift_from_below_no_vertical_streaks()`: Kiểm tra tương tự cho vùng đỉnh.
+  - `tests/test_whip_bridge.py`:
+    - `test_shift_up_no_vertical_streaks()`: Kiểm tra không có dải pixel bị kéo giãn hoặc lặp lại 1D đơn điệu.
+    - `test_shift_from_below_no_vertical_streaks()`: Kiểm tra tương tự cho dải đỉnh.
     - `test_whip_bridge_duration_and_audio_sync_preserved()`: Đảm bảo tổng thời lượng không đổi.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**:
-  - 100% tests mới trong `test_whip_bridge.py` pass.
-  - Video render thực tế tại đoạn nối clip $\leftrightarrow$ panel không còn hiện tượng kéo sọc đứng.
+- **Tiêu chí nghiệm thu**: 100% tests pass, video render đoạn chuyển tiếp không còn sọc đứng.
 
-### Task 0.3: Kiểm Thử & Checkpoint P0 Trên Windows Server
-- **Nội dung thực hiện**: Chạy test suite trên `D:\code\cbp-video-test` qua SSH tunnel.
-- **Lệnh thực thi**: `pytest tests/test_whip_bridge.py tests/test_video_clips.py`.
-- **Checkpoint P0**: Báo cáo Master kết quả test và clip mẫu trước khi bước vào P1.
+### Task 0.3: Thu Thập Baseline Byte-Identity Ngay Sau Whip Fix (Fix 7)
+- **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
+- **Files to touch**: `tests/test_p0_baseline.py` (mới), `tests/fixtures/p0_baseline.json` (mới).
+- **Nội dung thực hiện**:
+  - Chạy fixture render chuẩn ngay sau khi Task 0.2 hoàn thành.
+  - Tính toán và lưu hash SHA256 của `shots.json` và `video_silent.mp4` vào `tests/fixtures/p0_baseline.json`.
+  - Do cơ chế chọn whip transition được seed tất định theo `f"{project}:{scene_a}:{scene_b}"` (`pipeline.py:609-623`), baseline này có tính tất định 100% và đóng vai trò làm thước đo hồi quy cho P1.
+- **Tests written FIRST (TDD)**:
+  - `tests/test_p0_baseline.py`:
+    - `test_p0_baseline_matches_stored_hash()`: Assert hash render khớp chính xác với baseline đã lưu.
+- **Tiêu chí nghiệm thu**: File baseline được ghi nhận và pass test kiểm tra lặp lại.
 
 ---
 
 ## 3. Giai Đoạn P1: Lớp Video Clip Hybrid Trong Comic Q&A
 
-Mục tiêu: Cho phép chọn và phát video clip trên từng beat trong Comic Q&A, giữ comic làm nguồn gốc, quản lý qua cờ `ENABLE_VIDEO_CLIPS=0`.
+Mục tiêu: Tích hợp video clips vào Comic Q&A, giữ comic làm nguồn gốc chính, bảo toàn byte-identical khi flag OFF.
 
-### Task 1.1: Định Nghĩa Feature Flag & Biến Cấu Hình
+### Task 1.1: Feature Flags, Post-Atempo Giữ Nguyên & Conditional Seeding (Fix 1 & 2)
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
 - **Files to touch**: `config.py`, `.env.example`.
 - **Nội dung thực hiện**:
   - Khai báo cờ `ENABLE_VIDEO_CLIPS = bool(int(os.getenv("ENABLE_VIDEO_CLIPS", "0")))`.
-  - Khai báo các thông số fit clip: `CLIP_SPEED_MIN = float(os.getenv("CLIP_SPEED_MIN", "0.8"))`, `CLIP_SPEED_MAX = float(os.getenv("CLIP_SPEED_MAX", "1.25"))`, `CLIP_MAX_HOLD = float(os.getenv("CLIP_MAX_HOLD", "0.3"))`.
-  - Khai báo `POST_ATEMPO = float(os.getenv("POST_ATEMPO", "1.15"))` và `CHATTERBOX_SEED = int(os.getenv("CHATTERBOX_SEED", "42"))`.
+  - Khai báo các thông số fit: `CLIP_SPEED_MIN = 0.8`, `CLIP_SPEED_MAX = 1.25`, `CLIP_MAX_HOLD = 0.3`.
+  - **Fix 1**: **KHÔNG ĐƯỢC ĐỔI MẶC ĐỊNH `POST_ATEMPO` TRONG `config.py`** (giữ nguyên mặc định 1.30 trong code). Đọc giá trị hiệu dụng từ `.env` (chỉ rõ 1.15).
+  - **Fix 2**: `CHATTERBOX_SEED` **CHỈ ĐƯỢC SEED KHI FLAG ON** (`42` nếu bật). Khi flag OFF, giữ nguyên unseeded TTS (`CHATTERBOX_SEED = None`, nhiệt độ ngẫu nhiên 0.8 như cũ).
 - **Tests written FIRST (TDD)**:
   - `tests/test_qa_clip_config.py`:
-    - `test_default_flags_off()`: Đảm bảo `ENABLE_VIDEO_CLIPS` mặc định là `False`.
-    - `test_custom_env_flags()`: Kiểm tra nạp đúng biến khi gán env.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Khi không đặt env, toàn bộ flag giữ nguyên giá trị mặc định an toàn.
+    - `test_default_flags_off_unseeded()`: Kiểm tra khi flag OFF thì `CHATTERBOX_SEED is None` và `POST_ATEMPO` code default là 1.30.
+    - `test_flags_on_seeded()`: Kiểm tra khi flag ON thì `CHATTERBOX_SEED == 42`.
+- **Tiêu chí nghiệm thu**: Mọi cấu hình chuẩn xác theo đúng quy tắc flag ON/OFF.
 
-### Task 1.2: Kiến Trúc Fast-API ASGI Server & LAN Router
-- **Phân loại**: TOUCHES STABLE PATH (`ui/__main__.py:87` cho chế độ `--lan`).
-- **Guard / Cơ chế bảo vệ**: Chế độ desktop `ft.run(main)` tại `ui/__main__.py:67` hoàn toàn không đổi. Khi chạy `--lan`, các route clip chỉ được nạp; nếu flag `ENABLE_VIDEO_CLIPS=0`, route trả về thông báo tính năng tắt.
+### Task 1.2: FastAPI Launcher Chỉ Bọc Khi Flag ON (Fix 3)
+- **Phân loại**: TOUCHES STABLE PATH (`ui/__main__.py:87`).
+- **Guard**: Khi flag OFF, sử dụng 100% đường chạy cũ.
+- **Worker**: Integrator / `video-qa/p1-verify`.
 - **Files to touch**: `ui/__main__.py`, `ui/web_routes.py` (mới).
 - **Nội dung thực hiện**:
-  - Tạo `ui/web_routes.py`: Định nghĩa `APIRouter` chứa các endpoint `/moments_review`, `/api/pick_moment`, `/api/beat_tts_status`.
-  - Sửa `ui/__main__.py:87`: Khi `--lan`, xuất `flet_asgi = ft.run(main, export_asgi_app=True, assets_dir=str(PROJECTS_ROOT))`, khởi tạo FastAPI app, nạp `clip_router` **TRƯỚC**, sau đó mới `app.mount("/", flet_asgi)`. Chạy uvicorn trên cổng `8550`.
+  - **Fix 3**: Trong hàm `_run()` tại `ui/__main__.py:87`:
+    - Nếu `not config.ENABLE_VIDEO_CLIPS`: Chạy chính xác lệnh cũ `ft.run(main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=args.port, assets_dir=str(PROJECTS_ROOT))`. Hoàn toàn không nạp FastAPI.
+    - Nếu `config.ENABLE_VIDEO_CLIPS`: Mới xuất `flet_asgi`, tạo FastAPI app, nạp `clip_router` trước rồi mount `flet_asgi` sau cùng, chạy qua Uvicorn trên cổng `8550`.
 - **Tests written FIRST (TDD)**:
   - `tests/test_fastapi_launcher.py`:
-    - `test_routes_precede_flet_mount()`: Giả lập HTTP client gọi `/moments_review`, đảm bảo trả về HTTP 200 HTML chứ không bị Flet catch-all nuốt.
-    - `test_desktop_mode_untouched()`: Đảm bảo lệnh gọi desktop không khởi động uvicorn.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Mở trình duyệt truy cập `http://localhost:8550/moments_review` trả về HTML đúng; truy cập `http://localhost:8550/` mở ứng dụng Flet bình thường.
+    - `test_lan_uses_exact_old_ft_run_when_flag_off()`: Đảm bảo không import/wrap FastAPI khi flag OFF.
+    - `test_lan_uses_fastapi_wrap_when_flag_on()`: Đảm bảo khởi tạo FastAPI và route clip ưu tiên trước Flet khi flag ON.
+- **Tiêu chí nghiệm thu**: Flag OFF chạy Flet thuần không phụ thuộc FastAPI; flag ON mở web routes bình thường.
 
-### Task 1.3: Deterministic Background TTS Runner & Caching Hạt Nhân
-- **Phân loại**: TOUCHES STABLE PATH (`stages/stage_4/chatterbox_tts.py:173`, `stages/stage_4/pipeline.py:151`).
-- **Guard / Cơ chế bảo vệ**: Nếu không có `CHATTERBOX_SEED`, giữ nguyên temperature ngẫu nhiên. Cache WAV đọc nếu có, không có thì tổng hợp bình thường.
-- **Files to touch**: `stages/stage_4/chatterbox_tts.py`, `stages/stage_4/pipeline.py`.
+### Task 1.3: Background TTS Runner, Worker Seeding & Không Gọi `ensure_reviewed` (Fix 8)
+- **Phân loại**: TOUCHES STABLE PATH (`stages/stage_4/_chatterbox_worker.py:27`, `stage_4/pipeline.py:151`).
+- **Worker**: Integrator.
+- **Files to touch**: `stages/stage_4/_chatterbox_worker.py`, `stages/stage_4/background_tts.py` (mới), `stages/stage_4/pipeline.py`.
 - **Nội dung thực hiện**:
-  - Tại `chatterbox_tts.py`: Bổ sung tham số `seed: int | None = 42` vào payload gửi sang subprocess worker `_WORKER`. Worker gán seed cố định cho torch/python RNG.
-  - Bổ sung cơ chế cache WAV theo hash:
-    `key = sha256(f"{text}|{voice}|{exaggeration}|{cfg}|{seed}|{atempo}".encode()).hexdigest()`
-    Lưu file tại `projects/<p>/cache/tts/<key>.wav`.
-  - Tại `stage_4/pipeline.py:151`: Kiểm tra cache WAV trước khi gọi tổng hợp, tái sử dụng các file đã sinh nền từ Review Gate.
+  - Tại `stages/stage_4/_chatterbox_worker.py`: Gán seed cố định (`torch.manual_seed`, `np.random.seed`, `random.seed`) khi nhận `job.get("seed")`.
+  - Tạo `stages/stage_4/background_tts.py`: Quản lý tiến trình tổng hợp nền. **TUYỆT ĐỐI KHÔNG GỌI `ensure_reviewed()`** vì review gate đang mở và cố tình chặn Stage 4.
+  - Lưu file WAV vào `projects/<p>/cache/tts/<sha256>.wav`.
+  - Tại `stages/stage_4/pipeline.py:151`: Tái sử dụng các chunk đã cache, chỉ synthesize các chunk còn thiếu. Dùng chính xác thuật toán chia câu `_chunks`, `_even_words` và atempo.
 - **Tests written FIRST (TDD)**:
   - `tests/test_chatterbox_deterministic.py`:
-    - `test_chatterbox_fixed_seed_bit_identical()`: Tổng hợp cùng 1 câu 2 lần với cùng seed trên cùng máy, assert hash file WAV giống nhau 100%.
-    - `test_wav_cache_reuse_in_stage_4()`: Tạo cache WAV giả lập, chạy Stage 4 pipeline và xác minh không gọi synthesize mới.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Chạy 2 lần background TTS trên cùng câu cho ra file WAV bit-identical. Stage 4 nhận diện và tái sử dụng toàn bộ cache.
+    - `test_background_tts_does_not_call_ensure_reviewed()`: Mock `ensure_reviewed`, đảm bảo không bị gọi trong background job.
+    - `test_stage_4_reuses_cached_chunks()`: Kiểm tra Stage 4 nạp cache thành công mà không gọi worker cho chunk đã có.
+- **Tiêu chí nghiệm thu**: Background TTS chạy êm ái mà không bị chặn bởi Review Gate; Stage 4 tái sử dụng 100% cache.
 
-### Task 1.4: Bộ Tính Toán Beat Window & Quản Lý Keep-Awake Windows
+### Task 1.4: Bộ Tính Beat Window & Keep-Awake Windows
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
 - **Files to touch**: `stages/stage_4/beat_timing.py` (mới).
 - **Nội dung thực hiện**:
-  - Xây dựng hàm `calculate_beat_durations(narration, wav_timings)`:
-    - Phân bổ từ câu sang beat theo tỷ lệ từ ngữ (`_even_words`).
-    - Áp dụng gap absorption (`shots.py:797-803`).
-    - Gộp các beat $< 1.5\text{s}$ (`QA_MIN_SHOT_SECONDS`).
-    - Khấu trừ $0.12\text{s}$ mỗi bên nếu có whip transition.
-  - Xây dựng hàm quản lý trạng thái máy tính:
-    `set_keep_awake(True/False)` sử dụng `ctypes.windll.kernel32.SetThreadExecutionState(0x80000002)` khi chạy trên Windows.
+  - Xây dựng `calculate_beat_durations` phân bổ thời lượng câu sang beat theo `_even_words`, kết hợp gap absorption, gộp beat $< 1.5\text{s}$ và khấu trừ $0.12\text{s}$ whip transition.
+  - Tích hợp `SetThreadExecutionState(0x80000002)` chống sleep trên Windows.
 - **Tests written FIRST (TDD)**:
   - `tests/test_beat_timing.py`:
-    - `test_beat_window_calculation_math()`: So sánh kết quả tính beat window với fixture chuẩn của Stage 5.
-    - `test_whip_deduction_and_min_duration()`: Đảm bảo không có beat nào $< 0.4\text{s}$ sau khi khấu trừ.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Kết quả tính toán thời lượng beat khớp chính xác với thời lượng shot tương ứng khi render ở Stage 5.
+    - `test_beat_window_calculation_accuracy()`: Kiểm tra khớp timing với Stage 5.
+- **Tiêu chí nghiệm thu**: Thời lượng beat tính toán khớp hoàn toàn với shot render thực tế.
 
-### Task 1.5: UI Review Gate - Nút "Dùng MP4", Invalidation & PubSub Sync
-- **Phân loại**: TOUCHES STABLE PATH (`ui/screens/s_review_gate.py:1474-1510`).
-- **Guard / Cơ chế bảo vệ**: Bọc trong điều kiện `if config.ENABLE_VIDEO_CLIPS:`. Khi cờ OFF, giao diện không render icon "Dùng MP4" và không kích hoạt background TTS.
+### Task 1.5: UI Review Gate: Nút MP4 & Reset Toàn Bộ Project Khi Sửa Narration (Master Decision a & Fix 5)
+- **Phân loại**: TOUCHES STABLE PATH (`ui/screens/s_review_gate.py`).
+- **Guard**: Chỉ kích hoạt khi `config.ENABLE_VIDEO_CLIPS=True`.
+- **Worker**: Integrator / `video-qa/p1-verify`.
 - **Files to touch**: `ui/screens/s_review_gate.py`.
 - **Nội dung thực hiện**:
-  - Khi mở Review Gate với `ENABLE_VIDEO_CLIPS=1`: Khởi chạy background task tổng hợp TTS cho toàn bộ câu trong kịch bản.
-  - Trên mỗi Beat Card: Thêm icon `ft.IconButton(ft.Icons.VIDEO_FILE_OUTLINED, tooltip="Dùng MP4")`. Khi click, gọi `page.launch_url(f"/moments_review?project={project}&beat={beat_key}")` mở tab mới. Đẩy câu của beat này lên đầu priority queue TTS.
-  - Đăng ký `page.pubsub`: Khi nhận event `clip_picked` từ tab web, cập nhật trạng thái Beat Card sang nhãn MP4 màu xanh.
-  - Khi người dùng chỉnh sửa chữ narration (`_on_text` / `_on_frag_text`): Xóa sạch panel lock và MP4 selection của các beat thuộc câu sửa; hủy cache WAV của câu đó và đẩy vào hàng đợi tổng hợp lại.
+  - Thêm icon nút "Dùng MP4" trên từng beat card, mở tab `/moments_review` qua `page.launch_url`.
+  - Cập nhật card sang trạng thái MP4 qua pubsub khi nhận event chọn clip.
+  - **Master Decision a & Fix 5**: Hàm `_clear_all_locks_and_clips()`: Khi người dùng sửa text narration (hoặc thêm/xóa/gộp fragment), **TỰ ĐỘNG XÓA SẠCH TOÀN BỘ (ALL) panel locks VÀ MP4 selections của TOÀN BỘ PROJECT** (xóa sạch `locks.json` và `clips.json`). Background TTS kích hoạt lại và chỉ re-synthesize các câu bị thay đổi.
 - **Tests written FIRST (TDD)**:
   - `tests/test_review_gate_clip_ui.py`:
-    - `test_clip_button_hidden_when_flag_off()`: Assert nút MP4 không có trong cây control khi cờ OFF.
-    - `test_edit_narration_clears_locks_and_clips()`: Mô phỏng sự kiện sửa text, kiểm tra lock và clip bị xóa.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Giao diện cập nhật tức thì khi chọn clip ở tab ngoài; sửa kịch bản vô hiệu hóa đúng các lựa chọn liên quan.
+    - `test_narration_edit_clears_all_project_locks_and_clips()`: Mô phỏng sửa 1 câu, xác minh toàn bộ locks và clips của cả project bị reset.
+- **Tiêu chí nghiệm thu**: Xóa sạch đúng toàn bộ lựa chọn theo lệnh Master; đồng bộ thời gian thực mượt mà.
 
-### Task 1.6: Web App Tab `/moments_review` (YouTube IFrame API & Parallel Search)
+### Task 1.6: Web App Tab `/moments_review` (8 Luồng Song Song)
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
 - **Files to touch**: `ui/web_routes.py`, `stages/clip_fetch.py`.
 - **Nội dung thực hiện**:
-  - Xây dựng giao diện HTML tại route `/moments_review`:
-    - Hiển thị danh sách kết quả từ `clip_fetch.moment_search`.
-    - Nhúng iframe YouTube Player API (`enablejsapi=1`).
-    - Nút mốc thời gian gợi ý (chapters, subtitles, peaks).
-    - Link "Xem trên YouTube tại t" cho từng video.
-    - Nút "Dùng từ đây" gọi `player.getCurrentTime()` và POST JSON `{project, beat, video_id, start}` về `/api/pick_moment`.
-  - Tối ưu hóa `moment_search`: Song song hóa 8 luồng qua `ThreadPoolExecutor` để lấy metadata; cache kết quả theo `(beat, query)`.
+  - Xây dựng HTML tab `/moments_review` nhúng YouTube IFrame API (`enablejsapi=1`), gợi ý mốc thời gian, link xem trực tiếp trên YouTube và nút "Dùng từ đây" POST về `/api/pick_moment`.
+  - Chạy `moment_search` song song 8 luồng, cache kết quả theo `(beat, query)`.
 - **Tests written FIRST (TDD)**:
-  - `tests/test_moments_web_review.py`:
-    - `test_parallel_moment_search_performance()`: Kiểm tra thời gian tìm kiếm với mock 8 video hoàn thành dưới 15s.
-    - `test_pick_moment_api_pubsub_broadcast()`: Gửi POST `/api/pick_moment`, kiểm tra pubsub nhận đúng payload.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Tab web tải nhanh, nhúng player mượt mà, bấm chọn gửi dữ liệu chính xác về Flet.
+  - `tests/test_fastapi_launcher.py`: Kiểm tra route `/moments_review` và endpoint `/api/pick_moment`.
+- **Tiêu chí nghiệm thu**: Giao diện tab phản hồi nhanh dưới 15s, gửi dữ liệu chính xác về Flet.
 
-### Task 1.7: Tải Section Với yt-dlp & Tạo Preview 9:16
+### Task 1.7: Tải Section Với Công Thức Biên Chính Xác (Fix 9)
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
 - **Files to touch**: `stages/clip_fetch.py`, `stages/stage_5/clips.py`.
 - **Nội dung thực hiện**:
-  - Viết hàm `fetch_clip_section(url, out_dir, start, duration)`:
-    - Chạy: `yt-dlp --download-sections "*{start}-{start+duration+2.0}" --force-keyframes-at-cuts ...`
-    - Đưa file về chuẩn h264 yuv420p 30fps.
-  - Viết hàm `render_clip_preview(clip_path, start, beat_duration)`:
-    - Render nhanh clip 9:16 (contain+blur) đúng độ dài beat để Master xem thử trước khi chốt.
+  - Viết `ytdlp_section_args` và `fetch_clip_section`: Tính điểm kết thúc chính xác:
+    `end = start + beat_duration * config.CLIP_SPEED_MAX + margin` (với `margin = 2.0s`).
+  - Viết `render_clip_preview` trong `stages/stage_5/clips.py` dựng video preview 9:16 đúng độ dài beat.
 - **Tests written FIRST (TDD)**:
   - `tests/test_download_section.py`:
-    - `test_ytdlp_download_section_command_args()`: Kiểm tra chuỗi đối số `-download-sections` và keyframe cut.
-    - `test_preview_aspect_ratio_and_duration()`: Xác minh file preview sinh ra đúng 1080x1920 và đúng số frame.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Dung lượng tải về giảm $> 14\times$ so với tải toàn bộ video; preview hiển thị chuẩn xác 9:16.
+    - `test_ytdlp_section_args_calculation()`: Kiểm tra công thức end time có tính `CLIP_SPEED_MAX`.
+    - `test_preview_rendered_to_contract()`: Kiểm tra video preview 9:16.
+- **Tiêu chí nghiệm thu**: File tải nhỏ hơn $14–33\times$, preview chuẩn 9:16.
 
-### Task 1.8: Triển Khai Fit Math & Hard Cut Tại Render Stage 5
-- **Phân loại**: TOUCHES STABLE PATH (`stages/stage_5/clips.py:563-600`, `stages/stage_5/shots.py:2995`).
-- **Guard / Cơ chế bảo vệ**: Chỉ kích hoạt khi shot có `clip_path`. Nếu không có, toàn bộ logic render panel Ken Burns và xfade dissolve giữ nguyên 100%.
+### Task 1.8: Triển Khai Fit Math & Hard Cut Tại Render Stage 5 (Fix 10)
+- **Phân loại**: TOUCHES STABLE PATH (`stages/stage_5/clips.py`, `stages/stage_5/pipeline.py`).
+- **Guard**: Chỉ chạy khi shot có `clip_path`.
+- **Worker**: Integrator.
 - **Files to touch**: `stages/stage_5/clips.py`, `stages/stage_5/pipeline.py`.
 - **Nội dung thực hiện**:
-  - Triển khai thuật toán Fit Math trong `render_clip_shot`:
-    1. Đo thời lượng thực tế của shot $T$.
-    2. Cắt từ $S$. Nếu thiếu/thừa, áp dụng speed filter trong khoảng $[0.8, 1.25]$.
-    3. Nếu vẫn thiếu sau speed: giữ frame cuối $\le 0.3\text{s}$ bằng `tpad`.
-  - Tại `stages/stage_5/pipeline.py`: Xử lý transition:
-    - Shot clip: Ép **HARD CUT** tại biên nối trước và sau shot.
-    - Shot panel: Giữ nguyên hòa tan **DISSOLVE** (`XFADE_DURATION=0.25s`).
+  - Trong `render_clip_shot`: Gọi `_fit_clip_timing` co giãn tốc độ trong dải `[CLIP_SPEED_MIN, CLIP_SPEED_MAX]` (0.8 - 1.25x), giữ frame cuối $\le 0.3\text{s}$ (`CLIP_MAX_HOLD`).
+  - Trong `pipeline.py`: Ép **HARD CUT** quanh shot có clip; panel comic giữ nguyên hòa tan dissolve (`XFADE_DURATION=0.25`).
 - **Tests written FIRST (TDD)**:
   - `tests/test_clip_fit_math.py`:
-    - `test_clip_speed_within_bounds()`: Kiểm tra hệ số speed không vượt quá 0.8 và 1.25.
-    - `test_clip_hard_cut_transition_boundaries()`: Xác minh concat graph tạo cut cứng quanh clip shot.
-    - `test_frozen_tail_capped_at_max_hold()`: Kiểm tra hold frame không vượt quá 0.3s.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Video render mượt mà, âm thanh không bị lệch pha một frame nào; shot clip hiển thị đúng nhịp hành động.
+    - `test_fit_timing_speed_bounds()`: Kiểm tra hệ số tốc độ trong ngưỡng cho phép.
+    - `test_hard_cuts_enforced_for_clips()`: Kiểm tra concat graph ép cut cứng quanh clip.
+- **Tiêu chí nghiệm thu**: Video render mượt mà, khớp hoàn hảo với giọng đọc narration.
 
-### Task 1.9: Kiểm Thử TDD Hồi Quy Toàn Diện Cho Giai Đoạn P1
-- **Phân loại**: ADDITIVE (Bộ test).
+### Task 1.9: Kiểm Thử TDD Hồi Quy Toàn Diện P1
+- **Phân loại**: ADDITIVE.
+- **Worker**: `video-qa/p1-verify`.
 - **Files to touch**: `tests/test_video_qa_hybrid.py` (mới).
 - **Nội dung thực hiện**:
-  - Viết test kiểm tra tính toàn vẹn:
-    - `test_byte_identical_when_flag_off()`: Chạy fixture pipeline Q&A chuẩn với `ENABLE_VIDEO_CLIPS=0`. Đối chiếu SHA256 của `shots.json` và `video_silent.mp4` với fixture gốc. Phải trùng khớp 100%.
-    - `test_clip_shot_contract_compliance()`: Kiểm tra mọi clip shot sinh ra thỏa mãn contract h264 yuv420p 1080x1920 30fps no audio.
-    - `test_rollback_to_panel_preserves_original_shot()`: Kiểm tra thao tác hoàn tác về panel khôi phục đúng panel lock ban đầu.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Toàn bộ suite test pass hoàn toàn trên máy dev.
+  - Viết test kiểm tra tính toàn vẹn byte-identical so với `p0_baseline.json` khi flag `ENABLE_VIDEO_CLIPS=0`.
+  - Kiểm tra hợp đồng clip shot (1080x1920 30fps no audio) và cơ chế rollback.
+- **Tiêu chí nghiệm thu**: 100% test pass.
 
-### Task 1.10: Triển Khai Kiểm Thử Trên Windows Server & Checkpoint P1
-- **Nội dung thực hiện**:
-  - Đồng bộ code lên `D:\code\cbp-video-test` trên Windows Server qua SSH.
-  - Chạy full test: `pytest tests/test_video_qa_hybrid.py tests/test_video_clips.py`.
-  - Chạy thử nghiệm 1 project Q&A thực tế, mở web UI qua LAN port 8550, chọn 2 clip MP4 cho 2 beat.
-  - Render video hoàn chỉnh, kiểm tra độ mượt trên VLC.
-- **Checkpoint P1**: Báo cáo Master video mẫu hybrid và xin phê duyệt trước khi chuyển sang P2.
+### Task 1.10: Kiểm Thử Windows E2E & Checkpoint P1
+- **Worker**: `video-qa/p1-verify`.
+- **Nội dung thực hiện**: Chạy test suite và render mẫu project trên `D:\code\cbp-video-test` qua SSH tunnel.
+- **Checkpoint P1**: Báo cáo video mẫu cho Master.
 
 ---
 
 ## 4. Giai Đoạn P2: Type-Safe Media Source Router
 
-Mục tiêu: Tự động phân loại câu hỏi Q&A thuộc Comic hay Screen Media một cách an toàn kiểu dữ liệu và có tính xác định cao.
+Mục tiêu: Phân loại câu hỏi Q&A tự động, type-safe, có kiểm tra sâu cấp issue Batcave.
 
-### Task 2.1: Xây Dựng Schema Pydantic Cho Router
+### Task 2.1: Schema Pydantic Cho Router
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator (`comic-book-pipeline-12`).
 - **Files to touch**: `stages/research_scout/router_schema.py` (mới).
-- **Nội dung thực hiện**:
-  - Định nghĩa `PrimaryMedium` (`comic`, `film`, `tv_animation`, `game`, `mixed`).
-  - Định nghĩa `VisualSource` (`comic`, `youtube`, `both`).
-  - Định nghĩa model `RoutedItem` và `QuestionRouteResponse` theo đúng schema đã thử nghiệm thành công trong Spike.
-- **Tests written FIRST (TDD)**:
-  - `tests/test_router_schema.py`:
-    - `test_schema_validation_valid_json()`: Xác thực payload hợp lệ.
-    - `test_schema_rejects_invalid_enums()`: Đảm bảo throw `ValidationError` khi medium nằm ngoài enum.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Schema chuẩn hóa 100%, serialize/deserialize không lỗi.
+- **Nội dung thực hiện**: Định nghĩa `PrimaryMedium`, `VisualSource`, `RoutedItem`, `QuestionRouteResponse`.
+- **Tests written FIRST (TDD)**: `tests/test_router_schema.py`.
+- **Tiêu chí nghiệm thu**: Schema serialize/deserialize 100% hợp lệ.
 
 ### Task 2.2: LLM Router Client (Gemini 2.5 Flash Lite)
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
 - **Files to touch**: `stages/research_scout/media_router.py` (mới).
-- **Nội dung thực hiện**:
-  - Tích hợp OpenRouter/Google API gọi `google/gemini-2.5-flash-lite`.
-  - Đặt `temperature = 0.0`, ép `response_format = {"type": "json_object"}` kèm schema prompt.
-  - Bổ sung cơ chế retry tối đa 2 lần nếu gặp lỗi validation Pydantic.
-- **Tests written FIRST (TDD)**:
-  - `tests/test_media_router_client.py`:
-    - `test_router_llm_call_with_mock_response()`: Kiểm tra xử lý phản hồi và tính toán token/chi phí.
-    - `test_router_handles_malformed_json_retry()`: Mô phỏng JSON lỗi lần đầu, retry thành công lần 2.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Tỷ lệ lỗi schema 0%, độ trễ trung bình $\le 2.5\text{s}$, chi phí $\le \$0.0004/\text{câu}$.
+- **Nội dung thực hiện**: Gọi Gemini 2.5 Flash Lite với structured JSON output, retry tối đa 2 lần.
+- **Tests written FIRST (TDD)**: `tests/test_media_router_client.py`.
+- **Tiêu chí nghiệm thu**: Tỷ lệ lỗi schema 0%, độ trễ $\le 2.5\text{s}$.
 
-### Task 2.3: Kiểm Tra Batcave Sâu Cấp Issue (Batcave Issue Verifier)
+### Task 2.3: Batcave Issue Deep Verifier (4 Bước)
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
 - **Files to touch**: `stages/stage_1/batcave_verifier.py` (mới).
-- **Nội dung thực hiện**:
-  - Viết hàm `verify_batcave_issue(series_name, issue_number, year=None) -> bool`:
-    1. Tìm kiếm series theo tên và năm xuất bản (`disambiguation by year`).
-    2. Gọi `discover_issues` bóc tách `window.__DATA__.chapters`.
-    3. So khớp chính xác số issue.
-    4. Gửi ping `getChapterData` xác nhận trang truyện tồn tại.
-- **Tests written FIRST (TDD)**:
-  - `tests/test_batcave_issue_verifier.py`:
-    - `test_batcave_verifier_true_positive()`: Thử nghiệm với ASM 1963 #121 $\rightarrow$ trả về `True`.
-    - `test_batcave_verifier_false_positive_prevention()`: Thử nghiệm với ASM 2018 #121 (không tồn tại) $\rightarrow$ trả về `False`.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Loại bỏ hoàn toàn lỗi dương tính giả của các series trùng tên khác năm.
+- **Nội dung thực hiện**: Triển khai kiểm tra sâu 4 bước (disambiguation năm $\rightarrow$ chapters $\rightarrow$ issue match $\rightarrow$ getChapterData ping).
+- **Tests written FIRST (TDD)**: `tests/test_batcave_issue_verifier.py`.
+- **Tiêu chí nghiệm thu**: Phân biệt chuẩn xác ASM 1963 #121 (True) vs ASM 2018 #121 (False).
 
-### Task 2.4: Bộ Quy Tắc Quyết Định Deterministic & Tích Hợp Router
+### Task 2.4: Deterministic Rules & Safety Net
 - **Phân loại**: ADDITIVE.
+- **Worker**: Integrator.
 - **Files to touch**: `stages/research_scout/router_rules.py` (mới).
-- **Nội dung thực hiện**:
-  - Triển khai hàm `resolve_media_route(routed_items, question_text) -> str`:
-    - Kiểm tra: Không có comic/mixed AND kiểm tra Batcave issue thất bại AND tìm thấy video clips $\implies$ `screen_qa`.
-    - Ngược lại $\implies$ `comic_qa`.
-- **Tests written FIRST (TDD)**:
-  - `tests/test_router_rules.py`:
-    - `test_civil_war_route_safety_net()`: Câu hỏi "Why did Captain America and Iron Man fight?" $\rightarrow$ dù LLM nghiêng về phim nhưng Batcave có truyện Civil War #1 $\rightarrow$ bắt buộc trả về `comic_qa`.
-    - `test_endgame_routes_to_screen()`: Câu hỏi Endgame $\rightarrow$ Batcave không có $\rightarrow$ trả về `screen_qa`.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Đạt độ chính xác 10/10 trên bộ testset `part1_testset.json`.
+- **Nội dung thực hiện**: Luật xác định: `screen_qa` khi và chỉ khi không có comic/mixed AND Batcave issue fail AND clips found. Ngược lại `comic_qa`.
+- **Tests written FIRST (TDD)**: `tests/test_router_rules.py`.
+- **Tiêu chí nghiệm thu**: Đạt 10/10 trên testset đối chiếu, Civil War giữ đúng route `comic_qa`.
 
-### Task 2.5: Kiểm Thử Trên Windows Server & Checkpoint P2
-- **Nội dung thực hiện**: Chạy toàn bộ test router trên Windows checkout phụ. Xác thực kết nối mạng đến You.com và Batcave.
-- **Checkpoint P2**: Trình bày kết quả định tuyến và xin ý kiến Master trước khi triển khai P3.
+### Task 2.5: Kiểm Thử Windows & Checkpoint P2
+- **Worker**: Integrator.
+- **Nội dung thực hiện**: Chạy test router trên server phụ, xác nhận kết nối mạng You.com và Batcave.
 
 ---
 
-## 5. Giai Đoạn P3: Chế Độ Độc Lập `screen_qa`
+## 5. Giai Đoạn P3: Chế Độ Độc Lập `screen_qa` (NEW MODULES ONLY - Fix 4 & 11)
 
-Mục tiêu: Xây dựng chế độ pipeline mới `screen_qa`, tách biệt hoàn toàn khỏi luồng tải truyện tranh, hình ảnh 100% là clips/stills/text cards, không bao giờ crash.
+Mục tiêu: Xây dựng chế độ thuần video cho phim/hoạt hình, hoàn toàn trong các module mới, không sửa code cũ, không bao giờ crash.
 
-### Task 3.1: Đăng Ký Chế Độ Pipeline `screen_qa`
+### Task 3.1: Đăng Ký Mode Mới & CLI Entrypoint Mới (Fix 4)
 - **Phân loại**: ADDITIVE.
-- **Files to touch**: `config.py`.
+- **Worker**: `video-qa/p3-core`.
+- **Files to touch**: `config.py`, `stages/screen_pipeline.py` (mới).
 - **Nội dung thực hiện**:
-  - Bổ sung `SCREEN_QA = "screen_qa"` vào enum / danh sách mode được hỗ trợ.
-  - Thêm cấu hình riêng cho Screen QA (bỏ qua download comic, bật clip builder).
-- **Tests written FIRST (TDD)**:
-  - `tests/test_screen_qa_mode_registration.py`:
-    - `test_screen_qa_mode_valid()`: Đảm bảo CLI chấp nhận `--mode screen_qa`.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Pipeline nhận diện mode mới mà không làm xáo trộn các mode cũ (`recap`, `explore_answer`, `micro_moment`).
+  - Đăng ký `SCREEN_QA = "screen_qa"`.
+  - Tạo CLI mới `stages/screen_pipeline.py` (tương tự `answer_pipeline.py`), điều phối toàn bộ pipeline cho Screen Q&A mà không chạm vào luồng comic.
+- **Tests written FIRST (TDD)**: `tests/test_screen_pipeline_cli.py`.
+- **Tiêu chí nghiệm thu**: CLI khởi chạy độc lập cho Screen Q&A.
 
-### Task 3.2: Module Nghiên Cứu Screen Canon & Định Dạng Narration
+### Task 3.2: Screen Research & Screen Script Writer Mới (Fix 4)
 - **Phân loại**: ADDITIVE.
-- **Files to touch**: `stages/stage_1/screen_research.py` (mới), `stages/stage_3/write_script.py`.
+- **Worker**: `video-qa/p3-core`.
+- **Files to touch**: `stages/stage_1/screen_research.py` (mới), `stages/stage_3/screen_script.py` (mới).
 - **Nội dung thực hiện**:
-  - Xây dựng `screen_research.py`: Bóc tách thông tin từ Screen Fandom wikis, sinh file `screen_context.json` (thay thế cho `answer_context.json` và `comic_context.json`). Tuyệt đối không gọi tới `stages/stage_1/answer_research.py:632`.
-  - Trong `write_script.py`: Thêm nhánh xử lý cho `screen_qa`: Trích dẫn nguồn theo cú pháp `Tác phẩm (Năm phát hành)` (ví dụ: *Avengers: Infinity War (2018)*) thay vì số issue truyện tranh.
-- **Tests written FIRST (TDD)**:
-  - `tests/test_screen_research_and_script.py`:
-    - `test_screen_research_creates_context_without_comic_urls()`: Đảm bảo tạo context hợp lệ không chứa reader_url.
-    - `test_screen_narration_cites_movie_and_year()`: Kiểm tra prompt và đầu ra narration trích dẫn đúng chuẩn phim/năm.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Stage 1 và Stage 3 chạy trơn tru cho Screen Q&A không phụ thuộc vào Batcave.
+  - **KHÔNG SỬA `write_script.py`**: Tạo `stages/stage_3/screen_script.py` chuyên viết kịch bản narration cite `Title (Year)`.
+  - Tạo `stages/stage_1/screen_research.py`: Nghiên cứu từ Screen Fandom wikis, sinh `screen_context.json`, hoàn toàn không gọi luồng Batcave của `answer_research.py:632`.
+- **Tests written FIRST (TDD)**: `tests/test_screen_research_and_script.py`.
+- **Tiêu chí nghiệm thu**: Sinh kịch bản chuẩn phim/năm không phụ thuộc vào comic.
 
-### Task 3.3: Shot Builder Độc Lập Cho Screen Q&A
+### Task 3.3: Screen Shot Builder Mới (Fix 4)
 - **Phân loại**: ADDITIVE.
+- **Worker**: `video-qa/p3-visual`.
 - **Files to touch**: `stages/stage_5/screen_shots.py` (mới).
 - **Nội dung thực hiện**:
-  - Viết hàm `build_shots_for_screen_qa(narration, scene_timings, clips_manifest)`:
-    - Phân chia shot dựa trên caption chunks và độ dài beat.
-    - Hoàn toàn không phụ thuộc vào danh sách panel truyện tranh (`pages_by_number` hay `_panel_pool`).
-    - Mỗi shot được gán clip từ manifest hoặc chuyển sang chuỗi fallback.
-- **Tests written FIRST (TDD)**:
-  - `tests/test_screen_shot_builder.py`:
-    - `test_screen_shots_built_without_comic_pages()`: Chạy builder với `pages_by_number={}` mà không nảy sinh ngoại lệ.
-    - `test_shot_durations_cover_entire_narration()`: Đảm bảo tổng thời lượng các shot khớp chính xác với timeline audio.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Builder sinh danh sách Shot hoàn chỉnh, hợp lệ, sẵn sàng render.
+  - **KHÔNG SỬA `shots.py`**: Tạo `stages/stage_5/screen_shots.py` với hàm `build_shots_for_screen_qa`.
+  - Phân chia shot theo caption chunks, hoàn toàn không phụ thuộc vào danh sách panel truyện (`_panel_pool`).
+- **Tests written FIRST (TDD)**: `tests/test_screen_shot_builder.py`.
+- **Tiêu chí nghiệm thu**: Sinh danh sách Shot hợp lệ khi số lượng panel bằng 0.
 
-### Task 3.4: Chuỗi Fallback 4 Cấp Độ Không Bao Giờ Crash
-- **Phân loại**: TOUCHES STABLE PATH (`stages/stage_5/shots.py:3003-3006`).
-- **Guard / Cơ chế bảo vệ**: Chỉ áp dụng khi `shot.mode == "screen_qa"` hoặc khi shot không có `source_image`. Các shot của Comic Q&A vẫn giữ nguyên báo lỗi panel thiếu để tránh mất hình comic ngoài ý muốn.
-- **Files to touch**: `stages/stage_5/shots.py`, `utils/text_card.py`.
+### Task 3.4: Chuỗi Fallback 4 Cấp Độ Không Bao Giờ Crash (Fix 11)
+- **Phân loại**: ADDITIVE (Trong module mới).
+- **Worker**: `video-qa/p3-visual`.
+- **Files to touch**: `stages/stage_5/screen_shots.py`, `utils/text_card.py`.
 - **Nội dung thực hiện**:
-  - Sửa hàm `render_shot`:
-    - Khi clip chính lỗi: Thử render clip dự phòng (`backup_candidate`).
-    - Nếu không có clip dự phòng: Thử render ảnh tĩnh HD / custom image (`custom_images.json`) với chuyển động Ken Burns nhẹ.
-    - Nếu không có ảnh tĩnh: Gọi `utils/text_card.render_text_card` tạo thẻ chữ đồ họa chứa câu trả lời tóm tắt của beat trên nền tối có logo.
-    - Tuyệt đối không để xảy ra `RuntimeError` do thiếu `source_image`.
-- **Tests written FIRST (TDD)**:
-  - `tests/test_screen_qa_fallbacks.py`:
-    - `test_fallback_to_backup_clip()`: Mô phỏng clip chính hỏng, hệ thống tự lấy clip phụ.
-    - `test_fallback_to_hd_still()`: Mô phỏng cả 2 clip hỏng, lấy ảnh tĩnh.
-    - `test_fallback_to_text_card_never_crashes()`: Mô phỏng không có tài nguyên nào, render ra thẻ chữ, assert return code thành công.
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Pipeline hoàn thành 100% trong mọi tình huống giả lập hỏng file hoặc đứt mạng.
+  - **KHÔNG SỬA `render_shot` TRONG `shots.py`**: Tạo hàm render riêng `render_screen_shot` trong `screen_shots.py`.
+  - Triển khai chuỗi fallback 4 cấp: Clip chính $\rightarrow$ Clip dự phòng $\rightarrow$ Ảnh tĩnh HD Ken Burns $\rightarrow$ Thẻ chữ đồ họa (`utils/text_card.py`).
+  - Tuyệt đối không để xảy ra `RuntimeError` do thiếu `source_image`.
+- **Tests written FIRST (TDD)**: `tests/test_screen_qa_fallbacks.py`.
+- **Tiêu chí nghiệm thu**: Giả lập hỏng file/mạng, pipeline luôn render ra video hoàn chỉnh, không bao giờ crash.
 
-### Task 3.5: Kiểm Thử TDD Toàn Diện Cho Chế Độ `screen_qa`
+### Task 3.5: Giao Diện Screen Review UI
 - **Phân loại**: ADDITIVE.
+- **Worker**: `video-qa/p3-visual`.
+- **Files to touch**: `ui/screens/s_screen_review.py` (mới).
+- **Nội dung thực hiện**: Màn hình review dành riêng cho Screen Q&A (ẩn gallery comic, chỉ hiện danh sách clip và preview 9:16).
+- **Tiêu chí nghiệm thu**: Giao diện trực quan, dễ duyệt cho Screen Q&A.
+
+### Task 3.6: Kiểm Thử TDD End-to-End Screen Q&A
+- **Phân loại**: ADDITIVE.
+- **Worker**: `video-qa/p3-core` & `video-qa/p3-visual`.
 - **Files to touch**: `tests/test_screen_qa_end_to_end.py` (mới).
-- **Nội dung thực hiện**:
-  - Viết test end-to-end giả lập trọn vẹn 1 dự án Screen Q&A (từ khâu nhận câu hỏi, routing, script, tải clip section đến dựng video MP4 hoàn chỉnh).
-- **Tiêu chí nghiệm thu (Acceptance Criteria)**: Test chạy thông suốt từ đầu đến cuối trên máy local.
-
-### Task 3.6: Kiểm Thử Toàn Diện Trên Windows Server & Demo Master (Final Checkpoint)
-- **Nội dung thực hiện**:
-  - Đồng bộ toàn bộ mã nguồn lên `D:\code\cbp-video-test` trên Windows Server.
-  - Chạy toàn bộ test suite dự án (`pytest`).
-  - Chạy thử nghiệm thực tế 1 câu hỏi Screen Q&A (ví dụ: *"How did the Avengers travel back in time in Endgame?"*).
-  - Trình duyệt qua LAN cổng 8550.
-  - Kiểm tra video hoàn thiện xuất ra tại `projects/<p>/video.mp4`.
-- **Final Checkpoint**: Trình diễn Master sản phẩm video thực tế trên Windows Server.
+- **Nội dung thực hiện**: Test trọn vẹn luồng Screen Q&A từ input câu hỏi đến video MP4.
+- **Tiêu chí nghiệm thu**: 100% tests pass.
 
 ---
 
-## 6. Tổng Hợp Danh Sách Task & Ma Trận Phân Loại
+## 6. Giai Đoạn Hợp Nhất & Bàn Giao Option A (Final Delivery Phase)
 
-| Phase | Mã Task | Tên Nhiệm Vụ | Phân Loại | Cơ Chế Bảo Vệ (Guard) | File Chạm Vào |
-|---|---|---|---|---|---|
-| **P0** | **Task 0.1** | Tạo nhánh tích hợp & setup server clone | ADDITIVE | Nhánh Git riêng | Git repository |
-| | **Task 0.2** | Sửa lỗi vệt sọc đứng Whip-Bridge | TOUCHES STABLE | Thuật toán padding bilinear | `stages/stage_5/pipeline.py:706` |
-| | **Task 0.3** | Kiểm thử & Checkpoint P0 | ADDITIVE | Thư mục clone phụ | Server `D:\code\cbp-video-test` |
-| **P1** | **Task 1.1** | Khai báo Feature Flags & timing config | ADDITIVE | Mặc định OFF (`0`) | `config.py` |
-| | **Task 1.2** | FastAPI launcher & ASGI LAN mount | TOUCHES STABLE | Desktop mode giữ nguyên | `ui/__main__.py:87`, `ui/web_routes.py` |
-| | **Task 1.3** | Deterministic Background TTS & Cache | TOUCHES STABLE | Fixed seed 42, cache fallback | `stage_4/chatterbox_tts.py`, `stage_4/pipeline.py` |
-| | **Task 1.4** | Beat window math & Keep-awake Windows | ADDITIVE | Module mới | `stage_4/beat_timing.py` |
-| | **Task 1.5** | UI Review Gate: Nút MP4 & Invalidation | TOUCHES STABLE | Cờ `ENABLE_VIDEO_CLIPS` | `ui/screens/s_review_gate.py` |
-| | **Task 1.6** | Web App Tab `/moments_review` (8 threads) | ADDITIVE | Route độc lập | `ui/web_routes.py`, `clip_fetch.py` |
-| | **Task 1.7** | Tải section yt-dlp & Preview 9:16 | ADDITIVE | Hàm chuyên dụng | `clip_fetch.py`, `stage_5/clips.py` |
-| | **Task 1.8** | Fit Math & Hard Cut tại Render Stage 5 | TOUCHES STABLE | Chỉ chạy khi shot có clip | `stage_5/clips.py`, `stage_5/pipeline.py` |
-| | **Task 1.9** | Test TDD hồi quy byte-identical P1 | ADDITIVE | Test suite | `tests/test_video_qa_hybrid.py` |
-| | **Task 1.10** | Test Windows Server & Checkpoint P1 | ADDITIVE | Checkout phụ | Server `D:\code\cbp-video-test` |
-| **P2** | **Task 2.1** | Pydantic Schema cho Media Router | ADDITIVE | Module mới | `research_scout/router_schema.py` |
-| | **Task 2.2** | Gemini 2.5 Flash Lite LLM Client | ADDITIVE | Module mới | `research_scout/media_router.py` |
-| | **Task 2.3** | Batcave Issue Deep Verifier (4 bước) | ADDITIVE | Module mới | `stage_1/batcave_verifier.py` |
-| | **Task 2.4** | Deterministic Rules & Safety Net | ADDITIVE | Module mới | `research_scout/router_rules.py` |
-| | **Task 2.5** | Test Windows Server & Checkpoint P2 | ADDITIVE | Checkout phụ | Server `D:\code\cbp-video-test` |
-| **P3** | **Task 3.1** | Đăng ký mode mới `screen_qa` | ADDITIVE | Flag mode mới | `config.py` |
-| | **Task 3.2** | Screen Research & Script Movie Cites | ADDITIVE | Module mới | `stage_1/screen_research.py`, `stage_3/write_script.py` |
-| | **Task 3.3** | Shot Builder độc lập cho Screen Q&A | ADDITIVE | Builder mới | `stage_5/screen_shots.py` |
-| | **Task 3.4** | Chuỗi Fallback 4 cấp độ không crash | TOUCHES STABLE | Guard theo `mode == "screen_qa"` | `stage_5/shots.py`, `utils/text_card.py` |
-| | **Task 3.5** | Test TDD end-to-end Screen Q&A | ADDITIVE | Test suite | `tests/test_screen_qa_end_to_end.py` |
-| | **Task 3.6** | Test Windows & Final Demo Checkpoint | ADDITIVE | Checkout phụ | Server `D:\code\cbp-video-test` |
+### Task 3.7: Hợp Nhất Chi Nhánh & Kiểm Thử Tích Hợp Trên Windows Server (Fix 12 & 13)
+- **Worker**: Integrator (`comic-book-pipeline-12`).
+- **Nội dung thực hiện**:
+  - Lắng nghe báo cáo hoàn thành từ các worker `video-qa/p1-verify`, `video-qa/p3-core`, `video-qa/p3-visual`.
+  - Merge các local branch vào `feat/video-qa-hybrid`, giải quyết triệt để conflict.
+  - Chạy full test suite trên Windows Server trong thư mục riêng `D:\code\cbp-video-test-int` trên cổng `8562`.
+  - Push nhánh `feat/video-qa-hybrid`.
+  - **BÁO CÁO VÀ CHỜ LỆNH PHÊ DUYỆT CỦA MASTER (Gated Checkpoint)**.
+
+### Task 3.8: Triển Khai Production & Demo Master (Master Decision b / Option A Final Step)
+- **Worker**: Integrator (`comic-book-pipeline-12`).
+- **Điều kiện tiên quyết**: **CHỈ THỰC HIỆN KHI MASTER ĐÃ ĐỒNG Ý RÕ RÀNG (EXPLICIT OK)**.
+- **Nội dung thực hiện**:
+  - Pull nhánh `feat/video-qa-hybrid` vào thư mục production `D:\code\comic-book-pipeline`.
+  - Khởi động lại UI trên cổng `8550` với cờ `ENABLE_VIDEO_CLIPS=1`.
+  - Demo trực tiếp cho Master qua mạng LAN.
+- **Tiêu chí nghiệm thu**: Trình diễn thành công tính năng cho Master trên môi trường production của server.
 
 ---
 
-## 7. Rủi Ro Tiềm Ẩn & Đánh Giá Quyết Định Kỹ Thuật
+## 7. Bảng Tổng Hợp Phân Bổ Task & Ma Trận Trách Nhiệm
 
-### 7.1. Các Rủi Ro Kỹ Thuật (Open Risks)
-1. **Hiện tượng YouTube Rate Limit / HTTP 429 khi lấy phụ đề**:
-   - Khi tìm kiếm nhiều video liên tục, YouTube đôi khi giới hạn IP lấy phụ đề XML/VTT.
-   - *Biện pháp giảm thiểu*: Hệ thống đã được thiết kế sẵn sàng: nếu mất phụ đề, thuật toán xếp hạng vẫn dựa trên Chapters và Most-replayed heatmap peaks để gợi ý mốc thời gian.
-2. **Sai lệch thời lượng TTS giữa Mac và Windows**:
-   - Dù cùng seed, khác biệt về nhân xử lý PyTorch (MPS trên Mac vs CPU trên Windows) có thể gây lệch tới 0.45s/beat.
-   - *Biện pháp giảm thiểu*: Quy định Windows Server là nơi lưu cache WAV duy nhất làm chuẩn; máy Mac chỉ nhận kết quả đã sinh từ server.
-3. **Hiện tượng ngủ (Sleep/Suspend) của Windows Server**:
-   - Windows Server tự động chuyển sang chế độ ngủ sau 30-60s không tương tác bàn phím/chuột.
-   - *Biện pháp giảm thiểu*: Kích hoạt liên tục `SetThreadExecutionState` trong background TTS worker để giữ luồng CPU hoạt động.
-
-### 7.2. Đánh Giá Khách Quan Về Các Quyết Định (Decisions Critique)
-1. **Về việc bắt buộc chạy Background TTS ngay khi mở Review Gate**:
-   - *Nhận xét thẳng thắn*: Việc CPU Windows tốn 5–7 phút để tổng hợp 1 video Short tạo ra độ trễ chờ đợi ban đầu nếu Master muốn chọn clip ngay lập tức.
-   - *Giải pháp tối ưu bổ sung*: Cơ chế **Priority Queue** (ưu tiên câu của beat được click) là quyết định cứu cánh tuyệt đối cần phải thực hiện triệt để: Master click beat nào, câu đó được ưu tiên làm trước trong ~20s thay vì phải chờ hết cả kịch bản 5–7 phút.
-2. **Về việc xóa toàn bộ lựa chọn Panel khi sửa Narration**:
-   - *Nhận xét thẳng thắn*: Nếu Master chỉ sửa 1 từ nhỏ không làm thay đổi nhịp, việc xóa cả lựa chọn panel đã chọn trước đó có thể gây phiền toái. Tuy nhiên, vì thời lượng âm thanh thay đổi sẽ làm vỡ timing cắt hình của clip và căn khung của panel, nên quyết định xóa là **đúng đắn về mặt kỹ thuật để triệt tiêu lỗi lệch hình-tiếng**. Để giảm tải cho Master, hệ thống chỉ xóa các beat thuộc câu bị sửa, giữ nguyên các câu khác.
+| Mã Task | Tên Nhiệm Vụ | Phân Loại | Worker Phụ Trách | File Chạm Vào |
+|---|---|---|---|---|
+| **0.1** | Setup nhánh tích hợp & server clone | ADDITIVE | `comic-book-pipeline-12` | Git repo |
+| **0.2** | Sửa whip transition bằng Mirroring (Fix 6) | TOUCHES STABLE | `comic-book-pipeline-12` | `stage_5/pipeline.py:706` |
+| **0.3** | Thu thập P0 Baseline Byte-Identity (Fix 7) | ADDITIVE | `comic-book-pipeline-12` | `tests/fixtures/p0_baseline.json` |
+| **1.1** | Feature flags, Atempo & Seed conditional (Fix 1, 2) | ADDITIVE | `comic-book-pipeline-12` | `config.py` |
+| **1.2** | FastAPI launcher chỉ bọc khi flag ON (Fix 3) | TOUCHES STABLE | `comic-book-pipeline-12` | `ui/__main__.py:87` |
+| **1.3** | Background TTS, worker seed & chunk cache (Fix 8) | TOUCHES STABLE | `comic-book-pipeline-12` | `stage_4/_chatterbox_worker.py`, `pipeline.py` |
+| **1.4** | Beat window math & Windows keep-awake | ADDITIVE | `comic-book-pipeline-12` | `stage_4/beat_timing.py` |
+| **1.5** | UI Review Gate: Reset toàn bộ project khi sửa script (Fix 5) | TOUCHES STABLE | `video-qa/p1-verify` | `ui/screens/s_review_gate.py` |
+| **1.6** | Web App Tab `/moments_review` (8 threads) | ADDITIVE | `comic-book-pipeline-12` | `ui/web_routes.py`, `clip_fetch.py` |
+| **1.7** | Tải section yt-dlp & Preview 9:16 (Fix 9) | ADDITIVE | `comic-book-pipeline-12` | `clip_fetch.py`, `stage_5/clips.py` |
+| **1.8** | Fit Math & Hard Cut tại Render Stage 5 (Fix 10) | TOUCHES STABLE | `comic-book-pipeline-12` | `stage_5/clips.py`, `pipeline.py` |
+| **1.9** | Test TDD hồi quy byte-identical P1 | ADDITIVE | `video-qa/p1-verify` | `tests/test_video_qa_hybrid.py` |
+| **1.10** | Test Windows Server & Checkpoint P1 | ADDITIVE | `video-qa/p1-verify` | Server `D:\code\cbp-video-test` |
+| **2.1** | Pydantic Schema cho Media Router | ADDITIVE | `comic-book-pipeline-12` | `research_scout/router_schema.py` |
+| **2.2** | Gemini 2.5 Flash Lite LLM Client | ADDITIVE | `comic-book-pipeline-12` | `research_scout/media_router.py` |
+| **2.3** | Batcave Issue Deep Verifier 4 bước | ADDITIVE | `comic-book-pipeline-12` | `stage_1/batcave_verifier.py` |
+| **2.4** | Deterministic Rules & Safety Net | ADDITIVE | `comic-book-pipeline-12` | `research_scout/router_rules.py` |
+| **2.5** | Test Windows Server & Checkpoint P2 | ADDITIVE | `comic-book-pipeline-12` | Server `D:\code\cbp-video-test` |
+| **3.1** | Đăng ký mode mới & `screen_pipeline.py` CLI (Fix 4) | ADDITIVE | `video-qa/p3-core` | `stages/screen_pipeline.py` |
+| **3.2** | Screen Research & `screen_script.py` Writer (Fix 4) | ADDITIVE | `video-qa/p3-core` | `stage_1/screen_research.py`, `stage_3/screen_script.py` |
+| **3.3** | Screen Shot Builder mới `screen_shots.py` (Fix 4) | ADDITIVE | `video-qa/p3-visual` | `stages/stage_5/screen_shots.py` |
+| **3.4** | Chuỗi Fallback 4 cấp độ không crash (Fix 11) | ADDITIVE | `video-qa/p3-visual` | `stages/stage_5/screen_shots.py` |
+| **3.5** | Screen Review UI mới | ADDITIVE | `video-qa/p3-visual` | `ui/screens/s_screen_review.py` |
+| **3.6** | Test TDD end-to-end Screen Q&A | ADDITIVE | `video-qa/p3-core` | `tests/test_screen_qa_end_to_end.py` |
+| **3.7** | Hợp nhất chi nhánh & E2E Test Server (Fix 12, 13) | ADDITIVE | `comic-book-pipeline-12` | Server `D:\code\cbp-video-test-int` |
+| **3.8** | Production Deploy & Demo Master (Option A Final) | TOUCHES PROD | `comic-book-pipeline-12` | Server `D:\code\comic-book-pipeline` |
