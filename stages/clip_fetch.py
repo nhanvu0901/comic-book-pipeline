@@ -277,7 +277,7 @@ _META_CACHE_DIR = REPO / "cache" / "metadata"
 _MOMENTS_CACHE_DIR = REPO / "cache" / "moments"
 
 
-def video_metadata(url: str, work_dir: Path, *, timeout: int = 120, use_cache: bool = True) -> tuple[dict, list]:
+def video_metadata(url: str, work_dir: Path, *, timeout: int = 120, use_cache: bool = False) -> tuple[dict, list]:
     """(yt-dlp info dict, subtitle cues) for one video WITHOUT downloading it. Two calls on
     purpose: the info JSON comes from --dump-single-json, which does not depend on subtitles —
     with both in one call a subtitle HTTP 429 (YouTube rate-limits caption requests) aborted

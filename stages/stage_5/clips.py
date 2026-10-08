@@ -577,10 +577,34 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
     clip_out = float(shot.clip_out or 0.0)
 
     # Fit math: trim -> extend into source -> speed [0.8, 1.25] -> hold <= 0.3s
+    from config import ENABLE_VIDEO_CLIPS, CLIP_SPEED_MIN, CLIP_SPEED_MAX, CLIP_MAX_HOLD
+
+    if not ENABLE_VIDEO_CLIPS:
+        # Baseline P0 path: exact preservation of comic pipeline behavior
+        if clip_out and clip_in > clip_out - 1.0 / _sh.FPS:
+            clip_in = max(0.0, clip_out - 1.0 / _sh.FPS)
+        inputs = ["-ss", f"{clip_in:.3f}"]
+        if clip_out:
+            inputs += ["-t", f"{clip_out - clip_in:.3f}"]
+        inputs += ["-i", str(src)]
+        logo = corner_logo is not None
+        if logo:
+            inputs += ["-i", str(corner_logo)]
+        graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop, duration, logo=logo)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [ff, "-y", *inputs, "-filter_complex", graph, "-map", "[v]",
+               "-frames:v", str(frames), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+               "-pix_fmt", "yuv420p", "-r", str(_sh.FPS), "-an", str(out_path)]
+        if progress:
+            progress(f"[stage5] shot {shot.shot_id:03d} (scene {shot.scene_id}, CLIP {shot.clip_id} "
+                     f"@{clip_in:.2f}s, {duration:.2f}s)")
+        _sh._run(cmd)
+        verify_shot_contract(out_path, frames)
+        return out_path
+
+    # Q&A Video Clip path (ENABLE_VIDEO_CLIPS=True)
     src_dur = float(info.get("duration") or 0.0)
     avail_src = max(0.0, src_dur - clip_in) if src_dur > 0 else duration
-
-    from config import CLIP_SPEED_MIN, CLIP_SPEED_MAX, CLIP_MAX_HOLD
 
     if clip_out and clip_in > clip_out - 1.0 / _sh.FPS:
         clip_in = max(0.0, clip_out - 1.0 / _sh.FPS)
@@ -596,8 +620,9 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
         speed = 1.0
         hold = 0.0
     else:
-        # Step 2: extend into source
-        extended_span = min(duration, avail_src)
+        # Step 2: extend into source if open-ended (clip_out not set)
+        avail = (clip_out - clip_in) if clip_out > clip_in else avail_src
+        extended_span = min(duration, avail)
         if extended_span >= duration:
             used_span = duration
             speed = 1.0

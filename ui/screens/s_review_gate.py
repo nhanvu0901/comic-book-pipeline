@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 import math
 import os
 import re
@@ -28,6 +29,8 @@ import time
 from typing import Callable
 
 import flet as ft
+
+logger = logging.getLogger(__name__)
 
 from pathlib import Path
 
@@ -64,14 +67,39 @@ def _remove_clip_for_beat(project: str, beat_key: str) -> None:
 
 
 def _load_beat_durations(project: str) -> dict[str, float]:
-    status_file = Path(config.PROJECTS_ROOT) / project / "review" / "tts_status.json"
-    if not status_file.exists():
-        return {}
+    for p in [
+        Path(config.PROJECTS_ROOT) / project / "review" / "tts_status.json",
+        Path(config.PROJECTS_ROOT) / project / "cache" / "tts" / "status.json",
+    ]:
+        if p.exists():
+            try:
+                data = json.loads(p.read_text("utf-8"))
+                durs = data.get("beat_durations")
+                if durs:
+                    return durs
+            except Exception:
+                pass
+    return {}
+
+
+def clear_project_locks_and_clips(project: str, locks_doc: dict | None = None) -> dict:
+    """Clear all panel and MP4 selections for the project when narration changes (flag ON)."""
+    if locks_doc is None:
+        locks_doc = load_review_locks(project)
+    locks_doc["locks"] = {}
+    clips_file = Path(config.PROJECTS_ROOT) / project / "review" / "clips" / "clips.json"
+    if clips_file.exists():
+        try:
+            clips_file.unlink()
+        except OSError:
+            pass
+    save_review_locks(project, locks_doc)
     try:
-        data = json.loads(status_file.read_text("utf-8"))
-        return data.get("beat_durations") or {}
-    except Exception:
-        return {}
+        from stages.stage_4.background_tts import start_background_tts
+        start_background_tts(project)
+    except Exception as exc:
+        logger.warning("start_background_tts failed during invalidation: %s", exc)
+    return locks_doc
 
 from ..bridge import (
     image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
@@ -779,8 +807,8 @@ def build(
         try:
             from stages.stage_4.background_tts import start_background_tts
             start_background_tts(project)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to start background tts: %s", exc)
 
         try:
             from ..web_routes import add_moment_picked_listener
@@ -790,27 +818,15 @@ def build(
                     clips_by_beat[bk] = payload
                     _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
             add_moment_picked_listener(_on_moment_picked)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to register moment picked listener: %s", exc)
 
     def _clear_all_locks_and_clips():
         if not config.ENABLE_VIDEO_CLIPS:
             return
         locks.clear()
-        locks_doc["locks"] = {}
-        clips_file = PROJECTS_ROOT / project / "review" / "clips" / "clips.json"
-        if clips_file.exists():
-            try:
-                clips_file.unlink()
-            except OSError:
-                pass
+        clear_project_locks_and_clips(project, locks_doc)
         clips_by_beat.clear()
-        save_review_locks(project, locks_doc)
-        try:
-            from stages.stage_4.background_tts import start_background_tts
-            start_background_tts(project)
-        except Exception:
-            pass
 
     status_text = ft.Text("", size=12, color=TEXT_MUTED)
     # per-beat control refs (keyed by beat_key) so a lock/dup change repaints just that card
@@ -1584,8 +1600,8 @@ def build(
                 try:
                     from stages.stage_4.background_tts import bump_priority_beat
                     bump_priority_beat(project, bk)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to bump priority beat: %s", exc)
                 async def _go():
                     await page.launch_url(f"/moments_review?project={project}&beat={bk}")
                 page.run_task(_go)

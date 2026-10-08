@@ -69,7 +69,9 @@ def test_fit_math_speed_and_hold_bounds(tmp_path):
 
 
 @needs_ffmpeg
-def test_frozen_tail_capped_at_max_hold(tmp_path):
+def test_frozen_tail_capped_at_max_hold(tmp_path, monkeypatch):
+    # The cap only exists on the Q&A clip path; the flag-OFF path is the legacy one.
+    monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", True)
     # Source is 1.0s long. Beat requires 2.0s.
     # Shortfall is 2.0 - (1.0 / 0.8) = 0.75s > CLIP_MAX_HOLD (0.3s).
     # Must raise ValueError to trigger panel fallback.

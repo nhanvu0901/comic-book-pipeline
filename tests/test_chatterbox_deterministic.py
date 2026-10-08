@@ -159,3 +159,41 @@ def test_stage4_reuses_wav_cache(tmp_path, monkeypatch):
     assert reused is not None
     assert synth_mock.call_count == 0
     assert reused.duration_seconds == pytest.approx(2.0, rel=1e-2)
+
+
+def test_background_tts_exact_chunking_with_normalization():
+    from stages.stage_4.pipeline import _normalize_for_tts
+    from stages.stage_4.chatterbox_tts import _chunks
+
+    raw = "Peter Parker—the hero… he never gave up—not even once."
+    norm = _normalize_for_tts(raw)
+    assert "—" not in norm
+    assert "…" not in norm
+
+    chunks_direct = _chunks(norm)
+    assert len(chunks_direct) > 0
+
+
+def test_module_level_start_and_bump_functions(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
+    proj_dir = tmp_path / "p_test"
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    narration = {
+        "scenes": [
+            {"scene_id": 1, "text": "Scene 1", "visual_beats": [{"beat_id": "1:1", "text": "Scene 1"}]},
+            {"scene_id": 2, "text": "Scene 2", "visual_beats": [{"beat_id": "2:1", "text": "Scene 2"}]},
+        ]
+    }
+    (proj_dir / "narration.json").write_text(json.dumps(narration))
+
+    # Mock runner.run_sync so thread doesn't do real TTS
+    monkeypatch.setattr(background_tts.BackgroundTTSRunner, "run_sync", lambda self, cb=None: {"completed": True})
+
+    runner1 = background_tts.start_background_tts("p_test")
+    runner2 = background_tts.start_background_tts("p_test")
+    assert runner1 is runner2, "Must return single runner instance per project"
+
+    background_tts.bump_priority_beat("p_test", "2:1")
+    assert 2 in runner1.priority_scenes
+
