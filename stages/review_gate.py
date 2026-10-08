@@ -87,7 +87,7 @@ MONEY_SWEEP_MAX_CALLS = int(os.getenv("MONEY_SWEEP_MAX_CALLS", "8"))  # sweep fa
 def _project_root(project) -> Path:
     """Accept a project slug OR a path to the project dir."""
     p = Path(project)
-    return p if p.is_dir() else Path(config.PROJECTS_ROOT) / str(project)
+    return p if p.is_dir() else PROJECTS_ROOT / str(project)
 
 
 def _locks_path(project) -> Path:

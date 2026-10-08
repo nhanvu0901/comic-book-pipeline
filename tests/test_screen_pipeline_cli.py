@@ -15,6 +15,8 @@ def test_screen_pipeline_cli_arg_parser():
 
 def test_screen_pipeline_end_to_end_mock(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
+    import stages.review_gate
+    monkeypatch.setattr(stages.review_gate, "PROJECTS_ROOT", tmp_path)
     proj_dir = tmp_path / "mock_screen_pipeline"
     proj_dir.mkdir(parents=True)
 
