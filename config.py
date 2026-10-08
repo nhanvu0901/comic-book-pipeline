@@ -20,6 +20,7 @@ class PipelineMode(str, Enum):
     ORIGIN_STORY = "origin_story"
     TOP_MOMENTS = "top_moments"
     CROSSOVER_SAGA = "crossover_saga"  # ≤5 sequential issues of one series → one Short
+    SCREEN_QA = "screen_qa"
 
 PIPELINE_MODE = PipelineMode(os.getenv("PIPELINE_MODE", "narrate_1_comic"))
 
