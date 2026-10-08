@@ -1,491 +1,501 @@
 """stages/stage_5/screen_shots.py
-Shot builder, 4-level fallback renderer, and pipeline runner for Screen Q&A (mode='screen_qa').
-Operates independently of comic panels (no pages_by_number / _panel_pool).
-Never-crash fallback chain:
-  Level 1: Primary Clip (from manifest)
-  Level 2: Backup Candidate Clip
-  Level 3: HD Still / Custom Image (Ken Burns)
-  Level 4: Text Card (utils/text_card.py) -> NEVER CRASHES
+Shot builder, never-crash renderer and Stage-5 runner for mode "screen_qa" (a Q&A Short whose
+pictures are video clips / stills / cards — no comic page anywhere).
+
+Independent of comic panels: nothing here reads pages_by_number, _panel_pool or a source_image.
+It is also independent of the comic *builder*: shots.py is not edited — this module composes the
+unchanged pieces it needs (clips.py's manifest + fit + contract, shots.render_shot for a still,
+pipeline's assembly / audio / encode) around its own beat plan (screen_beats.py).
+
+BEAT KEYS — the review scheme ("intro" | "outro" | "<sid>" | "<sid>:<frag>", 0-based), so a clip
+picked in /moments_review (review/clips/clips.json) and a still locked in the review screen
+(review/locks.json → review/custom/) land on the right shot through the SAME resolvers the comic
+path uses (clips.resolve_clip_assignments / shots._resolve_custom_images).
+
+NEVER-CRASH CHAIN (render_screen_shot) — each level runs only when the one above it failed:
+  1. the beat's clip                       (clips.render_clip_shot: trim → extend → speed → hold)
+  2. its BACKUP clip  (clips.json entry "backup": {...})
+  3. a still / custom image with Ken Burns (shots.render_shot on the beat's custom_image)
+  4. a text card                           (utils.screen_card, repo font)  → then a plain-colour
+     frame as the last resort, so a missing file, a bad codec, a dead network or a corrupt image
+     can never stop a render. Only a missing ffmpeg can — that is the environment, not content.
+
+CLIP SHOT CONTRACT — every shot (whatever level made it) is h264 yuv420p 1080x1920 30fps, one
+video stream, exactly round(duration*30) frames, no audio, SAR unsignalled (verify_shot_contract
++ setsar=0), so pipeline._concat's stream copy can splice clip, still and card shots freely and
+hard-cuts around clips stay clean.
 """
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageFilter
-
 import config
-from utils.text_card import render_text_card
 from . import shots as _sh
 from .clips import (
+    apply_clips_to_shots,
     parse_manifest,
     render_clip_shot,
-    verify_shot_contract,
+    resolve_clip_assignments,
     shot_log_entry,
+    verify_shot_contract,
 )
 from .pipeline import (
     _assemble_video,
-    _concat,
+    _build_outro_card,
     _final_encode,
+    _pad_audio_tail,
     _probe_duration,
     _score_final_video,
     _write_title_file,
     mix_audio,
 )
 from .schema import AssemblyResult, Shot
-from stages.stage_4.beat_timing import BeatWindow, calculate_beat_durations
+from .screen_beats import ScreenWindow, plan_windows
+
+# Motions the zoompan builder actually implements (a name outside this set renders STATIC — a
+# frozen frame). Reuse the comic cycle: every entry moves.
+SCREEN_MOTIONS = tuple(_sh.MOTION_CYCLE)
+
+# Bump when a change here alters what a given shot sidecar signature would render to.
+_RENDER_VERSION = 2
 
 
-def _find_font() -> Path:
-    """Locate Anton font or system fallback."""
-    root_font = Path(__file__).resolve().parent.parent.parent / "fonts" / "Anton-Regular.ttf"
-    if root_font.is_file():
-        return root_font
-    return Path("fonts/Anton-Regular.ttf")
+@dataclass
+class ScreenShot(Shot):
+    """A Shot plus what screen_qa needs: the beats it covers, a backup clip, and the level the
+    never-crash chain ended on. A subclass (not new Shot fields) so the comic dataclass — and
+    every shots.json it feeds — is untouched; copy.copy / dataclasses.replace keep the extras."""
+    beat_keys: list = field(default_factory=list)
+    query: str = ""
+    backup_clip_path: str = ""
+    backup_clip_in: float = 0.0
+    backup_clip_out: float = 0.0
+    backup_clip_crop: dict = field(default_factory=dict)
+    backup_clip_id: str = ""
+    backup_source_url: str = ""
+    # Absolute second in the source video where a section file's t=0 sits (clips.json
+    # "source_start", written when /moments_review downloads a section). -1 = unknown. Lets a
+    # section that went missing be fetched again from the RIGHT moment instead of from 0:00.
+    clip_source_start: float = -1.0
+    backup_source_start: float = -1.0
+    render_level: int = 0            # 1 clip · 2 backup · 3 still · 4 card · 0 not rendered yet
+    level_notes: list = field(default_factory=list)   # why each skipped level failed
+
+
+# ─── builder ────────────────────────────────────────────────────────────────────
+
+def _load_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _project_root_of(project: str | None, project_root: Path | None) -> Path | None:
+    if project_root is not None:
+        return Path(project_root)
+    if project:
+        p = Path(str(project))
+        return p if p.is_dir() else Path(config.PROJECTS_ROOT) / str(project)
+    return None
+
+
+def _backups_from_manifest(raw: Any, root: Path | None) -> dict[str, dict]:
+    """{clip id / beat key: backup dict} for every manifest entry carrying a "backup" object —
+    clips.parse_manifest ignores unknown keys, so this reads the raw JSON. A backup is
+    {"file"|"source_url", "start", "end", "crop", "id"} like a manifest entry."""
+    out: dict[str, dict] = {}
+    items = raw.get("clips") if isinstance(raw, dict) else raw
+    for it in items or []:
+        if not isinstance(it, dict) or it.get("enabled", True) is False:
+            continue
+        bk = it.get("backup")
+        if not isinstance(bk, dict) or not (bk.get("file") or bk.get("source_url")):
+            continue
+        f = str(bk.get("file") or "").strip()
+        if f and root is not None and not Path(f).is_absolute():
+            f = str(Path(root) / f)
+        entry = {**bk, "file": f}
+        eid = str(it.get("id") or (Path(str(it.get("file") or "")).stem) or "").strip()
+        if eid:
+            out[f"id:{eid}"] = entry
+        if it.get("beat"):
+            out[f"beat:{it['beat']}"] = entry
+    return out
+
+
+def _source_starts(raw: Any) -> dict[str, float]:
+    """{clip id: source_start} for manifest entries that record where their section begins."""
+    out: dict[str, float] = {}
+    items = raw.get("clips") if isinstance(raw, dict) else raw
+    for it in items or []:
+        if isinstance(it, dict) and isinstance(it.get("source_start"), (int, float)):
+            eid = str(it.get("id") or Path(str(it.get("file") or "")).stem or "").strip()
+            if eid:
+                out[eid] = float(it["source_start"])
+    return out
+
+
+def _stamp_backup(sh: ScreenShot, b: dict, offset: float) -> None:
+    """Attach backup entry `b` to the shot; `offset` keeps a beat that spans several shots playing
+    the backup continuously, as clips._stamp does for the primary."""
+    sh.backup_clip_path = str(b.get("file") or "")
+    start = float(b.get("start") or 0.0)
+    sh.backup_clip_in = round(start + offset, 3)
+    sh.backup_clip_out = float(b.get("end") or 0.0)
+    sh.backup_clip_crop = dict(b.get("crop") or {})
+    sh.backup_clip_id = str(b.get("id") or f"{sh.clip_id}-backup")
+    sh.backup_source_url = str(b.get("source_url") or "")
+    ss = b.get("source_start")
+    sh.backup_source_start = float(ss) if isinstance(ss, (int, float)) else -1.0
+
+
+def _requantize(shots: list[ScreenShot], fps: int = 30) -> None:
+    """Re-snap durations to whole frames by cumulative rounding after later passes split shots
+    (clips._split_in_time rounds to ms): the total — and so the audio alignment — is preserved."""
+    cum = 0.0
+    prev = 0
+    for s in shots:
+        cum += float(s.duration_seconds)
+        f = int(round(cum * fps))
+        frames = max(f - prev, int(round(_sh.FPS * 0.4)))
+        prev += frames
+        s.duration_seconds = frames / fps
 
 
 def build_shots_for_screen_qa(
     narration: dict[str, Any],
+    scene_timings: Any = None,
+    word_timestamps: list[dict] | None = None,
+    caption_chunks: Any = None,                  # accepted for build_shots parity; unused
     *,
-    scene_timings: list[dict[str, Any]] | None = None,
-    word_timestamps: list[dict[str, Any]] | None = None,
-    caption_chunks: list[dict[str, Any]] | None = None,
-    pages_by_number: dict | None = None,  # Ignored: no comic panels in screen_qa
-    cluster_to_name: dict | None = None,  # Ignored
+    pages_by_number: dict | None = None,         # ignored: screen_qa has no comic pages
+    cluster_to_name: dict | None = None,         # ignored
     project: str | None = None,
+    project_root: Path | None = None,
     clips_manifest: dict | list | None = None,
-    custom_images: dict | None = None,
+    custom_images: dict[str, str] | None = None,
     screen_context: dict | None = None,
-) -> list[Shot]:
-    """Build a list of Shot objects for screen_qa without relying on comic panels.
-    Each visual beat (or scene) produces one shot covering its beat window.
-    """
-    scenes = narration.get("scenes") or []
+    audio_duration: float = 0.0,
+    log: Callable[[str], None] = print,
+) -> list[ScreenShot]:
+    """One shot per beat window (see screen_beats.plan_windows) with the beat's clip, backup and
+    custom image stamped on through the same resolvers the comic path uses.
+
+    Contract with video-qa/p3-core (stages/screen_pipeline.py): `narration` is the Scene-schema
+    dict with mode "screen_qa" and visual_beats {text, query}; `screen_context` is
+    {question, items:[...]}; positional (narration, scene_timings, word_timestamps) is valid and
+    {} / None for the timings is fine — durations then come from target_seconds.
+
+    `custom_images` ({beat_key: abs path}) and `clips_manifest` override what the project folder
+    holds (tests, dry runs); with project=None nothing is read from disk."""
+    scenes = (narration or {}).get("scenes") or []
     if not scenes:
         return []
+    root = _project_root_of(project, project_root)
 
-    project_root = config.PROJECTS_ROOT / project if project else None
+    if screen_context is None and root is not None:
+        screen_context = _load_json(root / "screen_context.json") or {}
 
-    # Load screen_context if available and not passed
-    if screen_context is None and project_root and (project_root / "screen_context.json").exists():
-        try:
-            screen_context = json.loads((project_root / "screen_context.json").read_text())
-        except Exception:
-            screen_context = {}
+    # ── the beats Master picked something for (also protects them from the short-window merge)
+    raw_manifest: Any = clips_manifest
+    if raw_manifest is None and root is not None:
+        p = root / "review" / "clips" / "clips.json"
+        raw_manifest = _load_json(p) if p.exists() else None
+    if isinstance(raw_manifest, list):
+        raw_manifest = {"clips": raw_manifest}
+    entries = parse_manifest(raw_manifest, root or Path("."))[0] if raw_manifest else []
 
-    # Build sentence_timings for calculate_beat_durations
-    sentence_timings: dict[int, dict[str, float]] = {}
-    if scene_timings:
-        for st in scene_timings:
-            sid = int(st.get("scene_id", 1))
-            st_start = float(st.get("start", 0.0))
-            st_end = float(st.get("end", st_start + 4.0))
-            sentence_timings[sid] = {
-                "start": st_start,
-                "end": st_end,
-                "duration": round(st_end - st_start, 4),
-            }
-    elif project_root and (project_root / "cache" / "tts" / "status.json").exists():
-        try:
-            status = json.loads((project_root / "cache" / "tts" / "status.json").read_text())
-            scene_durs = status.get("scene_durations") or {}
-            running_t = 0.0
-            for sc in scenes:
-                sid = int(sc.get("scene_id", 1))
-                dur = float(scene_durs.get(str(sid), sc.get("target_seconds", 4.0)))
-                sentence_timings[sid] = {
-                    "start": running_t,
-                    "end": running_t + dur,
-                    "duration": dur,
-                }
-                running_t += dur
-        except Exception:
-            sentence_timings = {}
+    if custom_images is not None:
+        custom_map = {str(k): str(v) for k, v in custom_images.items()}
+    elif root is not None:
+        custom_map = _sh._resolve_custom_images(str(root), narration)
+    else:
+        custom_map = {}
 
-    if not sentence_timings:
-        # Fallback to target_seconds or word count estimation
-        running_t = 0.0
-        for sc in scenes:
-            sid = int(sc.get("scene_id", 1))
-            dur = float(sc.get("target_seconds") or max(2.0, len(str(sc.get("text", "")).split()) * 0.35))
-            sentence_timings[sid] = {
-                "start": running_t,
-                "end": running_t + dur,
-                "duration": dur,
-            }
-            running_t += dur
+    assignments = resolve_clip_assignments(entries, narration, claimed_beats=set(custom_map),
+                                           log=log) if entries else []
+    picked = set(custom_map) | {bk for bk, _ in assignments}
 
-    # Calculate exact beat timing windows
-    beat_windows = calculate_beat_durations(scenes, sentence_timings, min_duration=0.4)
+    windows = plan_windows(narration, scene_timings, word_timestamps, audio_duration=audio_duration,
+                           screen_context=screen_context, protected=picked, fps=_sh.FPS)
+    shots: list[ScreenShot] = []
+    seen_intro = False
+    for i, w in enumerate(windows):
+        is_intro = bool(w.is_intro and not seen_intro)
+        seen_intro = seen_intro or w.is_intro
+        shots.append(ScreenShot(
+            shot_id=i, scene_id=w.scene_id, duration_seconds=w.duration, panel_bbox={},
+            source_image="", motion=SCREEN_MOTIONS[i % len(SCREEN_MOTIONS)],
+            caption_text=w.text, is_intro=is_intro, beat_keys=list(w.keys), query=w.query))
 
-    # Load clips manifest
-    clip_entries = []
-    if clips_manifest is not None:
-        if isinstance(clips_manifest, dict):
-            clip_entries, _ = parse_manifest(clips_manifest, project_root or Path("."))
-        elif isinstance(clips_manifest, list):
-            clip_entries, _ = parse_manifest({"clips": clips_manifest}, project_root or Path("."))
-    elif project_root and (project_root / "review" / "clips" / "clips.json").exists():
-        try:
-            raw_m = json.loads((project_root / "review" / "clips" / "clips.json").read_text())
-            clip_entries, _ = parse_manifest(raw_m, project_root)
-        except Exception:
-            clip_entries = []
-
-    # Map clip entries by beat
-    clips_by_beat: dict[str, Any] = {}
-    for ce in clip_entries:
-        if ce.beat:
-            clips_by_beat[str(ce.beat)] = ce
-
-    # Load custom images if available
-    if custom_images is None and project_root and (project_root / "review" / "custom" / "custom_images.json").exists():
-        try:
-            custom_images = json.loads((project_root / "review" / "custom" / "custom_images.json").read_text())
-        except Exception:
-            custom_images = {}
-    custom_images = custom_images or {}
-
-    # Motion sequence to give varied motion to non-clip / still shots
-    motions = ["push_in", "pan_left", "push_top", "pan_right", "push_bottom"]
-
-    shots: list[Shot] = []
-    for s_idx, bw in enumerate(beat_windows, start=1):
-        motion = motions[(s_idx - 1) % len(motions)]
-        is_intro = (s_idx == 1 and bool(scenes[0].get("is_intro", False)))
-
-        shot = Shot(
-            shot_id=s_idx,
-            scene_id=bw.scene_id,
-            duration_seconds=bw.duration,
-            panel_bbox={"x": 0, "y": 0, "w": _sh.OUTPUT_W, "h": _sh.OUTPUT_H},
-            source_image="",
-            motion=motion,
-            caption_text=bw.text,
-            is_intro=is_intro,
-            beat_id=bw.scene_id,
-        )
-
-        # Match custom still
-        if bw.beat_id in custom_images:
-            c_val = custom_images[bw.beat_id]
-            shot.custom_image = str(c_val if isinstance(c_val, str) else c_val.get("file", ""))
-
-        # Match clip
-        ce = clips_by_beat.get(bw.beat_id)
-        if not ce and ":" in bw.beat_id:
-            # Fallback to scene-level clip
-            ce = clips_by_beat.get(bw.beat_id.split(":")[0])
-
-        if ce:
-            shot.clip_path = ce.file
-            shot.clip_in = ce.start
-            shot.clip_out = ce.end
-            shot.clip_crop = ce.crop
-            shot.clip_id = ce.id
-            shot.clip_source_url = ce.source_url
-
-            # Check for backup candidate on clip entry
-            raw_backup = getattr(ce, "backup_candidate", None) or getattr(ce, "backup_file", None)
-            if isinstance(raw_backup, dict):
-                shot.backup_clip_path = str(raw_backup.get("file", ""))
-                shot.backup_clip_in = float(raw_backup.get("start", 0.0))
-                shot.backup_clip_out = float(raw_backup.get("end", 0.0))
-                shot.backup_clip_crop = raw_backup.get("crop", {})
-                shot.backup_clip_id = str(raw_backup.get("id", f"{ce.id}_backup"))
-            elif isinstance(raw_backup, str) and raw_backup:
-                shot.backup_clip_path = raw_backup
-                shot.backup_clip_in = 0.0
-                shot.backup_clip_out = 0.0
-                shot.backup_clip_id = f"{ce.id}_backup"
-
-        shots.append(shot)
-
+    if custom_map:
+        _sh._apply_custom_images_to_shots(shots, custom_map, narration)
+    if assignments:
+        apply_clips_to_shots(shots, assignments, narration, log=log)
+        backups = _backups_from_manifest(raw_manifest, root)
+        entry_start = {e.id: e.start for e in entries}
+        src_start = _source_starts(raw_manifest)
+        for sh in shots:
+            if not isinstance(sh, ScreenShot) or not sh.clip_id:
+                continue
+            sh.clip_source_start = src_start.get(sh.clip_id, -1.0)
+            b = backups.get(f"id:{sh.clip_id}") or next(
+                (backups[f"beat:{k}"] for k in sh.beat_keys if f"beat:{k}" in backups), None)
+            if b:
+                _stamp_backup(sh, b, max(0.0, sh.clip_in - entry_start.get(sh.clip_id, sh.clip_in)))
+    _requantize(shots)
+    for i, sh in enumerate(shots):
+        sh.shot_id = i
     return shots
 
 
-def _prepare_still_frame(image_path: Path, out_path: Path) -> Path:
-    """Contain+blur a still image to 1080x1920."""
-    W, H = _sh.OUTPUT_W, _sh.OUTPUT_H
-    with Image.open(image_path) as im:
-        im = im.convert("RGB")
-        iw, ih = im.size
-        bg = im.resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(radius=25))
-        scale = min(W / iw, H / ih)
-        fw, fh = max(2, int(round(iw * scale))), max(2, int(round(ih * scale)))
-        fg = im.resize((fw, fh), Image.LANCZOS)
-        bg.paste(fg, ((W - fw) // 2, (H - fh) // 2))
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        bg.save(out_path)
-    return out_path
+# ─── network repair: a clip entry that only names a URL ─────────────────────────
+
+def _fetch_section(url: str, start: float, seconds: float, root: Path,
+                   log: Callable[[str], None]) -> Path:
+    """P1's section download (yt-dlp *start-end with the CLIP_SPEED_MAX margin, keyframe-accurate)
+    into review/clips/. The file's t=0 IS the source `start`."""
+    from .. import clip_fetch
+    return clip_fetch.fetch_clip_section(url, root / "review" / "clips", start=start,
+                                         beat_duration=seconds, log=log)
 
 
-def _render_still_ken_burns(
-    image_path: Path,
-    out_path: Path,
-    duration: float,
-    motion: str = "push_in",
-    *,
-    corner_logo: Path | None = None,
-    progress: Callable[[str], None] | None = None,
-) -> Path:
-    """Render a still image with Ken Burns animation matching shot contract."""
+# ─── the never-crash renderer ───────────────────────────────────────────────────
+
+def _card_texts(shot: Shot, screen_context: dict | None) -> tuple[str, str, str]:
+    """(headline, body, footer) for a shot's card — the research item named in the words
+    (adaptation title + year), else the question; the spoken words; the channel."""
+    ctx = screen_context or {}
+    headline = str(ctx.get("question") or "").strip()
+    text = (getattr(shot, "caption_text", "") or "").lower()
+    for item in ctx.get("items") or []:
+        ent = str(item.get("entity") or "").strip().lower()
+        if ent and ent in text and item.get("adaptation_title"):
+            yr = f" ({item['year']})" if item.get("year") else ""
+            headline = f"{item['adaptation_title']}{yr}"
+            break
+    body = (getattr(shot, "caption_text", "") or "").strip() or f"Scene {shot.scene_id}"
+    return headline, body, str(getattr(config, "CHANNEL_NAME", "") or "")
+
+
+def _encode_still_frame(png: Path, out_path: Path, frames: int, corner_logo: Path | None) -> None:
+    """A PNG held for `frames` frames, encoded to the shot contract (setsar=0 → same SPS as the
+    clip/panel shots, so the concat stream copy accepts it)."""
     ff = _sh._require_ffmpeg()
-    work_dir = out_path.parent / "_still_frames"
-    work_dir.mkdir(parents=True, exist_ok=True)
-    framed = work_dir / f"framed_{out_path.stem}.png"
-    _prepare_still_frame(image_path, framed)
-
-    dur = max(0.4, duration)
-    frames = max(1, int(round(dur * _sh.FPS)))
-    factor = _sh.PRE_UPSCALE_FACTOR_FULL
-    pre = f"scale={_sh.OUTPUT_W * factor}:{_sh.OUTPUT_H * factor}:flags=bicubic,"
-    zp = _sh._zoompan_expr(motion, frames, action=False)
-
-    inputs = ["-framerate", "1", "-loop", "1", "-t", "1", "-i", str(framed)]
-    segs = [f"[0:v]{pre}{zp}[vz]"]
-    prev = "vz"
-    if corner_logo is not None and corner_logo.is_file():
+    inputs = ["-loop", "1", "-framerate", str(_sh.FPS), "-i", str(png)]
+    graph = "[0:v]format=yuv420p,setsar=0[v]"
+    if corner_logo is not None and Path(corner_logo).is_file():
         inputs += ["-i", str(corner_logo)]
-        segs.append(f"[{prev}][1:v]overlay=W-w-36:36[vl]")
-        prev = "vl"
-    filter_complex = ";".join(segs)
-
-    cmd = [
-        ff, "-y",
-        *inputs,
-        "-filter_complex", filter_complex,
-        "-map", f"[{prev}]",
-        "-frames:v", str(frames),
-        "-c:v", "libx264",
-        "-preset", "medium",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-r", str(_sh.FPS),
-        "-an",
-        str(out_path),
-    ]
-    if progress:
-        progress(f"[screen_qa] still ken_burns {out_path.name} ({dur:.2f}s, {motion})")
+        graph = "[0:v][1:v]overlay=W-w-36:36,format=yuv420p,setsar=0[v]"
+    cmd = [ff, "-y", *inputs, "-filter_complex", graph, "-map", "[v]",
+           "-frames:v", str(frames), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+           "-pix_fmt", "yuv420p", "-r", str(_sh.FPS), "-an", str(out_path)]
     _sh._run(cmd)
     verify_shot_contract(out_path, frames)
-    return out_path
 
 
-def _render_card_shot(
-    shot: Shot,
-    out_path: Path,
-    *,
-    work_dir: Path | None = None,
-    corner_logo: Path | None = None,
-    screen_context: dict | None = None,
-    progress: Callable[[str], None] | None = None,
-) -> Path:
-    """Level 4: Render graphic text card via utils/text_card.py -> NEVER CRASHES."""
+def _render_card(shot: Shot, out_path: Path, work_dir: Path, corner_logo: Path | None,
+                 screen_context: dict | None, frames: int) -> None:
+    from utils.screen_card import render_screen_card
+    headline, body, footer = _card_texts(shot, screen_context)
+    png = work_dir / f"card_{shot.shot_id:03d}.png"
+    render_screen_card(png, width=_sh.OUTPUT_W, height=_sh.OUTPUT_H, headline=headline,
+                       body=body, footer=footer)
+    _encode_still_frame(png, out_path, frames, corner_logo)
+
+
+def _render_blank(shot: Shot, out_path: Path, work_dir: Path, frames: int) -> None:
+    """Last resort: a plain dark frame straight from ffmpeg's colour source (no Pillow, no font,
+    no input file at all)."""
     ff = _sh._require_ffmpeg()
-    work_dir = work_dir or out_path.parent / "_cards"
-    work_dir.mkdir(parents=True, exist_ok=True)
-    card_png = work_dir / f"card_{shot.shot_id:03d}.png"
-
-    # Context title / question
-    header = "Q&A BREAKDOWN"
-    if screen_context and screen_context.get("question"):
-        header = str(screen_context["question"])
-    elif getattr(shot, "caption_text", ""):
-        # short title
-        words = shot.caption_text.split()
-        if len(words) > 6:
-            header = " ".join(words[:6]) + "..."
-        else:
-            header = shot.caption_text
-
-    text_body = shot.caption_text or f"Scene {shot.scene_id} Beat {getattr(shot, 'beat_id', 1)}"
-    font_path = _find_font()
-    lines = [
-        (header, "#58a6ff", 40, 0.35),
-        (text_body, "#ffffff", 48, 0.50),
-        ("COMIC BOOK PIPELINE", "#8b949e", 32, 0.65),
-    ]
-
-    render_text_card(
-        card_png,
-        width=_sh.OUTPUT_W,
-        height=_sh.OUTPUT_H,
-        background="#0e1117",
-        lines=lines,
-        font_path=font_path,
-        logo_path=corner_logo,
-        logo_width=240,
-        logo_center_y=350,
-    )
-
-    dur = max(0.4, float(shot.duration_seconds))
-    frames = max(1, int(round(dur * _sh.FPS)))
-
-    cmd = [
-        ff, "-y",
-        "-loop", "1",
-        "-framerate", str(_sh.FPS),
-        "-t", f"{dur:.3f}",
-        "-i", str(card_png),
-        "-frames:v", str(frames),
-        "-c:v", "libx264",
-        "-preset", "medium",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-r", str(_sh.FPS),
-        "-an",
-        str(out_path),
-    ]
-    if progress:
-        progress(f"[screen_qa] text card fallback {out_path.name} ({dur:.2f}s)")
+    cmd = [ff, "-y", "-f", "lavfi", "-i",
+           f"color=c=0x0e1117:s={_sh.OUTPUT_W}x{_sh.OUTPUT_H}:r={_sh.FPS}",
+           "-vf", "format=yuv420p,setsar=0", "-frames:v", str(frames), "-c:v", "libx264",
+           "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(_sh.FPS),
+           "-an", str(out_path)]
     _sh._run(cmd)
     verify_shot_contract(out_path, frames)
-    return out_path
+
+
+def _fail_note(level: int, exc: BaseException | str) -> str:
+    return f"L{level}: {' '.join(str(exc).split())[:300]}"
 
 
 def render_screen_shot(
-    shot: Shot,
+    shot: ScreenShot,
     out_path: Path,
     *,
     work_dir: Path | None = None,
     corner_logo: Path | None = None,
     screen_context: dict | None = None,
+    project_root: Path | None = None,
+    fetch_missing: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> Path:
-    """Render one screen_qa shot through the 4-level fallback chain:
-    Level 1: Primary clip ->
-    Level 2: Backup candidate clip ->
-    Level 3: HD Still / Custom image (Ken Burns) ->
-    Level 4: Text Card (utils/text_card.py) -> NEVER CRASHES.
-    """
+    """Render ONE screen_qa shot through the never-crash chain (module docstring). Sets
+    shot.render_level (1-4) and shot.level_notes; shot.clip_fallback stays non-empty only when a
+    clip was wanted and none rendered (that is what pipeline._assemble_video reads to decide
+    whether the shot is a clip shot for its hard cuts)."""
+    log = progress or (lambda _m: None)
+    out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    shot.screen_render_level = 0
+    work_dir = Path(work_dir) if work_dir else out_path.parent / "_screen_work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    shot.render_level = 0
+    shot.level_notes = []
+    frames = max(1, int(round(max(0.4, float(shot.duration_seconds)) * _sh.FPS)))
+    wanted_clip = bool(shot.clip_path or shot.clip_source_url or shot.clip_fallback)
+    root = Path(project_root) if project_root else None
 
-    # ── Level 1: Primary Clip ──────────────────────────────────────────────
-    if getattr(shot, "clip_path", "") and Path(shot.clip_path).is_file():
+    def _clip_candidate(path: str, c_in: float, c_out: float, crop: dict, cid: str,
+                        url: str, src_start: float = -1.0) -> ScreenShot | None:
+        """A shot copy pointing at one clip, fetching the section first when only a URL is known."""
+        sh = copy.copy(shot)
+        sh.clip_path, sh.clip_in, sh.clip_out = path, c_in, c_out
+        sh.clip_crop, sh.clip_id, sh.clip_source_url = dict(crop or {}), cid, url
+        if (not path or not Path(path).is_file()) and url and fetch_missing and root is not None:
+            # in-point is relative to the section file when its source moment is known
+            start = src_start + c_in if src_start >= 0 else c_in
+            got = _fetch_section(url, start, float(shot.duration_seconds), root, log)
+            sh.clip_path, sh.clip_in = str(got), 0.0
+            sh.clip_out = 0.0
+        if not sh.clip_path:
+            return None
+        if not Path(sh.clip_path).is_file():
+            raise FileNotFoundError(f"clip file missing: {sh.clip_path}")
+        return sh
+
+    # ── Level 1 — the beat's own clip ───────────────────────────────────────────
+    if wanted_clip:
         try:
-            res = render_clip_shot(shot, out_path, corner_logo=corner_logo, progress=progress)
-            shot.screen_render_level = 1
-            shot.clip_fallback = ""
-            return res
-        except Exception as exc:
-            shot.clip_fallback = f"Level 1 failed ({type(exc).__name__}: {exc})"
-            if progress:
-                progress(f"[screen_qa] ⚠ shot {shot.shot_id:03d}: primary clip failed ({exc}) — trying backup candidate")
-    elif getattr(shot, "clip_path", ""):
-        shot.clip_fallback = f"Level 1 file not found: {shot.clip_path}"
+            cand = _clip_candidate(shot.clip_path, shot.clip_in, shot.clip_out, shot.clip_crop,
+                                   shot.clip_id, shot.clip_source_url, shot.clip_source_start)
+            if cand is None:
+                raise FileNotFoundError(shot.clip_fallback or "clip has no local file")
+            render_clip_shot(cand, out_path, corner_logo=corner_logo, progress=log)
+            shot.render_level, shot.clip_fallback = 1, ""
+            shot.clip_path, shot.clip_in, shot.clip_out = cand.clip_path, cand.clip_in, cand.clip_out
+            return out_path
+        except Exception as exc:                                     # noqa: BLE001 — chain
+            shot.level_notes.append(_fail_note(1, exc))
+            log(f"[screen_qa] shot {shot.shot_id:03d}: clip failed ({exc}) — trying the backup clip")
 
-    # ── Level 2: Backup Candidate Clip ─────────────────────────────────────
-    backup_path = getattr(shot, "backup_clip_path", "")
-    if backup_path and Path(backup_path).is_file():
-        backup_shot = copy.copy(shot)
-        backup_shot.clip_path = backup_path
-        backup_shot.clip_in = getattr(shot, "backup_clip_in", 0.0)
-        backup_shot.clip_out = getattr(shot, "backup_clip_out", 0.0)
-        backup_shot.clip_crop = getattr(shot, "backup_clip_crop", {})
-        backup_shot.clip_id = getattr(shot, "backup_clip_id", f"{shot.clip_id}_backup")
+    # ── Level 2 — the backup clip ───────────────────────────────────────────────
+    if shot.backup_clip_path or shot.backup_source_url:
         try:
-            res = render_clip_shot(backup_shot, out_path, corner_logo=corner_logo, progress=progress)
-            shot.screen_render_level = 2
-            shot.clip_fallback = "fallback_to_backup_candidate"
-            return res
-        except Exception as exc:
-            prev_fb = shot.clip_fallback or ""
-            shot.clip_fallback = f"{prev_fb} | Level 2 failed ({type(exc).__name__}: {exc})"
-            if progress:
-                progress(f"[screen_qa] ⚠ shot {shot.shot_id:03d}: backup clip failed ({exc}) — trying HD still")
-    elif backup_path:
-        shot.clip_fallback = f"{shot.clip_fallback or ''} | Level 2 file not found: {backup_path}"
+            cand = _clip_candidate(shot.backup_clip_path, shot.backup_clip_in, shot.backup_clip_out,
+                                   shot.backup_clip_crop, shot.backup_clip_id or f"{shot.clip_id}-backup",
+                                   shot.backup_source_url, shot.backup_source_start)
+            if cand is None:
+                raise FileNotFoundError("backup clip has no local file")
+            render_clip_shot(cand, out_path, corner_logo=corner_logo, progress=log)
+            shot.render_level, shot.clip_fallback = 2, ""
+            shot.clip_path, shot.clip_in, shot.clip_out = cand.clip_path, cand.clip_in, cand.clip_out
+            shot.clip_id, shot.clip_crop = cand.clip_id, cand.clip_crop
+            shot.clip_source_url = cand.clip_source_url
+            return out_path
+        except Exception as exc:                                     # noqa: BLE001 — chain
+            shot.level_notes.append(_fail_note(2, exc))
+            log(f"[screen_qa] shot {shot.shot_id:03d}: backup clip failed ({exc}) — trying a still")
+    if wanted_clip:
+        shot.clip_fallback = " | ".join(shot.level_notes) or shot.clip_fallback or "clip did not render"
 
-    # ── Level 3: HD Still / Custom Image (Ken Burns) ────────────────────────
-    still_path = getattr(shot, "custom_image", "") or getattr(shot, "still_image", "")
-    if still_path and Path(still_path).is_file():
+    # ── Level 3 — a still / custom image, Ken Burns (shots.render_shot, unchanged) ──────────
+    still = getattr(shot, "custom_image", "") or ""
+    if still:
         try:
-            res = _render_still_ken_burns(
-                Path(still_path),
-                out_path,
-                shot.duration_seconds,
-                motion=shot.motion or "push_in",
-                corner_logo=corner_logo,
-                progress=progress,
-            )
-            shot.screen_render_level = 3
-            shot.clip_fallback = "fallback_to_hd_still"
-            return res
-        except Exception as exc:
-            prev_fb = shot.clip_fallback or ""
-            shot.clip_fallback = f"{prev_fb} | Level 3 failed ({type(exc).__name__}: {exc})"
-            if progress:
-                progress(f"[screen_qa] ⚠ shot {shot.shot_id:03d}: HD still failed ({exc}) — falling back to text card")
-    elif still_path:
-        shot.clip_fallback = f"{shot.clip_fallback or ''} | Level 3 still not found: {still_path}"
+            still_shot = copy.copy(shot)
+            still_shot.clip_path = ""                  # render_shot takes its custom-image path
+            _sh.render_shot(still_shot, out_path, work_dir=work_dir / "_stills",
+                            progress=log, corner_logo=corner_logo)
+            verify_shot_contract(out_path, frames)
+            shot.render_level = 3
+            return out_path
+        except Exception as exc:                                     # noqa: BLE001 — chain
+            shot.level_notes.append(_fail_note(3, exc))
+            log(f"[screen_qa] shot {shot.shot_id:03d}: still failed ({exc}) — falling back to a card")
 
-    # ── Level 4: Text Card (utils/text_card.py) -> NEVER CRASHES ────────────
+    # ── Level 4 — a text card; the plain frame is its own failsafe ──────────────
     try:
-        res = _render_card_shot(
-            shot,
-            out_path,
-            work_dir=work_dir,
-            corner_logo=corner_logo,
-            screen_context=screen_context,
-            progress=progress,
-        )
-        shot.screen_render_level = 4
-        shot.clip_fallback = "fallback_to_text_card"
-        return res
-    except Exception as exc:
-        # Ultimate Pillow failsafe: minimal plain solid color MP4 with 1 text
-        if progress:
-            progress(f"[screen_qa] ⚠ Level 4 card exception ({exc}) — rendering emergency blank card")
-        emergency_png = (work_dir or out_path.parent) / f"emerg_{shot.shot_id:03d}.png"
-        img = Image.new("RGB", (_sh.OUTPUT_W, _sh.OUTPUT_H), (15, 17, 21))
-        emergency_png.parent.mkdir(parents=True, exist_ok=True)
-        img.save(emergency_png)
-        dur = max(0.4, float(shot.duration_seconds))
-        frames = max(1, int(round(dur * _sh.FPS)))
-        ff = _sh._require_ffmpeg()
-        cmd = [
-            ff, "-y", "-loop", "1", "-framerate", str(_sh.FPS), "-t", f"{dur:.3f}",
-            "-i", str(emergency_png), "-frames:v", str(frames),
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-r", str(_sh.FPS), "-an",
-            str(out_path),
-        ]
-        _sh._run(cmd)
-        verify_shot_contract(out_path, frames)
-        shot.screen_render_level = 4
-        shot.clip_fallback = "fallback_to_emergency_card"
-        return out_path
+        _render_card(shot, out_path, work_dir, corner_logo, screen_context, frames)
+    except Exception as exc:                                         # noqa: BLE001 — never crash
+        shot.level_notes.append(_fail_note(4, exc))
+        log(f"[screen_qa] shot {shot.shot_id:03d}: text card failed ({exc}) — plain frame")
+        _render_blank(shot, out_path, work_dir, frames)
+    shot.render_level = 4
+    return out_path
 
 
-def _write_screen_shots_log(shots: list[Shot], shots_dir: Path, out_path: Path, log: Callable[[str], None]) -> None:
-    """Write shots.json for screen_qa shots reporting render level and clip/still details."""
+# ─── shots.json + reuse signature ───────────────────────────────────────────────
+
+def _file_sig(p: str) -> list:
+    try:
+        st = Path(p).stat()
+        return [p, st.st_size, int(st.st_mtime)]
+    except OSError:
+        return [p, 0, 0]
+
+
+def shot_signature(shot: ScreenShot, corner_logo: Path | None) -> str:
+    """Everything that decides what a shot file contains, so a rerun reuses a shot only when it
+    would render the same (a changed clip pick, still or duration re-renders it)."""
+    doc = {
+        "v": _RENDER_VERSION, "frames": int(round(shot.duration_seconds * _sh.FPS)),
+        "motion": shot.motion, "text": shot.caption_text, "intro": shot.is_intro,
+        "clip": [_file_sig(shot.clip_path) if shot.clip_path else shot.clip_source_url,
+                 shot.clip_in, shot.clip_out, shot.clip_crop],
+        "backup": [_file_sig(shot.backup_clip_path) if shot.backup_clip_path else shot.backup_source_url,
+                   shot.backup_clip_in, shot.backup_clip_out],
+        "still": _file_sig(shot.custom_image) if shot.custom_image else "",
+        "logo": bool(corner_logo), "fit": [config.ENABLE_VIDEO_CLIPS, config.CLIP_SPEED_MIN,
+                                           config.CLIP_SPEED_MAX, config.CLIP_MAX_HOLD],
+        "frame": [_sh.OUTPUT_W, _sh.OUTPUT_H],
+    }
+    return hashlib.sha1(json.dumps(doc, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _write_screen_shots_log(shots: list[ScreenShot], out_path: Path,
+                            log: Callable[[str], None]) -> None:
+    """shots.json — a LIST like the comic Stage 5 writes (nothing reads it downstream)."""
     entries = []
     for s in shots:
-        entry: dict[str, Any] = {
-            "shot_id": s.shot_id,
-            "scene_id": s.scene_id,
-            "duration": round(s.duration_seconds, 3),
-            "caption_text": s.caption_text,
-            "render_level": getattr(s, "screen_render_level", 0),
-            "fallback_reason": getattr(s, "clip_fallback", None),
+        e: dict[str, Any] = {
+            "shot_id": s.shot_id, "scene_id": s.scene_id, "beats": list(s.beat_keys),
+            "caption_text": s.caption_text, "duration_seconds": round(s.duration_seconds, 3),
+            "frames": int(round(s.duration_seconds * _sh.FPS)), "motion": s.motion,
+            "render_level": s.render_level,
+            "level_name": {1: "clip", 2: "backup_clip", 3: "still", 4: "card"}.get(s.render_level),
+            "level_notes": list(s.level_notes) or None,
         }
-        c_entry = shot_log_entry(s)
-        if c_entry:
-            entry["clip"] = c_entry
-        if getattr(s, "custom_image", ""):
-            entry["custom_image"] = s.custom_image
-        entries.append(entry)
+        clip = shot_log_entry(s)
+        if clip:
+            e["clip"] = clip
+        if s.custom_image:
+            e["custom_image"] = s.custom_image
+        if s.backup_clip_path or s.backup_source_url:
+            e["backup"] = {"id": s.backup_clip_id, "file": s.backup_clip_path,
+                           "in": s.backup_clip_in, "source_url": s.backup_source_url}
+        entries.append(e)
+    Path(out_path).write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
+    levels = [e["render_level"] for e in entries]
+    log(f"[screen_qa] wrote shots.json ({len(entries)} shots: "
+        f"{levels.count(1)} clip, {levels.count(2)} backup, {levels.count(3)} still, "
+        f"{levels.count(4)} card)")
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"shots": entries}, indent=2, ensure_ascii=False))
-    log(f"[screen_qa] wrote {len(entries)} shot entries to {out_path.name}")
+
+# ─── Stage 5 runner ─────────────────────────────────────────────────────────────
+
+def _load_screen_context(root: Path) -> dict:
+    return _load_json(root / "screen_context.json") or {}
 
 
 def run_screen_qa_pipeline(
@@ -498,142 +508,112 @@ def run_screen_qa_pipeline(
     log: Callable[[str], None] = print,
     audio_path: Path | None = None,
     audio_duration: float = 0.0,
-    scene_timings: list[dict[str, Any]] | None = None,
-    word_timestamps: list[dict[str, Any]] | None = None,
+    scene_timings: Any = None,
+    word_timestamps: list[dict] | None = None,
 ) -> AssemblyResult:
-    """Complete Stage 5 assembly pipeline for mode='screen_qa'.
-    Produces projects/<p>/final.mp4 adhering to the standard contract.
-    """
+    """Stage 5 for mode="screen_qa": the shots of build_shots_for_screen_qa → never-crash render →
+    the comic Stage 5's own assembly (hard cuts around clips, dissolves elsewhere), narration mix,
+    outro card, final encode and music score → projects/<p>/final.mp4 (+ video_silent.mp4,
+    audio_mixed.wav, shots.json, title.txt), the same contract the comic path ships.
+    Called by stage_5.pipeline.assemble_project, which has already passed the review gate and
+    checked the TTS hash."""
     root = Path(project_root)
+    _sh.set_output_frame("screen_qa")       # Shorts frame (a long-form render earlier in this
+                                            # process may have left the module on 1920x1080)
     shots_dir = root / "shots"
     shots_dir.mkdir(parents=True, exist_ok=True)
     silent_video_path = root / "video_silent.mp4"
     audio_mixed_path = root / "audio_mixed.wav"
     final_path = root / "final.mp4"
-    audio_path = audio_path or root / "audio.wav"
+    audio_path = Path(audio_path) if audio_path else root / "audio.wav"
+    n_scenes = len(narration.get("scenes") or [])
+
+    def _result(shots=None, final="", dur=0.0):
+        return AssemblyResult(
+            final_path=final, duration_seconds=round(dur, 3),
+            shot_count=len(shots) if shots is not None else len(list(shots_dir.glob("shot_*.mp4"))),
+            scene_count=n_scenes, caption_path="", silent_video_path=str(silent_video_path),
+            audio_mixed_path=str(audio_mixed_path), shots_dir=str(shots_dir), shots=shots or [])
 
     if final_path.exists() and not force and not panels_only:
         log(f"[screen_qa] final.mp4 already exists ({final_path}); pass force=True to rebuild")
-        duration = _probe_duration(final_path)
-        return AssemblyResult(
-            final_path=str(final_path),
-            duration_seconds=round(duration, 3),
-            shot_count=len(list(shots_dir.glob("shot_*.mp4"))),
-            scene_count=len(narration.get("scenes") or []),
-            caption_path="",
-            silent_video_path=str(silent_video_path),
-            audio_mixed_path=str(audio_mixed_path),
-            shots_dir=str(shots_dir),
-        )
+        return _result(final=str(final_path), dur=_probe_duration(final_path))
 
-    # Build shots
+    screen_context = _load_screen_context(root)
     shots = build_shots_for_screen_qa(
-        narration=narration,
-        scene_timings=scene_timings,
-        word_timestamps=word_timestamps,
-        project=project_name,
-    )
+        narration, scene_timings, word_timestamps, project=project_name, project_root=root,
+        screen_context=screen_context, audio_duration=audio_duration, log=log)
     if not shots:
-        raise RuntimeError("build_shots_for_screen_qa produced 0 shots")
-
-    # Audio padding guard: ensure video length covers audio duration
-    if audio_duration > 0:
-        total_shot_dur = sum(s.duration_seconds for s in shots)
-        if total_shot_dur < audio_duration:
-            pad = (audio_duration - total_shot_dur) + 0.20
-            shots[-1].duration_seconds += pad
-            log(f"[screen_qa] extended last shot +{pad:.2f}s so video >= audio ({audio_duration:.2f}s)")
+        raise RuntimeError("build_shots_for_screen_qa produced 0 shots — check narration.json scenes")
+    total = sum(s.duration_seconds for s in shots)
+    log(f"[screen_qa] planning {len(shots)} shots over {n_scenes} scene(s), "
+        f"{total:.2f}s of video for {audio_duration:.2f}s of audio")
 
     if panels_only:
-        _write_screen_shots_log(shots, shots_dir, root / "shots.json", log)
-        return AssemblyResult(
-            final_path="",
-            duration_seconds=0.0,
-            shot_count=len(shots),
-            scene_count=len(narration.get("scenes") or []),
-            caption_path="",
-            silent_video_path=str(silent_video_path),
-            audio_mixed_path=str(audio_mixed_path),
-            shots_dir=str(shots_dir),
-            shots=shots,
-        )
+        _write_screen_shots_log(shots, root / "shots.json", log)
+        return _result(shots)
 
-    # Corner logo
-    from config import ENABLE_CORNER_LOGO, CHANNEL_LOGO_PATH
+    from config import CHANNEL_LOGO_PATH, ENABLE_CORNER_LOGO
     corner_logo = None
     if ENABLE_CORNER_LOGO:
         corner_logo = _sh._prepare_corner_logo(
             CHANNEL_LOGO_PATH, shots_dir / "_corner_logo.png",
-            width=int(_sh.OUTPUT_W * 0.10), alpha=0.55
-        )
+            width=int(_sh.OUTPUT_W * 0.10), alpha=0.55)
+        if corner_logo is None:
+            log(f"[screen_qa] corner logo unavailable ({CHANNEL_LOGO_PATH}); skipping overlay")
 
-    # Screen context
-    screen_context = None
-    ctx_path = root / "screen_context.json"
-    if ctx_path.exists():
-        try:
-            screen_context = json.loads(ctx_path.read_text())
-        except Exception:
-            pass
-
-    # Render each shot
     shot_paths: list[Path] = []
     for s in shots:
         sp = shots_dir / f"shot_{s.shot_id:03d}.mp4"
-        if sp.exists() and not force:
-            log(f"[screen_qa] reusing {sp.name}")
+        meta = shots_dir / f"shot_{s.shot_id:03d}.json"
+        sig = shot_signature(s, corner_logo)
+        prev = _load_json(meta) if meta.exists() else None
+        if (not force and sp.exists() and isinstance(prev, dict) and prev.get("sig") == sig):
+            s.render_level = int(prev.get("level") or 0)
+            s.clip_fallback = str(prev.get("clip_fallback") or "")
+            s.level_notes = list(prev.get("notes") or [])
+            log(f"[screen_qa] reusing {sp.name} (level {s.render_level})")
         else:
-            render_screen_shot(
-                s, sp,
-                work_dir=shots_dir / "_work",
-                corner_logo=corner_logo,
-                screen_context=screen_context,
-                progress=log,
-            )
+            render_screen_shot(s, sp, work_dir=shots_dir / "_work", corner_logo=corner_logo,
+                               screen_context=screen_context, project_root=root, progress=log)
+            meta.write_text(json.dumps({"sig": shot_signature(s, corner_logo), "level": s.render_level,
+                                        "clip_fallback": s.clip_fallback, "notes": s.level_notes}),
+                            encoding="utf-8")
         shot_paths.append(sp)
+    _write_screen_shots_log(shots, root / "shots.json", log)
 
-    # Write debug shots.json
-    _write_screen_shots_log(shots, shots_dir, root / "shots.json", log)
+    from config import (CHANNEL_HANDLE, CHANNEL_NAME, ENABLE_OUTRO_CARD, OUTRO_CARD_SECONDS)
+    outro_card, outro_dur = None, 0.0
+    if ENABLE_OUTRO_CARD:
+        outro_card = _build_outro_card(root / "_outro_card.mp4", duration=OUTRO_CARD_SECONDS,
+                                       logo=CHANNEL_LOGO_PATH, channel_name=CHANNEL_NAME,
+                                       handle=CHANNEL_HANDLE)
+        outro_dur = OUTRO_CARD_SECONDS if outro_card is not None else 0.0
 
-    # Assemble silent video: hard cuts stream copy around clip shots
     if silent_video_path.exists() and not force:
         log(f"[screen_qa] reusing {silent_video_path.name}")
     else:
-        _assemble_video(shots, shot_paths, silent_video_path, project=project_name)
+        log(f"[screen_qa] assembling {len(shot_paths)} shots → {silent_video_path.name}")
+        _assemble_video(shots, shot_paths, silent_video_path, outro_card=outro_card,
+                        outro_dur=outro_dur, project=project_name)
 
-    # Audio mix
-    if audio_mixed_path.exists() and not force and audio_path.exists() and audio_mixed_path.stat().st_mtime >= audio_path.stat().st_mtime:
+    if (audio_mixed_path.exists() and not force and audio_path.exists()
+            and audio_mixed_path.stat().st_mtime >= audio_path.stat().st_mtime):
         log(f"[screen_qa] reusing {audio_mixed_path.name}")
-    elif audio_path.exists():
-        mix_audio(audio_path, audio_mixed_path, bg_music_path=None, progress=log)
     else:
-        # Emergency dummy audio if no audio.wav found
-        ff = _sh._require_ffmpeg()
-        total_dur = _probe_duration(silent_video_path)
-        cmd = [
-            ff, "-y",
-            "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=mono",
-            "-t", f"{total_dur:.3f}",
-            str(audio_mixed_path),
-        ]
-        _sh._run(cmd)
+        mix_audio(audio_path, audio_mixed_path, bg_music_path=None, progress=log)
+        if outro_dur > 0:
+            try:
+                padded = audio_mixed_path.with_suffix(".pad.wav")
+                _pad_audio_tail(audio_mixed_path, outro_dur, padded)
+                padded.replace(audio_mixed_path)
+            except Exception as exc:                                  # noqa: BLE001
+                log(f"[screen_qa] audio pad failed ({exc}); shipping without the outro-card tail")
 
-    # Final encode to projects/<p>/final.mp4
-    log(f"[screen_qa] final encode -> {final_path.name}")
+    log(f"[screen_qa] final encode → {final_path.name}")
     _final_encode(silent_video_path, audio_mixed_path, final_path)
-
+    _score_final_video(project_name, root, silent_video_path, audio_path, final_path, log=log)
     duration = _probe_duration(final_path)
     log(f"[screen_qa] done: {final_path} ({duration:.2f}s)")
     _write_title_file(root, narration)
-
-    return AssemblyResult(
-        final_path=str(final_path),
-        duration_seconds=round(duration, 3),
-        shot_count=len(shots),
-        scene_count=len(narration.get("scenes") or []),
-        caption_path="",
-        silent_video_path=str(silent_video_path),
-        audio_mixed_path=str(audio_mixed_path),
-        shots_dir=str(shots_dir),
-        shots=shots,
-    )
+    return _result(shots, final=str(final_path), dur=duration)
