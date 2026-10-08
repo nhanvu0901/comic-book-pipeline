@@ -3,6 +3,20 @@ import importlib
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _config_without_dotenv_leakage(monkeypatch):
+    """config.py calls load_dotenv() on every (re)import, so a developer's or the server's
+    .env (POST_ATEMPO=1.15 in production) leaked into the "code default" assertions and
+    made them fail for reasons that are not regressions. Reload config with .env disabled,
+    then put the real config back for the tests that run after this file."""
+    import dotenv
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+    yield
+    monkeypatch.undo()
+    import config
+    importlib.reload(config)
+
+
 def test_default_flags_off(monkeypatch):
     monkeypatch.delenv("ENABLE_VIDEO_CLIPS", raising=False)
     monkeypatch.delenv("CLIP_SPEED_MIN", raising=False)

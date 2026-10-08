@@ -192,6 +192,9 @@ Hàm `_fit_clip_timing` trong `stages/stage_5/clips.py` thực hiện:
   3. Khớp chính xác số issue.
   4. Ping kiểm tra `getChapterData`.
 - **Lưới An Toàn**: Tránh nhận nhầm câu hỏi kinh điển có cả truyện và phim (như Civil War) thành screen media.
+- **Tham chiếu comic có kiểu (typed refs)**: mỗi `RoutedItem` có `comic_series`/`comic_issue`/`comic_year` do LLM điền (kể cả khi kết quả search chỉ nói về phim; `comic_series=null` nghĩa là không có bản comic). Verifier chỉ tra Batcave bằng các ref này, `ping_pages=True`. **Không** suy ra ref từ tên phim, **không** có bảng sự kiện hard-code, **không** mặc định issue #1.
+- **Issue chưa biết**: chỉ xác minh series + năm tồn tại trên Batcave (`BatcaveCheck.level == "series"`), và kết quả ghi rõ "issue number unknown" (log + `media_route.json`). Series tồn tại ⇒ `comic_qa` (ưu tiên an toàn cho comic).
+- **Quyết định + dấu vết**: `decide_route()` trả `RouteDecision` (route, các `BatcaveCheck`, `clips_found`, lý do); `answer_pipeline --auto-route` ghi vào `media_route.json` và, khi route là `screen_qa`, **không chạy comic research** mà in lệnh `stages.screen_pipeline` kế tiếp.
 
 ---
 
