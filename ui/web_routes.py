@@ -409,7 +409,6 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     #pick-box.err {{ border-color: #da3633; }}
     #pick-preview {{ height: 320px; border-radius: 6px; margin-top: 8px; display: none; }}
   </style>
-  <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
   <h1>Chọn khoảnh khắc cho Beat {e(beat)}</h1>
@@ -427,12 +426,20 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     const BEAT = {_js(beat)};
     window.players = {{}};
 
-    function onYouTubeIframeAPIReady() {{
+    // The API calls this global the moment it has loaded — it must already exist (so this script comes
+    // BEFORE the iframe_api tag below) and the iframes must already be in the DOM.
+    function initPlayers() {{
       document.querySelectorAll('iframe[id^="player_"]').forEach(iframe => {{
+        if (window.players[iframe.id.replace('player_', '')]) return;
         const vid = iframe.id.replace('player_', '');
         window.players[vid] = new YT.Player(iframe.id, {{ events: {{ 'onReady': () => console.log('YT Player ready: ' + vid) }} }});
       }});
-      setInterval(() => {{
+    }}
+    function onYouTubeIframeAPIReady() {{
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initPlayers);
+      else initPlayers();
+    }}
+    setInterval(() => {{
         for (const [vid, p] of Object.entries(window.players)) {{
           const el = document.getElementById('cur_' + vid);
           if (el && p && typeof p.getCurrentTime === 'function') {{
@@ -440,7 +447,6 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
           }}
         }}
       }}, 400);
-    }}
 
     function seekTo(vid, seconds) {{
       const input = document.getElementById('start_' + vid);
@@ -517,6 +523,7 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
       body: JSON.stringify({{ project: PROJECT, beat: BEAT }}) }}).catch(() => {{}});
     pollDuration();
   </script>
+  <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>"""
 
