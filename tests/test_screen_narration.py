@@ -469,3 +469,28 @@ def test_hook_beats_use_the_same_non_dangling_split(proj, monkeypatch):
     beats = [b["text"] for b in nar.scenes[0].visual_beats]
     assert len(beats) >= 2
     assert not any(b.split()[-1].lower() in sq._DANGLING and b.split()[-1][-1].isalpha() for b in beats[:-1]), beats
+
+
+# ─── entity naming: research entities come as "A (B)" / "A / B" ─────────────────────────────
+
+@pytest.mark.parametrize("entity, text, named", [
+    ("Ant-Man (Scott Lang)", "Scott Lang walks out of the tunnel.", True),       # live: parenthetical alias
+    ("Ant-Man (Scott Lang)", "Ant-Man walks out of the tunnel.", True),
+    ("Tony Stark / Iron Man", "Iron Man builds a watch.", True),
+    ("Tony Stark / Iron Man", "A billionaire builds a watch.", False),
+    ("The Avengers", "The team builds a watch.", False),                         # an article alone is not a name
+    ("The Avengers", "Avengers assemble.", True),
+    ("Alice Park", "Alice seals the door.", True),
+    ("Alice Park", "She seals the door.", False),
+])
+def test_entity_is_named_by_any_alias(entity, text, named):
+    assert sq._entity_named(text, entity) is named
+
+
+def test_validator_accepts_an_alias_for_the_entity():
+    items = _items()
+    items[0]["entity"] = "Alice Park (the engineer)"
+    scenes = [_scene("In Deep Station (2011), Alice acts."), _scene("a"),
+              _scene("Bob Chen in Cold Orbit (2016)."), _scene("b")]
+    assert not [i for i in sq._validate_screen_scenes(scenes, items, "list", band=(1, 999), scene_max=42)
+                if "names its entity" in i]

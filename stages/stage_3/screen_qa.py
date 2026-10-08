@@ -173,6 +173,24 @@ def _cites(text: str, title: str, year: Any) -> bool:
     return _mentions_title(text, title) and str(year).strip() in _tokens(text)
 
 
+_ARTICLES = frozenset({"the", "a", "an"})
+
+
+def _entity_named(text: str, entity: str) -> bool:
+    """Does `text` name the entity by any of its aliases? Research writes entities as
+    "Ant-Man (Scott Lang)" or "Tony Stark / Iron Man"; the writer may use either name. Each alias
+    is matched by its first real word (a leading article alone never counts as naming it)."""
+    low = str(text or "").lower()
+    names = [a for a in re.split(r"[/()\[\],;&]|\band\b", str(entity or "")) if a.strip()]
+    for alias in names:
+        words = [w for w in re.findall(r"[\w'-]+", alias.lower())]
+        while words and words[0] in _ARTICLES and len(words) > 1:
+            words.pop(0)
+        if words and words[0] not in _ARTICLES and re.search(rf"(?<![\w-]){re.escape(words[0])}(?![\w-])", low):
+            return True
+    return not names                                   # nothing to check against
+
+
 def _anchor_query(query: str, title: str) -> str:
     """A clip query must name the film/series, otherwise 'weld sparks' finds any video."""
     query = " ".join(str(query or "").split())
@@ -296,8 +314,7 @@ def _validate_screen_scenes(
         item_idx = i // per
         if i % per == 0 and item_idx < len(items):                # CONTEXT scene names its entity
             entity = str(items[item_idx].get("entity", "")).strip()
-            key = re.sub(r"[^\w'-]", "", entity.split()[0]).lower() if entity else ""
-            if key and key not in text.lower():
+            if entity and not _entity_named(text, entity):
                 issues.append(f"scene {i + 1} never names its entity ({entity!r})")
         if archetype == "explain" and ea._LIST_LANGUAGE_RE.search(text):
             issues.append(f"scene {i + 1} uses list language "
