@@ -538,17 +538,42 @@ def fetch_clip_section(
         log(f"[clip] cached section: {out}")
         return out
 
+    import config
+    end = start + beat_duration * config.CLIP_SPEED_MAX + margin
     cmd = ytdlp_section_args(url, src_dir, start=start, beat_duration=beat_duration,
                             margin=margin, max_height=max_height)
     res = subprocess.run(cmd, capture_output=True, text=True)
     lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
     raw = Path(lines[-1]) if lines else None
-    if res.returncode != 0 or raw is None or not raw.is_file():
-        tail = " ".join((res.stderr or res.stdout or "").split())[-500:]
-        raise RuntimeError(f"yt-dlp section download failed for {url}: {tail}")
+    if res.returncode == 0 and raw is not None and raw.is_file():
+        normalize(raw, out, log=log)
+        return out
 
-    normalize(raw, out, log=log)
+    reason = _ytdlp_error(res)
+    log(f"[clip] section download failed ({reason}) — falling back to the whole video, cut locally")
+    # An outdated yt-dlp gets HTTP 403 from googlevideo when ffmpeg pulls a section (seen on the Windows
+    # server: yt-dlp 2026.07.04 failed, 2026.08.19 worked). The native downloader still works, so take the
+    # whole video (cached per id in src/) and cut the very same [start, end] window out of it.
+    try:
+        whole = src_dir / f"{vid}.mp4"
+        if not whole.is_file():
+            whole = download(url, src_dir, max_height=max_height, log=log)
+        normalize(whole, out, start=start, duration=end - start, log=log)
+    except Exception as exc:
+        raise RuntimeError(f"yt-dlp section download failed for {url}: {reason}; "
+                           f"whole-video fallback failed too: {exc}") from exc
     return out
+
+
+def _ytdlp_error(res) -> str:
+    """The ERROR lines of a failed yt-dlp run (not its version warnings), with a hint when the error
+    is the 403/ffmpeg pattern an outdated yt-dlp produces."""
+    text = (res.stderr or "") + "\n" + (res.stdout or "")
+    errs = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("ERROR")]
+    msg = " | ".join(errs)[-400:] or " ".join(text.split())[-400:]
+    if "older than 90 days" in text and ("ffmpeg exited" in text or "403" in text):
+        msg += " (this yt-dlp is outdated — `pip install -U yt-dlp`)"
+    return msg
 
 
 def download(url: str, out_dir: Path, *, max_height: int = 1080, log=print) -> Path:
@@ -564,7 +589,8 @@ def download(url: str, out_dir: Path, *, max_height: int = 1080, log=print) -> P
     return path
 
 
-def normalize(src: Path, out: Path, *, max_short_side: int = 1080, log=print) -> Path:
+def normalize(src: Path, out: Path, *, max_short_side: int = 1080, start: float | None = None,
+              duration: float | None = None, log=print) -> Path:
     """Transcode ANY input to H.264 yuv420p, constant 30 fps, short side <= max_short_side,
     AAC audio if there is any. Written to a temp name first so a crash never leaves a
     half-file that later looks cached."""
@@ -574,7 +600,8 @@ def normalize(src: Path, out: Path, *, max_short_side: int = 1080, log=print) ->
     k = min(1.0, max_short_side / min(w, h))
     tw, th = max(2, int(round(w * k / 2)) * 2), max(2, int(round(h * k / 2)) * 2)
     tmp = out.with_name(out.stem + ".part.mp4")
-    cmd = [_ffmpeg(), "-y", "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?",
+    cut = ([] if start is None else ["-ss", f"{start:.3f}"]) + ([] if duration is None else ["-t", f"{duration:.3f}"])
+    cmd = [_ffmpeg(), "-y", *cut, "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?",
            "-vf", f"fps=30,scale={tw}:{th}:flags=lanczos,setsar=1,format=yuv420p",
            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(tmp)]
