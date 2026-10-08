@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import math
 import os
 import re
@@ -30,7 +31,48 @@ import flet as ft
 
 from pathlib import Path
 
+import config
 from config import MUSIC_GENRE, MUSIC_GENRES, PROJECTS_ROOT
+
+
+def _load_clips_manifest(project: str) -> dict[str, dict]:
+    manifest_file = Path(config.PROJECTS_ROOT) / project / "review" / "clips" / "clips.json"
+    if not manifest_file.exists():
+        return {}
+    try:
+        data = json.loads(manifest_file.read_text("utf-8"))
+        return {
+            str(c.get("beat")): c
+            for c in data.get("clips", [])
+            if c.get("beat") and c.get("enabled", True) is not False
+        }
+    except Exception:
+        return {}
+
+
+def _remove_clip_for_beat(project: str, beat_key: str) -> None:
+    manifest_file = Path(config.PROJECTS_ROOT) / project / "review" / "clips" / "clips.json"
+    if not manifest_file.exists():
+        return
+    try:
+        data = json.loads(manifest_file.read_text("utf-8"))
+        clips = [c for c in data.get("clips", []) if str(c.get("beat")) != str(beat_key)]
+        data["clips"] = clips
+        manifest_file.write_text(json.dumps(data, indent=2), "utf-8")
+    except Exception:
+        pass
+
+
+def _load_beat_durations(project: str) -> dict[str, float]:
+    status_file = Path(config.PROJECTS_ROOT) / project / "review" / "tts_status.json"
+    if not status_file.exists():
+        return {}
+    try:
+        data = json.loads(status_file.read_text("utf-8"))
+        return data.get("beat_durations") or {}
+    except Exception:
+        return {}
+
 from ..bridge import (
     image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
     load_preprocessed, load_review_candidates, load_review_locks, list_review_projects,
@@ -729,6 +771,47 @@ def build(
     for entry in list_custom_images(PROJECTS_ROOT / project):
         custom_by_beat.setdefault(str(entry.get("beat_key") or ""), []).append(entry)
 
+    clips_by_beat: dict[str, dict] = {}
+    beat_durations: dict[str, float] = {}
+    if config.ENABLE_VIDEO_CLIPS:
+        clips_by_beat = _load_clips_manifest(project)
+        beat_durations = _load_beat_durations(project)
+        try:
+            from stages.stage_4.background_tts import start_background_tts
+            start_background_tts(project)
+        except Exception:
+            pass
+
+        try:
+            from ..web_routes import add_moment_picked_listener
+            def _on_moment_picked(payload: dict):
+                if payload.get("project") == project:
+                    bk = str(payload.get("beat"))
+                    clips_by_beat[bk] = payload
+                    _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
+            add_moment_picked_listener(_on_moment_picked)
+        except Exception:
+            pass
+
+    def _clear_all_locks_and_clips():
+        if not config.ENABLE_VIDEO_CLIPS:
+            return
+        locks.clear()
+        locks_doc["locks"] = {}
+        clips_file = PROJECTS_ROOT / project / "review" / "clips" / "clips.json"
+        if clips_file.exists():
+            try:
+                clips_file.unlink()
+            except OSError:
+                pass
+        clips_by_beat.clear()
+        save_review_locks(project, locks_doc)
+        try:
+            from stages.stage_4.background_tts import start_background_tts
+            start_background_tts(project)
+        except Exception:
+            pass
+
     status_text = ft.Text("", size=12, color=TEXT_MUTED)
     # per-beat control refs (keyed by beat_key) so a lock/dup change repaints just that card
     card_refs: dict[str, dict] = {}
@@ -880,12 +963,24 @@ def build(
                 ctrls["icon"].update()
             except Exception:
                 pass
-        has_pick = bool(selected) or bool(locked_custom)
+        has_clip = beat_key in clips_by_beat
+        has_pick = bool(selected) or bool(locked_custom) or has_clip
         refs["auto_badge"].visible = not has_pick
         cap = MAX_PANELS if unit == "scene" else 1
-        refs["count_chip"].value = f"{len(selected)}/{cap} selected"
+        if has_clip:
+            refs["count_chip"].value = "MP4 clip selected"
+            refs["count_chip"].color = SUCCESS
+        else:
+            refs["count_chip"].value = f"{len(selected)}/{cap} selected"
+            refs["count_chip"].color = TEXT_MUTED
+        if "mp4_badge" in refs:
+            refs["mp4_badge"].visible = has_clip
+            try:
+                refs["mp4_badge"].update()
+            except Exception:
+                pass
         refs["warn_chip"].visible = (
-            unit == "scene" and len(selected) < MIN_PANELS and not locked_custom)
+            unit == "scene" and len(selected) < MIN_PANELS and not locked_custom and not has_clip)
         try:
             refs["cand_row"].update()
             refs["auto_badge"].update()
@@ -1070,6 +1165,11 @@ def build(
         locks_doc["approved"] = False
         locks_doc["approved_at"] = None
         save_review_locks(project, locks_doc)
+        if config.ENABLE_VIDEO_CLIPS:
+            _clear_all_locks_and_clips()
+            _show_snack("Đã lưu narration — video clips flag bật: đã reset toàn bộ panel & MP4 locks.")
+            on_state_change()
+            return
         if dropped:
             # The card list still shows a row per OLD fragment; typing into one of those
             # ghost rows silently wrote nothing. A full rebuild is the cheapest way to
@@ -1444,16 +1544,19 @@ def build(
             else:
                 _open_gallery()
 
-        has_pick = bool(selected) or bool(locked_custom)
+        has_clip = beat_key in clips_by_beat
+        has_pick = bool(selected) or bool(locked_custom) or has_clip
         auto_badge = _chip("auto", TEXT_MUTED, visible=not has_pick)
-        dup_badge = _chip("duplicate panel", WARN, visible=beat_key in _dup_beat_keys())
+        dup_badge = _chip("duplicate panel", WARN, visible=beat_key in _dup_beat_keys() and not has_clip)
+        mp4_badge = _chip("MP4", SUCCESS, visible=has_clip)
         cap = MAX_PANELS if unit == "scene" else 1
-        count_chip = ft.Text(f"{len(selected)}/{cap} selected", size=9,
-                              color=TEXT_MUTED, font_family="Menlo")
+        count_chip = ft.Text(
+            "MP4 clip selected" if has_clip else f"{len(selected)}/{cap} selected",
+            size=9, color=SUCCESS if has_clip else TEXT_MUTED, font_family="Menlo")
         warn_chip = _chip("pick at least 2", WARN,
-                           visible=unit == "scene" and len(selected) < MIN_PANELS and not locked_custom)
+                           visible=unit == "scene" and len(selected) < MIN_PANELS and not locked_custom and not has_clip)
         card_refs[beat_key] = {"tiles": tiles, "icons": icons, "cand_row": cand_row,
-                               "auto_badge": auto_badge, "dup_badge": dup_badge,
+                               "auto_badge": auto_badge, "dup_badge": dup_badge, "mp4_badge": mp4_badge,
                                "count_chip": count_chip, "warn_chip": warn_chip,
                                "unit": unit, "custom_tiles": custom_tiles,
                                "open_gallery": _open_gallery, "n_tiles": n_tiles}
@@ -1476,6 +1579,39 @@ def build(
                           tooltip="Add a custom image for this beat", on_click=_add_image_click,
                           style=ft.ButtonStyle(padding=ft.padding.all(0))),
         ]
+        if config.ENABLE_VIDEO_CLIPS:
+            def _open_mp4_review(_e, bk=beat_key):
+                try:
+                    from stages.stage_4.background_tts import bump_priority_beat
+                    bump_priority_beat(project, bk)
+                except Exception:
+                    pass
+                async def _go():
+                    await page.launch_url(f"/moments_review?project={project}&beat={bk}")
+                page.run_task(_go)
+
+            header_icons.append(ft.IconButton(
+                ft.Icons.VIDEO_FILE_OUTLINED, icon_size=18,
+                icon_color=SUCCESS if has_clip else None,
+                tooltip="Dùng MP4 (Chọn khoảnh khắc từ YouTube)",
+                on_click=_open_mp4_review,
+                style=ft.ButtonStyle(padding=ft.padding.all(0)),
+            ))
+            if has_clip:
+                def _rollback_mp4(_e, bk=beat_key):
+                    _remove_clip_for_beat(project, bk)
+                    clips_by_beat.pop(bk, None)
+                    _refresh_beat_card(bk)
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+                header_icons.append(ft.IconButton(
+                    ft.Icons.UNDO, icon_size=16, icon_color=WARN,
+                    tooltip="Hủy MP4 (quay lại dùng comic panel)",
+                    on_click=_rollback_mp4,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                ))
         if unit == "fragment":
             header_icons.append(ft.IconButton(
                 ft.Icons.CALL_MERGE, icon_size=18, icon_color=WARN,
@@ -1494,14 +1630,20 @@ def build(
                 on_click=lambda _e, b=beat: _delete_beat(b),
                 style=ft.ButtonStyle(padding=ft.padding.all(0))))
 
-        header = ft.Row([
+        header_items: list[ft.Control] = [
             ft.Text(f"{scene_id:02d}", size=12, color=TEXT_MUTED, font_family="Menlo"),
             ft.Text(_anchor_label(beat.get("page_ref"), beat.get("panel_ref")),
                     size=10, color=TEXT_MUTED, font_family="Menlo"),
+        ]
+        beat_dur = beat_durations.get(beat_key)
+        if beat_dur:
+            header_items.append(ft.Text(f"{beat_dur:.1f}s", size=10, color=ACCENT, font_family="Menlo"))
+        header_items.extend([
             ft.Container(expand=True),
             *header_icons,
-            count_chip, auto_badge, dup_badge, warn_chip,
-        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            count_chip, auto_badge, dup_badge, mp4_badge, warn_chip,
+        ])
+        header = ft.Row(header_items, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
         children: list[ft.Control] = [header, text_control]
         if source_items:
@@ -1554,6 +1696,10 @@ def build(
             locks_doc["approved"] = False
             locks_doc["approved_at"] = None
             save_review_locks(project, locks_doc)
+            if config.ENABLE_VIDEO_CLIPS:
+                _clear_all_locks_and_clips()
+                on_state_change()
+                return
             # Drop the beat row(s) too — review["beats"] is the ListView's source of
             # truth for a LOCAL _rebuild() (add/split/merge never re-read
             # candidates.json), so it must stay in sync or a deleted scene would
@@ -1601,6 +1747,10 @@ def build(
         locks_doc["approved"] = False
         locks_doc["approved_at"] = None
         save_review_locks(project, locks_doc)
+        if config.ENABLE_VIDEO_CLIPS:
+            _clear_all_locks_and_clips()
+            on_state_change()
+            return
         beats_list = _remap_beats_list(review.get("beats") or [], sid, frag_idx, -1)
         review["beats"] = beats_list
         survivor_idx = 0 if frag_idx == 0 else frag_idx - 1
@@ -1659,6 +1809,10 @@ def build(
         locks_doc["approved"] = False
         locks_doc["approved_at"] = None
         save_review_locks(project, locks_doc)
+        if config.ENABLE_VIDEO_CLIPS:
+            _clear_all_locks_and_clips()
+            on_state_change()
+            return
         beats_list = _remap_beats_list(review.get("beats") or [], sid, frag_idx, -1)
         review["beats"] = beats_list
         # Every surviving fragment row of this scene shifted index (the drop closed the gap),
@@ -1716,6 +1870,10 @@ def build(
                 locks_doc["approved"] = False
                 locks_doc["approved_at"] = None
                 save_review_locks(project, locks_doc)
+                if config.ENABLE_VIDEO_CLIPS:
+                    _clear_all_locks_and_clips()
+                    on_state_change()
+                    return
 
                 beats_list = _remap_beats_list(review.get("beats") or [], sid, frag_idx + 1, 1)
                 review["beats"] = beats_list
@@ -1804,6 +1962,10 @@ def build(
             locks_doc["approved"] = False
             locks_doc["approved_at"] = None
             save_review_locks(project, locks_doc)
+            if config.ENABLE_VIDEO_CLIPS:
+                _clear_all_locks_and_clips()
+                on_state_change()
+                return
             new_beat = {
                 "scene_id": new_scene["scene_id"], "narration_text": new_text,
                 "page_ref": new_scene.get("page_ref") or None, "panel_ref": None,
