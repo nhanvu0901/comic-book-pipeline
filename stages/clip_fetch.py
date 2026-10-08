@@ -518,6 +518,52 @@ def ytdlp_section_args(
     ]
 
 
+class DownloadTimeout(RuntimeError):
+    """A yt-dlp/ffmpeg run that did not finish in time (and was killed)."""
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill `proc` AND its descendants — yt-dlp launches python, which launches ffmpeg, and killing only
+    the first leaves the others hanging on a stalled connection."""
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            import signal
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _run_capture(cmd: list[str], *, timeout: float | None) -> subprocess.CompletedProcess:
+    """subprocess.run(capture_output, text) with a REAL timeout: on expiry the whole process tree is killed
+    and DownloadTimeout raised. A LAN pick must never hang on a stalled googlevideo connection forever
+    (seen on the Windows server: ffmpeg idle for 10+ minutes, the UI stuck on 'downloading')."""
+    kw: dict = {"start_new_session": True} if sys.platform != "win32" else {}
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", **kw)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        raise DownloadTimeout(f"no result after {timeout:.0f}s — killed")
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+# how long one section download / one whole-video download may take before it is killed and the next
+# strategy (or the error) takes over
+SECTION_TIMEOUT = float(os.getenv("CLIP_SECTION_TIMEOUT", "180"))
+DOWNLOAD_TIMEOUT = float(os.getenv("CLIP_DOWNLOAD_TIMEOUT", "900"))
+
+
 def fetch_clip_section(
     url: str,
     clip_dir: Path,
@@ -542,14 +588,17 @@ def fetch_clip_section(
     end = start + beat_duration * config.CLIP_SPEED_MAX + margin
     cmd = ytdlp_section_args(url, src_dir, start=start, beat_duration=beat_duration,
                             margin=margin, max_height=max_height)
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
-    raw = Path(lines[-1]) if lines else None
-    if res.returncode == 0 and raw is not None and raw.is_file():
-        normalize(raw, out, log=log)
-        return out
-
-    reason = _ytdlp_error(res)
+    try:
+        res = _run_capture(cmd, timeout=SECTION_TIMEOUT)
+    except DownloadTimeout as exc:
+        res, reason = None, f"section download: {exc}"
+    else:
+        lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+        raw = Path(lines[-1]) if lines else None
+        if res.returncode == 0 and raw is not None and raw.is_file():
+            normalize(raw, out, log=log)
+            return out
+        reason = _ytdlp_error(res)
     log(f"[clip] section download failed ({reason}) — falling back to the whole video, cut locally")
     # An outdated yt-dlp gets HTTP 403 from googlevideo when ffmpeg pulls a section (seen on the Windows
     # server: yt-dlp 2026.07.04 failed, 2026.08.19 worked). The native downloader still works, so take the
@@ -579,12 +628,14 @@ def _ytdlp_error(res) -> str:
 def download(url: str, out_dir: Path, *, max_height: int = 1080, log=print) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     log(f"[clip] downloading {url}")
-    res = subprocess.run(ytdlp_args(url, out_dir, max_height=max_height),
-                         capture_output=True, text=True)
+    try:
+        res = _run_capture(ytdlp_args(url, out_dir, max_height=max_height), timeout=DOWNLOAD_TIMEOUT)
+    except DownloadTimeout as exc:
+        raise RuntimeError(f"yt-dlp download of {url}: {exc}") from exc
     lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
     path = Path(lines[-1]) if lines else None
     if res.returncode != 0 or path is None or not path.is_file():
-        tail = " ".join((res.stderr or res.stdout or "").split())[-500:]
+        tail = _ytdlp_error(res)
         raise RuntimeError(f"yt-dlp failed for {url} (exit {res.returncode}): {tail}")
     return path
 
