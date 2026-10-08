@@ -49,14 +49,14 @@ def test_clip_muted_and_contract_compliant(tmp_path):
 
 @needs_ffmpeg
 def test_fit_math_speed_and_hold_bounds(tmp_path):
-    # Source is 1.0s long. Beat requires 2.0s.
-    # Available = 1.0s. Needed = 2.0s.
-    # Required speed = 1.0 / 2.0 = 0.5 -> clamped to CLIP_SPEED_MIN = 0.8.
+    # Source is 1.0s long. Beat requires 1.4s.
+    # Available = 1.0s. Needed = 1.4s.
+    # Required speed = 1.0 / 1.4 = 0.714 -> clamped to CLIP_SPEED_MIN = 0.8.
     # At speed 0.8: duration is 1.0 / 0.8 = 1.25s.
-    # Remaining shortfall: 2.0 - 1.25 = 0.75s -> capped at CLIP_MAX_HOLD = 0.3s.
+    # Remaining shortfall: 1.4 - 1.25 = 0.15s <= CLIP_MAX_HOLD = 0.3s.
     src = _make_source(tmp_path / "short_src.mp4", dur=1.0)
     shot = Shot(
-        shot_id=1, scene_id=1, duration_seconds=2.0,
+        shot_id=1, scene_id=1, duration_seconds=1.4,
         panel_bbox={"x": 0, "y": 0, "w": 100, "h": 100},
         source_image="dummy.png", motion="zoom_in",
         clip_path=str(src), clip_in=0.0, clip_out=1.0, clip_id="c2"
@@ -64,8 +64,36 @@ def test_fit_math_speed_and_hold_bounds(tmp_path):
     out = tmp_path / "fitted_clip.mp4"
     clips.render_clip_shot(shot, out)
 
-    # Output matches exact shot contract frames (2.0s * 30 = 60 frames)
-    clips.verify_shot_contract(out, 60)
+    # Output matches exact shot contract frames (1.4s * 30 = 42 frames)
+    clips.verify_shot_contract(out, 42)
+
+
+@needs_ffmpeg
+def test_frozen_tail_capped_at_max_hold(tmp_path):
+    # Source is 1.0s long. Beat requires 2.0s.
+    # Shortfall is 2.0 - (1.0 / 0.8) = 0.75s > CLIP_MAX_HOLD (0.3s).
+    # Must raise ValueError to trigger panel fallback.
+    from PIL import Image
+    page = tmp_path / "page.png"
+    Image.new("RGB", (800, 1200), (200, 100, 50)).save(page)
+
+    src = _make_source(tmp_path / "too_short.mp4", dur=1.0)
+    shot = Shot(
+        shot_id=1, scene_id=1, duration_seconds=2.0,
+        panel_bbox={"x": 0, "y": 0, "w": 800, "h": 1200},
+        source_image=str(page), motion="zoom_in",
+        clip_path=str(src), clip_in=0.0, clip_out=1.0, clip_id="c_fail"
+    )
+    out = tmp_path / "fail_clip.mp4"
+    with pytest.raises(ValueError, match="CLIP_MAX_HOLD"):
+        clips.render_clip_shot(shot, out)
+
+    # Calling via shots.render_shot safely catches ValueError and falls back to panel
+    panel_out = tmp_path / "fallback_shot.mp4"
+    res = shots.render_shot(shot, panel_out)
+    assert res.exists()
+    assert shot.clip_fallback != ""
+    assert "CLIP_MAX_HOLD" in shot.clip_fallback
 
 
 @needs_ffmpeg

@@ -607,8 +607,14 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
             req_speed = extended_span / duration if duration > 0 else 1.0
             speed = max(CLIP_SPEED_MIN, min(CLIP_SPEED_MAX, req_speed))
             dur_after_speed = extended_span / speed
-            # Step 4: hold frame to fill remaining gap
-            hold = max(0.0, duration - dur_after_speed)
+            # Step 4: hold frame to fill remaining gap (hold <= CLIP_MAX_HOLD)
+            shortfall = max(0.0, duration - dur_after_speed)
+            if shortfall > CLIP_MAX_HOLD + 1e-4:
+                raise ValueError(
+                    f"clip shortfall {shortfall:.2f}s exceeds CLIP_MAX_HOLD {CLIP_MAX_HOLD:.2f}s "
+                    f"(duration={duration:.2f}s, speed={speed:.2f}x)"
+                )
+            hold = shortfall
             used_span = extended_span
 
     inputs = ["-ss", f"{clip_in:.3f}"]

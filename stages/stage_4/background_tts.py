@@ -50,7 +50,7 @@ def _apply_chunk_atempo(wav_bytes: bytes, atempo: float) -> tuple[bytes, float]:
             dur = wf.getnframes() / float(wf.getframerate())
         return wav_bytes, dur
 
-    ff = shutil.which("ffmpeg")
+    ff = (config.FFMPEG_BIN if os.path.isfile(config.FFMPEG_BIN) else None) or shutil.which(config.FFMPEG_BIN) or shutil.which("ffmpeg")
     if not ff:
         with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
             dur = wf.getnframes() / float(wf.getframerate())
@@ -106,7 +106,7 @@ class BackgroundTTSRunner:
         self.voice_wav = voice_wav or CHATTERBOX_VOICE_WAV or "built-in"
         self.exaggeration = CHATTERBOX_EXAGGERATION
         self.cfg_weight = CHATTERBOX_CFG_WEIGHT
-        self.seed = config.CHATTERBOX_SEED or 42
+        self.seed = config.CHATTERBOX_SEED if config.ENABLE_VIDEO_CLIPS else None
         self.post_atempo = float(os.getenv("POST_ATEMPO", str(config.POST_ATEMPO)))
         self.priority_scenes: list[int] = []
 
@@ -239,8 +239,20 @@ class BackgroundTTSRunner:
                 if progress_cb:
                     progress_cb(f"[bg-tts] scene {sid} ready ({scene_wav_dur:.2f}s)")
 
-            # Final pass: recalculate all beat windows across full project
-            full_windows = calculate_beat_durations(scenes, sentence_timings)
+            # Final pass: recalculate all beat windows across full project in canonical scene order
+            canonical_sentence_timings: dict[int, dict[str, float]] = {}
+            curr_canonical_t = 0.0
+            for sc in scenes:
+                sid = int(sc.get("scene_id") or 1)
+                dur = float(scene_durations.get(str(sid), sentence_timings.get(sid, {}).get("duration", 0.0)))
+                canonical_sentence_timings[sid] = {
+                    "duration": dur,
+                    "start": round(curr_canonical_t, 4),
+                    "end": round(curr_canonical_t + dur, 4),
+                }
+                curr_canonical_t += dur
+
+            full_windows = calculate_beat_durations(scenes, canonical_sentence_timings)
             for w in full_windows:
                 beat_durations[w.beat_id] = round(w.duration, 4)
 
@@ -280,7 +292,7 @@ def load_or_synthesize_cached(
     v = voice_wav or CHATTERBOX_VOICE_WAV or "built-in"
     ex = CHATTERBOX_EXAGGERATION
     cfg = CHATTERBOX_CFG_WEIGHT
-    seed = config.CHATTERBOX_SEED or 42
+    seed = config.CHATTERBOX_SEED if config.ENABLE_VIDEO_CLIPS else None
 
     all_words: list[dict[str, Any]] = []
     chunk_wav_paths: list[Path] = []
@@ -303,8 +315,18 @@ def load_or_synthesize_cached(
             wav_file = cache_dir / f"{key}.wav"
             meta_file = cache_dir / f"{key}.json"
 
-            if not (wav_file.exists() and meta_file.exists()):
-                # Synthesize missing chunk
+            loaded_meta = None
+            if wav_file.exists() and meta_file.exists():
+                try:
+                    meta = json.loads(meta_file.read_text())
+                    ch_dur = float(meta["duration"])
+                    ch_words = meta.get("words", [])
+                    loaded_meta = (ch_dur, ch_words)
+                except Exception:
+                    loaded_meta = None
+
+            if loaded_meta is None:
+                # Synthesize missing or corrupted chunk
                 wav_bytes, ch_dur, sr = _synthesize_chunk_raw(
                     ch,
                     voice_wav=v,
@@ -317,9 +339,7 @@ def load_or_synthesize_cached(
                 ch_words = _even_words(ch, 0.0, ch_dur)
                 meta_file.write_text(json.dumps({"duration": ch_dur, "words": ch_words}, indent=2))
             else:
-                meta = json.loads(meta_file.read_text())
-                ch_dur = float(meta["duration"])
-                ch_words = meta.get("words", [])
+                ch_dur, ch_words = loaded_meta
 
             chunk_wav_paths.append(wav_file)
             for w in ch_words:

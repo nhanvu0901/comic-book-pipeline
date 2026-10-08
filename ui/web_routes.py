@@ -82,10 +82,13 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     if not candidates:
         try:
             candidates = clip_fetch.moment_search(query, limit=8)
-            if cache_file:
+            if cache_file and candidates:
                 cache_file.write_text(json.dumps(candidates, indent=2, ensure_ascii=False))
         except Exception:
-            # Fallback demo candidate when network or API key is absent
+            candidates = []
+
+        if not candidates:
+            # Fallback demo candidate when network or API key is absent or search returns empty
             candidates = [
                 {
                     "id": "dQw4w9WgXcQ",
