@@ -76,6 +76,28 @@ def test_skip_narrate_resumes_at_tts_without_rewriting_the_approved_narration(mo
     assert calls == ["tts", "render"]
 
 
+def test_start_at_runs_from_that_step_on(monkeypatch, capsys):
+    """Re-render after picking clips must not re-run TTS (force-regenerates audio); re-TTS after a
+    narration approval must not rewrite the narration."""
+    calls = []
+    _patch_all_steps(monkeypatch, calls)
+    assert sp.main(["--project", "p", "--start-at", "render"]) == 0
+    assert calls == ["render"]
+    out = capsys.readouterr().out
+    assert "step=research status=ok detail=skipped" in out and "step=tts status=ok detail=skipped" in out
+    calls.clear()
+    assert sp.main(["--project", "p", "--start-at", "tts", "--stop-after", "tts"]) == 0
+    assert calls == ["tts"]
+
+
+def test_start_at_after_stop_after_is_rejected(monkeypatch, capsys):
+    _patch_all_steps(monkeypatch, [])
+    with pytest.raises(SystemExit) as exc:
+        sp.main(["--project", "p", "--start-at", "render", "--stop-after", "narrate"])
+    assert exc.value.code == 2
+    assert "comes after --stop-after" in capsys.readouterr().err
+
+
 def test_step_failure_reports_fail_status(monkeypatch, capsys):
     calls = []
     _patch_all_steps(monkeypatch, calls)

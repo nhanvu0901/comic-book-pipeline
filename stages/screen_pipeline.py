@@ -15,7 +15,9 @@ Usage:
     python -m stages.screen_pipeline --project endgame_time_travel --skip-research --stop-after narrate
     # ...approve the narration + clip choices in the review gate, then resume (narration is
     # approved by SHA, so do NOT re-run narrate):
-    python -m stages.screen_pipeline --project endgame_time_travel --skip-research --skip-narrate
+    python -m stages.screen_pipeline --project endgame_time_travel --start-at tts
+    # re-render only (e.g. after picking other clips) — TTS is not re-run:
+    python -m stages.screen_pipeline --project endgame_time_travel --start-at render
 """
 from __future__ import annotations
 
@@ -163,6 +165,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip research; reuse existing screen_context.json.",
     )
     parser.add_argument(
+        "--start-at",
+        choices=STEPS,
+        default=None,
+        help="Run from this step onward (earlier steps are skipped). E.g. --start-at render re-renders "
+             "without re-running TTS.",
+    )
+    parser.add_argument(
         "--skip-narrate",
         action="store_true",
         help="Skip narrate; reuse the existing narration.json (it is approved by SHA in the review "
@@ -179,16 +188,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Run through this step then stop (default: run all the way to render).",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.start_at and args.stop_after and STEPS.index(args.start_at) > STEPS.index(args.stop_after):
+        parser.error(f"--start-at {args.start_at} comes after --stop-after {args.stop_after}")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     stop_index = STEPS.index(args.stop_after) if args.stop_after else len(STEPS) - 1
+    start_index = STEPS.index(args.start_at) if args.start_at else 0
     skip = {"research": args.skip_research, "narrate": args.skip_narrate}
 
     for i, step in enumerate(STEPS):
-        if skip.get(step):
+        if i < start_index or skip.get(step):
             print(f"[screen-pipeline] step={step} status=ok detail=skipped")
         else:
             try:
