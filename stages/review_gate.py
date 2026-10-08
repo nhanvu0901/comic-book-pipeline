@@ -48,7 +48,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import config
 from config import PROJECTS_ROOT
 from stages._arc import qa_item_chapters
 from stages.user_errors import MissingInputError
@@ -232,8 +231,9 @@ def _plot_source(project) -> str:
 
 # ─── gate ─────────────────────────────────────────────────────────────────────
 
-# Modes whose panels are fixed by construction rather than chosen by a matcher (or screen media with no comic panels).
-GATE_EXEMPT_MODES = ("panel_walk", "screen_qa")
+# Modes whose panels are fixed by construction rather than chosen by a matcher. ONLY long-form
+# qualifies: it narrates page by page in reading order. Every Short mode stays hard-gated.
+GATE_EXEMPT_MODES = ("panel_walk",)
 
 
 def _narration_mode(project) -> str:
