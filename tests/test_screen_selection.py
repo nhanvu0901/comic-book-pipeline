@@ -152,16 +152,33 @@ def test_a_changed_narration_clears_every_pick_and_the_approval(root):
 
 # ─── TTS durations: one path ──────────────────────────────────────────────────
 
-def test_tts_status_is_read_from_the_cache_path_only(root):
+def _status_file(root: Path, doc: dict) -> None:
+    (root / "review").mkdir(exist_ok=True)
+    (root / "review" / "tts_status.json").write_text(json.dumps(doc))
+
+
+def test_tts_status_has_one_path_the_documented_review_file(root):
     assert sel.tts_status(root) == {"completed": False, "scene_durations": {}, "beat_durations": {}}
-    (root / "review" / "tts_status.json").write_text(json.dumps({"scene_durations": {"1": 99}}))
-    assert sel.tts_status(root)["scene_durations"] == {}            # the old UI path is NOT consulted
+    # the runner's old private cache copy is NOT consulted any more
     (root / "cache" / "tts").mkdir(parents=True)
-    (root / "cache" / "tts" / "status.json").write_text(json.dumps(
-        {"completed": True, "scene_durations": {"1": 4.0, "2": 4.0, "3": 4.0}}))
+    (root / "cache" / "tts" / "status.json").write_text(json.dumps({"scene_durations": {"1": 99}}))
+    assert sel.tts_status(root)["scene_durations"] == {}
+    _status_file(root, {"completed": True, "scene_durations": {"1": 4.0, "2": 4.0, "3": 4.0}})
+    assert sel.tts_status(root)["scene_durations"] == {"1": 4.0, "2": 4.0, "3": 4.0}
+    import importlib.util
+    if importlib.util.find_spec("stages.stage_4.tts_status"):         # P1's module, once merged
+        from stages.stage_4 import tts_status as p1
+        assert sel.tts_status(root)["scene_durations"] == p1.read_status(root)["scene_durations"]
+
+
+def test_beat_seconds_uses_the_runners_beat_numbers_where_it_has_them(root):
     nar = json.loads((root / "narration.json").read_text())
+    _status_file(root, {"completed": False, "scene_durations": {"1": 4.0, "2": 4.0, "3": 4.0}})
     secs = sel.beat_seconds(root, nar)
     assert secs["1:0"] + secs["1:1"] == pytest.approx(4.0, abs=0.1)
+    _status_file(root, {"scene_durations": {"1": 4.0}, "beat_durations": {"2:1": 1.75, "9:9": 5.0}})
+    secs = sel.beat_seconds(root, nar)
+    assert secs["2:1"] == 1.75 and "9:9" not in secs        # the runner's number wins; stale keys ignored
 
 
 # ─── backup clip ──────────────────────────────────────────────────────────────
