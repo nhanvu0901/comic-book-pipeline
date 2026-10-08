@@ -46,3 +46,93 @@ def test_render_clip_preview_geometry_and_frames(tmp_path):
     assert info["width"] == 1080
     assert info["height"] == 1920
     assert abs(info["duration"] - beat_dur) < 0.1
+
+
+# ─── fetch_clip_section: the section path, its failure message, and the whole-video fallback ──────
+
+import subprocess as _sp
+
+
+def _fake_run_factory(monkeypatch, *, section_ok: bool, src_for_section=None, calls=None):
+    """subprocess.run stand-in for the yt-dlp section command. The real ffmpeg (normalize) is untouched."""
+    real_run = _sp.run
+
+    def fake(cmd, *a, **k):
+        if isinstance(cmd, list) and "--download-sections" in cmd:
+            calls.append("section")
+            if section_ok:
+                return _sp.CompletedProcess(cmd, 0, stdout=str(src_for_section) + "\n", stderr="")
+            return _sp.CompletedProcess(cmd, 1, stdout="", stderr=(
+                "WARNING: Your yt-dlp version (2026.07.04) is older than 90 days!\n"
+                "ERROR: ffmpeg exited with code 3436169992\n"))
+        return real_run(cmd, *a, **k)
+    monkeypatch.setattr(clip_fetch.subprocess, "run", fake)
+
+
+def _source(tmp_path, dur=12.0):
+    import shutil
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        pytest.skip("ffmpeg required")
+    p = tmp_path / "whole.mp4"
+    _sp.run([ff, "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-t", f"{dur}",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(p)], check=True, capture_output=True)
+    return p
+
+
+def test_a_section_download_is_normalised_and_cached(tmp_path, monkeypatch):
+    src = _source(tmp_path, 7.0)
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=True, src_for_section=src, calls=calls)
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=3.0, beat_duration=4.0, log=lambda m: None)
+    assert out.name == "abcDEF12345_3.0_4.0.mp4" and out.is_file() and calls == ["section"]
+    assert clips.probe_video(out)["duration"] == pytest.approx(7.0, abs=0.2)
+    clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                  start=3.0, beat_duration=4.0, log=lambda m: None)
+    assert calls == ["section"], "cached: no second download"
+
+
+def test_a_failed_section_falls_back_to_the_whole_video_cut_to_the_same_window(tmp_path, monkeypatch):
+    whole = _source(tmp_path, 20.0)
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=False, calls=calls)
+    monkeypatch.setattr(clip_fetch, "download", lambda url, out_dir, **kw: calls.append("whole") or whole)
+    logs = []
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=5.0, beat_duration=4.0, log=logs.append)
+    assert calls == ["section", "whole"]
+    # same window the section would have been: [start, start + beat*CLIP_SPEED_MAX + margin] = 5 .. 12 s
+    assert clips.probe_video(out)["duration"] == pytest.approx(4.0 * config.CLIP_SPEED_MAX + 2.0, abs=0.2)
+    assert any("falling back" in m and "ffmpeg exited" in m for m in logs)
+    assert not any("WARNING" in m for m in logs), "the reason is the ERROR line, not the version warning"
+
+
+def test_the_fallback_cuts_at_the_picked_moment_not_at_zero(tmp_path, monkeypatch):
+    import numpy as np
+    whole = _source(tmp_path, 20.0)                  # testsrc burns the running time into the frames
+    _fake_run_factory(monkeypatch, section_ok=False, calls=[])
+    monkeypatch.setattr(clip_fetch, "download", lambda url, out_dir, **kw: whole)
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=8.0, beat_duration=3.0, log=lambda m: None)
+    import shutil
+
+    def frame(path, t):
+        raw = _sp.run([shutil.which("ffmpeg"), "-v", "error", "-ss", f"{t}", "-i", str(path), "-frames:v", "1",
+                       "-vf", "scale=64:36,format=gray", "-f", "rawvideo", "-"], capture_output=True).stdout
+        return np.frombuffer(raw, dtype=np.uint8).astype(float)
+    # the first frame of the cut equals the whole video's frame at 8.0 s, not its frame at 0 s
+    d_at_start = np.abs(frame(out, 0.0) - frame(whole, 8.0)).mean()
+    d_at_zero = np.abs(frame(out, 0.0) - frame(whole, 0.0)).mean()
+    assert d_at_start < 6 and d_at_zero > d_at_start * 2
+
+
+def test_both_failing_reports_the_error_line_and_the_hint(tmp_path, monkeypatch):
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=False, calls=calls)
+    monkeypatch.setattr(clip_fetch, "download", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no network")))
+    with pytest.raises(RuntimeError) as ei:
+        clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                      start=1.0, beat_duration=2.0, log=lambda m: None)
+    msg = str(ei.value)
+    assert "ffmpeg exited with code 3436169992" in msg and "pip install -U yt-dlp" in msg and "no network" in msg
