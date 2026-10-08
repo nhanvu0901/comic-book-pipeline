@@ -66,6 +66,16 @@ def test_skip_research(monkeypatch):
     assert calls == ["narrate"]
 
 
+def test_skip_narrate_resumes_at_tts_without_rewriting_the_approved_narration(monkeypatch):
+    """Narration is approved in the review gate by SHA; re-running narrate would rewrite
+    narration.json and make the approval stale, so a resumed run must be able to skip it."""
+    calls = []
+    _patch_all_steps(monkeypatch, calls)
+    rc = sp.main(["--project", "endgame_time_travel", "--skip-research", "--skip-narrate"])
+    assert rc == 0
+    assert calls == ["tts", "render"]
+
+
 def test_step_failure_reports_fail_status(monkeypatch, capsys):
     calls = []
     _patch_all_steps(monkeypatch, calls)

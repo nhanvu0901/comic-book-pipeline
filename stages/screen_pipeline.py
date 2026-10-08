@@ -13,6 +13,9 @@ Status output:
 Usage:
     python -m stages.screen_pipeline --question "How did the Avengers travel back in time in Endgame?" --project endgame_time_travel
     python -m stages.screen_pipeline --project endgame_time_travel --skip-research --stop-after narrate
+    # ...approve the narration + clip choices in the review gate, then resume (narration is
+    # approved by SHA, so do NOT re-run narrate):
+    python -m stages.screen_pipeline --project endgame_time_travel --skip-research --skip-narrate
 """
 from __future__ import annotations
 
@@ -141,6 +144,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         Examples:
           python -m stages.screen_pipeline --question "How did the Avengers travel back in time in Endgame?" --project endgame_time_travel
           python -m stages.screen_pipeline --project endgame_time_travel --skip-research --stop-after narrate
+          python -m stages.screen_pipeline --project endgame_time_travel --skip-research --skip-narrate
         """),
     )
     parser.add_argument("--question", default="", help="The question to answer (required unless --skip-research).")
@@ -159,6 +163,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip research; reuse existing screen_context.json.",
     )
     parser.add_argument(
+        "--skip-narrate",
+        action="store_true",
+        help="Skip narrate; reuse the existing narration.json (it is approved by SHA in the review "
+             "gate — rewriting it would make the approval stale).",
+    )
+    parser.add_argument(
         "--skip-review",
         action="store_true",
         help="Pass-through to Stage 4 TTS.",
@@ -175,7 +185,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     stop_index = STEPS.index(args.stop_after) if args.stop_after else len(STEPS) - 1
-    skip = {"research": args.skip_research}
+    skip = {"research": args.skip_research, "narrate": args.skip_narrate}
 
     for i, step in enumerate(STEPS):
         if skip.get(step):
