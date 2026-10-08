@@ -91,6 +91,20 @@ def assemble_project(
     # Short mode (set_output_frame returns the 1080x1920 default), so recap / micro_moment /
     # explore_answer come out byte-identical to before this branch existed.
     mode = str(narration.get("mode") or "")
+    if mode == "screen_qa":
+        from .screen_shots import run_screen_qa_pipeline
+        return run_screen_qa_pipeline(
+            project_name,
+            root,
+            narration,
+            force=force,
+            panels_only=panels_only,
+            log=log,
+            audio_path=audio_path,
+            audio_duration=audio_duration,
+            scene_timings=scene_timings,
+            word_timestamps=word_timestamps,
+        )
     fw, fh = set_output_frame(mode)
     if mode in LONGFORM_MODES:
         pages_by_number = widen_panels_to_tiers(pages_by_number)
