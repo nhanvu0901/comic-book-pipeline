@@ -344,3 +344,41 @@ def test_hard_cuts_around_clips_are_real_and_only_with_the_flag(tmp_path, monkey
     # flag OFF: the stable xfade dissolve — the incoming clip fades in over the first 0.25s
     fade = [_center_rgb(off, i, tmp_path) for i in (31, 33, 35)]
     assert not all(_is_near(px, blue) for px in fade), "flag OFF must keep the stable dissolve"
+
+
+def _color_tags(path: Path) -> tuple:
+    res = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "stream=color_range,color_space,color_transfer,color_primaries", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True, check=True)
+    return tuple(v if v not in ("", "unknown", "unspecified") else None for v in res.stdout.strip().split(","))
+
+
+@needs_ffmpeg
+def test_a_tagged_source_does_not_leak_its_colour_tags_into_the_shot(tmp_path, monkeypatch):
+    """A YouTube source is tagged bt709/tv, a panel shot carries no tags. Concatenated, that is a colour-parameter
+    change mid-stream (ffmpeg 8.1 reconfigures its filter graph there; one Windows run crashed at that spot), so a
+    clip shot must carry exactly what a panel shot carries — nothing."""
+    from PIL import Image
+    _flag_on(monkeypatch)
+    monkeypatch.setattr(shots, "PANEL_UPSCALE", False)
+    tagged = tmp_path / "tagged.mp4"
+    subprocess.run([FFMPEG, "-y", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30", "-t", "2", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-color_range", "tv", str(tagged)], check=True, capture_output=True)
+    assert _color_tags(tagged)[:2] == ("tv", "bt709")                        # the premise: the source IS tagged
+    shot = Shot(shot_id=0, scene_id=1, duration_seconds=1.0, panel_bbox={"x": 0, "y": 0, "w": 800, "h": 1200},
+                source_image="x.png", motion="zoom_in", clip_path=str(tagged), clip_id="t")
+    clip_tags = _color_tags(clips.render_clip_shot(shot, tmp_path / "clip.mp4"))
+    page = tmp_path / "page.png"
+    Image.new("RGB", (800, 1200), (90, 30, 140)).save(page)
+    panel = Shot(shot_id=1, scene_id=2, duration_seconds=1.0, panel_bbox={"x": 0, "y": 0, "w": 800, "h": 1200},
+                 source_image=str(page), motion="zoom_in")
+    panel_tags = _color_tags(shots.render_shot(panel, tmp_path / "panel.mp4"))
+    assert clip_tags == panel_tags == (None, None, None, None)
+    # ... and the concatenation therefore carries one set of parameters end to end
+    cat = pipeline._concat([tmp_path / "panel.mp4", tmp_path / "clip.mp4", tmp_path / "panel.mp4"], tmp_path / "cat.mp4")
+    assert _color_tags(cat) == (None, None, None, None)
+    # flag OFF keeps the legacy graph (stable path untouched): the tags still ride along there
+    monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", False)
+    legacy = clips.render_clip_shot(shot, tmp_path / "legacy.mp4")
+    assert _color_tags(legacy)[:2] == ("tv", "bt709")

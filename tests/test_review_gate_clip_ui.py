@@ -278,3 +278,20 @@ def test_the_pick_listener_repaints_the_card_and_is_not_stacked(screen):
 def test_clip_beats_do_not_warn_about_missing_panels(screen):
     texts = _texts(screen.build())
     assert "MP4 clip selected" in texts
+
+
+def test_a_pick_or_a_rollback_after_approve_withdraws_the_approval(screen):
+    """Approve covers what Stage 5 will render; a clip picked or rolled back afterwards changes that."""
+    root = screen.build()
+    assert screen.locks()["approved"] is True
+    web_routes._broadcast_moment_picked({"project": "qa", "state": "ready", "beat": "3:1", "id": "ccccccccccc",
+                                         "file": "review/clips/c.mp4", "start": 0.0})
+    assert screen.locks()["approved"] is False and screen.locks()["approved_at"] is None
+    assert "2:0" in screen.locks()["locks"], "only the approval goes — the panel locks stay"
+    # approve again, then roll a clip back
+    doc = screen.locks(); doc["approved"] = True; doc["approved_at"] = "t2"
+    (screen.root / "review" / "locks.json").write_text(json.dumps(doc))
+    screen.build()
+    undo = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
+    undo[0].on_click(None)
+    assert screen.locks()["approved"] is False

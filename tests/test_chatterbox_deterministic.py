@@ -385,3 +385,50 @@ def test_synthesize_project_flag_off_never_touches_the_cache(tts_env, monkeypatc
     res = p4.synthesize_project("qa", provider="chatterbox", skip_review=True, post_atempo=1.0)
     assert seen["text"] == "One two three four." and res.audio_duration_seconds == pytest.approx(2.0)
     assert not (tts_env.root / "qa" / "cache" / "tts").exists() or not list((tts_env.root / "qa" / "cache" / "tts").glob("*.wav"))
+
+
+# ─── regressions the reviewer asked for explicitly (M15, M16) ─────────────────────────────────────
+
+def test_bump_on_a_project_with_no_runner_does_not_deadlock(tts_env):
+    """M15: bump_priority_beat used to hold the non-reentrant registry lock and call start_background_tts,
+    which takes it again — a hang that then blocked every later start/bump too."""
+    tts_env.project("qa", QA_SCENES)
+    done = threading.Event()
+    box = {}
+
+    def go():
+        box["runner"] = bt.bump_priority_beat("qa", "3")
+        done.set()
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    assert done.wait(10), "bump_priority_beat hung (registry lock held while re-acquiring it)"
+    # the lock must be free afterwards: another start/bump from a second thread returns promptly too
+    t2 = threading.Thread(target=lambda: bt.start_background_tts("qa"), daemon=True)
+    t2.start()
+    t2.join(10)
+    assert not t2.is_alive()
+    r = box["runner"]
+    while r.is_running():
+        time.sleep(0.05)
+
+
+def test_start_after_a_finished_run_resynthesizes_an_edited_sentence(tts_env):
+    """M16: start_background_tts used to hand back the finished runner and do nothing, so a re-open of the
+    review screen after a narration edit never re-voiced the edit."""
+    proj = tts_env.project("qa", QA_SCENES)
+    r = bt.start_background_tts("qa")
+    while r.is_running():
+        time.sleep(0.05)
+    assert len(tts_env.launches()) == 1 and tts_status.read_status(proj)["completed"] is True
+    doc = json.loads((proj / "narration.json").read_text())
+    doc["scenes"][2]["text"] = "A brand new ending sentence."
+    (proj / "narration.json").write_text(json.dumps(doc))
+    again = bt.start_background_tts("qa")                      # what the review screen does on every open
+    assert again is r, "one runner per project"
+    while again.is_running():
+        time.sleep(0.05)
+    launches = tts_env.launches()
+    assert len(launches) == 2
+    assert [c["text"] for c in launches[1]["job"]["chunks"]] == ["A brand new ending sentence."]
+    assert tts_status.read_status(proj)["beat_durations"]["3"] == pytest.approx(0.5)
