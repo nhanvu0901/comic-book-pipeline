@@ -95,14 +95,6 @@ MODES: list[NarrationMode] = [
         "MEANS (statement-narrative, not a recap). Reads the comic_context.json "
         "'target_moment' field; never propose this for a normal single-comic retelling.",
     ),
-    NarrationMode(
-        "screen_qa",
-        "Screen Q&A",
-        "INTERNAL — only used by the automated Screen Q&A research pipeline "
-        "(a movie/show/animation trivia question answered with video clips and screen research). "
-        "Requires a pre-built screen_context.json; never propose this for a normal "
-        "single-comic retelling.",
-    ),
 ]
 
 

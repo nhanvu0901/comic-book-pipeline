@@ -21,6 +21,12 @@ from utils.atomic_json import write_json_atomic
 from ._llm import call_with_chain
 from .schema import Narration, Scene
 
+# Narration mode key. Deliberately NOT a config.PipelineMode member and NOT a stage_3.modes.MODES
+# entry: the first would break the Stage-1 mode dropdown (it iterates the enum), the second would
+# change describe_catalog() — the Stage-3 propose prompt of every comic. screen_qa is written by
+# this module only and never proposed.
+SCREEN_QA_MODE = "screen_qa"
+
 _WORDS_PER_SEC = 3.4
 
 _SCREEN_QA_SYSTEM = """You are QAWriter for a screen-media YouTube Short. The video answers ONE question \
