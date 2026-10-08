@@ -394,7 +394,11 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     skips the whip step entirely — no stable seed possible, so no behavior change.
     """
     groups = _group_shots_by_scene(shots, shot_paths)
-    has_clips = any(getattr(s, "clip_path", "") and not getattr(s, "clip_fallback", "") for s in shots)
+    # Hard cuts around clip shots are part of the ENABLE_VIDEO_CLIPS feature: with the flag OFF a
+    # project that carries a (legacy opt-in) clips.json assembles exactly as it always did.
+    from config import ENABLE_VIDEO_CLIPS
+    has_clips = ENABLE_VIDEO_CLIPS and any(
+        getattr(s, "clip_path", "") and not getattr(s, "clip_fallback", "") for s in shots)
     if not has_clips:
         whip = _pick_whip_boundaries(project, shots) if project else {}
         if not whip:

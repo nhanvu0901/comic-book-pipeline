@@ -129,6 +129,13 @@ def verify_narration_hash(sidecar_path: Path, scenes: list[dict], *, log=print,
         )
 
 
+def post_atempo_for_mode(mode: str) -> float:
+    """The atempo Stage 4 applies for a narration `mode` — longform modes read slower than a
+    Short. One definition: synthesize_project and the background TTS cache both call it, so the
+    cached chunks are always atempo'd the way Stage 4 would."""
+    return POST_ATEMPO_LONGFORM if str(mode or "") in LONGFORM_TTS_MODES else POST_ATEMPO
+
+
 def synthesize_project(
     project_name: str,
     *,
@@ -162,9 +169,7 @@ def synthesize_project(
     # longform want different reading speeds, and the caller usually does not know which it
     # is holding. None (the default) means "ask the narration".
     if post_atempo is None:
-        post_atempo = (POST_ATEMPO_LONGFORM
-                       if str(narration.get("mode") or "") in LONGFORM_TTS_MODES
-                       else POST_ATEMPO)
+        post_atempo = post_atempo_for_mode(str(narration.get("mode") or ""))
     scenes = narration.get("scenes") or []
     if not scenes:
         raise ValueError("narration.json has no scenes")

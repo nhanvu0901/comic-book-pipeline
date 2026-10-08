@@ -53,9 +53,10 @@ import math
 import os
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from . import shots as _sh
 from .schema import Shot
@@ -92,6 +93,63 @@ class ClipEntry:
 
 def manifest_path(project_root: Path) -> Path:
     return Path(project_root) / MANIFEST_REL
+
+
+# The review UI (Flet), the /moments_review web routes and Stage 5 all touch clips.json, from
+# different threads: every read-modify-write below holds this lock and writes atomically.
+_MANIFEST_LOCK = threading.RLock()
+
+
+def read_manifest_doc(project_root: Path) -> dict:
+    """The raw clips.json document ({"clips": [...]}), a fresh empty one when absent/unreadable."""
+    try:
+        doc = json.loads(manifest_path(project_root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"clips": []}
+    if not isinstance(doc, dict) or not isinstance(doc.get("clips"), list):
+        return {"clips": []}
+    return doc
+
+
+def _write_manifest_doc(project_root: Path, doc: dict) -> None:
+    from utils.atomic_json import write_json_atomic
+    write_json_atomic(manifest_path(project_root), doc)
+
+
+def upsert_beat_clip(project_root: Path, entry: dict) -> None:
+    """Make `entry` THE clip of its beat: any older entry for that beat is replaced outright (not
+    merged — a stale "end" must not survive a re-pick), every other beat's entry is left alone."""
+    beat = str(entry.get("beat") or "")
+    with _MANIFEST_LOCK:
+        doc = read_manifest_doc(project_root)
+        doc["clips"] = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) == beat)]
+        doc["clips"].append(entry)
+        _write_manifest_doc(project_root, doc)
+
+
+def remove_beat_clip(project_root: Path, beat: str) -> bool:
+    """Roll a beat back to its panel: drop its clip entry. True when there was one."""
+    with _MANIFEST_LOCK:
+        if not manifest_path(project_root).exists():
+            return False
+        doc = read_manifest_doc(project_root)
+        kept = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) == str(beat))]
+        if len(kept) == len(doc["clips"]):
+            return False
+        doc["clips"] = kept
+        _write_manifest_doc(project_root, doc)
+        return True
+
+
+def clear_manifest(project_root: Path) -> bool:
+    """Drop EVERY clip selection of the project (the narration changed). The downloaded section
+    files stay on disk — a re-pick of the same moment finds them cached."""
+    with _MANIFEST_LOCK:
+        p = manifest_path(project_root)
+        if not p.exists():
+            return False
+        p.unlink()
+        return True
 
 
 def _num(v) -> float | None:
@@ -559,10 +617,92 @@ def verify_shot_contract(path: Path, frames: int) -> None:
         raise ValueError(f"clip shot breaks the shot contract: got {got}, want {want}")
 
 
+# ─── fit math (ENABLE_VIDEO_CLIPS=1) ────────────────────────────────────────────────
+
+# Extra last-frame padding asked of tpad on the Q&A path (see render_clip_shot): 3 frames.
+_TAIL_PAD = 3.0 / _sh.FPS
+
+
+class ClipFit(NamedTuple):
+    """How a clip is laid onto a shot: play `used` source-seconds at `speed`x, then hold the last
+    frame for `hold` seconds. used / speed + hold == the shot's duration."""
+    used: float
+    speed: float
+    hold: float
+
+
+class ClipTooShort(ValueError):
+    """The footage can't fill the shot even at CLIP_SPEED_MIN plus a CLIP_MAX_HOLD freeze — the
+    shot must render its panel instead (render_shot catches ValueError and records the reason)."""
+
+
+def fit(span: float, avail: float, dur: float, *, speed_min: float | None = None,
+        speed_max: float | None = None, max_hold: float | None = None) -> ClipFit:
+    """Pure fit math (spec 4.4) — the ONE place the clip/shot timing is decided; both
+    render_clip_shot and frozen_tail_seconds call it.
+
+      span   source-seconds the picked window offers (clip_out - clip_in; the whole remainder of
+             the file for an open-ended clip)
+      avail  source-seconds that really exist from the in-point on (>= span; pass avail == span
+             for a window that must not be extended)
+      dur    the shot's length in output seconds
+
+    1. TRIM    span >= dur            → play `dur` seconds, nothing else to do
+    2. EXTEND  the window is short    → keep playing into real footage, up to `avail`
+    3. SPEED   still short            → slow down to ext/dur, never below speed_min (CLIP_SPEED_MIN);
+                                        never speeds up (a longer clip is trimmed, not rushed)
+    4. HOLD    still short            → freeze the last frame, at most max_hold (CLIP_MAX_HOLD)
+    else raise ClipTooShort."""
+    import config
+    lo = config.CLIP_SPEED_MIN if speed_min is None else speed_min
+    hi = config.CLIP_SPEED_MAX if speed_max is None else speed_max
+    cap = config.CLIP_MAX_HOLD if max_hold is None else max_hold
+    if dur <= 0:
+        raise ValueError(f"shot duration must be positive, got {dur}")
+    span, avail = max(0.0, span), max(0.0, avail)
+    if span >= dur - 1e-6:
+        return ClipFit(dur, 1.0, 0.0)
+    ext = min(max(avail, span), dur)
+    if ext >= dur - 1e-6:
+        return ClipFit(dur, 1.0, 0.0)
+    if ext <= 0:
+        raise ClipTooShort(f"clip has no footage (shot needs {dur:.2f}s, CLIP_MAX_HOLD {cap:.2f}s)")
+    speed = max(lo, min(hi, ext / dur))
+    hold = max(0.0, dur - ext / speed)
+    if hold > cap + 1e-4:
+        raise ClipTooShort(
+            f"clip shortfall {hold:.2f}s exceeds CLIP_MAX_HOLD {cap:.2f}s "
+            f"({ext:.2f}s of footage for a {dur:.2f}s shot, speed {speed:.2f}x)")
+    return ClipFit(ext, speed, hold)
+
+
+def plan_clip_shot(shot, src_dur: float) -> tuple[float, ClipFit]:
+    """(in-point, fit) for a clip shot — everything render_clip_shot needs to decide, and the same
+    answer frozen_tail_seconds reports. `src_dur` is the clip file's duration (0 = unknown).
+
+    A later shot of a beat whose fixed window already ran out starts one frame before the
+    out-point, so it asks fit() for a single frame of footage (→ ClipTooShort, panel)."""
+    fps = _sh.FPS
+    dur = max(0.4, float(shot.duration_seconds))
+    clip_in = max(0.0, float(shot.clip_in))
+    clip_out = float(shot.clip_out or 0.0)
+    file_left = max(0.0, src_dur - clip_in) if src_dur > 0 else dur
+    if clip_out and clip_in > clip_out - 1.0 / fps:
+        clip_in = max(0.0, clip_out - 1.0 / fps)
+        span = 1.0 / fps
+    elif clip_out > clip_in:
+        span = min(clip_out - clip_in, file_left)      # a fixed window is never extended
+    else:
+        span = file_left                               # open-ended: as long as the shot needs
+    return clip_in, fit(span, span, dur)
+
+
 def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = None,
-                     progress: Callable[[str], None] | None = None) -> Path:
+                     progress: Callable[[str], None] | None = None,
+                     preset: str = "medium", crf: int = 18) -> Path:
     """Render one clip shot to `out_path` (see PLAYBACK RULES); raises on any problem so the
-    caller (shots.render_shot) can fall back to the panel."""
+    caller (shots.render_shot) can fall back to the panel. `preset`/`crf` only reach the
+    ENABLE_VIDEO_CLIPS path (the review preview wants a fast encode); the legacy path is fixed."""
     ff = _sh._require_ffmpeg()
     src = Path(shot.clip_path)
     if not src.is_file():
@@ -576,7 +716,7 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
     frames = max(1, int(round(duration * _sh.FPS)))
     clip_out = float(shot.clip_out or 0.0)
 
-    from config import ENABLE_VIDEO_CLIPS, CLIP_SPEED_MIN, CLIP_SPEED_MAX, CLIP_MAX_HOLD
+    from config import ENABLE_VIDEO_CLIPS
 
     if not ENABLE_VIDEO_CLIPS:
         if clip_out and clip_in > clip_out - 1.0 / _sh.FPS:
@@ -602,68 +742,52 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
         verify_shot_contract(out_path, frames)
         return out_path
 
-    # Fit math (when ENABLE_VIDEO_CLIPS=1): trim -> extend into source -> speed [0.8, 1.25] -> hold <= 0.3s
-    src_dur = float(info.get("duration") or 0.0)
-    avail_src = max(0.0, src_dur - clip_in) if src_dur > 0 else duration
+    # Fit math (ENABLE_VIDEO_CLIPS=1): trim -> extend -> speed [0.8, 1.25] -> hold <= 0.3s, else
+    # the shot falls back to its panel (render_shot catches the ValueError). plan_clip_shot is the
+    # SAME function frozen_tail_seconds uses, so shots.json can never disagree with the render.
+    clip_in, fit_ = plan_clip_shot(shot, info["duration"])
 
-    if clip_out and clip_in > clip_out - 1.0 / _sh.FPS:
-        clip_in = max(0.0, clip_out - 1.0 / _sh.FPS)
-        nominal_span = 1.0 / _sh.FPS
-    elif clip_out > clip_in:
-        nominal_span = clip_out - clip_in
-    else:
-        nominal_span = min(duration, avail_src)
-
-    if nominal_span >= duration:
-        # Step 1: trim
-        used_span = duration
-        speed = 1.0
-        hold = 0.0
-    else:
-        # Step 2: extend into source if clip_out not fixed
-        avail = (clip_out - clip_in) if (clip_out and clip_out > clip_in) else avail_src
-        extended_span = min(duration, avail)
-        if extended_span >= duration:
-            used_span = duration
-            speed = 1.0
-            hold = 0.0
-        else:
-            # Step 3: speed 0.8-1.25
-            req_speed = extended_span / duration if duration > 0 else 1.0
-            speed = max(CLIP_SPEED_MIN, min(CLIP_SPEED_MAX, req_speed))
-            dur_after_speed = extended_span / speed
-            # Step 4: hold frame to fill remaining gap
-            hold = max(0.0, duration - dur_after_speed)
-            used_span = extended_span
-
-    inputs = ["-ss", f"{clip_in:.3f}"]
-    if used_span:
-        inputs += ["-t", f"{used_span:.3f}"]
-    inputs += ["-i", str(src)]
+    inputs = ["-ss", f"{clip_in:.3f}", "-t", f"{fit_.used:.3f}", "-i", str(src)]
     logo = corner_logo is not None
     if logo:
         inputs += ["-i", str(corner_logo)]
-    graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop, hold,
-                              speed=speed, logo=logo)
+    # The graph's tpad holds the last frame for `hold` seconds; _TAIL_PAD more frames are asked
+    # for than the shot needs and `-frames:v` cuts them off, so a frame lost to fps/setpts
+    # rounding can never leave the output a frame short of the contract.
+    graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop,
+                              fit_.hold + _TAIL_PAD, speed=fit_.speed, logo=logo)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [ff, "-y", *inputs, "-filter_complex", graph, "-map", "[v]",
-           "-frames:v", str(frames), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+           "-frames:v", str(frames), "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
            "-pix_fmt", "yuv420p", "-r", str(_sh.FPS), "-an", str(out_path)]
     if progress:
         progress(f"[stage5] shot {shot.shot_id:03d} (scene {shot.scene_id}, CLIP {shot.clip_id} "
-                 f"@{clip_in:.2f}s, {duration:.2f}s, speed={speed:.2f}x, hold={hold:.2f}s)")
+                 f"@{clip_in:.2f}s, {duration:.2f}s, speed={fit_.speed:.2f}x, hold={fit_.hold:.2f}s)")
     _sh._run(cmd)
     verify_shot_contract(out_path, frames)
     return out_path
 
 
 def frozen_tail_seconds(shot) -> float:
-    """How long the last frame is held because the clip is shorter than the shot (0 when the
-    clip covers it, or is open-ended — the source's own end is only known at render time)."""
-    out, cin = float(getattr(shot, "clip_out", 0) or 0), float(getattr(shot, "clip_in", 0) or 0)
-    if not out:
+    """How long the last frame is held because the clip is shorter than the shot.
+
+    Flag OFF (legacy clip shots): the shortfall to the clip's `end` — 0 when the clip covers the
+    shot or is open-ended (the source's own end is only known at render time).
+    Flag ON: the hold the renderer applies, taken from the SAME plan_clip_shot() it renders with
+    (speed included); 0 when the clip fell back to its panel, or the file can't be probed."""
+    from config import ENABLE_VIDEO_CLIPS
+    if not ENABLE_VIDEO_CLIPS:
+        out, cin = float(getattr(shot, "clip_out", 0) or 0), float(getattr(shot, "clip_in", 0) or 0)
+        if not out:
+            return 0.0
+        return round(max(0.0, float(shot.duration_seconds) - max(0.0, out - cin)), 3)
+    if getattr(shot, "clip_fallback", "") or not getattr(shot, "clip_path", ""):
         return 0.0
-    return round(max(0.0, float(shot.duration_seconds) - max(0.0, out - cin)), 3)
+    try:
+        src_dur = probe_video(Path(shot.clip_path))["duration"]
+        return round(plan_clip_shot(shot, src_dur)[1].hold, 3)
+    except (OSError, RuntimeError, ValueError):
+        return 0.0
 
 
 def shot_log_entry(shot) -> dict | None:
@@ -699,23 +823,11 @@ def render_clip_preview(
     out_path: Path,
     crop: dict | None = None,
 ) -> Path:
-    """Render a fast 9:16 vertical preview clip matching beat duration."""
-    ff = _sh._require_ffmpeg()
-    info = probe_video(clip_path)
-    frames = max(1, int(round(beat_duration * _sh.FPS)))
-    graph = clip_filter_graph(info["width"], info["height"], crop, beat_duration)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        ff, "-y",
-        "-ss", f"{start:.3f}",
-        "-t", f"{beat_duration:.3f}",
-        "-i", str(clip_path),
-        "-filter_complex", graph, "-map", "[v]",
-        "-frames:v", str(frames),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-        "-pix_fmt", "yuv420p", "-r", str(_sh.FPS), "-an",
-        str(out_path),
-    ]
-    _sh._run(cmd)
-    return out_path
-
+    """The 9:16 review preview of a picked clip — rendered by render_clip_shot itself (fast
+    encode), so it shows exactly what Stage 5 will lay on the beat: the same fit, speed and hold.
+    Raises ClipTooShort when the footage can't fill `beat_duration` (the pick would fall back to
+    the panel at render time) so the review UI can say so instead of showing a clip that won't play."""
+    shot = Shot(shot_id=0, scene_id=0, duration_seconds=beat_duration, panel_bbox={},
+                source_image="", motion="zoom_in", clip_path=str(clip_path),
+                clip_in=float(start), clip_out=0.0, clip_id="preview", clip_crop=dict(crop or {}))
+    return render_clip_shot(shot, out_path, preset="veryfast", crf=22)

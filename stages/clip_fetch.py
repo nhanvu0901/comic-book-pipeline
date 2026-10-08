@@ -273,13 +273,29 @@ def score_video(desc: str, cand: dict, info: dict, moments: list[dict], n_querie
 _SUB_LANGS = ("en", "en-US", "en-GB", "en-orig")
 
 
-def video_metadata(url: str, work_dir: Path, *, timeout: int = 120) -> tuple[dict, list]:
+_META_CACHE_DIR = REPO / "cache" / "metadata"
+_MOMENTS_CACHE_DIR = REPO / "cache" / "moments"
+
+
+def video_metadata(url: str, work_dir: Path, *, timeout: int = 120, use_cache: bool = False) -> tuple[dict, list]:
     """(yt-dlp info dict, subtitle cues) for one video WITHOUT downloading it. Two calls on
     purpose: the info JSON comes from --dump-single-json, which does not depend on subtitles —
     with both in one call a subtitle HTTP 429 (YouTube rate-limits caption requests) aborted
     the whole video. Subtitles are then fetched only when the video has English ones, and any
     failure there just means no subtitle signal. Raises when the info itself can't be read
     (private / removed / blocked)."""
+    m = _YT_ID.search(url)
+    vid = m.group(1) if m else None
+    if use_cache and vid:
+        _META_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = _META_CACHE_DIR / f"{vid}.json"
+        if cache_file.is_file():
+            try:
+                cached_data = json.loads(cache_file.read_text(encoding="utf-8"))
+                return cached_data["info"], cached_data.get("cues", [])
+            except Exception:
+                pass
+
     base = [*_ytdlp_cmd(), "--skip-download", "--no-playlist", "--js-runtimes", "node"]
     res = subprocess.run([*base, "--dump-single-json", url],
                          capture_output=True, text=True, timeout=timeout)
@@ -302,14 +318,34 @@ def video_metadata(url: str, work_dir: Path, *, timeout: int = 120) -> tuple[dic
         vtts = sorted(work_dir.glob("*.vtt"))
         if vtts:
             cues = parse_vtt(vtts[0].read_text(encoding="utf-8", errors="replace"))
+
+    if use_cache and vid and info:
+        try:
+            _META_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_file = _META_CACHE_DIR / f"{vid}.json"
+            cache_file.write_text(json.dumps({"info": info, "cues": cues}, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
     return info, cues
 
 
 def moment_search(desc: str, *, limit: int = 8, extra_queries: list[str] | tuple = (),
-                  search=youtube_search, metadata=video_metadata, log=print) -> list[dict]:
+                  search=youtube_search, metadata=video_metadata, log=print,
+                  use_cache: bool = True) -> list[dict]:
     """The shortlist: up to `limit` videos, best first, each with its candidate windows."""
+    import hashlib
     from concurrent.futures import ThreadPoolExecutor
     queries = moment_queries(desc, extra_queries)
+    cache_key = hashlib.sha256(f"{desc}|{queries}|{limit}".encode("utf-8")).hexdigest()
+    if use_cache:
+        _MOMENTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cfile = _MOMENTS_CACHE_DIR / f"{cache_key}.json"
+        if cfile.is_file():
+            try:
+                return json.loads(cfile.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
     cands = gather_candidates(queries, search=search, log=log)[:limit]
     log(f"[moment] {len(queries)} queries → {len(cands)} video(s); reading their metadata")
 
@@ -332,10 +368,19 @@ def moment_search(desc: str, *, limit: int = 8, extra_queries: list[str] | tuple
         row.update(score_video(desc, c, info, moments, len(queries)))
         return row
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         rows = list(pool.map(one, cands))
     ok = sorted((r for r in rows if "error" not in r), key=lambda r: -r["score"])
-    return ok + [r for r in rows if "error" in r]
+    result = ok + [r for r in rows if "error" in r]
+    if use_cache:
+        try:
+            _MOMENTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            (_MOMENTS_CACHE_DIR / f"{cache_key}.json").write_text(
+                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+    return result
 
 
 def moments_html(sections: list[tuple[str, list[dict]]]) -> str:
