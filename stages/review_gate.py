@@ -48,6 +48,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import config
 from config import PROJECTS_ROOT
 from stages._arc import qa_item_chapters
 from stages.user_errors import MissingInputError
@@ -86,7 +87,7 @@ MONEY_SWEEP_MAX_CALLS = int(os.getenv("MONEY_SWEEP_MAX_CALLS", "8"))  # sweep fa
 def _project_root(project) -> Path:
     """Accept a project slug OR a path to the project dir."""
     p = Path(project)
-    return p if p.is_dir() else PROJECTS_ROOT / str(project)
+    return p if p.is_dir() else Path(config.PROJECTS_ROOT) / str(project)
 
 
 def _locks_path(project) -> Path:
@@ -231,9 +232,8 @@ def _plot_source(project) -> str:
 
 # ─── gate ─────────────────────────────────────────────────────────────────────
 
-# Modes whose panels are fixed by construction rather than chosen by a matcher. ONLY long-form
-# qualifies: it narrates page by page in reading order. Every Short mode stays hard-gated.
-GATE_EXEMPT_MODES = ("panel_walk",)
+# Modes whose panels are fixed by construction rather than chosen by a matcher (or screen media with no comic panels).
+GATE_EXEMPT_MODES = ("panel_walk", "screen_qa")
 
 
 def _narration_mode(project) -> str:
