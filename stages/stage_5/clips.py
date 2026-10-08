@@ -507,12 +507,10 @@ def _even(v: float) -> int:
 
 
 def clip_filter_graph(iw: int, ih: int, crop: dict | None, hold_seconds: float, *,
-                      logo: bool = False) -> str:
+                      speed: float = 1.0, logo: bool = False) -> str:
     """filter_complex turning input 0 into a 9:16 (OUTPUT_W x OUTPUT_H) CFR stream labelled
-    [v]: optional subject crop → contain+blur (same look as shots._prepare_panel_frame: the
-    whole clip sharp, upscale capped at _FG_MAX_SCALE, centred over a blurred cover-fill of
-    itself) → hold the last frame `hold_seconds` (clip shorter than the shot) → corner logo.
-    A {"cx"} crop that would need more than CLIP_MAX_UPSCALE is dropped (full frame instead)."""
+    [v]: optional subject crop → speed change [0.8, 1.25] → contain+blur → hold the last
+    frame `hold_seconds` (tpad) → corner logo."""
     W, H, fps = _sh.OUTPUT_W, _sh.OUTPUT_H, _sh.FPS
     x, y, w, h = crop_region(iw, ih, crop)
     if crop and "cx" in crop and max(W / w, H / h) > CLIP_MAX_UPSCALE * (1 + _SNAP_FRAC):
@@ -520,6 +518,7 @@ def clip_filter_graph(iw: int, ih: int, crop: dict | None, hold_seconds: float, 
               f"(> CLIP_MAX_UPSCALE {CLIP_MAX_UPSCALE}) — full-frame contain instead")
         x, y, w, h = 0, 0, iw, ih
     pre = f"crop={w}:{h}:{x}:{y}," if (x, y, w, h) != (0, 0, iw, ih) else ""
+    spd = f"setpts={(1.0 / speed):.4f}*PTS," if abs(speed - 1.0) > 1e-4 else ""
     scale = min(min(W / w, H / h), CLIP_MAX_UPSCALE)
     fw, fh = min(W, _even(w * scale)), min(H, _even(h * scale))
     # setsar=0 leaves the aspect ratio unsignalled, as the panel shots do: the H.264 SPS then
@@ -527,11 +526,11 @@ def clip_filter_graph(iw: int, ih: int, crop: dict | None, hold_seconds: float, 
     tail = f"tpad=stop_mode=clone:stop_duration={hold_seconds:.3f},format=yuv420p,setsar=0"
     out = "[vc]" if logo else "[v]"
     if abs(fw - W) <= W * _SNAP_FRAC and abs(fh - H) <= H * _SNAP_FRAC:
-        g = f"[0:v]{pre}fps={fps},scale={W}:{H}:flags=lanczos,{tail}{out}"
+        g = f"[0:v]{pre}{spd}fps={fps},scale={W}:{H}:flags=lanczos,{tail}{out}"
     else:
         # Blur at quarter size: same look as a full-size sigma-40 blur, a fraction of the cost.
         bw, bh = max(2, W // 4), max(2, H // 4)
-        g = (f"[0:v]{pre}fps={fps},setsar=1,split=2[cb][cf];"
+        g = (f"[0:v]{pre}{spd}fps={fps},setsar=1,split=2[cb][cf];"
              f"[cb]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},"
              f"gblur=sigma=10,scale={W}:{H}[bg];"
              f"[cf]scale={fw}:{fh}:flags=lanczos[fg];"
@@ -576,25 +575,58 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
     duration = max(0.4, float(shot.duration_seconds))
     frames = max(1, int(round(duration * _sh.FPS)))
     clip_out = float(shot.clip_out or 0.0)
+
+    # Fit math: trim -> extend into source -> speed [0.8, 1.25] -> hold <= 0.3s
+    src_dur = float(info.get("duration") or 0.0)
+    avail_src = max(0.0, src_dur - clip_in) if src_dur > 0 else duration
+
+    from config import CLIP_SPEED_MIN, CLIP_SPEED_MAX, CLIP_MAX_HOLD
+
     if clip_out and clip_in > clip_out - 1.0 / _sh.FPS:
-        # A later shot of a beat whose clip already ran out (continuous playback past "end"):
-        # hold the out-point frame, never play on past it.
         clip_in = max(0.0, clip_out - 1.0 / _sh.FPS)
+        nominal_span = 1.0 / _sh.FPS
+    elif clip_out > clip_in:
+        nominal_span = clip_out - clip_in
+    else:
+        nominal_span = min(duration, avail_src)
+
+    if nominal_span >= duration:
+        # Step 1: trim
+        used_span = duration
+        speed = 1.0
+        hold = 0.0
+    else:
+        # Step 2: extend into source
+        extended_span = min(duration, avail_src)
+        if extended_span >= duration:
+            used_span = duration
+            speed = 1.0
+            hold = 0.0
+        else:
+            # Step 3: speed 0.8-1.25
+            req_speed = extended_span / duration if duration > 0 else 1.0
+            speed = max(CLIP_SPEED_MIN, min(CLIP_SPEED_MAX, req_speed))
+            dur_after_speed = extended_span / speed
+            # Step 4: hold frame to fill remaining gap
+            hold = max(0.0, duration - dur_after_speed)
+            used_span = extended_span
+
     inputs = ["-ss", f"{clip_in:.3f}"]
-    if clip_out:
-        inputs += ["-t", f"{clip_out - clip_in:.3f}"]
+    if used_span:
+        inputs += ["-t", f"{used_span:.3f}"]
     inputs += ["-i", str(src)]
     logo = corner_logo is not None
     if logo:
         inputs += ["-i", str(corner_logo)]
-    graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop, duration, logo=logo)
+    graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop, hold,
+                              speed=speed, logo=logo)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [ff, "-y", *inputs, "-filter_complex", graph, "-map", "[v]",
            "-frames:v", str(frames), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
            "-pix_fmt", "yuv420p", "-r", str(_sh.FPS), "-an", str(out_path)]
     if progress:
         progress(f"[stage5] shot {shot.shot_id:03d} (scene {shot.scene_id}, CLIP {shot.clip_id} "
-                 f"@{clip_in:.2f}s, {duration:.2f}s)")
+                 f"@{clip_in:.2f}s, {duration:.2f}s, speed={speed:.2f}x, hold={hold:.2f}s)")
     _sh._run(cmd)
     verify_shot_contract(out_path, frames)
     return out_path

@@ -394,11 +394,53 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     skips the whip step entirely — no stable seed possible, so no behavior change.
     """
     groups = _group_shots_by_scene(shots, shot_paths)
-    whip = _pick_whip_boundaries(project, shots) if project else {}
-    if not whip:
-        return _assemble_groups(shots, groups, out_path,
-                                outro_card=outro_card, outro_dur=outro_dur)
-    return _assemble_with_whips(shots, groups, whip, out_path, outro_card, outro_dur)
+    has_clips = any(getattr(s, "clip_path", "") and not getattr(s, "clip_fallback", "") for s in shots)
+    if not has_clips:
+        whip = _pick_whip_boundaries(project, shots) if project else {}
+        if not whip:
+            return _assemble_groups(shots, groups, out_path,
+                                    outro_card=outro_card, outro_dur=outro_dur)
+        return _assemble_with_whips(shots, groups, whip, out_path, outro_card, outro_dur)
+
+    shot_is_clip = {s.shot_id: bool(getattr(s, "clip_path", "") and not getattr(s, "clip_fallback", "")) for s in shots}
+    group_shot_map = _group_shots_only(shots)
+
+    runs: list[tuple[bool, list[list]]] = []
+    for gi, g in enumerate(groups):
+        g_shots = group_shot_map[gi][1] if gi < len(group_shot_map) else []
+        g_is_clip = any(shot_is_clip.get(s.shot_id, False) for s in g_shots)
+        if runs and runs[-1][0] == g_is_clip:
+            runs[-1][1].append(g)
+        else:
+            runs.append((g_is_clip, [g]))
+
+    tmp = out_path.parent / "_clip_runs"
+    tmp.mkdir(parents=True, exist_ok=True)
+    run_paths: list[Path] = []
+    n_runs = len(runs)
+
+    for ri, (is_clip, run_groups) in enumerate(runs):
+        is_last = (ri == n_runs - 1)
+        card = outro_card if is_last else None
+        cdur = outro_dur if is_last else 0.0
+        run_out = tmp / f"run_{ri:03d}.mp4"
+
+        if is_clip:
+            all_paths = []
+            for _sid, ps, _dur in run_groups:
+                all_paths.extend(ps)
+            if card:
+                all_paths.append(card)
+            _concat(all_paths, run_out)
+        else:
+            _assemble_groups(
+                shots, run_groups, run_out,
+                outro_card=card, outro_dur=cdur,
+                is_first_run=(ri == 0),
+            )
+        run_paths.append(run_out)
+
+    return _concat(run_paths, out_path)
 
 
 def _assemble_groups(shots, groups, out_path: Path, *,
