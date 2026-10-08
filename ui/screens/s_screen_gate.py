@@ -391,8 +391,9 @@ def build(
         key = str(payload.get("beat"))
 
         async def _apply():
+            sel.withdraw_approval(root)          # a pick made after Approve → approve again
             _reload()
-            _refresh_cards(f"Đã chọn clip MP4 cho beat {key}.")
+            _refresh_cards(f"Đã chọn clip MP4 cho beat {key} — cần approve lại.")
             if clips_on and config_auto_backup():
                 _kick_backup(key)
         try:

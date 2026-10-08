@@ -168,6 +168,7 @@ def test_an_edited_search_query_is_what_gets_sent(project):
 
 def test_a_pick_event_reloads_the_screen_and_searches_a_backup_in_the_background(project, monkeypatch):
     ctl, page, state, _ = _build(project)
+    sel.set_approved(project, True)
     (project / "review" / "clips" / "clips.json").write_text(json.dumps({"clips": [
         {"id": "VID9", "file": "review/clips/VID9.mp4", "beat": "2:1", "start": 0, "end": 2,
          "source_start": 12.0}]}))
@@ -183,6 +184,7 @@ def test_a_pick_event_reloads_the_screen_and_searches_a_backup_in_the_background
                                          "video_id": "VID9", "start": 12.0})
     _drain(page)
     assert "MP4 VID9 @ 12.0s" in _texts(ctl)               # the card list was rebuilt in place
+    assert not sel.is_approved(project)                    # a pick after Approve withdraws it
     assert called.wait(5)
     assert seen["key"] == "2:1" and seen["query"] == "Tony Stark Eureka quantum GPS"
     assert seen["seconds"] and seen["seconds"] > 0

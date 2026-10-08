@@ -94,6 +94,11 @@ def _unapprove(root: Path) -> None:
         _save_locks(root, doc)
 
 
+def withdraw_approval(project_root) -> None:
+    """A pick changed after Master approved: approval must be given again (as in the comic gate)."""
+    _unapprove(_root(project_root))
+
+
 # ─── clips (review/clips/clips.json) ────────────────────────────────────────────
 
 def _manifest(root: Path) -> dict:
