@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -309,11 +310,12 @@ def test_recorded_spike_outputs_never_send_a_comic_question_to_screen_qa_except_
 
 # ── opt-in accuracy run (live You.com + OpenRouter + batcave) ──────────────────
 
-NEUTRAL_SET = Path("/tmp/source_router/followup_definitions.json")
+# ROUTER_NEUTRAL_SET lets another machine (the Windows server) point at its own copy of the file.
+NEUTRAL_SET = Path(os.environ.get("ROUTER_NEUTRAL_SET", "/tmp/source_router/followup_definitions.json"))
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not NEUTRAL_SET.exists(), reason="/tmp/source_router/followup_definitions.json not found")
+@pytest.mark.skipif(not NEUTRAL_SET.exists(), reason="neutral question set not found (set ROUTER_NEUTRAL_SET)")
 def test_live_router_accuracy_on_the_neutral_question_set(capsys):
     """Opt-in: `pytest -m integration tests/test_router_rules.py -k live_router`.
     Runs every neutral/bank question through the whole router and prints the table.
