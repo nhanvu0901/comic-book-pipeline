@@ -1,0 +1,6 @@
+{
+  "project": "baseline_fixture_p0",
+  "shots_json_sha256": "8ea9e272e1e809b51b9d19ad0b937c1638a3054b0c2e8c8c1e0df0eae1086ac5",
+  "video_silent_sha256": "c29fa5791d49be4dc0531853f62c7d1091d51a1d133ed2b3f695073a29a74b48",
+  "note": "P0 baseline captured right after whip fix with seeded whip choice"
+}

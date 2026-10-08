@@ -3820,7 +3820,8 @@ def _crop_panel(source_image: str, bbox: dict[str, int], out_path: Path,
     )
     cached = _CLEAN_PANEL_CACHE.get(cache_key)
     if cached is not None and Path(cached).exists():
-        shutil.copyfile(str(cached), str(out_path))
+        if Path(cached).resolve() != Path(out_path).resolve():
+            shutil.copyfile(str(cached), str(out_path))
         return out_path
 
     try:

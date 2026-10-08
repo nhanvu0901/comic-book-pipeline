@@ -669,6 +669,38 @@ def _trim_clip_head(src: Path, out_path: Path, skip_seconds: float) -> Path:
            "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", str(out_path)]
     _run(cmd)
     return out_path
+def _shift_up_mirrored(img, px: int, out_w: int | None = None, out_h: int | None = None):
+    from PIL import Image
+    from .shots import OUTPUT_W, OUTPUT_H
+    w = out_w or OUTPUT_W
+    h = out_h or OUTPUT_H
+    canvas = Image.new("RGB", (w, h))
+    canvas.paste(img, (0, -px))
+    if px > 0:
+        sample_h = min(px, h)
+        sample = img.crop((0, h - sample_h, w, h))
+        mirrored = sample.transpose(Image.FLIP_TOP_BOTTOM)
+        canvas.paste(mirrored, (0, h - sample_h))
+    return canvas
+
+
+def _shift_from_below_mirrored(img, px: int, out_w: int | None = None, out_h: int | None = None):
+    from PIL import Image
+    from .shots import OUTPUT_W, OUTPUT_H
+    w = out_w or OUTPUT_W
+    h = out_h or OUTPUT_H
+    canvas = Image.new("RGB", (w, h))
+    canvas.paste(img, (0, px))
+    if px > 0:
+        sample_h = min(px, h)
+        sample = img.crop((0, 0, w, sample_h))
+        mirrored = sample.transpose(Image.FLIP_TOP_BOTTOM)
+        canvas.paste(mirrored, (0, 0))
+    return canvas
+
+
+_shift_up = _shift_up_mirrored
+_shift_from_below = _shift_from_below_mirrored
 
 
 def _build_whip_bridge(prev_clip: Path, next_clip: Path, out_path: Path,
@@ -704,20 +736,10 @@ def _build_whip_bridge(prev_clip: Path, next_clip: Path, out_path: Path,
         return img.resize((OUTPUT_W, small_h)).resize((OUTPUT_W, OUTPUT_H), Image.BILINEAR)
 
     def _shift_up(img: "Image.Image", px: int) -> "Image.Image":
-        canvas = Image.new("RGB", (OUTPUT_W, OUTPUT_H))
-        canvas.paste(img, (0, -px))
-        if px > 0:
-            edge = img.crop((0, OUTPUT_H - 1, OUTPUT_W, OUTPUT_H)).resize((OUTPUT_W, px))
-            canvas.paste(edge, (0, OUTPUT_H - px))
-        return canvas
+        return _shift_up_mirrored(img, px, OUTPUT_W, OUTPUT_H)
 
     def _shift_from_below(img: "Image.Image", px: int) -> "Image.Image":
-        canvas = Image.new("RGB", (OUTPUT_W, OUTPUT_H))
-        canvas.paste(img, (0, px))
-        if px > 0:
-            edge = img.crop((0, 0, OUTPUT_W, 1)).resize((OUTPUT_W, px))
-            canvas.paste(edge, (0, 0))
-        return canvas
+        return _shift_from_below_mirrored(img, px, OUTPUT_W, OUTPUT_H)
 
     def _flash(img: "Image.Image", alpha: float) -> "Image.Image":
         if alpha <= 0:
