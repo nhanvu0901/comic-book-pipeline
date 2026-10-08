@@ -1,7 +1,7 @@
 """Agent-first orchestrator CLI for screen_qa mode.
 
 Runs the full pipeline for a Screen-driven Q&A Short end to end:
-research canon from screen wikis -> write screen narration citing film/show and year ->
+research screen canon from web evidence -> write the Q&A narration citing film/show and year ->
 synthesize TTS audio -> render final video.
 
 Unlike comic pipelines, this mode has NO download or preprocess steps —
@@ -18,14 +18,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
 from typing import Callable
 
 from config import POST_ATEMPO, get_project_dirs
+from stages.stage_3.screen_qa import SCREEN_QA_MODE
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -38,7 +37,7 @@ STEPS = ["research", "narrate", "tts", "render"]
 
 
 def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
-    """Scout screen canon from fandom wikis / Wikipedia and save screen_context.json."""
+    """Research the question from web evidence and save screen_context.json."""
     if not args.question:
         raise ValueError("--question is required unless --skip-research")
 
@@ -56,7 +55,7 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
 
 
 def _step_narrate(args: argparse.Namespace, log: Callable[[str], None]) -> str:
-    """Write screen narration citing movie/show title and year, with clip query visual beats."""
+    """Write the Q&A narration: hook, 2 scenes per item citing film/series + year, outro."""
     from stages.stage_3.screen_qa import save_screen_narration, write_screen_qa
 
     nar = write_screen_qa(
@@ -64,8 +63,11 @@ def _step_narrate(args: argparse.Namespace, log: Callable[[str], None]) -> str:
         hook_hint=getattr(args, "hint", ""),
         progress=log,
     )
-    path = save_screen_narration(nar, args.project, progress=log)
-    return f"{len(nar.scenes)} scene(s), ~{nar.estimated_duration_seconds}s"
+    save_screen_narration(nar, args.project, progress=log)
+    detail = f"{len(nar.scenes)} scene(s), ~{nar.estimated_duration_seconds}s"
+    if not nar.llm_model:
+        detail += " (deterministic fallback — the writer LLM was unusable; read narration.json)"
+    return detail
 
 
 def _step_tts(args: argparse.Namespace, log: Callable[[str], None]) -> str:
@@ -82,29 +84,44 @@ def _step_tts(args: argparse.Namespace, log: Callable[[str], None]) -> str:
 
 
 def _step_render(args: argparse.Namespace, log: Callable[[str], None]) -> str:
-    """Render step: calls screen shot builder from video-qa/p3-visual via contract.
+    """Render through Stage 5's own entry point.
 
-    Contract:
-    - narration.json uses Scene schema with mode 'screen_qa';
-    - visual_beats are dicts {text, query};
-    - screen_context.json = {question, items:[{entity, event, adaptation_title, year, summary, visual_query, source_urls}]}.
-    Until p3-visual lands, stub the render call behind that contract.
+    assemble_project() dispatches a mode=="screen_qa" narration to
+    stages.stage_5.screen_shots.run_screen_qa_pipeline (video-qa/p3-visual): beat windows from the
+    Stage-4 timings, 4-level never-crash clip fallback, hard cuts around clips, final.mp4. Going
+    through it keeps the review gate, the narration-hash guard and the audio/timing loading in
+    ONE place instead of re-implemented here (an earlier version called the shot builder with
+    guessed arguments).
+
+    Contract this step relies on:
+      - narration.json is the Scene schema with mode "screen_qa";
+      - visual_beats are {text, query};
+      - screen_context.json = {question, items:[{entity, event, adaptation_title, year, summary,
+        visual_query, source_urls}]}.
     """
     try:
-        from stages.stage_5.screen_shots import build_shots_for_screen_qa
+        from stages.stage_5.screen_shots import run_screen_qa_pipeline  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "screen_qa render needs stages.stage_5.screen_shots.run_screen_qa_pipeline "
+            f"(branch video-qa/p3-visual): {exc}"
+        ) from exc
 
-        log("[screen-pipeline] invoking p3-visual build_shots_for_screen_qa...")
-        root = get_project_dirs(args.project)["root"]
-        nar_path = root / "narration.json"
-        if not nar_path.exists():
-            raise FileNotFoundError(f"Missing {nar_path} for render")
-        nar = json.loads(nar_path.read_text())
-        # Call builder when available
-        shots = build_shots_for_screen_qa(nar, {}, {})
-        return f"{len(shots)} shot(s) built (p3-visual)"
-    except (ImportError, AttributeError):
-        log("[screen-pipeline] p3-visual shot builder not yet present; stubbing render per contract")
-        return "stubbed screen_qa render (waiting for p3-visual)"
+    nar_path = get_project_dirs(args.project)["root"] / "narration.json"
+    if not nar_path.exists():
+        raise FileNotFoundError(f"Missing {nar_path} — run the narrate step first")
+    mode = str(json.loads(nar_path.read_text()).get("mode") or "")
+    if mode != SCREEN_QA_MODE:
+        raise ValueError(
+            f"{nar_path} has mode {mode!r}, not {SCREEN_QA_MODE!r}: Stage 5 would run the comic "
+            f"renderer on it. Re-run the narrate step of this CLI."
+        )
+
+    from stages.stage_5.pipeline import assemble_project
+
+    result = assemble_project(args.project, force=True, skip_review=args.skip_review, progress=log)
+    return (f"{result.shot_count} shot(s), {result.duration_seconds:.1f}s -> "
+            f"{Path(result.final_path).name}")
 
 
 def _run_step(step: str, args: argparse.Namespace, log: Callable[[str], None]) -> str:
