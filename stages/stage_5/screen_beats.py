@@ -365,7 +365,12 @@ def plan_windows(
     cum = [0.0]
     for p in pieces:
         cum.append(cum[-1] + p["dur"])
-    total_frames = max(int(math.ceil(cum[-1] * fps - 1e-6)), 1)
+    # The video must COVER the timeline: whole frames, never fewer than the timeline's end (the
+    # epsilon only swallows float noise; the check below keeps the guarantee strict).
+    timeline_end = spans[-1][2]
+    total_frames = max(int(math.ceil(timeline_end * fps - 1e-6)), 1)
+    if total_frames / fps < timeline_end:
+        total_frames += 1
     min_frames = int(math.ceil(MIN_SHOT_SECONDS * fps - 1e-9))
     bounds = _snap_boundaries(cum, fps, min_frames, total_frames)
 
