@@ -136,11 +136,13 @@ def save_state(s: AppState) -> None:
 
 
 def list_projects() -> list[str]:
-    """Scan PROJECTS_ROOT for project directories containing comic_context.json."""
+    """Scan PROJECTS_ROOT for project directories containing comic_context.json — or
+    screen_context.json, which is what a screen_qa project (no comic at all) is rooted in."""
     if not PROJECTS_ROOT.exists():
         return []
     out: list[str] = []
     for d in sorted(PROJECTS_ROOT.iterdir()):
-        if d.is_dir() and (d / "comic_context.json").exists():
+        if d.is_dir() and ((d / "comic_context.json").exists()
+                           or (d / "screen_context.json").exists()):
             out.append(d.name)
     return out

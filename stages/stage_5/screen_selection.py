@@ -42,6 +42,16 @@ def _read(path: Path, default: Any) -> Any:
     return doc if isinstance(doc, type(default)) else default
 
 
+def load_narration(project_root) -> dict:
+    """narration.json or {} (never raises)."""
+    return _read(_root(project_root) / "narration.json", {})
+
+
+def load_screen_context(project_root) -> dict:
+    """screen_context.json ({question, items:[...]}) or {} — p3-core's research output."""
+    return _read(_root(project_root) / "screen_context.json", {})
+
+
 # ─── approval (review/locks.json) ───────────────────────────────────────────────
 
 def _locks_doc(root: Path) -> dict:
