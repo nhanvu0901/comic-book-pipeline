@@ -1,30 +1,74 @@
-"""Background TTS runner and audio cache for Q&A pipeline."""
+"""Background TTS for the Q&A video-clip flow (ENABLE_VIDEO_CLIPS=1).
+
+While Master is still in the review gate, the narration is synthesized ahead of time, chunk by
+chunk, so (a) every beat can show its exact length — the length a picked clip has to fill — and
+(b) Stage 4 later finds the audio already there and only synthesizes what changed.
+
+It reproduces Stage 4's Chatterbox path, not an approximation of it:
+  * NORMALISE  stages.stage_4.pipeline._normalize_for_tts over the whole narration text,
+  * CHUNK      chatterbox_tts._chunks (one chunk per sentence, <= 320 chars) over that text,
+  * ATEMPO     config.POST_ATEMPO (POST_ATEMPO_LONGFORM for longform modes), applied to each chunk
+               before it is cached — the atempo is part of the cache key,
+  * WORDS      chatterbox_tts._even_words spreads each chunk's words over its measured length.
+
+ONE CACHE, projects/<p>/cache/tts/<sha256>.wav + .json, keyed by
+sha256(text | voice | exaggeration | cfg_weight | seed | post_atempo [| temperature]) — see
+get_cache_key. A chunk whose key is on disk is never synthesized again: not by the next pass, not
+by Stage 4 (load_or_synthesize_cached). Chunks are seeded INDIVIDUALLY (the worker re-seeds before
+each one), so a chunk's audio depends only on its key, never on which batch it travelled in.
+
+ONE STATUS FILE, review/tts_status.json (stages.stage_4.tts_status) — written here, read by the
+UI and the web routes.
+
+It never calls ensure_reviewed(): the review gate is open on purpose, and that guard exists to
+stop Stage 4 until it closes.
+
+THE WORKER. synthesize_missing() starts ONE chatterbox worker for a whole batch of chunks — the
+model loads once, not once per sentence — and reads its progress line by line, so each chunk is
+cached and its beat's length published the moment it finishes. A priority bump or a narration
+edit stops the batch (the chunks already done stay cached) and the runner re-plans.
+"""
 from __future__ import annotations
 
 import hashlib
 import io
 import json
+import logging
 import os
+import queue
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import wave
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import config
-from .beat_timing import BeatWindow, calculate_beat_durations, set_keep_awake
+from . import tts_status
+from .beat_timing import beat_rows, compute_beat_timings, narration_text, scene_word_ranges, set_keep_awake
 from .chatterbox_tts import (
     CHATTERBOX_CFG_WEIGHT,
+    CHATTERBOX_DEVICE,
     CHATTERBOX_EXAGGERATION,
+    CHATTERBOX_TEMPERATURE,
     CHATTERBOX_VOICE_WAV,
-    ChatterboxResult,
     _chunks,
     _even_words,
 )
-from .schema import TTSResult
 
+logger = logging.getLogger(__name__)
+
+# a chunk the worker failed to render this many times in one run is given up on (status.error says so)
+_MAX_ATTEMPTS = 2
+# no output from a running worker for this long = it is hung
+_STALL_SECONDS = float(os.getenv("BACKGROUND_TTS_STALL_SECONDS", "1200"))
+
+
+# ─── cache key / settings ─────────────────────────────────────────────────────────────────────
 
 def get_cache_key(
     text: str,
@@ -33,368 +77,513 @@ def get_cache_key(
     cfg_weight: float,
     seed: int | None,
     post_atempo: float,
+    temperature: float | None = None,
 ) -> str:
-    """Unique sha256 cache key per TTS chunk:
-    sha256(text|voice|exaggeration|cfg_weight|seed|post_atempo)
-    """
+    """sha256 of everything that decides a chunk's audio:
+    text | voice | exaggeration | cfg_weight | seed | post_atempo [| temperature]."""
     v = str(voice or "built-in").strip()
-    payload = f"{text.strip()}|{v}|{exaggeration}|{cfg_weight}|{seed}|{post_atempo}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    payload = f"{text.strip()}|{v}|{exaggeration}|{cfg_weight}|{seed}|{post_atempo}"
+    if temperature is not None:
+        payload += f"|{temperature}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class TTSSettings:
+    """Every knob that shapes a chunk's audio; `key(text)` is the cache key."""
+    voice: str
+    exaggeration: float
+    cfg_weight: float
+    temperature: float
+    seed: int | None
+    post_atempo: float
+
+    @classmethod
+    def current(cls, *, voice_wav: str | None, post_atempo: float) -> "TTSSettings":
+        return cls(
+            voice=str(voice_wav or CHATTERBOX_VOICE_WAV or "built-in"),
+            exaggeration=CHATTERBOX_EXAGGERATION,
+            cfg_weight=CHATTERBOX_CFG_WEIGHT,
+            temperature=CHATTERBOX_TEMPERATURE,
+            # Only a flag-ON run is seeded (the flag-OFF Chatterbox read stays unseeded, as ever).
+            seed=config.CHATTERBOX_SEED if config.ENABLE_VIDEO_CLIPS else None,
+            post_atempo=float(post_atempo),
+        )
+
+    def key(self, text: str) -> str:
+        return get_cache_key(text, self.voice, self.exaggeration, self.cfg_weight, self.seed,
+                             self.post_atempo, self.temperature)
+
+
+def resolve_post_atempo(narration: dict[str, Any]) -> float:
+    """The atempo Stage 4 applies to this narration — one definition, shared with Stage 4."""
+    from .pipeline import post_atempo_for_mode
+    return post_atempo_for_mode(str(narration.get("mode") or ""))
+
+
+def plan_chunks(scenes: Sequence[dict[str, Any]]) -> list[str]:
+    """The chunks Stage 4's Chatterbox path synthesizes for these scenes: the whole narration
+    normalised for TTS, then split into sentences. Identical to what synthesize_project builds."""
+    from .pipeline import _normalize_for_tts
+    return _chunks(_normalize_for_tts(narration_text(scenes)))
+
+
+# ─── the chunk cache ──────────────────────────────────────────────────────────────────────────
+
+class ChunkCache:
+    """projects/<p>/cache/tts/<key>.wav (+ <key>.json {"duration", "words"}). A chunk counts as
+    cached only when both files exist; the json is written last, atomically."""
+
+    def __init__(self, cache_dir: Path, settings: TTSSettings):
+        self.dir = Path(cache_dir)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.settings = settings
+
+    def wav_path(self, text: str) -> Path:
+        return self.dir / f"{self.settings.key(text)}.wav"
+
+    def _meta_path(self, text: str) -> Path:
+        return self.dir / f"{self.settings.key(text)}.json"
+
+    def meta(self, text: str) -> dict | None:
+        if not self.wav_path(text).is_file():
+            return None
+        try:
+            meta = json.loads(self._meta_path(text).read_text(encoding="utf-8"))
+            float(meta["duration"])
+            return meta
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def duration(self, text: str) -> float | None:
+        m = self.meta(text)
+        return None if m is None else float(m["duration"])
+
+    def has(self, text: str) -> bool:
+        return self.meta(text) is not None
+
+    def store(self, text: str, wav_bytes: bytes, duration: float) -> None:
+        wav, meta = self.wav_path(text), self._meta_path(text)
+        tmp_w = wav.with_name(wav.name + ".tmp")
+        tmp_w.write_bytes(wav_bytes)
+        os.replace(tmp_w, wav)
+        tmp_m = meta.with_name(meta.name + ".tmp")
+        tmp_m.write_text(json.dumps({"duration": duration, "words": _even_words(text, 0.0, duration)},
+                                    indent=2), encoding="utf-8")
+        os.replace(tmp_m, meta)
+
+
+def _ffmpeg_bin() -> str | None:
+    return ((config.FFMPEG_BIN if os.path.isfile(config.FFMPEG_BIN) else None)
+            or shutil.which(config.FFMPEG_BIN) or shutil.which("ffmpeg"))
+
+
+def _wav_seconds(data: bytes) -> float:
+    with wave.open(io.BytesIO(data), "rb") as wf:
+        return wf.getnframes() / float(wf.getframerate())
 
 
 def _apply_chunk_atempo(wav_bytes: bytes, atempo: float) -> tuple[bytes, float]:
-    """Apply ffmpeg atempo filter to wav bytes in memory."""
+    """ffmpeg atempo over one chunk's wav (pitch-preserving, pcm_s16le like Stage 4's
+    _apply_atempo). Returns (wav bytes, duration)."""
     if abs(atempo - 1.0) < 1e-4:
-        # No speed change
-        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
-            dur = wf.getnframes() / float(wf.getframerate())
-        return wav_bytes, dur
-
-    ff = (config.FFMPEG_BIN if os.path.isfile(config.FFMPEG_BIN) else None) or shutil.which(config.FFMPEG_BIN) or shutil.which("ffmpeg")
+        return wav_bytes, _wav_seconds(wav_bytes)
+    ff = _ffmpeg_bin()
     if not ff:
-        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
-            dur = wf.getnframes() / float(wf.getframerate())
-        return wav_bytes, dur
-
+        raise FileNotFoundError(f"ffmpeg not found (FFMPEG_BIN={config.FFMPEG_BIN}) — needed for atempo")
     with tempfile.TemporaryDirectory(prefix="atempo_chunk_") as tdir:
-        in_p = Path(tdir) / "in.wav"
-        out_p = Path(tdir) / "out.wav"
+        in_p, out_p = Path(tdir) / "in.wav", Path(tdir) / "out.wav"
         in_p.write_bytes(wav_bytes)
-
-        cmd = [
-            ff, "-y", "-i", str(in_p),
-            "-filter:a", f"atempo={atempo}",
-            "-vn", str(out_p),
-        ]
-        subprocess.run(cmd, check=True, capture_output=True)
-        res_bytes = out_p.read_bytes()
-        with wave.open(str(out_p), "rb") as wf:
-            dur = wf.getnframes() / float(wf.getframerate())
-        return res_bytes, dur
+        res = subprocess.run([ff, "-y", "-i", str(in_p), "-filter:a", f"atempo={atempo}",
+                              "-c:a", "pcm_s16le", "-vn", str(out_p)], capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"ffmpeg atempo failed: {(res.stderr or '')[-400:]}")
+        out = out_p.read_bytes()
+    return out, _wav_seconds(out)
 
 
-def _synthesize_chunk_raw(
-    text: str,
-    voice_wav: str | None = None,
-    exaggeration: float = 0.5,
-    cfg_weight: float = 0.5,
-    seed: int | None = None,
-    post_atempo: float = 1.15,
-) -> tuple[bytes, float, int]:
-    """Synthesize one chunk using chatterbox_tts and return (wav_bytes, duration, sr)."""
+# ─── the one worker job ───────────────────────────────────────────────────────────────────────
+
+def _prompt_wav(voice: str) -> str | None:
+    """The reference wav the worker clones — resolved like chatterbox_tts.synthesize does."""
+    if voice and Path(voice).is_file():
+        return str(voice)
+    if CHATTERBOX_VOICE_WAV and Path(CHATTERBOX_VOICE_WAV).is_file():
+        return str(CHATTERBOX_VOICE_WAV)
+    return None
+
+
+def synthesize_missing(
+    texts: Sequence[str],
+    cache: ChunkCache,
+    *,
+    on_chunk: Callable[[str, float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    log: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Synthesize every chunk in `texts` that isn't cached, with ONE worker process (one model
+    load) for the whole batch, caching each chunk as it finishes. Returns the texts that are
+    still not cached afterwards (failed chunks, or the ones left when should_stop() fired)."""
     from . import chatterbox_tts
-    res = chatterbox_tts.synthesize(
-        text,
-        voice_id=voice_wav,
-        exaggeration=exaggeration,
-        cfg_weight=cfg_weight,
-        seed=seed,
-    )
-    final_bytes, dur = _apply_chunk_atempo(res.wav_bytes, post_atempo)
-    return final_bytes, dur, 24000
-
-
-def _synthesize_chunks_batch(
-    chunks: list[str],
-    cache_dir: Path,
-    voice_wav: str | None = None,
-    exaggeration: float = 0.5,
-    cfg_weight: float = 0.5,
-    seed: int | None = None,
-    post_atempo: float = 1.15,
-) -> None:
-    """Synthesize multiple missing chunks in a single worker job to avoid model reload."""
-    if not chunks:
-        return
-    from .chatterbox_tts import _venv_python, _WORKER, CHATTERBOX_TEMPERATURE, CHATTERBOX_DEVICE
-    venv_py = _venv_python()
+    _log = log or (lambda _m: None)
+    todo = [t for t in dict.fromkeys(texts) if t.strip() and not cache.has(t)]
+    if not todo:
+        return []
+    venv_py = chatterbox_tts._venv_python()
     if not venv_py.exists():
-        for ch in chunks:
-            raw_bytes, dur, _ = _synthesize_chunk_raw(
-                ch,
-                voice_wav=voice_wav,
-                exaggeration=exaggeration,
-                cfg_weight=cfg_weight,
-                seed=seed,
-                post_atempo=post_atempo,
-            )
-            k = get_cache_key(ch, voice_wav, exaggeration, cfg_weight, seed, post_atempo)
-            (cache_dir / f"{k}.wav").write_bytes(raw_bytes)
-            (cache_dir / f"{k}.json").write_text(json.dumps({"duration": dur, "words": _even_words(ch, 0.0, dur)}, indent=2))
-        return
+        raise RuntimeError(
+            f"Chatterbox venv missing at {venv_py.parent.parent} (set CHATTERBOX_VENV, or create it "
+            f"with: python3 -m venv .venv-chatterbox && {venv_py} -m pip install chatterbox-tts)")
 
+    st = cache.settings
     tmp = Path(tempfile.mkdtemp(prefix="chatterbox_batch_"))
     out_dir = tmp / "wav"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    prompt_wav = str(voice_wav) if (voice_wav and Path(voice_wav).is_file()) else None
-
+    chunk_specs = []
+    for t in todo:
+        spec: dict[str, Any] = {"text": t, "exaggeration": st.exaggeration, "cfg_weight": st.cfg_weight}
+        if st.seed is not None:
+            spec["seed"] = st.seed        # re-seeded before EACH chunk: audio depends on its key only
+        chunk_specs.append(spec)
     job = tmp / "job.json"
     job.write_text(json.dumps({
-        "chunks": [{"text": c, "exaggeration": exaggeration, "cfg_weight": cfg_weight} for c in chunks],
+        "chunks": chunk_specs,
         "out_dir": str(out_dir),
-        "audio_prompt": prompt_wav,
-        "temperature": CHATTERBOX_TEMPERATURE,
+        "audio_prompt": _prompt_wav(st.voice),
+        "temperature": st.temperature,
         "device": CHATTERBOX_DEVICE or None,
-        "seed": seed,
     }))
+    _log(f"[bg-tts] one worker job for {len(todo)} chunk(s)")
 
-    proc = subprocess.run([str(venv_py), str(_WORKER), str(job)], capture_output=True, text=True)
-    if proc.returncode != 0:
-        # Fall back to single-chunk synthesis if worker errors
-        for ch in chunks:
-            raw_bytes, dur, _ = _synthesize_chunk_raw(
-                ch,
-                voice_wav=voice_wav,
-                exaggeration=exaggeration,
-                cfg_weight=cfg_weight,
-                seed=seed,
-                post_atempo=post_atempo,
-            )
-            k = get_cache_key(ch, voice_wav, exaggeration, cfg_weight, seed, post_atempo)
-            (cache_dir / f"{k}.wav").write_bytes(raw_bytes)
-            (cache_dir / f"{k}.json").write_text(json.dumps({"duration": dur, "words": _even_words(ch, 0.0, dur)}, indent=2))
-        return
+    proc = subprocess.Popen([str(venv_py), str(chatterbox_tts._WORKER), str(job)],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, encoding="utf-8", errors="replace", bufsize=1)
+    lines: "queue.Queue[str | None]" = queue.Queue()
 
-    for i, ch in enumerate(chunks):
-        wav_path = out_dir / f"chunk_{i:05d}.wav"
-        if wav_path.is_file():
-            raw_bytes = wav_path.read_bytes()
-            final_bytes, dur = _apply_chunk_atempo(raw_bytes, post_atempo)
-            k = get_cache_key(ch, voice_wav, exaggeration, cfg_weight, seed, post_atempo)
-            (cache_dir / f"{k}.wav").write_bytes(final_bytes)
-            (cache_dir / f"{k}.json").write_text(json.dumps({
-                "duration": dur,
-                "words": _even_words(ch, 0.0, dur),
-            }, indent=2))
+    def _pump() -> None:
+        try:
+            for ln in proc.stdout:                                  # type: ignore[union-attr]
+                lines.put(ln)
+        finally:
+            lines.put(None)
+
+    threading.Thread(target=_pump, daemon=True, name="bg-tts-worker-pump").start()
+    tail: list[str] = []
+    last_output = time.monotonic()
+    stopped = False
+    try:
+        while True:
+            if should_stop is not None and should_stop():
+                stopped = True
+                break
+            try:
+                ln = lines.get(timeout=0.5)
+            except queue.Empty:
+                if time.monotonic() - last_output > _STALL_SECONDS:
+                    tail.append(f"(no output for {_STALL_SECONDS:.0f}s — worker killed)")
+                    break
+                continue
+            if ln is None:
+                break
+            last_output = time.monotonic()
+            ln = ln.strip()
+            if not ln:
+                continue
+            if not ln.startswith("{"):
+                tail.append(ln)                                     # worker stderr, kept for the error
+                continue
+            try:
+                msg = json.loads(ln)
+            except ValueError:
+                continue
+            if msg.get("ready"):
+                _log(f"[bg-tts] model loaded on {msg.get('device')} @ {msg.get('sr')}Hz")
+            elif msg.get("error"):
+                _log(f"[bg-tts] chunk {msg.get('i')} failed: {str(msg['error'])[:140]}")
+            elif "sec" in msg:
+                i = int(msg["i"])
+                if not 0 <= i < len(todo):
+                    continue
+                wav = out_dir / f"chunk_{i:05d}.wav"
+                if not wav.is_file():
+                    continue
+                final_bytes, dur = _apply_chunk_atempo(wav.read_bytes(), st.post_atempo)
+                cache.store(todo[i], final_bytes, dur)
+                try:
+                    wav.unlink()
+                except OSError:
+                    pass
+                if on_chunk is not None:
+                    on_chunk(todo[i], dur)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    left = [t for t in todo if not cache.has(t)]
+    if left and not stopped:
+        _log(f"[bg-tts] {len(left)} chunk(s) not produced. Worker output: " + " | ".join(tail[-6:]))
+    return left
 
 
-import threading
-
-_RUNNERS: dict[str, BackgroundTTSRunner] = {}
-_RUNNERS_LOCK = threading.Lock()
-
-
-def start_background_tts(project_name: str, voice_wav: str | None = None) -> BackgroundTTSRunner:
-    """Start or retrieve a background TTS runner for project in a background daemon thread."""
-    with _RUNNERS_LOCK:
-        runner = _RUNNERS.get(project_name)
-        if runner is None:
-            runner = BackgroundTTSRunner(project_name, voice_wav=voice_wav)
-            _RUNNERS[project_name] = runner
-            t = threading.Thread(target=runner.run_sync, daemon=True, name=f"bg-tts-{project_name}")
-            t.start()
-        return runner
-
-
-def bump_priority_beat(project_name: str, beat_id: str) -> None:
-    """Bump the scene containing beat_id to the front of the background TTS queue."""
-    with _RUNNERS_LOCK:
-        runner = _RUNNERS.get(project_name)
-        if runner is None:
-            runner = start_background_tts(project_name)
-        runner.bump_priority_beat(beat_id)
-
+# ─── the runner ───────────────────────────────────────────────────────────────────────────────
 
 class BackgroundTTSRunner:
-    """Background TTS runner that operates progressively on narration.json
-    without requiring ensure_reviewed."""
+    """Keeps projects/<p>/cache/tts and review/tts_status.json in step with narration.json.
+    One per project (see start_background_tts); safe to poke from the UI and web threads."""
 
     def __init__(self, project_name: str, voice_wav: str | None = None):
         self.project_name = project_name
         self.root = config.PROJECTS_ROOT / project_name
         self.cache_dir = self.root / "cache" / "tts"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.review_dir = self.root / "review"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.review_dir.mkdir(parents=True, exist_ok=True)
-        self.voice_wav = voice_wav or CHATTERBOX_VOICE_WAV or "built-in"
-        self.exaggeration = CHATTERBOX_EXAGGERATION
-        self.cfg_weight = CHATTERBOX_CFG_WEIGHT
-        self.seed = config.CHATTERBOX_SEED if config.ENABLE_VIDEO_CLIPS else None
-        self.post_atempo = float(os.getenv("POST_ATEMPO", str(config.POST_ATEMPO)))
+        self.voice_wav = voice_wav
         self.priority_scenes: list[int] = []
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()              # priority_scenes + job bookkeeping
+        self._state_lock = threading.Lock()        # thread start/stop decision
+        self._thread: threading.Thread | None = None
+        self._dirty = threading.Event()            # narration changed: re-plan
+        self._bumped = threading.Event()           # priority changed: maybe re-order the batch
+        self._reorder = False                      # set by _should_stop when it ended a batch for a bump
+        self._job_order: list[str] = []
+        self._cache: ChunkCache | None = None
+        self._attempts: dict[str, int] = {}
 
+    # ── pokes from other threads ──
     def bump_priority_beat(self, beat_id: str) -> None:
-        """Bump the scene containing beat_id to the front of the queue."""
-        narration_path = self.root / "narration.json"
-        if not narration_path.exists():
+        """Put the scene holding review beat `beat_id` first in the queue."""
+        sid = self._scene_of_beat(str(beat_id))
+        if sid is None:
             return
-        try:
-            narration = json.loads(narration_path.read_text())
-            for sc in narration.get("scenes", []):
-                sid = int(sc.get("scene_id") or 1)
-                for b in sc.get("visual_beats", []):
-                    if str(b.get("beat_id")) == beat_id:
-                        with self._lock:
-                            if sid in self.priority_scenes:
-                                self.priority_scenes.remove(sid)
-                            self.priority_scenes.insert(0, sid)
-                        return
-        except Exception as exc:
-            print(f"[bg-tts] bump_priority_beat error for {beat_id}: {exc}")
+        with self._lock:
+            if sid in self.priority_scenes:
+                self.priority_scenes.remove(sid)
+            self.priority_scenes.insert(0, sid)
+        self._bumped.set()
+
+    def request_resync(self) -> None:
+        """narration.json changed: re-plan, synthesizing only chunks that aren't cached."""
+        self._dirty.set()
+        self.ensure_running()
+
+    def ensure_running(self) -> bool:
+        """Start the background thread unless one is already working. True when it was started."""
+        with self._state_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return False
+            self._thread = threading.Thread(target=self._thread_main, daemon=True,
+                                            name=f"bg-tts-{self.project_name}")
+            self._thread.start()
+            return True
+
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
 
     def get_status(self) -> dict[str, Any]:
-        for status_file in [self.review_dir / "tts_status.json", self.cache_dir / "status.json"]:
-            if status_file.exists():
-                try:
-                    return json.loads(status_file.read_text())
-                except Exception:
-                    pass
-        return {"completed": False, "beat_durations": {}, "scene_durations": {}}
+        return tts_status.read_status(self.root)
+
+    # ── internals ──
+    def _load_narration(self) -> dict[str, Any] | None:
+        try:
+            doc = json.loads((self.root / "narration.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return doc if isinstance(doc, dict) and (doc.get("scenes") or []) else None
+
+    def _scene_of_beat(self, beat_id: str) -> int | None:
+        narration = self._load_narration()
+        if narration is None:
+            return None
+        for row in beat_rows(narration):
+            if row.beat_key == beat_id:
+                return row.scene_id
+        return None
+
+    def _thread_main(self) -> None:
+        self._attempts.clear()                                      # a fresh run retries what failed before
+        try:
+            while True:
+                self.run_sync()
+                with self._state_lock:
+                    if not self._dirty.is_set():
+                        self._thread = None
+                        return
+        except Exception as exc:                                    # never die silently
+            logger.exception("background TTS for %s crashed", self.project_name)
+            self._write_status({"completed": False, "running": False, "beat_durations": {},
+                                "scene_durations": {}, "error": f"{type(exc).__name__}: {exc}"})
+            with self._state_lock:
+                self._thread = None
 
     def _write_status(self, status: dict[str, Any]) -> None:
-        s_data = json.dumps(status, indent=2)
+        status["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         try:
-            (self.cache_dir / "status.json").write_text(s_data)
-        except OSError:
-            pass
-        try:
-            (self.review_dir / "tts_status.json").write_text(s_data)
-        except OSError:
-            pass
+            tts_status.write_status(self.root, status)
+        except OSError as exc:
+            logger.warning("could not write the TTS status for %s: %s", self.project_name, exc)
+
+    def _publish(self, narration: dict, chunks: list[str], cache: ChunkCache, *,
+                 running: bool, error: str | None = None) -> dict[str, Any]:
+        timings = compute_beat_timings(narration, chunks, [cache.duration(c) for c in chunks])
+        done = sum(1 for c in chunks if cache.has(c))
+        status = {
+            "completed": timings.complete,
+            "running": running,
+            "beat_durations": timings.durations,
+            "beat_windows": {k: list(v) for k, v in timings.windows.items()},
+            "scene_durations": {str(k): v for k, v in timings.scene_durations.items()},
+            "chunks_total": len(chunks),
+            "chunks_done": done,
+            "narration_sha": hashlib.sha256(narration_text(narration["scenes"]).encode("utf-8")).hexdigest(),
+            "post_atempo": cache.settings.post_atempo,
+            "seed": cache.settings.seed,
+            "error": error,
+        }
+        self._write_status(status)
+        return status
+
+    def _queue_order(self, narration: dict, chunks: list[str], cache: ChunkCache) -> list[str]:
+        """Missing chunks, those overlapping a bumped scene first, then stream order."""
+        pos, lo = [], 0
+        for c in chunks:
+            n = len(c.split())
+            pos.append((lo, lo + n))
+            lo += n
+        ranges = scene_word_ranges(narration["scenes"], lo)
+        with self._lock:
+            prio = list(self.priority_scenes)
+        missing = [(i, c) for i, c in enumerate(chunks)
+                   if not cache.has(c) and self._attempts.get(c, 0) < _MAX_ATTEMPTS]
+        ordered: list[str] = []
+        for sid in prio:
+            if sid not in ranges:
+                continue
+            s_lo, s_hi = ranges[sid]
+            for i, c in missing:
+                a, b = pos[i]
+                if a < s_hi and b > s_lo and c not in ordered:
+                    ordered.append(c)
+        ordered.extend(c for _i, c in missing if c not in ordered)
+        return ordered
+
+    def _should_stop(self) -> bool:
+        """Polled by the worker loop: stop the batch when it is stale or a bump needs a re-order."""
+        if self._dirty.is_set():
+            return True
+        if not self._bumped.is_set():
+            return False
+        self._bumped.clear()
+        cache = self._cache
+        narration = self._load_narration()
+        if cache is None or narration is None:
+            return False
+        want = self._queue_order(narration, plan_chunks(narration["scenes"]), cache)
+        if not want:
+            return False
+        remaining = [t for t in self._job_order if not cache.has(t)]
+        # the chunk in flight and the one after it are already "next": no restart for those
+        if want[0] in remaining[:2]:
+            return False
+        self._reorder = True
+        return True
 
     def run_sync(self, progress_cb: Callable[[str], None] | None = None) -> dict[str, Any]:
-        """Execute background TTS run synchronously with keep-awake."""
-        narration_path = self.root / "narration.json"
-        if not narration_path.exists():
-            return {"error": f"narration.json not found in {self.root}"}
-
-        narration = json.loads(narration_path.read_text())
-        scenes = narration.get("scenes") or []
-        if not scenes:
-            return {"error": "No scenes in narration"}
-
-        from .pipeline import _normalize_for_tts
-
+        """Bring the cache and the status up to date with narration.json, synchronously.
+        Repeats while the narration (or the priority) keeps changing underneath it."""
+        say = progress_cb or (lambda _m: None)
         set_keep_awake(True)
         try:
-            status = self.get_status()
-            beat_durations = status.get("beat_durations", {})
-            scene_durations = status.get("scene_durations", {})
+            while True:
+                self._dirty.clear()
+                self._reorder = False
+                narration = self._load_narration()
+                if narration is None:
+                    status = {"completed": False, "running": False, "beat_durations": {},
+                              "scene_durations": {},
+                              "error": f"narration.json missing or without scenes in {self.root}"}
+                    self._write_status(status)
+                    return status
+                settings = TTSSettings.current(voice_wav=self.voice_wav,
+                                               post_atempo=resolve_post_atempo(narration))
+                cache = ChunkCache(self.cache_dir, settings)
+                self._cache = cache
+                chunks = plan_chunks(narration["scenes"])
+                if not chunks:
+                    return self._publish(narration, chunks, cache, running=False)
+                order = self._queue_order(narration, chunks, cache)
+                self._job_order = order
+                self._publish(narration, chunks, cache, running=bool(order))
 
-            remaining_scenes = list(scenes)
-            sentence_timings: dict[int, dict[str, float]] = {}
-            running_t = 0.0
-
-            while remaining_scenes:
-                # Dynamically re-check priority before each scene
-                next_sc = None
-                with self._lock:
-                    for sid in list(self.priority_scenes):
-                        match = next((s for s in remaining_scenes if int(s.get("scene_id") or 1) == sid), None)
-                        if match:
-                            next_sc = match
-                            self.priority_scenes.remove(sid)
-                            break
-                if next_sc is None:
-                    next_sc = remaining_scenes[0]
-
-                remaining_scenes.remove(next_sc)
-                sc = next_sc
-                sid = int(sc.get("scene_id") or 1)
-                raw_text = str(sc.get("text", "")).strip()
-                if not raw_text:
-                    continue
-
-                text = _normalize_for_tts(raw_text)
-                chunks = _chunks(text)
-                scene_wav_dur = 0.0
-
-                # Check missing chunks
-                missing_chunks: list[str] = []
-                chunk_keys = []
-                for ch in chunks:
-                    key = get_cache_key(
-                        text=ch,
-                        voice=self.voice_wav,
-                        exaggeration=self.exaggeration,
-                        cfg_weight=self.cfg_weight,
-                        seed=self.seed,
-                        post_atempo=self.post_atempo,
-                    )
-                    chunk_keys.append((ch, key))
-                    wav_file = self.cache_dir / f"{key}.wav"
-                    meta_file = self.cache_dir / f"{key}.json"
-                    if not (wav_file.exists() and meta_file.exists()):
-                        missing_chunks.append(ch)
-
-                if missing_chunks:
-                    _synthesize_chunks_batch(
-                        missing_chunks,
-                        cache_dir=self.cache_dir,
-                        voice_wav=self.voice_wav,
-                        exaggeration=self.exaggeration,
-                        cfg_weight=self.cfg_weight,
-                        seed=self.seed,
-                        post_atempo=self.post_atempo,
-                    )
-
-                for ch, key in chunk_keys:
-                    wav_file = self.cache_dir / f"{key}.wav"
-                    meta_file = self.cache_dir / f"{key}.json"
+                error: str | None = None
+                if order:
+                    def _on_chunk(text: str, dur: float, _n=narration, _c=chunks, _k=cache) -> None:
+                        self._publish(_n, _c, _k, running=True)
+                        say(f"[bg-tts] cached {dur:.2f}s: {text[:60]}")
                     try:
-                        meta = json.loads(meta_file.read_text())
-                        ch_dur = float(meta["duration"])
-                    except Exception:
-                        wav_bytes, ch_dur, sr = _synthesize_chunk_raw(
-                            ch,
-                            voice_wav=self.voice_wav,
-                            exaggeration=self.exaggeration,
-                            cfg_weight=self.cfg_weight,
-                            seed=self.seed,
-                            post_atempo=self.post_atempo,
-                        )
-                        wav_file.write_bytes(wav_bytes)
-                        words = _even_words(ch, 0.0, ch_dur)
-                        meta_file.write_text(json.dumps({"duration": ch_dur, "words": words}, indent=2))
-
-                    scene_wav_dur += ch_dur
-
-                scene_durations[str(sid)] = round(scene_wav_dur, 4)
-                sentence_timings[sid] = {
-                    "duration": scene_wav_dur,
-                    "start": running_t,
-                    "end": running_t + scene_wav_dur,
-                }
-                running_t += scene_wav_dur
-
-                # Update beat durations progressively for this scene
-                windows = calculate_beat_durations([sc], sentence_timings)
-                for w in windows:
-                    beat_durations[w.beat_id] = round(w.duration, 4)
-
-                status["beat_durations"] = beat_durations
-                status["scene_durations"] = scene_durations
-                self._write_status(status)
-                if progress_cb:
-                    progress_cb(f"[bg-tts] scene {sid} ready ({scene_wav_dur:.2f}s)")
-
-            # Final pass: recalculate all beat windows across full project in canonical scene order
-            canonical_sentence_timings: dict[int, dict[str, float]] = {}
-            curr_canonical_t = 0.0
-            for sc in scenes:
-                sid = int(sc.get("scene_id") or 1)
-                dur = float(scene_durations.get(str(sid), sentence_timings.get(sid, {}).get("duration", 0.0)))
-                canonical_sentence_timings[sid] = {
-                    "duration": dur,
-                    "start": round(curr_canonical_t, 4),
-                    "end": round(curr_canonical_t + dur, 4),
-                }
-                curr_canonical_t += dur
-
-            full_windows = calculate_beat_durations(scenes, canonical_sentence_timings)
-            for w in full_windows:
-                beat_durations[w.beat_id] = round(w.duration, 4)
-
-            status["completed"] = True
-            status["beat_durations"] = beat_durations
-            status["scene_durations"] = scene_durations
-            self._write_status(status)
-            return status
-
+                        left = synthesize_missing(order, cache, on_chunk=_on_chunk,
+                                                  should_stop=self._should_stop, log=say)
+                    except RuntimeError as exc:         # no venv / the worker could not start
+                        left, error = [], str(exc)
+                    if error is None and not (self._dirty.is_set() or self._reorder) and left:
+                        for t in left:                  # the worker produced nothing for these
+                            self._attempts[t] = self._attempts.get(t, 0) + 1
+                        if any(self._attempts[t] < _MAX_ATTEMPTS for t in left):
+                            continue                    # one more try, in a fresh job
+                        error = (f"{len(left)} chunk(s) could not be synthesized "
+                                 f"(first: {left[0][:60]!r})")
+                    if error is None and (self._dirty.is_set() or self._reorder):
+                        continue                        # edited narration / new priority: re-plan
+                elif any(not cache.has(c) for c in chunks):
+                    error = "some chunks were given up on after repeated failures"
+                status = self._publish(narration, chunks, cache, running=False, error=error)
+                if error or not self._dirty.is_set():
+                    return status
         finally:
             set_keep_awake(False)
 
+
+# ─── per-project registry ─────────────────────────────────────────────────────────────────────
+
+_RUNNERS: dict[str, BackgroundTTSRunner] = {}
+_RUNNERS_LOCK = threading.Lock()
+
+
+def _runner_for(project_name: str, voice_wav: str | None = None) -> BackgroundTTSRunner:
+    with _RUNNERS_LOCK:
+        runner = _RUNNERS.get(project_name)
+        if runner is None:
+            runner = BackgroundTTSRunner(project_name, voice_wav=voice_wav)
+            _RUNNERS[project_name] = runner
+        return runner
+
+
+def start_background_tts(project_name: str, voice_wav: str | None = None) -> BackgroundTTSRunner:
+    """The project's runner (one per project), its daemon thread running."""
+    runner = _runner_for(project_name, voice_wav)
+    runner.ensure_running()
+    return runner
+
+
+def bump_priority_beat(project_name: str, beat_id: str) -> BackgroundTTSRunner:
+    """Move the scene of review beat `beat_id` to the front of the project's queue."""
+    runner = start_background_tts(project_name)
+    runner.bump_priority_beat(beat_id)
+    return runner
+
+
+def request_resync(project_name: str) -> BackgroundTTSRunner:
+    """narration.json changed — have the runner re-plan (and start it if it is idle)."""
+    runner = _runner_for(project_name)
+    runner.request_resync()
+    return runner
+
+
+# ─── Stage 4 side ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class CachedAudioResult:
@@ -410,91 +599,38 @@ def load_or_synthesize_cached(
     voice_wav: str | None = None,
     provider: str = "chatterbox",
 ) -> CachedAudioResult | None:
-    """Used by Stage 4: loads all cached chunks for the project, synthesizing
-    only missing chunks, and combines them into audio.wav."""
+    """Stage 4 (ENABLE_VIDEO_CLIPS=1): the project's audio from the shared chunk cache,
+    synthesizing only the chunks that are missing (in one worker job), concatenated into
+    audio.wav with the word timeline Stage 4 builds from it."""
     if provider != "chatterbox":
         return None
-
     root = config.PROJECTS_ROOT / project_name
-    cache_dir = root / "cache" / "tts"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    v = voice_wav or CHATTERBOX_VOICE_WAV or "built-in"
-    ex = CHATTERBOX_EXAGGERATION
-    cfg = CHATTERBOX_CFG_WEIGHT
-    seed = config.CHATTERBOX_SEED if config.ENABLE_VIDEO_CLIPS else None
+    cache = ChunkCache(root / "cache" / "tts",
+                       TTSSettings.current(voice_wav=voice_wav, post_atempo=post_atempo))
+    chunks = plan_chunks(scenes)
+    if not chunks:
+        return None
+    left = synthesize_missing(chunks, cache, log=print)
+    if left:
+        raise RuntimeError(f"Chatterbox produced no audio for {len(left)} chunk(s) "
+                           f"(first: {left[0][:60]!r}) — re-run Stage 4 to retry just those")
 
     all_words: list[dict[str, Any]] = []
-    chunk_wav_paths: list[Path] = []
-    running_t = 0.0
+    wav_paths: list[Path] = []
+    t = 0.0
+    for ch in chunks:
+        meta = cache.meta(ch)
+        assert meta is not None
+        dur = float(meta["duration"])
+        for w in meta.get("words") or []:
+            all_words.append({"word": w["word"], "start": round(t + float(w["start"]), 4),
+                              "end": round(t + float(w["end"]), 4)})
+        wav_paths.append(cache.wav_path(ch))
+        t += dur
 
-    from .pipeline import _normalize_for_tts
-
-    for sc in scenes:
-        raw_text = str(sc.get("text", "")).strip()
-        if not raw_text:
-            continue
-        text = _normalize_for_tts(raw_text)
-        chunks = _chunks(text)
-        for ch in chunks:
-            key = get_cache_key(
-                text=ch,
-                voice=v,
-                exaggeration=ex,
-                cfg_weight=cfg,
-                seed=seed,
-                post_atempo=post_atempo,
-            )
-            wav_file = cache_dir / f"{key}.wav"
-            meta_file = cache_dir / f"{key}.json"
-
-            loaded_meta = None
-            if wav_file.exists() and meta_file.exists():
-                try:
-                    meta = json.loads(meta_file.read_text())
-                    ch_dur = float(meta["duration"])
-                    ch_words = meta.get("words", [])
-                    loaded_meta = (ch_dur, ch_words)
-                except Exception:
-                    loaded_meta = None
-
-            if loaded_meta is None:
-                # Synthesize missing or corrupted chunk
-                wav_bytes, ch_dur, sr = _synthesize_chunk_raw(
-                    ch,
-                    voice_wav=v,
-                    exaggeration=ex,
-                    cfg_weight=cfg,
-                    seed=seed,
-                    post_atempo=post_atempo,
-                )
-                wav_file.write_bytes(wav_bytes)
-                ch_words = _even_words(ch, 0.0, ch_dur)
-                meta_file.write_text(json.dumps({"duration": ch_dur, "words": ch_words}, indent=2))
-            else:
-                ch_dur, ch_words = loaded_meta
-
-            chunk_wav_paths.append(wav_file)
-            for w in ch_words:
-                all_words.append({
-                    "word": w["word"],
-                    "start": round(running_t + float(w["start"]), 4),
-                    "end": round(running_t + float(w["end"]), 4),
-                })
-            running_t += ch_dur
-
-    if not chunk_wav_paths:
-        return None
-
-    # Concatenate chunk wavs into audio.wav
     audio_path = root / "audio.wav"
-    _concat_wavs(chunk_wav_paths, audio_path)
-
-    return CachedAudioResult(
-        audio_path=audio_path,
-        duration_seconds=running_t,
-        words=all_words,
-    )
+    _concat_wavs(wav_paths, audio_path)
+    return CachedAudioResult(audio_path=audio_path, duration_seconds=t, words=all_words)
 
 
 def _concat_wavs(wav_paths: list[Path], out_path: Path) -> None:
@@ -507,7 +643,6 @@ def _concat_wavs(wav_paths: list[Path], out_path: Path) -> None:
 
     frames = bytearray()
     nchannels = sampwidth = framerate = None
-
     for p in wav_paths:
         with wave.open(str(p), "rb") as wf:
             if nchannels is None:
