@@ -155,6 +155,15 @@ def decide_route(
         log(f"[router] Question '{question}': {reason}")
         return decision
 
+    inconclusive = [c for c in decision.batcave_checks if c.inconclusive]
+    if inconclusive:
+        # A lookup that could not finish says nothing about the comic: never let it read as
+        # "not on batcave" (that would send a comic-canon question to screen_qa).
+        reason = f"batcave lookup inconclusive ({inconclusive[0].describe()}) -> comic_qa"
+        decision.reasons.append(reason)
+        log(f"[router] Question '{question}': {reason}")
+        return decision
+
     clips_found = False
     try:
         clips_found = bool(youtube_search(f"{question} clip"))
