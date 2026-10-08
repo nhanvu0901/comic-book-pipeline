@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+import config
 from stages.stage_5 import clips, shots
 from stages.stage_5.schema import Shot
 
@@ -384,7 +385,11 @@ def test_clip_shot_meets_the_shot_contract(tmp_path):
 
 
 @needs_ffmpeg
-def test_a_clip_shorter_than_its_shot_holds_its_last_frame(tmp_path):
+def test_a_clip_shorter_than_its_shot_holds_its_last_frame(tmp_path, monkeypatch):
+    # Pins the LEGACY (ENABLE_VIDEO_CLIPS=0) playback rule: the whole shortfall is a freeze. With
+    # the flag ON the hold is capped at CLIP_MAX_HOLD and the shot falls back to its panel instead
+    # (tests/test_clip_fit_math.py) — so this test sets the flag explicitly rather than inherit it.
+    monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", False)
     src = _make_source(tmp_path / "src.mp4", audio=False)
     shot = _clip_shot(src, 2.0, clip_in=1.0, clip_out=1.5)       # 0.5s of clip for a 2s shot
     out = clips.render_clip_shot(shot, tmp_path / "shot.mp4")
@@ -401,9 +406,11 @@ def test_a_clip_shorter_than_its_shot_holds_its_last_frame(tmp_path):
 
 
 @needs_ffmpeg
-def test_a_shot_after_the_clip_ran_out_holds_the_out_point(tmp_path):
+def test_a_shot_after_the_clip_ran_out_holds_the_out_point(tmp_path, monkeypatch):
     """One 1s clip over two 1s shots: the 2nd shot's in-point (start+1.0) is AT the out-point —
-    it must hold the out frame, not play on past "end"."""
+    it must hold the out frame, not play on past "end". LEGACY (ENABLE_VIDEO_CLIPS=0) rule; with
+    the flag ON that shot raises ClipTooShort and renders its panel (tests/test_clip_fit_math.py)."""
+    monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", False)
     src = _make_source(tmp_path / "src.mp4", audio=False)
     sl = [_shot(0, 2, 1.0), _shot(1, 2, 1.0)]
     clips.apply_clips_to_shots(sl, [("2", _entry(start=1.0, end=2.0, file=str(src)))],
