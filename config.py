@@ -547,6 +547,14 @@ BG_MUSIC_SILENCE_DB = float(os.getenv("BG_MUSIC_SILENCE_DB", "-35"))
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
 
+# ─── Video Clips in Q&A ────────────────────────────────────────────────────
+ENABLE_VIDEO_CLIPS = bool(int(os.getenv("ENABLE_VIDEO_CLIPS", "0")))
+CLIP_SPEED_MIN = float(os.getenv("CLIP_SPEED_MIN", "0.8"))
+CLIP_SPEED_MAX = float(os.getenv("CLIP_SPEED_MAX", "1.25"))
+CLIP_MAX_HOLD = float(os.getenv("CLIP_MAX_HOLD", "0.3"))
+_chatterbox_seed_env = os.getenv("CHATTERBOX_SEED")
+CHATTERBOX_SEED = (int(_chatterbox_seed_env) if _chatterbox_seed_env is not None else 42) if ENABLE_VIDEO_CLIPS else None
+
 # ─── Comic Scraper ──────────────────────────────────────────────────────────
 # headless=False opens a visible Chrome window — much more reliable against Cloudflare
 
