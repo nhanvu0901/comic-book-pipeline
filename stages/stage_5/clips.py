@@ -565,7 +565,7 @@ def _even(v: float) -> int:
 
 
 def clip_filter_graph(iw: int, ih: int, crop: dict | None, hold_seconds: float, *,
-                      speed: float = 1.0, logo: bool = False) -> str:
+                      speed: float = 1.0, logo: bool = False, untag: bool = False) -> str:
     """filter_complex turning input 0 into a 9:16 (OUTPUT_W x OUTPUT_H) CFR stream labelled
     [v]: optional subject crop → speed change [0.8, 1.25] → contain+blur → hold the last
     frame `hold_seconds` (tpad) → corner logo."""
@@ -582,6 +582,12 @@ def clip_filter_graph(iw: int, ih: int, crop: dict | None, hold_seconds: float, 
     # setsar=0 leaves the aspect ratio unsignalled, as the panel shots do: the H.264 SPS then
     # matches theirs bit for bit, which is what _concat's stream copy reuses for every segment.
     tail = f"tpad=stop_mode=clone:stop_duration={hold_seconds:.3f},format=yuv420p,setsar=0"
+    if untag:
+        # A YouTube source is tagged bt709/tv; a panel shot is not. Left alone, the tags ride into the clip
+        # shot, so the concatenated stream changes colour parameters mid-way (and ffmpeg 8.1 reconfigures its
+        # filter graph there — one Windows run died in the h264 decoder at exactly that spot). Every shot
+        # of one video must carry the same (here: no) colour metadata.
+        tail += ",setparams=colorspace=unknown:color_primaries=unknown:color_trc=unknown:range=unknown"
     out = "[vc]" if logo else "[v]"
     if abs(fw - W) <= W * _SNAP_FRAC and abs(fh - H) <= H * _SNAP_FRAC:
         g = f"[0:v]{pre}{spd}fps={fps},scale={W}:{H}:flags=lanczos,{tail}{out}"
@@ -755,7 +761,7 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
     # for than the shot needs and `-frames:v` cuts them off, so a frame lost to fps/setpts
     # rounding can never leave the output a frame short of the contract.
     graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop,
-                              fit_.hold + _TAIL_PAD, speed=fit_.speed, logo=logo)
+                              fit_.hold + _TAIL_PAD, speed=fit_.speed, logo=logo, untag=True)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [ff, "-y", *inputs, "-filter_complex", graph, "-map", "[v]",
            "-frames:v", str(frames), "-c:v", "libx264", "-preset", preset, "-crf", str(crf),

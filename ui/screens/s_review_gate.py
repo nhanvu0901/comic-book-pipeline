@@ -821,11 +821,21 @@ def build(
                     _show_snack(f"Beat {bk}: {payload.get('message') or 'không chọn được clip'}")
                     return
                 clips_by_beat[bk] = payload
+                _withdraw_approval()
                 _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
             # keyed by this page + project: a screen that rebuilds replaces its listener, not stacks one
             add_moment_picked_listener(_on_moment_picked, key=(id(page), project))
         except Exception as exc:
             logger.warning("Failed to register moment picked listener: %s", exc)
+
+    def _withdraw_approval():
+        """A clip picked or rolled back changes what Stage 5 will render, so an earlier Approve no longer
+        covers it — the same rule every narration edit follows (and P3's screen review)."""
+        if not locks_doc.get("approved"):
+            return
+        locks_doc["approved"] = False
+        locks_doc["approved_at"] = None
+        save_review_locks(project, locks_doc)
 
     def _clear_all_locks_and_clips():
         if not config.ENABLE_VIDEO_CLIPS:
@@ -1626,6 +1636,7 @@ def build(
                 def _rollback_mp4(_e, bk=beat_key):
                     _remove_clip_for_beat(project, bk)
                     clips_by_beat.pop(bk, None)
+                    _withdraw_approval()
                     _rebuild(f"Beat {bk}: quay lại dùng comic panel", dirty=frozenset({bk}))
                 header_icons.append(ft.IconButton(
                     ft.Icons.UNDO, icon_size=16, icon_color=WARN,
