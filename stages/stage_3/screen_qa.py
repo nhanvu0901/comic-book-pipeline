@@ -45,6 +45,12 @@ SCREEN_QA_MODE = "screen_qa"
 # Same Short pace as write_script._WORDS_PER_SEC (a test keeps them equal).
 _WORDS_PER_SEC = 3.4
 
+# Output budget. A scene is {text + 2-5 beat objects with text AND query} ~ 200 tokens; the comic
+# Q&A's string beats fit in 900/item, these do not (a fixed 2600 truncated a 5-item answer mid-JSON
+# on a live run). Reasoning models also burn tokens before the first brace, hence the headroom.
+_TOKENS_PER_SCENE = 450
+_TOKEN_HEADROOM = 1500
+
 
 # ─── prompts ────────────────────────────────────────────────────────────────
 
@@ -490,7 +496,7 @@ def write_screen_qa(
                 _user_prompt(question, items, archetype=archetype, thesis=thesis,
                              hook_hint=hook_hint, issues=issues, budget=budget),
                 models=[model] if model else None, progress=progress, validator=_valid,
-                max_tokens=900 * per + 800,
+                max_tokens=_TOKENS_PER_SCENE * expected + _TOKEN_HEADROOM,
             )
         except Exception as exc:  # noqa: BLE001 - any provider failure -> grounded fallback below
             log(f"[screen_qa] LLM call failed ({exc}); using grounded fallback")

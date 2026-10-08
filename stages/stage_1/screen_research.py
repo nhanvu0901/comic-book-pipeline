@@ -65,8 +65,10 @@ Your job: find the specific on-screen moments that answer the question.
 HARD RULES:
 1. USE ONLY THE EVIDENCE. Never add a fact from memory. If the evidence does not support a \
 moment, leave it out - fewer verified items beat more guessed ones.
-2. One item = one concrete on-screen moment (what a viewer could be shown), from a named film, \
-episode or series.
+2. One item = one concrete on-screen ACTION or EVENT (someone does something a camera could show), \
+from a named film, episode or series. A concept, a device, a rule or a place is not an item by \
+itself - fold it into the action that uses it. Items must be distinct moments, not restatements \
+of one another.
 3. Item fields:
    - entity: the character, team or object the moment is about.
    - event: what happens on screen that answers the question (a short verb phrase).
@@ -264,7 +266,7 @@ def _call_llm(system_prompt: str, user_prompt: str, log: Callable[[str], None] =
         if m and m not in chain:
             chain.append(m)
     raw, _model = call_with_chain(
-        system=system_prompt, user=user_prompt, models=chain, max_tokens=3000,
+        system=system_prompt, user=user_prompt, models=chain, max_tokens=5000,
         progress=log, label="screen_research", validator=_usable,
     )
     return raw

@@ -426,3 +426,20 @@ def test_contract_with_the_p3_visual_beat_planner(proj, monkeypatch):
     assert windows and sum(w.frames for w in windows) / 30 >= t           # video covers the audio
     covered = [k for w in windows for k in w.keys]
     assert covered == [r.key for r in rows]                               # every beat lands in a shot, in order
+
+
+def test_writer_token_budget_covers_the_dict_beat_json(proj, monkeypatch):
+    """Beats are {text, query} objects (~200 tokens per scene), far bigger than the comic Q&A's
+    string beats. A flat 2600-token cap truncated a 5-item answer mid-object on a live run
+    ('no usable JSON'), so the writer's budget must scale with the scene count."""
+    five = [dict(_items()[i % 2], entity=f"Person {i}") for i in range(5)]
+    _write_context(proj, items=five)
+    seen = {}
+
+    def fake(system, user, **kw):
+        seen["max_tokens"] = kw.get("max_tokens")
+        return json.dumps(_good_llm(five)), "test-model"
+
+    monkeypatch.setattr(sq, "_call_llm_chain", fake)
+    sq.write_screen_qa("proj")
+    assert seen["max_tokens"] >= 450 * 10
