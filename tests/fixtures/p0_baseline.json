@@ -18,6 +18,24 @@
           "video_silent_sha256": "ced8432dab8a471ca1693b1fe63041c6df445ab3fdecf947e5e9f3ea39c51200"
         }
       }
+    },
+    "win32|ffmpeg-8.1-full_build-www.gyan.dev|x264-core165-r3223": {
+      "captured_at": "2026-10-08T14:24:46+00:00",
+      "commit": "6788212435d42c45a30bd92db49f48e7a4707ee8",
+      "scenarios": {
+        "legacy_clip": {
+          "shots_json_sha256": "b4d15e45ba35c778fb62e00f546922bd047a16b0afbb6b68a4d80a49b0f6a878",
+          "video_silent_sha256": "fb48b104a755bdcc8ab7ce5d200492a09119801e9fbcbd655ce6c8c4e18f8f03"
+        },
+        "plain": {
+          "shots_json_sha256": "7e76ed77faffb788aacf31eaacc06c98c378ca1727a334fc3484dd1f68fbcb11",
+          "video_silent_sha256": "50524e16caec4fba2c2affb2b124252d1162b83ddcb8cb5a5ec7aea587ed4b14"
+        },
+        "whip": {
+          "shots_json_sha256": "6999eb5223d535c64f0684dc1f979117756cec04d544911ac68cf35181d28588",
+          "video_silent_sha256": "e8ef96a6840189bbe2081c41fba450be35f26680dc392a9c2cc024b33f9aceb6"
+        }
+      }
     }
   }
 }
