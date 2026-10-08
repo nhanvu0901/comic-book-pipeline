@@ -192,6 +192,64 @@ def test_a_pick_event_reloads_the_screen_and_searches_a_backup_in_the_background
     _drain(page)
 
 
+def test_a_failed_pick_shows_its_reason_and_changes_nothing(project, monkeypatch):
+    """P1's pick job broadcasts {'state': 'error', 'message': ...} when the TTS wait times out or
+    the section download fails. That is NOT a pick: no approval withdrawn, nothing reloaded, no
+    backup search — only the reason, as a snackbar (the comic gate does the same)."""
+    ctl, page, state, _ = _build(project)
+    sel.set_approved(project, True)
+    monkeypatch.setattr(sel, "suggest_backup", lambda *a, **k: pytest.fail("no backup for a failed pick"))
+    before_texts = _texts(ctl)
+    from ui import web_routes
+    web_routes._broadcast_moment_picked({
+        "project": "proj_screen", "beat": "2:1", "state": "error",
+        "message": "TTS chưa xong cho beat 2:1 (timeout)"})
+    _drain(page)
+    assert sel.is_approved(project)                         # untouched
+    assert sel.load_clips(project) == {}
+    assert not any("Đã chọn clip" in t for t in _texts(ctl))
+    assert _texts(ctl) == before_texts                      # the screen was not repainted
+    snacks = [o for o in page.overlay if isinstance(o, ft.SnackBar)]
+    assert snacks and "TTS chưa xong cho beat 2:1 (timeout)" in snacks[-1].content.value
+    assert snacks[-1].content.value.startswith("Beat 2:1: ")
+
+
+def test_a_failed_pick_without_a_message_still_says_something(project):
+    ctl, page, *_ = _build(project)
+    from ui import web_routes
+    web_routes._broadcast_moment_picked({"project": "proj_screen", "beat": "1:0", "state": "error"})
+    _drain(page)
+    snacks = [o for o in page.overlay if isinstance(o, ft.SnackBar)]
+    assert snacks and snacks[-1].content.value == "Beat 1:0: không chọn được clip"
+
+
+def test_a_progress_event_is_not_a_pick(project):
+    ctl, page, *_ = _build(project)
+    sel.set_approved(project, True)
+    from ui import web_routes
+    web_routes._broadcast_moment_picked({"project": "proj_screen", "beat": "1:0", "state": "running"})
+    assert not page.tasks and sel.is_approved(project)
+
+
+def test_a_dead_page_makes_the_listener_raise_so_the_broadcaster_can_drop_it(project):
+    """page.run_task on a closed session raises ('NoneType' object has no attribute 'loop'); the
+    listener used to swallow that, so the broadcaster never dropped it."""
+    ctl, page, *_ = _build(project)
+    page.run_task.side_effect = AttributeError("'NoneType' object has no attribute 'loop'")
+    cb = s_screen_gate._LISTENERS[id(page)]
+    with pytest.raises(AttributeError):
+        cb({"project": "proj_screen", "beat": "1:0", "state": "ready"})
+    with pytest.raises(AttributeError):
+        cb({"project": "proj_screen", "beat": "1:0", "state": "error", "message": "x"})
+    assert id(page) not in s_screen_gate._LISTENERS          # its own bookkeeping is forgotten too
+    from ui import web_routes
+    if hasattr(web_routes, "listener_count"):                # P1's broadcaster: raising = dropped
+        s_screen_gate._replace_listener(page, cb)
+        n = web_routes.listener_count()
+        web_routes._broadcast_moment_picked({"project": "proj_screen", "beat": "1:0", "state": "ready"})
+        assert web_routes.listener_count() == n - 1
+
+
 def test_a_pick_for_another_project_is_ignored(project, monkeypatch):
     ctl, page, *_ = _build(project)
     monkeypatch.setattr(sel, "suggest_backup", lambda *a, **k: pytest.fail("not this project"))

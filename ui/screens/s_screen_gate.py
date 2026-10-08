@@ -387,10 +387,33 @@ def build(
                     log.debug("could not repaint after backup search: %s", exc)
         threading.Thread(target=_work, daemon=True, name=f"screen-backup-{key}").start()
 
+    def _dispatch(coro_fn) -> None:
+        """Run `coro_fn` on the page's loop. A page whose session is gone raises here — that is
+        deliberately NOT swallowed: the broadcaster (web_routes._broadcast_moment_picked) drops a
+        listener that raises, and ours forgets its own bookkeeping, so a dead screen stops being
+        called instead of failing silently on every later pick."""
+        try:
+            page.run_task(coro_fn)
+        except Exception:
+            _LISTENERS.pop(id(page), None)
+            raise
+
     def _on_moment_picked(payload: dict[str, Any]) -> None:
         if payload.get("project") != project:
             return
         key = str(payload.get("beat"))
+        state_ = payload.get("state")
+        if state_ == "error":
+            # P1's pick job failed (TTS wait timeout, section download…): nothing was picked, so
+            # nothing is withdrawn or reloaded — the reason goes to Master, like the comic gate.
+            msg = f"Beat {key}: {payload.get('message') or 'không chọn được clip'}"
+
+            async def _fail():
+                _snack(msg)
+            _dispatch(_fail)
+            return
+        if state_ not in (None, "ready"):         # progress, not a pick
+            return
 
         async def _apply():
             sel.withdraw_approval(root)          # a pick made after Approve → approve again
@@ -398,10 +421,7 @@ def build(
             _refresh_cards(f"Đã chọn clip MP4 cho beat {key} — cần approve lại.")
             if clips_on and config_auto_backup():
                 _kick_backup(key)
-        try:
-            page.run_task(_apply)
-        except Exception as exc:                                      # noqa: BLE001
-            log.warning("could not apply the picked moment to the screen: %s", exc)
+        _dispatch(_apply)
 
     if clips_on:
         _replace_listener(page, _on_moment_picked)
