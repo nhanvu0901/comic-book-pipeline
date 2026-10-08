@@ -97,6 +97,19 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
 
     if not args.question:
         raise ValueError("--question is required unless --skip-research")
+
+    if getattr(args, "auto_route", False):
+        from stages.research_scout.router_rules import route_question_to_pipeline
+        route, _ = route_question_to_pipeline(args.question, log=log)
+        if route == "screen_qa":
+            log(f"[answer-pipeline] Question '{args.question}' routed to screen_qa")
+            from config import get_project_dirs
+            proj_root = get_project_dirs(args.project)["root"]
+            proj_root.mkdir(parents=True, exist_ok=True)
+            (proj_root / "media_route.json").write_text(
+                json.dumps({"route": "screen_qa", "question": args.question}, indent=2), "utf-8"
+            )
+
     from stages.stage_1.answer_research import build_contexts, research_answer
 
     research = research_answer(args.question, max_items=args.max_items,
@@ -246,6 +259,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "projects — Q&A panel choices must be reviewed (see review gate).")
     parser.add_argument("--stop-after", choices=STEPS, default=None,
                         help="Run through this step then stop (default: run all the way to render).")
+    parser.add_argument("--auto-route", action="store_true",
+                        help="Use media router to automatically route question between comic_qa and screen_qa.")
     return parser.parse_args(argv)
 
 
