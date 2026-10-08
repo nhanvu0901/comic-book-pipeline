@@ -95,3 +95,15 @@ def test_router_raises_after_max_retries():
             client=mock_client,
             max_retries=1
         )
+
+
+def test_system_prompt_asks_for_the_comic_source_and_forbids_guessing_the_issue():
+    from stages.research_scout.media_router import SYSTEM_PROMPT
+
+    # The JSON schema block repeats the field descriptions; check the instructions only.
+    instructions = SYSTEM_PROMPT.split("You must output strictly valid JSON")[0].lower()
+    assert "comic_series" in instructions
+    # a film-only result list must still get its comic source named
+    assert "even when the search results only" in instructions
+    # unknown issue -> null, never a guess
+    assert "never guess" in instructions
