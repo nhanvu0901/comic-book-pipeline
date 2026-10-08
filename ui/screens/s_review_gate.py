@@ -746,6 +746,11 @@ def build(
     on_state_change: Callable[[], None],
 ) -> ft.Control:
     project = state.project_name
+    narration = load_narration(project) or {} if project else {}
+    if narration.get("mode") == "screen_qa" or getattr(state, "pipeline_mode", "") == "screen_qa":
+        from .s_screen_gate import build as build_screen_gate
+        return build_screen_gate(page, state, on_go=on_go, on_state_change=on_state_change)
+
     review = load_review_candidates(project) if project else None
 
     if not review or not (review.get("beats") or []):

@@ -52,3 +52,171 @@ def test_batcave_verifier_live_network():
     # Live network test for false positive prevention: ASM 2018 only ran ~93 issues, #121 does not exist
     ok_false = verify_batcave_issue("Amazing Spider-Man", 121, year=2018)
     assert ok_false is False
+
+
+# ── ping_pages on REAL discover_issues dicts + series-level check (M9) ─────────
+# utils.comic_scraper.discover_issues returns {"title","url","chapter_id","number","date"}
+# — no "news_id" and no "id". The ping must derive both ids from what is really there.
+
+def _real_issue(news_id, chapter_id, number, title):
+    return {"title": title, "url": f"https://batcave.biz/reader/{news_id}/{chapter_id}",
+            "chapter_id": chapter_id, "number": float(number), "date": "01.01.2020"}
+
+
+def _civil_war_mocks():
+    hits = [("777", "civil-war-2006", "https://batcave.biz/777-civil-war-2006.html")]
+    issues = [_real_issue(777, 9001, 1, "Civil War (2006) #1"),
+              _real_issue(777, 9002, 2, "Civil War (2006) #2")]
+    return hits, issues
+
+
+def test_ping_pages_uses_ids_from_real_discover_issues_shape():
+    hits, issues = _civil_war_mocks()
+    calls = []
+
+    def fake_ping(reader_url, news_id, chapter_id):
+        calls.append((news_id, chapter_id))
+        return ["p1.jpg"]
+
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues), \
+         patch("utils.comic_scraper.readcomiconline._ajax_chapter_images", side_effect=fake_ping):
+        assert verify_batcave_issue("Civil War", 1, year=2006, ping_pages=True) is True
+    assert calls == [("777", 9001)]
+
+
+def test_ping_pages_failure_means_not_verified():
+    hits, issues = _civil_war_mocks()
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues), \
+         patch("utils.comic_scraper.readcomiconline._ajax_chapter_images", return_value=[]):
+        assert verify_batcave_issue("Civil War", 1, year=2006, ping_pages=True) is False
+
+
+def test_check_with_issue_reports_issue_level():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    hits, issues = _civil_war_mocks()
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues), \
+         patch("utils.comic_scraper.readcomiconline._ajax_chapter_images", return_value=["p1.jpg"]):
+        res = check_batcave_comic("Civil War", 1, 2006)
+    assert res.found is True and res.level == "issue"
+    assert (res.series, res.issue, res.year) == ("Civil War", 1, 2006)
+
+
+def test_check_without_issue_verifies_series_and_year_and_says_so():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    hits, issues = _civil_war_mocks()
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues):
+        res = check_batcave_comic("Civil War", None, 2006)
+    assert res.found is True
+    assert res.level == "series"
+    assert res.issue is None            # never invented
+    assert "issue number unknown" in res.note.lower()
+    assert "series" in res.describe().lower() and "unknown" in res.describe().lower()
+
+
+def test_series_level_check_rejects_a_different_volume_year():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    hits = [("456", "civil-war-2018", "https://batcave.biz/456-civil-war-2018.html")]
+    issues = [_real_issue(456, 10, 1, "Civil War (2018) #1")]
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues):
+        assert check_batcave_comic("Civil War", None, 2006).found is False
+
+
+def test_series_level_check_without_any_hit_is_not_found():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=[]):
+        assert check_batcave_comic("No Such Series", None, None).found is False
+
+
+def test_check_never_raises_on_network_errors():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    with patch("stages.stage_1.batcave_verifier._batcave_search", side_effect=RuntimeError("boom")):
+        res = check_batcave_comic("Civil War", None, 2006)
+    assert res.found is False
+
+
+def test_check_with_blank_series_is_not_found_without_searching():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    with patch("stages.stage_1.batcave_verifier._batcave_search") as search:
+        assert check_batcave_comic("  ", 1, 2006).found is False
+    search.assert_not_called()
+
+
+# ── a lookup that could not be completed is INCONCLUSIVE, never "not on batcave" ──
+# A transient guard/5xx/timeout used to read as "no such comic" and send a Civil War
+# question to screen_qa (seen on the Windows server). Only a completed lookup may say no.
+
+def test_search_error_is_inconclusive_not_absent():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    with patch("stages.stage_1.batcave_verifier._batcave_search", side_effect=RuntimeError("boom")):
+        res = check_batcave_comic("Civil War", None, 2006)
+    assert res.found is False and res.inconclusive is True
+    assert "inconclusive" in res.describe().lower()
+
+
+def test_batcave_search_non_200_raises_only_when_strict():
+    from stages.stage_1 import answer_research
+    sess = MagicMock()
+    sess.post.return_value = MagicMock(status_code=503, text="")
+    with patch("utils.comic_scraper.readcomiconline._get_session", return_value=sess):
+        assert answer_research._batcave_search("Civil War", log=lambda m: None) == []   # old behaviour kept
+        with pytest.raises(RuntimeError, match="503"):
+            answer_research._batcave_search("Civil War", log=lambda m: None, strict=True)
+
+
+def test_verifier_asks_for_a_strict_search():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    search = MagicMock(return_value=[])
+    with patch("stages.stage_1.batcave_verifier._batcave_search", search):
+        check_batcave_comic("Civil War", None, 2006)
+    assert search.call_args.kwargs.get("strict") is True
+
+
+def test_chapter_listing_error_is_inconclusive():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    hits, _ = _civil_war_mocks()
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", side_effect=TimeoutError("slow")):
+        res = check_batcave_comic("Civil War", 1, 2006)
+    assert res.found is False and res.inconclusive is True
+
+
+def test_a_completed_empty_search_is_a_definite_no():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=[]):
+        res = check_batcave_comic("No Such Series", None, None)
+    assert res.found is False and res.inconclusive is False
+
+
+def test_an_issue_missing_from_a_fully_listed_series_is_a_definite_no():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    hits, issues = _civil_war_mocks()
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues):
+        res = check_batcave_comic("Civil War", 99, 2006)
+    assert res.found is False and res.inconclusive is False
+
+
+def test_page_ping_is_retried_once_before_the_issue_counts_as_dead():
+    hits, issues = _civil_war_mocks()
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues), \
+         patch("utils.comic_scraper.readcomiconline._ajax_chapter_images",
+               side_effect=[[], ["p1.jpg"]]) as ping:
+        assert verify_batcave_issue("Civil War", 1, year=2006, ping_pages=True) is True
+    assert ping.call_count == 2
+
+
+def test_page_ping_that_keeps_failing_is_a_definite_no():
+    from stages.stage_1.batcave_verifier import check_batcave_comic
+    hits, issues = _civil_war_mocks()
+    with patch("stages.stage_1.batcave_verifier._batcave_search", return_value=hits), \
+         patch("stages.stage_1.batcave_verifier.discover_issues", return_value=issues), \
+         patch("utils.comic_scraper.readcomiconline._ajax_chapter_images", return_value=[]) as ping:
+        res = check_batcave_comic("Civil War", 1, 2006)
+    assert res.found is False and res.inconclusive is False
+    assert ping.call_count == 2

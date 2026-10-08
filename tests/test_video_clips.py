@@ -57,10 +57,11 @@ def _write_manifest(root: Path, items: list[dict]) -> Path:
 # ─── manifest parsing ────────────────────────────────────────────────────────────
 
 def test_parse_manifest_resolves_paths_ids_and_defaults(tmp_path):
+    elsewhere = str(tmp_path.parent / "elsewhere" / "x.mp4")   # absolute on every platform
     entries, problems = clips.parse_manifest({"clips": [
         {"file": "review/clips/abc.mp4", "start": 1.5, "end": 3, "beat": "2",
          "source_url": "https://youtu.be/abc"},
-        {"file": "/elsewhere/x.mp4", "beat": "intro"},                 # no start/end
+        {"file": elsewhere, "beat": "intro"},                          # no start/end
         {"file": "review/clips/abc.mp4", "start": 4, "beat": "3"},     # same stem → unique id
         {"file": "off.mp4", "beat": "4", "enabled": False},            # disabled → ignored
         {"source_url": "https://youtu.be/zzz", "beat": "5", "id": "later"},
@@ -70,7 +71,7 @@ def test_parse_manifest_resolves_paths_ids_and_defaults(tmp_path):
     assert entries[0].file == str(tmp_path / "review/clips/abc.mp4")
     assert (entries[0].start, entries[0].end) == (1.5, 3.0)
     assert entries[0].source_url == "https://youtu.be/abc"
-    assert entries[1].file == "/elsewhere/x.mp4"
+    assert entries[1].file == elsewhere
     assert (entries[1].start, entries[1].end) == (0.0, 0.0)          # open-ended
     assert entries[3].file == ""                                      # not fetched yet
 

@@ -56,7 +56,9 @@ def test_non_windows_writer_refuses_writes(tmp_path, monkeypatch):
 
 def test_windows_host_also_needs_explicit_server_marker(monkeypatch):
     monkeypatch.setenv("SCOUT_LEDGER_WRITER", "windows-server")
-    # This test runs on the current host; the marker alone must never enable it.
+    # The marker alone must never enable it on a non-Windows host (pinned, so this also holds
+    # when the suite itself runs on the Windows server).
+    monkeypatch.setattr(ledger_module.os, "name", "posix")
     assert ledger_module._is_windows_server() is False
 
 

@@ -1,0 +1,39 @@
+[    0.0s] project D:\code\cbp-video-test-p3v\projects\screen_fixture  seed=42 POST_ATEMPO=1.15
+[    1.6s] !! real section download failed (yt-dlp section download failed for https://www.youtube.com/watch?v=TcMBFSGVi1c: WARNING: Your yt-dlp version (2026.07.04) is older than 90 days! It is strongly recommended to always use the latest version. You installed yt-dlp with pip or using the wheel from PyPi; Use that to update. To suppress this warning, add --no-update to your command/config. ERROR: ffmpeg exited with code 3436169992) — beat 1:0 will fall through the chain
+[    1.9s] picks written, project approved
+[review-gate] 'screen_fixture' approved — proceeding
+[stage4] reused cached Chatterbox audio (10.29s, 38 words)
+[  137.1s] TTS done: audio 10.29s, 3 scene timings
+[  137.1s] [review-gate] 'screen_fixture' approved — proceeding
+[  137.1s] [stage5] clips: 3 shot(s) carry a clip (3/3 beat(s) placed)
+[  137.1s] [screen_qa] planning 4 shots over 3 scene(s), 10.50s of video for 10.29s of audio
+[  140.1s] [screen_qa] shot 000: clip failed (yt-dlp section download failed for https://www.youtube.com/watch?v=TcMBFSGVi1c: WARNING: Your yt-dlp version (2026.07.04) is older than 90 days! It is strongly recommended to always use the latest version. You installed yt-dlp with pip or using the wheel from PyPi; Use that to update. To suppress this warning, add --no-update to your command/config. ERROR: ffmpeg exited with code 3436169992) — trying the backup clip
+[stage5] Real-ESRGAN upscale failed ([WinError 2] The system cannot find the file specified) — using original panel
+[  141.0s] [stage5] shot 001 (scene 2, pan_down, 2.10s)
+[  142.2s] [screen_qa] shot 002: clip failed (ffprobe failed on D:\code\cbp-video-test-p3v\projects\screen_fixture\review\clips\broken.mp4: [mov,mp4,m4a,3gp,3g2,mj2 @ 00000199bcba8fc0] moov atom not found
+D:\code\cbp-video-test-p3v\projects\screen_fixture\review\clips\broken.mp4: Invalid data found when processing input) — trying the backup clip
+[  142.2s] [stage5] shot 002 (scene 2, CLIP bad-backup @0.00s, 1.53s, speed=1.00x, hold=0.00s)
+[  142.6s] [stage5] shot 003 (scene 3, CLIP gen_a @0.00s, 3.17s, speed=0.80x, hold=1.67s)
+[  143.3s] [screen_qa] wrote shots.json (4 shots: 1 clip, 1 backup, 1 still, 1 card)
+[  143.3s] [screen_qa] assembling 4 shots → video_silent.mp4
+[  143.7s] [stage5] loudnorm pass 1: measured I=-17.93 LUFS, LRA=1.30 LU → applying a single corrective gain
+[  143.7s] [stage5] loudnorm TTS → audio_mixed.wav
+[  143.9s] [screen_qa] final encode → final.mp4
+[  145.5s] [screen_qa] done: D:\code\cbp-video-test-p3v\projects\screen_fixture\final.mp4 (10.29s)
+[  145.5s] final: D:\code\cbp-video-test-p3v\projects\screen_fixture\final.mp4  10.288s  shots=4
+
+=== REPORT ===
+video {'codec_name': 'h264', 'profile': 'High', 'width': 1080, 'height': 1920, 'pix_fmt': 'yuv420p', 'r_frame_rate': '30/1'}
+audio {'codec_name': 'aac', 'sample_rate': '48000', 'channels': 2}
+audio.wav=10.288s  video_silent=10.500s  final=10.288s
+shot  level      start    dur   frames  beats
+   0  card         0.00   3.70    111  ['1:0', '1:1']  notes=['L1: yt-dlp section download failed for https://www.youtube.com/watch?v=TcMBFSGVi1c: WARNING: Your yt-dlp version (2026.07.04) is older than 90 days! It is strongly recommended to always use the latest version. You installed yt-dlp with pip or using the wheel from PyPi; Use that to update. To suppress th']
+   1  still        3.70   2.10     63  ['2:0']
+   2  backup_clip   5.80   1.53     46  ['2:1']  notes=['L1: ffprobe failed on D:\\code\\cbp-video-test-p3v\\projects\\screen_fixture\\review\\clips\\broken.mp4: [mov,mp4,m4a,3gp,3g2,mj2 @ 00000199bcba8fc0] moov atom not found D:\\code\\cbp-video-test-p3v\\projects\\screen_fixture\\review\\clips\\broken.mp4: Invalid data found when processing input']
+   3  clip         7.33   3.17     95  ['3:0', '3:1']
+
+scene boundaries (end of scene i  vs  start of next scene's first shot):
+  scene 1 ends 3.705s ; scene 2 first shot starts 3.700s ; next scene's speech begins 3.705s
+  scene 2 ends 7.318s ; scene 3 first shot starts 7.333s ; next scene's speech begins 7.318s
+[  145.7s] E2E OK
+EXIT=0 
