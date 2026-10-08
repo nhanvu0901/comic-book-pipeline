@@ -164,3 +164,37 @@ def test_no_comic_only_module_is_imported_by_the_screen_modules():
             if name == "pages_by_number" and rel.endswith("screen_shots.py"):
                 continue
             assert name not in used and not any(name in i for i in imported), f"{rel} uses {name}"
+
+
+def test_stage_1_mode_dropdown_builds_for_every_pipeline_mode_and_never_offers_screen_qa():
+    """The reviewer's B4: a PipelineMode member without a MODE_LABELS entry makes the Stage-1
+    screen raise KeyError while it BUILDS the dropdown — for every project, flag off too. Build
+    the real screen and read the options it produced."""
+    from unittest.mock import MagicMock
+
+    import flet as ft
+
+    from config import PipelineMode
+    from ui.screens import s1_identify
+    from ui.state import AppState
+
+    page = MagicMock()
+    page.services, page.overlay = [], []
+    ctl = s1_identify.build(page, AppState(project_name=""), on_go=lambda s: None,
+                            on_state_change=lambda: None)
+
+    def walk(c):
+        yield c
+        for attr in ("controls", "content"):
+            child = getattr(c, attr, None)
+            if isinstance(child, list):
+                for x in child:
+                    yield from walk(x)
+            elif child is not None and hasattr(child, "__dict__"):
+                yield from walk(child)
+
+    dropdowns = [c for c in walk(ctl) if isinstance(c, ft.Dropdown)]
+    assert dropdowns, "Stage-1 screen has no mode dropdown?"
+    keys = [o.key for o in dropdowns[0].options]
+    assert keys == [m.value for m in PipelineMode]          # one option per mode, none missing
+    assert "screen_qa" not in keys                          # screen_qa is not a Stage-1 mode
