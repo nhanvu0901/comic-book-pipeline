@@ -576,12 +576,12 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
     frames = max(1, int(round(duration * _sh.FPS)))
     clip_out = float(shot.clip_out or 0.0)
 
-    # Fit math: trim -> extend into source -> speed [0.8, 1.25] -> hold <= 0.3s
     from config import ENABLE_VIDEO_CLIPS, CLIP_SPEED_MIN, CLIP_SPEED_MAX, CLIP_MAX_HOLD
 
     if not ENABLE_VIDEO_CLIPS:
-        # Baseline P0 path: exact preservation of comic pipeline behavior
         if clip_out and clip_in > clip_out - 1.0 / _sh.FPS:
+            # A later shot of a beat whose clip already ran out (continuous playback past "end"):
+            # hold the out-point frame, never play on past it.
             clip_in = max(0.0, clip_out - 1.0 / _sh.FPS)
         inputs = ["-ss", f"{clip_in:.3f}"]
         if clip_out:
@@ -602,7 +602,7 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
         verify_shot_contract(out_path, frames)
         return out_path
 
-    # Q&A Video Clip path (ENABLE_VIDEO_CLIPS=True)
+    # Fit math (when ENABLE_VIDEO_CLIPS=1): trim -> extend into source -> speed [0.8, 1.25] -> hold <= 0.3s
     src_dur = float(info.get("duration") or 0.0)
     avail_src = max(0.0, src_dur - clip_in) if src_dur > 0 else duration
 
@@ -620,8 +620,8 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
         speed = 1.0
         hold = 0.0
     else:
-        # Step 2: extend into source if open-ended (clip_out not set)
-        avail = (clip_out - clip_in) if clip_out > clip_in else avail_src
+        # Step 2: extend into source if clip_out not fixed
+        avail = (clip_out - clip_in) if (clip_out and clip_out > clip_in) else avail_src
         extended_span = min(duration, avail)
         if extended_span >= duration:
             used_span = duration
