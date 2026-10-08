@@ -55,18 +55,15 @@ import subprocess as _sp
 
 def _fake_run_factory(monkeypatch, *, section_ok: bool, src_for_section=None, calls=None):
     """subprocess.run stand-in for the yt-dlp section command. The real ffmpeg (normalize) is untouched."""
-    real_run = _sp.run
-
-    def fake(cmd, *a, **k):
-        if isinstance(cmd, list) and "--download-sections" in cmd:
-            calls.append("section")
-            if section_ok:
-                return _sp.CompletedProcess(cmd, 0, stdout=str(src_for_section) + "\n", stderr="")
-            return _sp.CompletedProcess(cmd, 1, stdout="", stderr=(
-                "WARNING: Your yt-dlp version (2026.07.04) is older than 90 days!\n"
-                "ERROR: ffmpeg exited with code 3436169992\n"))
-        return real_run(cmd, *a, **k)
-    monkeypatch.setattr(clip_fetch.subprocess, "run", fake)
+    def fake(cmd, *, timeout=None):
+        assert "--download-sections" in cmd and timeout == clip_fetch.SECTION_TIMEOUT
+        calls.append("section")
+        if section_ok:
+            return _sp.CompletedProcess(cmd, 0, stdout=str(src_for_section) + "\n", stderr="")
+        return _sp.CompletedProcess(cmd, 1, stdout="", stderr=(
+            "WARNING: Your yt-dlp version (2026.07.04) is older than 90 days!\n"
+            "ERROR: ffmpeg exited with code 3436169992\n"))
+    monkeypatch.setattr(clip_fetch, "_run_capture", fake)
 
 
 def _source(tmp_path, dur=12.0):
@@ -136,3 +133,42 @@ def test_both_failing_reports_the_error_line_and_the_hint(tmp_path, monkeypatch)
                                       start=1.0, beat_duration=2.0, log=lambda m: None)
     msg = str(ei.value)
     assert "ffmpeg exited with code 3436169992" in msg and "pip install -U yt-dlp" in msg and "no network" in msg
+
+
+def test_a_stalled_download_is_killed_with_its_children_and_falls_back(tmp_path, monkeypatch):
+    """The Windows E2E hung for 10+ minutes on an idle ffmpeg. _run_capture must time out, kill the WHOLE tree
+    (yt-dlp -> python -> ffmpeg), and the pick then takes the next strategy instead of waiting forever."""
+    import sys
+    import time
+    child_pid = tmp_path / "grandchild.pid"
+    script = (f"import subprocess, sys, time; p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+              f"open(r'{child_pid}', 'w').write(str(p.pid)); time.sleep(60)")
+    t0 = time.time()
+    with pytest.raises(clip_fetch.DownloadTimeout):
+        clip_fetch._run_capture([sys.executable, "-c", script], timeout=2)
+    assert time.time() - t0 < 15
+    gc = int(child_pid.read_text())
+    time.sleep(0.5)
+    import os
+    try:
+        os.kill(gc, 0)
+        alive = True
+    except OSError:
+        alive = False
+    assert not alive, "the grandchild (the ffmpeg of a real run) must die with its parent"
+
+
+def test_a_section_that_times_out_falls_back_to_the_whole_video(tmp_path, monkeypatch):
+    whole = _source(tmp_path, 15.0)
+    calls = []
+
+    def stalled(cmd, *, timeout=None):
+        calls.append("section")
+        raise clip_fetch.DownloadTimeout("no result after 180s — killed")
+    monkeypatch.setattr(clip_fetch, "_run_capture", stalled)
+    monkeypatch.setattr(clip_fetch, "download", lambda url, out_dir, **kw: calls.append("whole") or whole)
+    logs = []
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=logs.append)
+    assert calls == ["section", "whole"] and out.is_file()
+    assert any("no result after 180s" in m for m in logs)
