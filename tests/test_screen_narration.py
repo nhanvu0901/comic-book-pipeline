@@ -494,3 +494,20 @@ def test_validator_accepts_an_alias_for_the_entity():
               _scene("Bob Chen in Cold Orbit (2016)."), _scene("b")]
     assert not [i for i in sq._validate_screen_scenes(scenes, items, "list", band=(1, 999), scene_max=42)
                 if "names its entity" in i]
+
+
+def test_off_count_draft_is_rejected_with_a_visible_reason(proj, monkeypatch):
+    """call_with_chain's own message says 'no usable JSON' for ANY validator rejection, which hid
+    a plain wrong-scene-count on live runs; the writer's validator must say what it saw."""
+    _write_context(proj)
+    short = _good_llm()
+    short["scenes"] = short["scenes"][:3]
+    logs = []
+
+    def fake(system, user, *, validator=None, **kw):
+        assert validator is not None and validator(json.dumps(short)) is False
+        raise RuntimeError("all models exhausted")
+
+    monkeypatch.setattr(sq, "_call_llm_chain", fake)
+    sq.write_screen_qa("proj", progress=logs.append)
+    assert any("want 4 item scenes, got 3" in m for m in logs), logs

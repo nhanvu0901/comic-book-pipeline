@@ -525,7 +525,10 @@ def write_screen_qa(
         if len(hook.split()) >= 4 and first.startswith(hook):
             log("[screen_qa] validator: first context scene repeats hook")
             return False
-        return len(scenes) == expected
+        if len(scenes) != expected:
+            log(f"[screen_qa] validator: want {expected} item scenes, got {len(scenes)}")
+            return False
+        return True
 
     best: tuple[int, dict[str, Any], str, list[str]] | None = None
     issues: list[str] | None = None
