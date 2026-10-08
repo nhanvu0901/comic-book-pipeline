@@ -445,6 +445,67 @@ def ytdlp_args(url: str, out_dir: Path, *, max_height: int = 1080) -> list[str]:
             "--print", "after_move:filepath", url]
 
 
+def ytdlp_section_args(
+    url: str,
+    out_dir: Path,
+    *,
+    start: float,
+    beat_duration: float,
+    margin: float = 2.0,
+    max_height: int = 1080,
+) -> list[str]:
+    import config
+    end = start + beat_duration * config.CLIP_SPEED_MAX + margin
+    fmt = f"bv*[height<={max_height}]+ba/b[height<={max_height}]/bv*+ba/b"
+    return [
+        *_ytdlp_cmd(),
+        "--no-playlist",
+        "--js-runtimes", "node",
+        "-f", fmt,
+        "--download-sections", f"*{start:.2f}-{end:.2f}",
+        "--force-keyframes-at-cuts",
+        "--merge-output-format", "mp4",
+        "--write-info-json",
+        "--no-progress",
+        "-o", str(Path(out_dir) / "%(id)s.%(ext)s"),
+        "--print", "after_move:filepath",
+        url,
+    ]
+
+
+def fetch_clip_section(
+    url: str,
+    clip_dir: Path,
+    *,
+    start: float,
+    beat_duration: float,
+    margin: float = 2.0,
+    max_height: int = 1080,
+    log=print,
+) -> Path:
+    clip_dir = Path(clip_dir)
+    src_dir = clip_dir / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    m = _YT_ID.search(url)
+    vid = m.group(1) if m else "clip"
+    out = clip_dir / f"{vid}_{start:.1f}_{beat_duration:.1f}.mp4"
+    if out.is_file():
+        log(f"[clip] cached section: {out}")
+        return out
+
+    cmd = ytdlp_section_args(url, src_dir, start=start, beat_duration=beat_duration,
+                            margin=margin, max_height=max_height)
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+    raw = Path(lines[-1]) if lines else None
+    if res.returncode != 0 or raw is None or not raw.is_file():
+        tail = " ".join((res.stderr or res.stdout or "").split())[-500:]
+        raise RuntimeError(f"yt-dlp section download failed for {url}: {tail}")
+
+    normalize(raw, out, log=log)
+    return out
+
+
 def download(url: str, out_dir: Path, *, max_height: int = 1080, log=print) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     log(f"[clip] downloading {url}")

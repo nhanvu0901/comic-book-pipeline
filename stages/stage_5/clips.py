@@ -633,3 +633,32 @@ def copy_clip_fields(dst, src) -> None:
     for k in ("clip_path", "clip_in", "clip_out", "clip_id", "clip_source_url", "clip_fallback"):
         setattr(dst, k, getattr(src, k))
     dst.clip_crop = copy.deepcopy(getattr(src, "clip_crop", {}) or {})
+
+
+def render_clip_preview(
+    clip_path: Path,
+    start: float,
+    beat_duration: float,
+    out_path: Path,
+    crop: dict | None = None,
+) -> Path:
+    """Render a fast 9:16 vertical preview clip matching beat duration."""
+    ff = _sh._require_ffmpeg()
+    info = probe_video(clip_path)
+    frames = max(1, int(round(beat_duration * _sh.FPS)))
+    graph = clip_filter_graph(info["width"], info["height"], crop, beat_duration)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ff, "-y",
+        "-ss", f"{start:.3f}",
+        "-t", f"{beat_duration:.3f}",
+        "-i", str(clip_path),
+        "-filter_complex", graph, "-map", "[v]",
+        "-frames:v", str(frames),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p", "-r", str(_sh.FPS), "-an",
+        str(out_path),
+    ]
+    _sh._run(cmd)
+    return out_path
+
