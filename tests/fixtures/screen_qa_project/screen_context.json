@@ -1,0 +1,27 @@
+{
+  "question": "How did the Avengers travel back in time in Endgame?",
+  "items": [
+    {
+      "entity": "Scott Lang",
+      "event": "Proposes using the Quantum Realm for time travel",
+      "adaptation_title": "Avengers: Endgame",
+      "year": 2019,
+      "summary": "Scott Lang returns from the Quantum Realm and proposes a time heist.",
+      "visual_query": "Ant-Man quantum tunnel van Avengers compound",
+      "source_urls": [
+        "https://marvelcinematicuniverse.fandom.com/wiki/Time_Heist"
+      ]
+    },
+    {
+      "entity": "Tony Stark",
+      "event": "Solves quantum navigation with an inverted Mobius strip",
+      "adaptation_title": "Avengers: Endgame",
+      "year": 2019,
+      "summary": "Tony Stark simulates a Mobius strip model to make GPS quantum travel stable.",
+      "visual_query": "Tony Stark holographic Mobius strip simulation",
+      "source_urls": [
+        "https://marvelcinematicuniverse.fandom.com/wiki/Tony_Stark"
+      ]
+    }
+  ]
+}
