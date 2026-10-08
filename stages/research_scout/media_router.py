@@ -30,7 +30,8 @@ Visual Source Rule:
 For events that exist prominently in both comics and screen adaptations, identify the specific instances or adaptations in your item list and specify adaptation_title.
 
 Comic source reference (comic_series / comic_issue / comic_year):
-- Whenever an item is based on, adapts, or originates from a comic, fill comic_series with that comic's series (or event/mini-series) title and comic_year with the year it started, even when the search results only mention the screen work.
+- Whenever an item is based on, adapts, or originates from a specific comic story (a limited series or event, a named story arc, or a specific issue), fill comic_series with that comic's series (or event/mini-series) title and comic_year with the year it started, even when the search results only mention the screen work.
+- Do not name a long-running flagship series merely because the character also appears in it; if no specific comic story is the source, leave the comic fields null.
 - Fill comic_issue only if you are sure of the exact issue number; otherwise leave it null. Never guess an issue number.
 - Leave all three null ONLY when the item has no comic counterpart at all (a story that exists only on screen).
 
@@ -97,6 +98,13 @@ def route_media_source(
             max_tokens=_MAX_ANSWER_TOKENS,
         )
         content = resp.choices[0].message.content or ""
+        finish = getattr(resp.choices[0], "finish_reason", None)
+        if finish in ("error", "length"):
+            # The provider cut the answer off (finish_reason "error" arrives with usage 0/0 and
+            # half a document): ask the SAME question again instead of feeding the stump back.
+            last_error = RuntimeError(f"router answer cut off (finish_reason={finish})")
+            logger.warning("Router attempt %d: %s", attempt, last_error)
+            continue
         try:
             parsed = QuestionRouteResponse.model_validate_json(content)
             return parsed

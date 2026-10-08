@@ -125,3 +125,32 @@ def test_router_call_caps_the_answer_length_and_the_prompt_asks_for_a_short_one(
     instructions = SYSTEM_PROMPT.split("You must output strictly valid JSON")[0].lower()
     assert "at most 3 evidence_urls" in instructions
     assert "short" in instructions
+
+
+def _resp(content, finish_reason="stop"):
+    return MagicMock(choices=[MagicMock(message=MagicMock(content=content), finish_reason=finish_reason)])
+
+
+@pytest.mark.parametrize("bad_finish", ["error", "length"])
+def test_a_provider_error_midway_is_retried_cleanly_without_the_partial_text(bad_finish):
+    # OpenRouter answered finish_reason="error" with half a JSON document (usage 0/0). The retry
+    # must re-ask the SAME question — feeding the cut-off text back only confuses the model.
+    good = json.dumps({"question": "q", "items": []})
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [_resp('{\n  "question": "q", "items": [{"ev', bad_finish),
+                                                  _resp(good)]
+    res = route_media_source("q", [], client=client, max_retries=2)
+
+    assert isinstance(res, QuestionRouteResponse)
+    first, second = (c.kwargs["messages"] for c in client.chat.completions.create.call_args_list)
+    assert second == first                        # same two messages, nothing appended
+    assert all(m["role"] != "assistant" for m in second)
+
+
+def test_a_schema_error_with_a_normal_finish_still_feeds_the_error_back():
+    good = json.dumps({"question": "q", "items": []})
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [_resp('{"question": "q", "items": [{"event": 1}]}'), _resp(good)]
+    route_media_source("q", [], client=client, max_retries=2)
+    second = client.chat.completions.create.call_args_list[1].kwargs["messages"]
+    assert [m["role"] for m in second][-2:] == ["assistant", "user"]
