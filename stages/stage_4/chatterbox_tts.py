@@ -139,9 +139,12 @@ def synthesize(
     log=None,
     exaggeration: float | None = None,
     cfg_weight: float | None = None,
+    seed: int | None = None,
     **_ignored,
 ) -> ChatterboxResult:
     """Generate audio + word timestamps locally. Same result shape as the other providers."""
+    from config import CHATTERBOX_SEED
+    active_seed = seed if seed is not None else CHATTERBOX_SEED
     _log = log or (lambda _m: None)
     if not text or not text.strip():
         raise ValueError("synthesize() called with empty text")
@@ -172,6 +175,7 @@ def synthesize(
         "audio_prompt": prompt_wav,
         "temperature": CHATTERBOX_TEMPERATURE,
         "device": CHATTERBOX_DEVICE or None,
+        "seed": active_seed,
     }))
 
     proc = subprocess.Popen([str(venv_py), str(_WORKER), str(job)],

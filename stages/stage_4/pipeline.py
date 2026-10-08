@@ -207,6 +207,48 @@ def synthesize_project(
             # the pinned Resemble voice until this is proven over a 19-minute read.
             from .chatterbox_tts import (CHATTERBOX_CFG_WEIGHT, CHATTERBOX_EXAGGERATION,
                                          CHATTERBOX_VOICE_WAV)
+            from .background_tts import load_or_synthesize_cached
+            from config import ENABLE_VIDEO_CLIPS
+            cached_res = None
+            if ENABLE_VIDEO_CLIPS:
+                cached_res = load_or_synthesize_cached(
+                    project_name=project_name,
+                    scenes=scenes,
+                    post_atempo=post_atempo,
+                    voice_wav=voice_id or CHATTERBOX_VOICE_WAV or None,
+                    provider="chatterbox",
+                )
+            if cached_res is not None:
+                words = cached_res.words
+                duration = cached_res.duration_seconds
+                print(f"[stage4] reused cached Chatterbox audio ({duration:.2f}s, {len(words)} words)")
+                words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))
+                hash_path.write_text(narration_hash(scenes))
+                (root / "tts_voice.json").write_text(json.dumps({
+                    "provider": "chatterbox-cached",
+                    "voice_wav": voice_id or CHATTERBOX_VOICE_WAV or "(built-in)",
+                    "exaggeration": CHATTERBOX_EXAGGERATION,
+                    "cfg_weight": CHATTERBOX_CFG_WEIGHT,
+                }, indent=2))
+                scene_timings = align_scenes_to_words(scenes, words)
+                caption_chunks = build_caption_chunks(scenes, words)
+                scenes_path.write_text(
+                    json.dumps([s.to_dict() for s in scene_timings], indent=2, ensure_ascii=False)
+                )
+                captions_path.write_text(
+                    json.dumps([c.to_dict() for c in caption_chunks], indent=2, ensure_ascii=False)
+                )
+                return TTSResult(
+                    audio_path=str(audio_path),
+                    audio_duration_seconds=round(duration, 3),
+                    voice_id=voice_id or CHATTERBOX_VOICE_WAV or "chatterbox",
+                    model="chatterbox-local",
+                    speed=1.0,
+                    word_timestamps=words,
+                    scene_timings=scene_timings,
+                    caption_chunks=caption_chunks,
+                    mode=str(narration.get("mode") or ""),
+                )
             from .chatterbox_tts import synthesize as _synthesize
             full_text = _normalize_for_tts(
                 " ".join(str(s.get("text", "")).strip() for s in scenes if s.get("text")))
