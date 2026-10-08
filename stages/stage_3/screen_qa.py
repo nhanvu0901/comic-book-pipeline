@@ -16,8 +16,9 @@ Interface contract (shared with video-qa/p3-visual and stages/stage_1/screen_res
     mode "screen_qa" — page_ref 0 / panel_ref -1 (there are no comic pages);
   * every Scene.visual_beats entry is {"text", "query"}: "text" is a verbatim fragment of the
     scene (the fragments rebuild the scene text exactly), "query" a clip-search hint that always
-    mentions the film/series. The Stage-4 beat windows ("<scene_id>:<1-based n>") are derived
-    from the position of each beat, so the order here is the key clips are stored under.
+    mentions the film/series. Beat keys ("intro"/"outro" for a single
+    fragment, else "<scene_id>:<0-based n>", see review_gate.bookend_row_keys) are derived from the
+    POSITION of each beat by the screen planner, so the order here is the key clips are stored under.
 
 Reuses (read-only, lazily) the comic Q&A pacing band, clickbait-hook filter, causal-marker /
 list-language guards and grounded hook from explore_answer so both Q&A modes stay in step.

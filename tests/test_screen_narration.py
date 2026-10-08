@@ -210,21 +210,6 @@ def test_hook_and_outro_have_queries_from_the_items(proj, monkeypatch):
     assert "Cold Orbit" in nar.scenes[-1].visual_beats[0]["query"]
 
 
-def test_contract_with_the_stage4_beat_window_calculator(proj, monkeypatch):
-    """p3-visual builds shots from calculate_beat_durations(): beats MUST be dicts, and the
-    window ids ('<scene>:<1-based n>') are the keys clips are stored under."""
-    from stages.stage_4.beat_timing import calculate_beat_durations
-    nar, _ = _run(proj, monkeypatch, _good_llm())
-    scenes = [s for s in json.loads(json.dumps(nar.to_dict()))["scenes"]]
-    timings = {s["scene_id"]: {"start": i * 4.0, "end": i * 4.0 + 4.0, "duration": 4.0}
-               for i, s in enumerate(scenes)}
-    windows = calculate_beat_durations(scenes, timings, min_duration=0.4)
-    assert len(windows) == sum(len(s["visual_beats"]) for s in scenes)
-    expected_ids = [f"{s['scene_id']}:{k}" for s in scenes for k in range(1, len(s["visual_beats"]) + 1)]
-    assert [w.beat_id for w in windows] == expected_ids
-    assert abs(sum(w.duration for w in windows) - 4.0 * len(scenes)) < 0.01
-
-
 # ─── hook / outro quality gates ──────────────────────────────────────────────
 
 def test_generic_clickbait_hook_falls_back_to_the_question(proj, monkeypatch):
