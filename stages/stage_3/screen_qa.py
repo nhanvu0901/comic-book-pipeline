@@ -215,6 +215,30 @@ def _normalize_visual_beats(raw_beats: list[Any], default_query: str = "") -> li
     return out
 
 
+# Words a fragment must not END on: cutting the video between "trapped in" and "the Quantum Realm"
+# is a visible stutter. (split_hook_fragments, shared with the comic modes, can do exactly that.)
+_DANGLING = frozenset(
+    "a an the of in on at to for from with by into onto over under as and or but nor so yet than "
+    "that which who whom whose his her their its our my your this these those".split())
+_SENTENCE_PUNCT = ",;:.!?—–-"
+
+
+def _split_fragments(text: str) -> list[str]:
+    """Verbatim, drawable fragments of `text` (the shared hook splitter), with any function word
+    that the cut stranded at the end of a fragment moved to the start of the next one."""
+    text = " ".join(str(text or "").split())
+    frags = split_hook_fragments(text) or [text]
+    for i in range(len(frags) - 1):
+        words = frags[i].split()
+        moved: list[str] = []
+        while len(words) > 2 and words[-1][-1] not in _SENTENCE_PUNCT and words[-1].lower() in _DANGLING:
+            moved.insert(0, words.pop())
+        if moved:
+            frags[i] = " ".join(words)
+            frags[i + 1] = " ".join([*moved, frags[i + 1]])
+    return [f for f in frags if f.strip()]
+
+
 def _fit_beats(text: str, raw_beats: list[Any], item: dict[str, Any]) -> list[dict[str, str]]:
     """Visual beats for one scene: the writer's fragments when they rebuild the scene text
     verbatim, else a deterministic split of the text. Every query names the item's title."""
@@ -222,8 +246,7 @@ def _fit_beats(text: str, raw_beats: list[Any], item: dict[str, Any]) -> list[di
     default_q = str(item.get("visual_query") or f"{title} {item.get('entity', '')}").strip()
     beats = _normalize_visual_beats(raw_beats, default_query=default_q)
     if not beats or _tokens(" ".join(b["text"] for b in beats)) != _tokens(text):
-        parts = split_hook_fragments(text) or [" ".join(text.split())]
-        beats = [{"text": p, "query": default_q} for p in parts]
+        beats = [{"text": p, "query": default_q} for p in _split_fragments(text)]
     return [{"text": b["text"], "query": _anchor_query(b["query"], title)} for b in beats]
 
 
@@ -538,9 +561,7 @@ def write_screen_qa(
         hook_text = ea._build_hook(question, {"items": items}, archetype, project_name)
         log("[screen_qa] writer hook missing or generic — used grounded fallback")
     first = items[0]
-    hook_frags = split_hook_fragments(hook_text)
-    scenes.append(_make_scene(1, hook_text, _fit_beats(hook_text, [{"text": f} for f in hook_frags], first),
-                              0, intro=True))
+    scenes.append(_make_scene(1, hook_text, _fit_beats(hook_text, [], first), 0, intro=True))
 
     for ix, sc in enumerate(body):
         it = items[item_of(ix)]

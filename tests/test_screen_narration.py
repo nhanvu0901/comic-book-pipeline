@@ -443,3 +443,29 @@ def test_writer_token_budget_covers_the_dict_beat_json(proj, monkeypatch):
     monkeypatch.setattr(sq, "_call_llm_chain", fake)
     sq.write_screen_qa("proj")
     assert seen["max_tokens"] >= 450 * 10
+
+
+# ─── fragment cuts must not strand a function word (a video cut mid-phrase) ─────────────────
+
+HOOK_SENTENCE = ("In Deep Station, Alice accidentally spent five years trapped in the lower decks, "
+                 "but for her, only five minutes passed.")
+
+
+def test_fragments_do_not_end_on_a_dangling_function_word():
+    frags = sq._split_fragments(HOOK_SENTENCE)
+    assert len(frags) >= 2
+    assert _tokens(" ".join(frags)) == _tokens(HOOK_SENTENCE)               # still verbatim
+    for f in frags[:-1]:
+        last = f.split()[-1]
+        assert last[-1] in ",;:.!?—-" or last.lower() not in sq._DANGLING, f   # "trapped in | the ..." is the bug
+
+
+def test_short_text_is_one_fragment():
+    assert sq._split_fragments("Alice seals the door.") == ["Alice seals the door."]
+
+
+def test_hook_beats_use_the_same_non_dangling_split(proj, monkeypatch):
+    nar, _ = _run(proj, monkeypatch, _good_llm(hook=HOOK_SENTENCE))
+    beats = [b["text"] for b in nar.scenes[0].visual_beats]
+    assert len(beats) >= 2
+    assert not any(b.split()[-1].lower() in sq._DANGLING and b.split()[-1][-1].isalpha() for b in beats[:-1]), beats
