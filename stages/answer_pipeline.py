@@ -99,16 +99,15 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
         raise ValueError("--question is required unless --skip-research")
 
     if getattr(args, "auto_route", False):
-        from stages.research_scout.router_rules import route_question_to_pipeline
-        route, _ = route_question_to_pipeline(args.question, log=log)
-        if route == "screen_qa":
+        from stages.research_scout.router_rules import decide_route
+        decision = decide_route(args.question, log=log)
+        _write_media_route(args, decision)
+        if decision.route == "screen_qa":
+            # A screen-only question has no comic to research: stop here instead of
+            # spending the SDK research call (it would fail on "too few verified items").
+            args.routed_to = "screen_qa"
             log(f"[answer-pipeline] Question '{args.question}' routed to screen_qa")
-            from config import get_project_dirs
-            proj_root = get_project_dirs(args.project)["root"]
-            proj_root.mkdir(parents=True, exist_ok=True)
-            (proj_root / "media_route.json").write_text(
-                json.dumps({"route": "screen_qa", "question": args.question}, indent=2), "utf-8"
-            )
+            return "routed to screen_qa; comic research skipped (see media_route.json)"
 
     from stages.stage_1.answer_research import build_contexts, research_answer
 
@@ -118,6 +117,17 @@ def _step_research(args: argparse.Namespace, log: Callable[[str], None]) -> str:
         args.question, research, args.project, log=log)
     _attach_money_target(answer_path, log)
     return f"{len(research.get('items') or [])} item(s) -> {answer_path.name}"
+
+
+def _write_media_route(args: argparse.Namespace, decision) -> None:
+    """Persist the router's decision (route + the checks behind it) next to the project."""
+    from config import get_project_dirs
+
+    proj_root = get_project_dirs(args.project)["root"]
+    proj_root.mkdir(parents=True, exist_ok=True)
+    (proj_root / "media_route.json").write_text(
+        json.dumps({"route": decision.route, "question": args.question,
+                    "decision": decision.to_dict()}, indent=2, ensure_ascii=False), "utf-8")
 
 
 def _load_reader_urls(project_name: str) -> list[str]:
@@ -289,6 +299,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[answer-pipeline] step={step} status=fail detail={type(exc).__name__}: {exc}")
                 return 1
             print(f"[answer-pipeline] step={step} status=ok detail={detail}")
+        if step == "research" and getattr(args, "routed_to", None) == "screen_qa":
+            # --auto-route sent a screen-only question away: the comic steps do not apply.
+            print(f"[answer-pipeline] route=screen_qa next=python -m stages.screen_pipeline "
+                  f'--question "{args.question}" --project {args.project}')
+            return 0
         if i >= stop_index:
             break
 

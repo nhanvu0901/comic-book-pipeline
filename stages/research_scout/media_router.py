@@ -28,6 +28,11 @@ Visual Source Rule:
 
 For events that exist prominently in both comics and screen adaptations, identify the specific instances or adaptations in your item list and specify adaptation_title.
 
+Comic source reference (comic_series / comic_issue / comic_year):
+- Whenever an item is based on, adapts, or originates from a comic, fill comic_series with that comic's series (or event/mini-series) title and comic_year with the year it started, even when the search results only mention the screen work.
+- Fill comic_issue only if you are sure of the exact issue number; otherwise leave it null. Never guess an issue number.
+- Leave all three null ONLY when the item has no comic counterpart at all (a story that exists only on screen).
+
 You must output strictly valid JSON matching this schema:
 {_SCHEMA_PROMPT}
 Do not include any explanation outside the JSON object.

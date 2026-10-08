@@ -77,3 +77,58 @@ def test_schema_rejects_invalid_confidence():
     }
     with pytest.raises(ValidationError):
         QuestionRouteResponse.model_validate(invalid_conf)
+
+
+# ── typed comic reference (M9 / M14): refs come from the LLM's typed output ──
+
+def _item(**extra):
+    base = {
+        "event": "Some event",
+        "primary_medium": "film",
+        "visual_source": "youtube",
+        "confidence": 0.9,
+        "reason": "r",
+    }
+    base.update(extra)
+    return RoutedItem.model_validate(base)
+
+
+def test_comic_reference_fields_default_to_none():
+    item = _item()
+    assert item.comic_series is None
+    assert item.comic_issue is None
+    assert item.comic_year is None
+
+
+def test_comic_reference_fields_roundtrip():
+    item = _item(comic_series="Civil War", comic_issue=1, comic_year=2006)
+    again = RoutedItem.model_validate_json(item.model_dump_json())
+    assert (again.comic_series, again.comic_issue, again.comic_year) == ("Civil War", 1, 2006)
+
+
+def test_comic_issue_and_year_are_coerced_from_strings():
+    item = _item(comic_series="X", comic_issue="#121", comic_year="1973")
+    assert item.comic_issue == 121
+    assert item.comic_year == 1973
+
+
+@pytest.mark.parametrize("junk", ["unknown", "N/A", "", "1-3", "TBD", None])
+def test_unusable_comic_issue_becomes_none_instead_of_failing_validation(junk):
+    # An unsure model must be able to say "I don't know the issue" without
+    # costing a retry — and the router must never turn that into a made-up #1.
+    item = _item(comic_series="X", comic_issue=junk)
+    assert item.comic_issue is None
+
+
+@pytest.mark.parametrize("junk", ["unknown", "", "c. 1990s", "20", None, 12345])
+def test_unusable_comic_year_becomes_none(junk):
+    assert _item(comic_series="X", comic_year=junk).comic_year is None
+
+
+def test_blank_comic_series_becomes_none():
+    assert _item(comic_series="   ").comic_series is None
+
+
+def test_json_schema_given_to_the_llm_mentions_the_comic_reference_fields():
+    props = QuestionRouteResponse.model_json_schema()["$defs"]["RoutedItem"]["properties"]
+    assert {"comic_series", "comic_issue", "comic_year"} <= set(props)
