@@ -198,7 +198,9 @@ def build(
 
     def _refresh_approval(push: bool = True) -> None:
         approved = sel.is_approved(root)
-        approve_btn.text = "Un-approve" if approved else "Approve"
+        # .content is the label — Button.text is just a stray attribute on flet 0.84 AND 0.86
+        # (assigning it repaints nothing), which left the button reading "Approve" once approved.
+        approve_btn.content = "Un-approve" if approved else "Approve"
         approve_btn.icon = (ft.Icons.UNPUBLISHED_OUTLINED if approved
                             else ft.Icons.CHECK_CIRCLE_OUTLINE)
         continue_btn.disabled = not approved

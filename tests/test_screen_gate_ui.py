@@ -222,6 +222,10 @@ def test_approve_satisfies_the_gate_and_enables_continue_to_tts(project):
     assert sel.is_approved(project)
     rg.ensure_reviewed(project, log=lambda m: None)
     assert not cont.disabled and state.is_approved(5)
+    assert _buttons(ctl, "Un-approve") and not _buttons(ctl, "Approve")   # the LABEL flips too
+    _buttons(ctl, "Un-approve")[0].on_click(None)
+    assert not sel.is_approved(project) and _buttons(ctl, "Approve") and cont.disabled
+    _buttons(ctl, "Approve")[0].on_click(None)
     cont.on_click(None)
     assert gone == [6]                       # TTS (stage 6), not straight to the video (8)
 
