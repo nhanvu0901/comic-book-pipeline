@@ -575,7 +575,3 @@ def get_project_dirs(project_name: str) -> dict:
     """Return base project folder. Sub-folders are created by stages as they need them."""
     base = get_project_path(project_name)
     return {"root": base}
-
-
-MODE_SCREEN_QA = "screen_qa"
-
