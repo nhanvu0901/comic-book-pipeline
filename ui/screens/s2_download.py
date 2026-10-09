@@ -153,6 +153,8 @@ def build(
         "Save URLs & retry resolution", lambda _e: None, icon=ft.Icons.REFRESH,
     )
     repair_button.key = "repair-reader-urls"
+    dl_url_button = primary_button("Download from URL(s)", lambda _e: None, icon=ft.Icons.LINK)
+    dl_url_button.key = "download-from-url"
 
     clipboard = ft.Clipboard()
     clipboard_attached = {"done": False}
@@ -268,8 +270,13 @@ def build(
             ))
         missing_panel.controls = controls
         blocked = (bool(rows) or bool(reader_error[0]) or repair_busy[0]
-                   or download_busy[0] or needs_stage_one_reapproval)
+                   or download_busy[0] or direct_download_busy[0]
+                   or needs_stage_one_reapproval)
         download_button.disabled = blocked
+        # Disabled while ANY download runs: the URL button used to swallow a second click
+        # without a word, and the two buttons did not know about each other.
+        dl_url_button.disabled = (download_busy[0] or direct_download_busy[0]
+                                  or repair_busy[0] or return_busy[0])
         repair_button.disabled = (
             not rows or repair_busy[0] or download_busy[0] or needs_stage_one_reapproval
         )
@@ -285,7 +292,7 @@ def build(
     _refresh_missing_panel()
 
     async def _execute():
-        if download_busy[0] or repair_busy[0] or return_busy[0]:
+        if download_busy[0] or repair_busy[0] or return_busy[0] or direct_download_busy[0]:
             return
         if not state.project_name:
             status_text.value = ("No project loaded — go back to Stage 1, or paste the "
@@ -332,6 +339,12 @@ def build(
 
             try:
                 manifest = await run_blocking(run_stage_download, state.project_name, push_log)
+            except bridge.DownloadInProgress as exc:
+                running.visible = False
+                status_text.value = str(exc)
+                status_text.color = WARN
+                page.update()
+                return
             except Exception as exc:
                 running.visible = False
                 status_text.value = "Failed — see log."
@@ -538,6 +551,7 @@ def build(
             # approvals and research session written under the new name.
             state.__dict__.update(load_state(proj).__dict__)
         direct_download_busy[0] = True
+        _refresh_missing_panel()
 
         running.visible = True
         status_text.value = ("Crossover-saga download — per-issue context…"
@@ -562,6 +576,11 @@ def build(
                     proj, raw, (issues_field.value or "").strip(),
                     bool(enrich_switch.value), push_log,
                 )
+        except bridge.DownloadInProgress as e:
+            running.visible = False
+            status_text.value = str(e)
+            status_text.color = WARN
+            page.update()
         except Exception as e:
             running.visible = False
             status_text.value = "Failed — see log."
@@ -582,12 +601,12 @@ def build(
             on_state_change()
         finally:
             direct_download_busy[0] = False
+            _refresh_missing_panel(update=True)
 
     def run_url_click(_e):
         page.run_task(_execute_url)
 
-    dl_url_button = primary_button("Download from URL(s)", run_url_click, icon=ft.Icons.LINK)
-    dl_url_button.key = "download-from-url"
+    dl_url_button.on_click = run_url_click
 
     def _show_snack(msg: str):
         sb = ft.SnackBar(content=ft.Text(msg))

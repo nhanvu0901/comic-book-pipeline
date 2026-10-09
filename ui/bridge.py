@@ -3,10 +3,12 @@ Async wrappers around the synchronous stage pipelines so the UI can run
 them off the event loop via page.run_task().
 """
 import asyncio
+import contextlib
 import json
 import os
 import queue
 import re
+import threading
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -512,7 +514,42 @@ def run_stage_1(
 
 # ─── Stage 2: Download ─────────────────────────────────────────────────────
 
+class DownloadInProgress(RuntimeError):
+    """A download for this project is already running — in this tab or another."""
+
+
+_downloads_running: set[str] = set()
+_downloads_guard = threading.Lock()
+
+
+@contextlib.contextmanager
+def _one_download_per_project(project_name: str):
+    """Hold a project's download slot for the length of one download.
+
+    The Stage 1 button, Download from URL(s) and the saga switch all write the same
+    raw_comic/chNN_page_*.jpg names, and a page already on disk counts as cached — so two
+    runs on one project mix the pages of two different comics into one chapter, and slow
+    each other down. The UI's own busy flags only cover one tab and one button each, so the
+    slot lives here, where every tab shares it."""
+    with _downloads_guard:
+        if project_name in _downloads_running:
+            raise DownloadInProgress(
+                f"A download for '{project_name}' is already running — wait for it to "
+                "finish (watch the log), then click again if pages are still missing.")
+        _downloads_running.add(project_name)
+    try:
+        yield
+    finally:
+        with _downloads_guard:
+            _downloads_running.discard(project_name)
+
+
 def run_stage_download(project_name: str, log: Callable[[str], None]) -> list[dict]:
+    with _one_download_per_project(project_name):
+        return _run_stage_download(project_name, log)
+
+
+def _run_stage_download(project_name: str, log: Callable[[str], None]) -> list[dict]:
     from config import get_project_dirs
     ctx_path = get_project_dirs(project_name)["root"] / "comic_context.json"
     ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
@@ -542,6 +579,17 @@ def run_stage_download_from_url(
 ) -> list[dict]:
     """URL-direct download: skip Stage 1. raw_input can be either a series URL
     or one-or-more reader URLs (whitespace/newline/comma separated)."""
+    with _one_download_per_project(project_name):
+        return _run_stage_download_from_url(project_name, raw_input, issues, enrich, log)
+
+
+def _run_stage_download_from_url(
+    project_name: str,
+    raw_input: str,
+    issues: str,
+    enrich: bool,
+    log: Callable[[str], None],
+) -> list[dict]:
     from stages.stage_2.url_mode import (
         classify_url, download_from_readers, download_from_series,
     )
@@ -575,6 +623,16 @@ def run_stage_download_saga(
     then downloads. raw_input is either ONE series URL (→ download_saga, auto
     ≤max_issues) or N reader URLs (→ download_saga_from_readers, one issue each).
     N==1 collapses to today's single-comic shape."""
+    with _one_download_per_project(project_name):
+        return _run_stage_download_saga(project_name, raw_input, max_issues, log)
+
+
+def _run_stage_download_saga(
+    project_name: str,
+    raw_input: str,
+    max_issues: int,
+    log: Callable[[str], None],
+) -> list[dict]:
     from stages.stage_2.url_mode import (
         classify_url, download_saga, download_saga_from_readers,
     )
