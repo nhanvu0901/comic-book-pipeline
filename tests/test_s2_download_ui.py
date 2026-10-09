@@ -270,6 +270,35 @@ def test_restored_unapproved_stage_one_cannot_download_the_old_context(monkeypat
     assert _by_key(root, "stage1-download").disabled is True
 
 
+def test_a_project_less_screen_is_not_told_it_was_returned_to_research(monkeypatch):
+    """A new, unnamed project has project_name == "" and returned_scout_project == "": the
+    two compared EQUAL, so the URL-direct entry (Step 3 straight from the picker) showed
+    "This project was returned to research" and greyed out Download (from Stage 1) for a
+    reason that was false."""
+    page = FakePage()
+    state = AppState(project_name="")
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    root = s2_download.build(page, state, on_go=lambda _stage: None, on_state_change=lambda: None)
+
+    assert not [c for c in _walk(root) if getattr(c, "key", None) == "needs-stage1-reapproval"]
+    assert _by_key(root, "stage1-download").disabled is False
+
+
+def test_clicking_stage_one_download_with_no_project_points_at_url_direct(monkeypatch):
+    page = FakePage()
+    state = AppState(project_name="")
+    monkeypatch.setattr(s2_download, "load_raw_pages", lambda _project: [])
+    monkeypatch.setattr(s2_download, "get_scout_missing_readers", lambda _project: [])
+    root = s2_download.build(page, state, on_go=lambda _stage: None, on_state_change=lambda: None)
+
+    _by_key(root, "stage1-download").on_click(None)
+    _run_task(page)
+
+    status = " ".join(str(c.value) for c in _walk(root) if isinstance(c, ft.Text) and c.value)
+    assert "No project loaded" in status and "url-direct" in status.lower()
+
+
 def test_missing_reader_panel_names_rank_entity_and_source_and_blocks_download(monkeypatch):
     page, root = _build(
         monkeypatch,

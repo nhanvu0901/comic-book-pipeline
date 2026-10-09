@@ -251,8 +251,11 @@ def build(
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
                 controls.append(ft.Column([copy_row, field], spacing=2))
             controls.append(repair_button)
+        # A project-less screen (URL-direct from the picker) has "" on both sides, which
+        # compared equal and claimed a return that never happened.
         needs_stage_one_reapproval = (
-            state.returned_scout_project == state.project_name
+            bool(state.project_name)
+            and state.returned_scout_project == state.project_name
             and not state.is_approved(1)
         )
         if needs_stage_one_reapproval:
@@ -285,7 +288,8 @@ def build(
         if download_busy[0] or repair_busy[0] or return_busy[0]:
             return
         if not state.project_name:
-            status_text.value = "No project loaded — go back to Stage 1."
+            status_text.value = ("No project loaded — go back to Stage 1, or paste the "
+                                 "comic URL(s) under URL-DIRECT below.")
             status_text.color = DANGER
             page.update()
             return
