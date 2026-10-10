@@ -365,3 +365,134 @@ def test_the_bridge_hands_the_whole_batch_through(tmp_path, monkeypatch):
         "First fresh question?", "Second fresh question?",
     ]
     assert "Old question?" in client.seen_prompt
+
+
+# ─── the hard filter reads the FULL avoid list; only the prompt is capped ───
+
+
+def _ledger_event(mode, kind, text, ts, *, label=None):
+    return {
+        "id": f"{mode}-{kind}-{text}-{ts}", "ts": ts, "mode": mode, "kind": kind, "key": "",
+        "keys": [], "label": label or text, "text": text, "entities": [], "scope": "item",
+        "reason_code": "", "refs": {},
+    }
+
+
+def _scripted_ledger(monkeypatch, tmp_path, events):
+    from stages.research_scout import avoid_list, ledger_shadow
+
+    monkeypatch.setattr(avoid_list.config, "PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setattr(
+        ledger_shadow, "_read_events", lambda **kwargs: (list(events), "export", "ready", None),
+    )
+    banlist = tmp_path / "qa_question_banlist.md"
+    banlist.write_text("| Date | Question | Reason |\n|---|---|---|\n", encoding="utf-8")
+    monkeypatch.setattr(avoid_list, "_banlist_path", lambda: banlist)
+
+
+_LANES = [
+    "Which vampires fought Dracula {n}", "Which robots rebelled against Skynet {n}",
+    "Which pirates sailed with Blackbeard {n}", "Which knights guarded Camelot {n}",
+]
+
+
+def _sixty_old_to_new(monkeypatch, tmp_path):
+    """60 produced Q&A lanes. Lane 1 is the OLDEST — it falls past the 50th line
+    of the prompt list; lane 60 is the newest."""
+    events = []
+    for number in range(1, 61):
+        lane = f"zq{number:02d}x unique{number:02d}y marker{number:02d}z lane"
+        events.append(_ledger_event("qa", "produced", lane, f"2026-02-{number // 3 + 1:02d}T{number % 24:02d}:00:00Z"))
+    _scripted_ledger(monkeypatch, tmp_path, events)
+    return events
+
+
+def test_a_produced_question_beyond_the_50th_avoid_line_is_still_burned(tmp_path, monkeypatch):
+    """The regression: the avoid list was cut to 50 BEFORE it became the burn
+    digest, so after a couple of re-rolls older produced/banned questions fell
+    out of the hard filter and could be offered again."""
+    events = _sixty_old_to_new(monkeypatch, tmp_path)
+    oldest = min(events, key=lambda e: e["ts"])["text"]
+    client = _ScriptedYouCom(candidates=[
+        {"question": oldest},
+        {"question": "Which villains have escaped Arkham through the front door?"},
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+
+    assert [entry["question"] for entry in batch] == [
+        "Which villains have escaped Arkham through the front door?"
+    ]
+    # ...while that same row really is outside the prompt's 50 lines.
+    assert oldest not in client.seen_prompt
+
+
+def _prompt_avoid_lines(prompt):
+    section = prompt.split("ALREADY DONE — avoid these relevant prior questions/issues:\n", 1)[1]
+    return [line for line in section.splitlines() if line.strip()]
+
+
+def test_the_prompt_avoid_section_is_still_capped_at_fifty(tmp_path, monkeypatch):
+    _sixty_old_to_new(monkeypatch, tmp_path)
+    client = _ScriptedYouCom(candidates=[{"question": "A fresh question?"}])
+
+    _workflow(tmp_path, client).discover_questions(ScoutMode.QA, exclude=["Shown just now?"])
+
+    lines = _prompt_avoid_lines(client.seen_prompt)
+    assert len(lines) == 50
+    assert lines[0] == "Shown just now?"  # session-shown first
+    # then the NEWEST ledger rows, not an alphabetical slice
+    assert any("marker60z" in line for line in lines)
+    assert not any("marker01z" in line for line in lines)
+
+
+def test_a_question_turned_down_in_an_earlier_session_is_burned(tmp_path, monkeypatch):
+    """What `discovered_offered` forgets on reload, the ledger remembers."""
+    turned_down = "Which heroes have wielded the Infinity Gauntlet successfully?"
+    _scripted_ledger(monkeypatch, tmp_path, [
+        _ledger_event("qa", "rejected", turned_down, "2026-10-01T00:00:00Z"),
+    ])
+    client = _ScriptedYouCom(candidates=[
+        {"question": turned_down},
+        {"question": "Who has out-lasted Deadpool in a healing contest?"},
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+
+    assert [entry["question"] for entry in batch] == [
+        "Who has out-lasted Deadpool in a healing contest?"
+    ]
+    assert turned_down in client.seen_prompt
+
+
+def test_a_rejected_micro_moment_is_burned_but_a_qa_rejection_is_not_applied_to_micro(
+    tmp_path, monkeypatch,
+):
+    year = date.today().year
+    rejected_moment = "Hero opens the sealed door and frees a prisoner from the vault."
+    qa_rejection = "Villain steals the crown jewels during a royal parade."
+    _scripted_ledger(monkeypatch, tmp_path, [
+        _ledger_event("micro", "rejected", rejected_moment, "2026-10-01T00:00:00Z",
+                      label=f"Hero #2 ({year})"),
+        _ledger_event("qa", "rejected", qa_rejection, "2026-10-01T00:00:01Z"),
+    ])
+
+    def candidate(text, number):
+        return {
+            "moment": text, "series_issue_year": f"Hero #{number} ({year})",
+            "turning_point": "Hero opens the sealed door.",
+            "what_visibly_happens": "Hero opens the sealed door and frees a prisoner.",
+            "why_it_lands": "The prisoner can now leave the room.",
+            "evidence_urls": ["https://publisher.test/hero"],
+        }
+
+    client = _ScriptedYouCom(candidates=[
+        candidate(rejected_moment, 2), candidate(qa_rejection, 3),
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO)
+
+    # The micro rejection is burned. The Q&A rejection belongs to another mode,
+    # so the very same words are still a fresh candidate in micro.
+    assert [entry["moment"] for entry in batch] == [qa_rejection]
+    assert rejected_moment in client.seen_prompt and qa_rejection not in client.seen_prompt

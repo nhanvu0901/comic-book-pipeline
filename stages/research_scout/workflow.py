@@ -796,15 +796,17 @@ class ScoutWorkflow:
         fallback = [{field: angle, "angle": angle, "fallback": True}]
 
         excluded = [str(item).strip() for item in exclude if str(item).strip()]
-        question_avoid = avoid_list.relevant_question_avoid_lines(
-            mode, " ".join(angles), extra_held=excluded, limit=50,
-        )
+        # Two views of one list. The hard filter below gets every question that
+        # must not come back; only the prompt's AVOID section is cut to its size
+        # budget (session-shown first, then the newest ledger rows) — the same
+        # split micro makes between inventory_issue_keys and the prompt labels.
+        question_avoid = avoid_list.question_avoid_lines(mode, extra_held=excluded)
         prompt = bundle.render(
             "discover",
             angles="\n".join(f"- {a}" for a in angles),
             count=str(count),
             exclude="\n".join(f"- {item}" for item in excluded) or "- (nothing yet)",
-            avoid="\n".join(question_avoid),
+            avoid="\n".join(question_avoid[:avoid_list.PROMPT_AVOID_LIMIT]),
         )
         prompt_text = prompt.text
         if mode is ScoutMode.MICRO:
@@ -823,9 +825,9 @@ class ScoutWorkflow:
         except Exception:
             return fallback
 
-        # One digest for both jobs: the produced/banned lanes we always avoid,
-        # plus whatever this session has already shown. is_burned's loose token
-        # overlap is what stops a re-roll returning the same lane re-worded.
+        # The produced/banned/turned-down lanes we always avoid plus whatever this
+        # session has already shown — ALL of them, uncapped. is_burned's loose
+        # token overlap is what stops a re-roll returning the same lane re-worded.
         burn_digest = "\n".join(f"- {line}" for line in question_avoid)
         picked: list[dict[str, Any]] = []
         seen: set[str] = set()
