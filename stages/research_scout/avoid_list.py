@@ -78,30 +78,62 @@ def _inventory(mode: ScoutMode) -> list[str]:
     return found
 
 
-def relevant_question_avoid_lines(
-    mode: ScoutMode | str, user_intent: str = "", extra_held=(), limit: int = 50,
-) -> list[str]:
-    """Question text for discover's question-level burn filter."""
-    result = [str(item).strip() for item in extra_held if str(item).strip()]
-    limit = max(0, min(int(limit), 50))
+# What the prompt's AVOID section may hold. Only the PROMPT is capped; the hard
+# filter reads question_avoid_lines() whole.
+PROMPT_AVOID_LIMIT = 50
+
+
+def _banlist_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "qa_question_banlist.md"
+
+
+def _banlist_questions() -> list[str]:
+    """The question of every dated row in qa_question_banlist.md, file order."""
+    path = _banlist_path()
+    if not path.exists():
+        return []
+    questions: list[str] = []
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or not re.match(r"(?:19|20)\d{2}-\d{2}-\d{2}", cells[0]):
+            continue
+        if cells[1]:
+            questions.append(cells[1])
+    return questions
+
+
+def question_avoid_lines(mode: ScoutMode | str, extra_held=()) -> list[str]:
+    """EVERY question discover must not hand back, in priority order, uncapped.
+
+    Order: what this session already showed (newest batch first), then the ledger
+    rows newest first — production/ban questions and, in their own mode only, the
+    questions Master turned down with 'None of these' — then the banlist file.
+    Feeds discover's hard ``is_burned`` filter; the prompt takes
+    ``relevant_question_avoid_lines``, the first 50 of this.
+    """
+    held = [" ".join(str(item).split()) for item in extra_held]
+    held = [item for item in held if item][::-1]
     mode_value = str(getattr(mode, "value", mode))
-    if mode_value != ScoutMode.QA.value:
-        return list(dict.fromkeys(result))[:limit]
-    path = Path(__file__).resolve().parents[2] / "qa_question_banlist.md"
-    try:
-        _labels, _keys, questions, _status = ledger_inventory.load_production_inventory(ScoutMode.QA)
-        result.extend(questions)
-    except (OSError, ValueError, TypeError):
-        pass
-    if path.exists():
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-            if len(cells) < 2 or not re.match(r"(?:19|20)\d{2}-\d{2}-\d{2}", cells[0]):
-                continue
-            question = re.sub(r"\s+", " ", cells[1])
-            if question:
-                result.append(question)
-    return list(dict.fromkeys(result))[:limit]
+    ledger_rows: list[tuple[str, str]] = []
+    if mode_value in {ScoutMode.QA.value, ScoutMode.MICRO.value}:
+        try:
+            ledger_rows = ledger_inventory.load_question_avoid(mode_value)
+        except (OSError, ValueError, TypeError):
+            pass
+    banned = _banlist_questions() if mode_value == ScoutMode.QA.value else []
+    lines: dict[str, str] = {}
+    for text in [*held, *(text for _stamp, text in ledger_rows), *banned]:
+        text = " ".join(text.split())
+        lines.setdefault(ledger_inventory.question_identity(text), text)
+    return list(lines.values())
+
+
+def relevant_question_avoid_lines(
+    mode: ScoutMode | str, user_intent: str = "", extra_held=(), limit: int = PROMPT_AVOID_LIMIT,
+) -> list[str]:
+    """The prompt-sized head of ``question_avoid_lines`` (never more than 50)."""
+    limit = max(0, min(int(limit), PROMPT_AVOID_LIMIT))
+    return question_avoid_lines(mode, extra_held)[:limit]
 
 
 def _key(label: str) -> tuple[str, str, str] | None:

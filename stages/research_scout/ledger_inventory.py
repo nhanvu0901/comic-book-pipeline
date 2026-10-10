@@ -183,6 +183,70 @@ def _active_key_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and not (event.get("kind") == "banned" and i < last_unban)]
 
 
+def _read_snapshot():
+    return ledger_shadow._read_events(
+        db_path=ledger_shadow.DEFAULT_DB_PATH,
+        export_path=ledger_shadow.DEFAULT_EXPORT_PATH,
+        windows_server=ledger_shadow.ledger._is_windows_server(),
+    )
+
+
+def _qa_groups(all_events: list[dict[str, Any]], local: list[dict[str, Any]]):
+    """Yield the member rows of every QA reservation group still held.
+
+    QA reservations are grouped by their stable question key when present;
+    legacy/context rows have an empty key and remain useful as local holds.
+    """
+    groups = sorted({str(e.get("key") or e.get("text") or e.get("label") or "") for e in all_events
+                     if e.get("mode") == "qa"}, key=str.casefold)
+    for group in groups:
+        members = [e for e in all_events if e.get("mode") == "qa"
+                   and (str(e.get("key") or e.get("text") or e.get("label") or "") == group)]
+        if not any(e in local for e in members) and not _rows_active(members):
+            continue
+        yield members
+
+
+def _group_text(members: list[dict[str, Any]]) -> str:
+    return next((str(e.get("text") or e.get("label") or "").strip() for e in members
+                 if str(e.get("text") or e.get("label") or "").strip()), "")
+
+
+# Sorts after every real timestamp: a hold taken on this machine that the
+# exported snapshot does not carry yet is newer than the snapshot itself.
+_NEWEST = "\uffff"
+
+
+def load_question_avoid(mode: ScoutMode | str) -> list[tuple[str, str]]:
+    """(timestamp, text) of every question discover must not hand back, newest first.
+
+    Q&A: the production/ban questions ``load_production_inventory`` returns plus
+    the rejected ones. Micro: rejected moments only — its production side is the
+    issue-key code gate, not question text. Recap has no discover. This is the
+    only reader that counts a ``rejected`` row; the uncapped result feeds
+    discover's hard filter, and the caller cuts it for the prompt.
+    """
+    mode_value = str(getattr(mode, "value", mode))
+    if mode_value not in {"qa", "micro"}:
+        return []
+    events, _source, _status, _error = _read_snapshot()
+    rows: list[tuple[str, str]] = []
+    if mode_value == "qa":
+        local = _local_events("qa")
+        for members in _qa_groups((events or []) + local, local):
+            text = _group_text(members)
+            stamps = [str(e["ts"]) for e in members if e.get("ts")]
+            if text:
+                rows.append((max(stamps) if stamps else _NEWEST, text))
+    for event in active_rejections(events, mode_value):
+        text = str(event.get("text") or event.get("label") or "").strip()
+        if text:
+            rows.append((str(event.get("ts", "")), text))
+    rows.sort(key=lambda row: row[1].casefold())
+    rows.sort(key=lambda row: row[0], reverse=True)
+    return rows
+
+
 def load_production_inventory(
     mode: ScoutMode | str,
 ) -> tuple[list[str], set[tuple[str, str, str]], list[str], str]:
@@ -190,28 +254,15 @@ def load_production_inventory(
     mode_value = str(getattr(mode, "value", mode))
     if mode_value not in {"qa", "micro", "recap"}:
         raise ValueError(f"unsupported scout inventory mode: {mode_value}")
-    events, source, status, _error = ledger_shadow._read_events(
-        db_path=ledger_shadow.DEFAULT_DB_PATH,
-        export_path=ledger_shadow.DEFAULT_EXPORT_PATH,
-        windows_server=ledger_shadow.ledger._is_windows_server(),
-    )
+    events, source, status, _error = _read_snapshot()
     labels: list[str] = []
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
     local = _local_events(mode_value)
     all_events = (events or []) + local
     if mode_value == "qa":
-        # QA reservations are grouped by their stable question key when present;
-        # legacy/context rows have an empty key and remain useful as local holds.
-        groups = sorted({str(e.get("key") or e.get("text") or e.get("label") or "") for e in all_events
-                         if e.get("mode") == "qa"}, key=str.casefold)
-        for group in groups:
-            members = [e for e in all_events if e.get("mode") == "qa"
-                       and (str(e.get("key") or e.get("text") or e.get("label") or "") == group)]
-            if not any(e in local for e in members) and not _rows_active(members):
-                continue
-            text = next((str(e.get("text") or e.get("label") or "").strip() for e in members
-                         if str(e.get("text") or e.get("label") or "").strip()), "")
+        for members in _qa_groups(all_events, local):
+            text = _group_text(members)
             if text:
                 questions.append(text)
             for e in members:
