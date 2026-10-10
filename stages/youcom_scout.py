@@ -245,6 +245,7 @@ DISCOVER_ANGLES = [
 
 _DISCOVER_PROPS = {
     "question": {"type": "string"}, "subject": {"type": "string"},
+    "proposed_format": {"type": "string"},
     "why_fans_ask_it": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
     "sample_answer_items": {"type": "array", "items": {"type": "string"}},
@@ -278,10 +279,11 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
         prompt = (
             f"{digest}\n\n=== TASK ===\n"
             "Find ONE comic-book question fans genuinely and repeatedly ask, about an "
-            "A-TIER famous character (Batman / Hulk / Thor / Spider-Man / Deadpool tier), "
-            "whose answer is a LIST of 3 or more separate moments in DIFFERENT comics all "
-            "published 2010 or later. Real fan debates and 'every character who…' articles "
-            "only — never invent a question because it sounds viral. Cite the URL where "
+            "A-TIER famous character (Batman / Hulk / Thor / Spider-Man / Deadpool tier). "
+            "Propose the format in `proposed_format`: 'list' if the answer is a list across "
+            "different comics, or 'direct' if it is one grounded answer developed through "
+            "story/evidence beats (Why/How, What-is/concept questions). "
+            "Real fan debates only — never invent a question because it sounds viral. Cite the URL where "
             "fans actually ask or answer it.\n"
             f"Angle for THIS search: {angle}."
         )
@@ -300,7 +302,7 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     lines = ["# DISCOVER — candidates for Master\n"]
     for c in kept:
         lines += [f"## {c.get('question')}",
-                  f"- subject: {c.get('subject')} | angle: {c.get('_angle')}",
+                  f"- subject: {c.get('subject')} | angle: {c.get('_angle')} | format: {c.get('proposed_format', 'list')}",
                   f"- why fans ask: {c.get('why_fans_ask_it','')[:300]}",
                   f"- sample items: {'; '.join(c.get('sample_answer_items') or [])[:400]}",
                   f"- evidence: {' '.join(c.get('evidence_urls') or [])}", ""]

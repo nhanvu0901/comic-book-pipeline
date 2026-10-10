@@ -28,6 +28,7 @@ from .planner import ResearchPlan
 from .policies import PolicyBundle
 from .storage import SessionStore
 from .youcom import RawCall, YouComClient
+from stages.question_archetype import question_archetype
 
 
 def _intent_with_feedback(session: ResearchSession) -> str:
@@ -101,28 +102,36 @@ def verify_output_schema() -> dict[str, Any]:
     }
 
 
-def general_output_schema(mode: ScoutMode | str = ScoutMode.QA) -> dict[str, Any]:
+def general_output_schema(
+    mode: ScoutMode | str = ScoutMode.QA, qa_format: str = ""
+) -> dict[str, Any]:
     """The fallback round's output schema. Micro adds the aftermath/context
-    fields (planner.MICRO_DETAIL_PROPS); Q&A keeps exactly the shape it had."""
+    fields (planner.MICRO_DETAIL_PROPS); direct format adds answer_thesis;
+    Q&A list keeps exactly the shape it had."""
     item_props = dict(_GENERAL_ITEM_PROPS)
     if ScoutMode(mode) is ScoutMode.MICRO:
         item_props.update(copy.deepcopy(planner_module.MICRO_DETAIL_PROPS))
+    top_props: dict[str, Any] = {
+        "candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": item_props,
+                "required": list(item_props),
+            },
+        },
+        "notes": {"type": "string"},
+    }
+    required = ["candidates", "notes"]
+    if ScoutMode(mode) is ScoutMode.QA and qa_format == "direct":
+        top_props["answer_thesis"] = {"type": "string"}
+        required.append("answer_thesis")
     return {
         "type": "object",
         "additionalProperties": False,
-        "properties": {
-            "candidates": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": item_props,
-                    "required": list(item_props),
-                },
-            },
-            "notes": {"type": "string"},
-        },
-        "required": ["candidates", "notes"],
+        "properties": top_props,
+        "required": required,
     }
 
 
@@ -179,7 +188,18 @@ class ScoutWorkflow:
         session = self._load_and_transition(session_id, "run_general")
         bundle = self._bundle(session.mode)
         feedback_notes = [f.text for f in session.feedback_log if f.text.strip()]
+        confirmed_format = "list"
+        if session.mode is ScoutMode.QA:
+            preliminary_format = str(question_archetype(session.user_intent))
+        else:
+            preliminary_format = ""
         plan = self._planner(session.user_intent, feedback_notes, session.mode.value)
+        if session.mode is ScoutMode.QA:
+            if plan is not None and getattr(plan, "format", "") in ("list", "direct"):
+                confirmed_format = plan.format
+            else:
+                confirmed_format = preliminary_format
+            session.format = confirmed_format
         if plan is None:
             # Fallback path — byte-for-byte today's behavior: the mode's fixed
             # template + the fixed schema. _intent_with_feedback folds feedback
@@ -192,18 +212,22 @@ class ScoutWorkflow:
                 digest=self.digest,
             )
             prompt_text, prompt_hash = prompt.text, prompt.sha256
-            schema = general_output_schema(session.mode)
+            schema = general_output_schema(session.mode, qa_format=confirmed_format)
             plan_record: dict[str, Any] = {"source": "fallback"}
+            if session.mode is ScoutMode.QA:
+                plan_record["format"] = confirmed_format
         else:
             # Planner path — feedback already reached the planner input above,
             # so it must NOT be folded into the prompt a second time here.
             prompt_text = planner_module.assemble_prompt(
                 plan, self.digest, user_intent=session.user_intent,
-                mode=session.mode.value,
+                mode=session.mode.value, qa_format=confirmed_format,
             )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
-            schema = planner_module.compile_schema(plan, mode=session.mode.value)
+            schema = planner_module.compile_schema(plan, mode=session.mode.value, qa_format=confirmed_format)
             plan_record = {"source": "planner", **plan.model_dump(mode="json")}
+            if session.mode is ScoutMode.QA:
+                plan_record["format"] = confirmed_format
         if session.mode is ScoutMode.MICRO:
             prompt_text += "\n\n" + recent_micro_instruction()
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
@@ -256,17 +280,22 @@ class ScoutWorkflow:
             if (citation := cited_sources.claim_citation(candidate)) is not None
         }
         self.store.write_artifact(session.id, "general/research.v1.json", _raw_record(raw))
+        candidate_payload: dict[str, Any] = {"candidates": candidates}
+        if session.mode is ScoutMode.QA:
+            answer_thesis = str(payload.get("answer_thesis", "") or "").strip()
+            if answer_thesis:
+                candidate_payload["answer_thesis"] = answer_thesis
         self.store.write_artifact(
             session.id,
             "general/candidates.v1.json",
-            {"candidates": candidates},
+            candidate_payload,
         )
         # Keep every round's payload under its own name so the chat can still show a
         # superseded round's candidates after a rerun overwrites candidates.v1.json.
         self.store.write_artifact(
             session.id,
             f"general/candidates.rev{session.revision}.v1.json",
-            {"revision": session.revision, "candidates": candidates},
+            {"revision": session.revision, **candidate_payload},
         )
         self.store.write_artifact(
             session.id,
@@ -297,6 +326,8 @@ class ScoutWorkflow:
             "accepted_bound_source_count": len(accepted_bound_sources),
             "candidate_validation_rejections": validation["rejected"],
         }
+        if session.mode is ScoutMode.QA:
+            detail["format"] = confirmed_format
         if plan is not None:
             detail["plan_summary"] = f"{plan.unit} · {plan.cardinality}" + (
                 f" · ranked: {plan.ranking}" if plan.ranking else ""
@@ -428,8 +459,14 @@ class ScoutWorkflow:
             if candidate_ids is not None
             else list(session.selected_specific_candidate_ids)
         )
-        if session.mode is ScoutMode.QA and not 3 <= len(ids) <= 5:
-            raise ScoutUserError("QA requires 3 to 5 selected candidates")
+        if session.mode is ScoutMode.QA:
+            fmt = session.format or str(question_archetype(session.user_intent))
+            if fmt == "direct":
+                if not 2 <= len(ids) <= 5:
+                    raise ScoutUserError("Direct Q&A requires 2 to 5 selected story beats")
+            else:
+                if not 3 <= len(ids) <= 5:
+                    raise ScoutUserError("QA requires 3 to 5 selected candidates")
         if session.mode is ScoutMode.MICRO and len(ids) != 1:
             raise ScoutUserError("MICRO requires exactly 1 selected candidate")
         session.selected_specific_candidate_ids = ids
@@ -624,7 +661,10 @@ class ScoutWorkflow:
             ("question", _DISCOVER_PROPS) if mode is ScoutMode.QA else ("moment", _MICRO_PROPS)
         )
         angles = [str(a) for a in bundle.general_angles.get(mode.value, [])] or [angle]
-        fallback = [{field: angle, "angle": angle, "fallback": True}]
+        fallback_item: dict[str, Any] = {field: angle, "angle": angle, "fallback": True}
+        if mode is ScoutMode.QA:
+            fallback_item["proposed_format"] = str(question_archetype(angle))
+        fallback = [fallback_item]
 
         excluded = [str(item).strip() for item in exclude if str(item).strip()]
         prompt = bundle.render(
@@ -676,7 +716,13 @@ class ScoutWorkflow:
                     continue
             seen.add(text.casefold())
             labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
-            picked.append({**candidate, field: text, "angle": labelled})
+            candidate_entry = {**candidate, field: text, "angle": labelled}
+            if mode is ScoutMode.QA:
+                prop_fmt = str(candidate.get("proposed_format") or "").strip().lower()
+                if prop_fmt not in ("list", "direct"):
+                    prop_fmt = str(question_archetype(text))
+                candidate_entry["proposed_format"] = prop_fmt
+            picked.append(candidate_entry)
             if mode is ScoutMode.QA and len(picked) >= count:
                 break
         if mode is ScoutMode.MICRO:

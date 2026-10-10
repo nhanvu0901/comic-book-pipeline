@@ -755,11 +755,17 @@ def build(
         choices: list[ft.Control] = []
         for index, entry in enumerate(discovered_holder[0]):
             angle = str(entry.get("angle") or "").strip()
+            fmt = str(entry.get("proposed_format") or entry.get("format") or "").strip()
             text_desc = _discovered_text(entry)
+            badges: list[ft.Control] = []
+            if fmt:
+                badges.append(ft.Text(f"[{fmt.capitalize()}]", size=11, weight=ft.FontWeight.BOLD, color=ACCENT, selectable=True))
+            if angle:
+                badges.append(ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED, selectable=True))
             entry_details: list[ft.Control] = [
                 ft.Row([
                     ft.Text(text_desc, size=13, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True, expand=True),
-                    ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED, selectable=True) if angle else ft.Container(),
+                    ft.Row(badges, spacing=4) if badges else ft.Container(),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             ]
             meta_parts = []
@@ -769,6 +775,8 @@ def build(
                 meta_parts.append(f"Issue: {entry['series_issue_year']}")
             if meta_parts:
                 entry_details.append(ft.Text(" • ".join(meta_parts), size=11, weight=ft.FontWeight.W_500, color=ACCENT, selectable=True))
+            if entry.get("source_evidence"):
+                entry_details.append(ft.Text(f"Evidence: {entry['source_evidence']}", size=11, color=TEXT_MUTED, selectable=True))
             if entry.get("turning_point"):
                 entry_details.append(ft.Text(f"Turning point: {entry['turning_point']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
             if entry.get("constant_broken"):
@@ -968,6 +976,20 @@ def build(
         discovered_pick[0] = raw
         intent_field.value = _discovered_intent(entry, ScoutMode(mode_group.value))
         _render_full()
+
+    def _intent_text_changed(_event) -> None:
+        """Clear the picked selection if the user edits the question text, so
+        the edited question cannot carry a stale format label or stale selection."""
+        if discovered_pick[0]:
+            try:
+                entry = discovered_holder[0][int(discovered_pick[0])]
+                expected = _discovered_intent(entry, ScoutMode(mode_group.value))
+                if (intent_field.value or "").strip() != expected.strip():
+                    discovered_pick[0] = ""
+                    _render_full()
+            except (TypeError, ValueError, IndexError):
+                discovered_pick[0] = ""
+                _render_full()
 
     def _show_discovered(batch) -> None:
         entries = [entry for entry in (batch or []) if _discovered_text(entry)]
@@ -1440,6 +1462,7 @@ def build(
         multiline=True,
         min_lines=1,
         max_lines=3,
+        on_change=_intent_text_changed,
     )
     send_button = primary_button("Send", _send_click)
     send_button.key = "chat-send"

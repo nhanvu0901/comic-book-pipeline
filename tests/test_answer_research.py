@@ -130,10 +130,11 @@ def test_answer_context_schema_exact_and_presentation_order(wired, monkeypatch):
                                    researched_at="2026-07-04", log=lambda _m: None)
     a = json.loads(a_path.read_text())
 
-    assert set(a.keys()) == {"question", "answer_summary", "constant_broken",
+    assert set(a.keys()) == {"question", "answer_summary", "format", "constant_broken",
                              "viewer_context", "researched_at", "source_engine", "items",
                              "unresolved_reader_urls"}
     assert a["question"] == QUESTION
+    assert a["format"] == "list"
     assert a["researched_at"] == "2026-07-04"
     assert a["source_engine"] == "youcom-web-search+openrouter-deepseek"
     # ADDITIVE story-context fields present (default "" when research omitted them —
@@ -429,3 +430,89 @@ def test_story_context_fields_round_trip_when_present(monkeypatch, tmp_path):
     first = a["items"][0]
     assert first["relationships"] == "Danny Ketch is the second Ghost Rider"
     assert first["stakes_why"] == "he turns his own curse on himself and feels nothing"
+
+
+def test_direct_research_allows_two_items_and_preserves_narrative_order(monkeypatch, tmp_path):
+    direct_q = "Why did Wolverine lose his healing factor?"
+    beats = [
+        {
+            "entity": "Microverse Virus",
+            "how_or_why": "An alien sentient virus infects Wolverine and burns out his mutant healing factor.",
+            "source_comic": '"Wolverine" (2014) #1',
+            "source_year": "2014",
+            "drawable_moment": "Wolverine coughing blood as his healing factor flickers out",
+            "verification_note": "marvel.fandom.com + comic issues",
+            "surprise_level": "high",
+            "reader_url": "https://batcave.biz/reader/111/222",
+        },
+        {
+            "entity": "Doctor Abraham Cornelius",
+            "how_or_why": "Without his healing factor, Logan fights Weapon X and is coated in molten adamantium.",
+            "source_comic": '"Death of Wolverine" #4',
+            "source_year": "2014",
+            "drawable_moment": "Logan encasing in hardening molten metal on a rooftop",
+            "verification_note": "marvel.fandom.com + issues",
+            "surprise_level": "low",
+            "reader_url": "https://batcave.biz/reader/333/444",
+        },
+    ]
+    payload = "```json\n" + json.dumps({
+        "answer_summary": "A sentient alien virus shut down his mutant healing factor, leaving him vulnerable.",
+        "constant_broken": "Wolverine cannot die or lose his regeneration.",
+        "viewer_context": "Wolverine's healing factor made him virtually indestructible for decades.",
+        "items": beats,
+    }) + "\n```"
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: payload)
+    monkeypatch.setattr(mod, "get_project_dirs", lambda name: {"root": tmp_path})
+    monkeypatch.setattr(mod, "verify_issue", lambda *a, **k: {"ok": True, "note": "verified"})
+
+    res = mod.research_answer(direct_q, log=lambda _m: None)
+    assert res["format"] == "direct"
+    assert len(res["items"]) == 2
+    assert res["items"][0]["entity"] == "Microverse Virus"
+    assert res["items"][1]["entity"] == "Doctor Abraham Cornelius"
+    assert res["answer_summary"].startswith("A sentient alien virus")
+
+    a_path, _ = mod.build_contexts(direct_q, res, "wolv_healing", log=lambda _m: None)
+    a = json.loads(a_path.read_text())
+    assert a["format"] == "direct"
+    assert len(a["items"]) == 2
+    assert a["answer_summary"].startswith("A sentient alien virus")
+
+
+def test_direct_research_what_is_concept_question(monkeypatch, tmp_path):
+    concept_q = "What is the Anti-Life Equation?"
+    beats = [
+        {
+            "entity": "Mister Miracle",
+            "how_or_why": "Scott Free resists the equation, demonstrating it is a mathematical formula of despair.",
+            "source_comic": '"Forever People" #5',
+            "source_year": "1971",
+            "drawable_moment": "Darkseid projecting fiery algebraic symbols",
+            "verification_note": "dc.fandom.com",
+            "surprise_level": "medium",
+            "reader_url": "https://batcave.biz/reader/111/222",
+        },
+        {
+            "entity": "Darkseid",
+            "how_or_why": "Darkseid broadcasts the formula across Earth, proving free will is mathematically impossible.",
+            "source_comic": '"Final Crisis" #4',
+            "source_year": "2008",
+            "drawable_moment": "Millions kneeling in unison chanting Darkseid's name",
+            "verification_note": "dc.fandom.com",
+            "surprise_level": "high",
+            "reader_url": "https://batcave.biz/reader/333/444",
+        },
+    ]
+    payload = "```json\n" + json.dumps({
+        "answer_summary": "The Anti-Life Equation is a mathematical proof that free will is an illusion, forcing total submission.",
+        "items": beats,
+    }) + "\n```"
+    monkeypatch.setattr(mod, "_research_with_youcom", lambda *a, **k: payload)
+    monkeypatch.setattr(mod, "get_project_dirs", lambda name: {"root": tmp_path})
+    monkeypatch.setattr(mod, "verify_issue", lambda *a, **k: {"ok": True, "note": "verified"})
+
+    res = mod.research_answer(concept_q, log=lambda _m: None)
+    assert res["format"] == "direct"
+    assert len(res["items"]) == 2
+    assert res["answer_summary"].startswith("The Anti-Life Equation is a mathematical proof")
