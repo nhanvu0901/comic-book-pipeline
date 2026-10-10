@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import string
 from copy import deepcopy
 from dataclasses import dataclass
@@ -126,33 +125,8 @@ class PolicyBundle:
         )
 
 
-def _resolve_policy_path(filename: str) -> Path:
-    path = _POLICIES_ROOT / filename
-    if path.is_file():
-        return path
-
-    # General version fallback: if a specific versioned asset (e.g. name.v2.json)
-    # is missing, look for earlier or alternative versions (e.g. name.v1.json).
-    match = re.match(r"^(.*?)\.v(\d+)\.json$", filename)
-    if match:
-        stem, target_ver = match.group(1), int(match.group(2))
-        for ver in range(target_ver - 1, 0, -1):
-            fallback = _POLICIES_ROOT / f"{stem}.v{ver}.json"
-            if fallback.is_file():
-                return fallback
-        candidates = sorted(
-            _POLICIES_ROOT.glob(f"{stem}.v*.json"),
-            key=lambda p: [int(c) if c.isdigit() else c for c in re.findall(r"\d+", p.name)],
-            reverse=True,
-        )
-        if candidates:
-            return candidates[0]
-
-    return path
-
-
 def _load_json(filename: str) -> dict[str, Any]:
-    path = _resolve_policy_path(filename)
+    path = _POLICIES_ROOT / filename
     with path.open("r", encoding="utf-8") as handle:
         return deepcopy(json.load(handle))
 
