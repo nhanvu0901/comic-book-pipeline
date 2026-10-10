@@ -16,8 +16,49 @@ from .ledger import STATE_PRECEDENCE
 from .models import ScoutMode
 
 _ACTIVE = {"in_progress", "produced", "published", "banned"}
+# A re-roll turns a *question* down; it says nothing about the issue behind it.
+# 'rejected' is therefore NOT in _ACTIVE (that set drives micro's hard issue gate
+# and QA's production inventory) and counts only for discover's question avoid,
+# through active_rejections() below. A later event of one of these kinds for the
+# same text lifts the rejection; neither touches Ledger.effective_state.
+_REJECTION_LIFTS = frozenset({"proposed", "unbanned"})
 _ISSUE_MARKER = re.compile(r"#\s*\d+(?:\.\d+)?[A-Za-z]?(?!\w)")
 _TRAILING_START_YEAR = re.compile(r"\s*\((?:19|20)\d{2}\)\s*$")
+
+
+def question_identity(text: Any) -> str:
+    """Identity of a question/moment text: whitespace- and case-insensitive."""
+    return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+
+
+def _event_order(event: dict[str, Any]) -> tuple[str, str]:
+    return (str(event.get("ts", "")), str(event.get("id", "")))
+
+
+def active_rejections(events: list[dict[str, Any]] | None, mode: str) -> list[dict[str, Any]]:
+    """Rejected question rows of ``mode`` still in force, newest first.
+
+    One row per question identity: the latest ``rejected`` event after the most
+    recent lift (a ``proposed``/``unbanned`` event for the same text). Events of
+    other modes never count, so a Q&A rejection cannot hide a micro moment.
+    """
+    by_identity: dict[str, list[dict[str, Any]]] = {}
+    for event in events or []:
+        kind = event.get("kind")
+        if event.get("mode") != mode or (kind != "rejected" and kind not in _REJECTION_LIFTS):
+            continue
+        identity = question_identity(event.get("text") or event.get("label"))
+        if identity:
+            by_identity.setdefault(identity, []).append(event)
+    live: list[dict[str, Any]] = []
+    for members in by_identity.values():
+        ordered = sorted(members, key=_event_order)
+        last_lift = max((i for i, e in enumerate(ordered) if e.get("kind") in _REJECTION_LIFTS),
+                        default=-1)
+        rejected = [e for e in ordered[last_lift + 1:] if e.get("kind") == "rejected"]
+        if rejected:
+            live.append(rejected[-1])
+    return sorted(live, key=_event_order, reverse=True)
 
 
 def micro_identity(label: str):
