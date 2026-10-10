@@ -1,47 +1,48 @@
-"""Q&A question archetype detection (explore_answer mode only).
+"""Q&A question archetype & format detection (explore_answer mode).
 
-Two archetypes drive different research + writing contracts:
+Two formats drive different research + writing contracts:
 
-  "list"    — "Who has survived X?", "N characters who..." → independent items,
-              countdown listicle (the original explore_answer format).
-  "explain" — "Why did X...", "How did Y...", "The day Z...", "This is how
-              X..." → ONE story told as an ARGUMENT; the scenes build a causal
-              chain and the final body scene must state the answer plainly (a
-              countdown of events never answers a "why" — measured failure on
-              the first explain question).
+  "list"   — "Who has survived X?", "N characters who..." → independent items,
+             countdown listicle across multiple comics.
+  "direct" — "Why did X...", "How did Y...", "What is Z...", "This is how X..."
+             → ONE grounded answer developed through story/evidence beats. The
+             scenes build a causal or conceptual argument, and the final scene
+             states the answer thesis plainly. (Previously also referred to as
+             "explain"; "direct" and legacy "explain" are treated as equal).
 
-An "explain" question comes in two REGISTERS — a real interrogative ("Why...",
-"How...", "What made...") or a statement lead ("This is how...", "The day...",
-"The tragic reason...") that reads as a promise, not a question. Both drive the
-identical research/writer/validator contract; only the deterministic hook
-(stage_3/explore_answer.py::_build_hook) needs to tell them apart, since
-forcing a "?" onto a statement lead ("This is how Batman trains himself?")
-reads wrong — see `is_statement_lead` below.
-
-Deterministic + data-driven (the question's own shape), so no comic/story is
-special-cased. Shared by stage_1 answer_research (research contract) and
-stage_3 explore_answer (writer/validator/hook contract).
+Direct questions come in two registers:
+- Interrogative: "Why...", "How...", "What made...", "What is/was/are...",
+  "What happened to..."
+- Statement lead: "This is how...", "The day...", "The tragic reason...",
+  "The truth behind...", "The origin of..."
+Both drive the identical direct research/writer/validator contract; only the
+hook builder needs to tell them apart so it avoids appending "?" to statements.
 """
 import re
 
-_INTERROGATIVE_LEAD = r"why|how|what\s+made"
-_STATEMENT_LEAD = (
-    r"the\s+(?:real\s+|tragic\s+|hidden\s+)?reason|the\s+day|the\s+time|the\s+moment|"
+QA_FORMAT_LIST = "list"
+QA_FORMAT_DIRECT = "direct"
+
+_DIRECT_INTERROGATIVE_LEAD = (
+    r"why|how|what\s+made|"
+    r"what\s+(?:actually\s+|really\s+|exactly\s+)?(?:is|was|are|were)(?!\s+\d+\b)|"
+    r"what\s+happened\s+(?:to|when|in)\b"
+)
+_DIRECT_STATEMENT_LEAD = (
+    r"the\s+(?:real\s+|tragic\s+|hidden\s+)?reason|"
+    r"the\s+(?:true\s+|real\s+)?(?:origin|secret|truth)\s+(?:of|behind|about)|"
+    r"the\s+day|the\s+time|the\s+moment|"
     r"this\s+is\s+how|this\s+is\s+why|here'?s\s+how|here'?s\s+why"
 )
-_EXPLAIN_Q_RE = re.compile(
-    rf"^\s*(?:{_INTERROGATIVE_LEAD}|{_STATEMENT_LEAD})\b", re.IGNORECASE,
+_DIRECT_Q_RE = re.compile(
+    rf"^\s*(?:{_DIRECT_INTERROGATIVE_LEAD}|{_DIRECT_STATEMENT_LEAD})\b", re.IGNORECASE,
 )
-_STATEMENT_LEAD_RE = re.compile(rf"^\s*(?:{_STATEMENT_LEAD})\b", re.IGNORECASE)
+_STATEMENT_LEAD_RE = re.compile(rf"^\s*(?:{_DIRECT_STATEMENT_LEAD})\b", re.IGNORECASE)
 
 # Capability-comparison shape ("X things Carnage can do that Venom can't",
 # "...that make Carnage stronger than Venom"). Still routes through
 # question_archetype() as "list" (unchanged) — this is a SEPARATE flag the
-# stage_3 hook builder checks to skip the "who"/rank tease language, since a
-# comparison has no ranked person, just an escalating capability. CONSERVATIVE:
-# only clear can/can't or stronger-than shapes match; ambiguous phrasing (e.g.
-# "things Carnage has that Venom doesn't") stays plain "list" — precision over
-# recall per the spec.
+# stage_3 hook builder checks to skip the "who"/rank tease language.
 _COMPARISON_RE = re.compile(
     r"can\s+do\s+that\b.*\bcan'?t\b"       # "...can do that... can't"
     r"|\bcan'?t\s+do\b"                     # "...can't do..."
@@ -50,20 +51,40 @@ _COMPARISON_RE = re.compile(
 )
 
 
+class QuestionArchetype(str):
+    """String subclass that treats 'direct' and legacy 'explain' as matching."""
+
+    def __eq__(self, other: object) -> bool:
+        if super().__eq__(other):
+            return True
+        val = str(self)
+        other_val = str(other) if isinstance(other, (str, QuestionArchetype)) else other
+        if val == "direct" and other_val == "explain":
+            return True
+        if val == "explain" and other_val == "direct":
+            return True
+        return False
+
+    def __hash__(self) -> int:
+        return hash("direct") if self in ("direct", "explain") else super().__hash__()
+
+
+def is_direct_format(fmt: str | None) -> bool:
+    """True when format or archetype represents a direct answer."""
+    return str(fmt or "").strip().lower() in ("direct", "explain")
+
+
 def is_comparison(question: str) -> bool:
-    """True when `question` is a capability-comparison shape (see _COMPARISON_RE
-    above). Independent of question_archetype() — comparison questions still
-    return "list" there; this is an additive flag, not a third archetype."""
+    """True when `question` is a capability-comparison shape."""
     return bool(_COMPARISON_RE.search(question or ""))
 
 
-def question_archetype(question: str) -> str:
-    """"explain" for Why/How/The-reason/The-day/This-is-how questions, else "list"."""
-    return "explain" if _EXPLAIN_Q_RE.match(question or "") else "list"
+def question_archetype(question: str) -> QuestionArchetype:
+    """"direct" for Why/How/What-is/concept questions, else "list"."""
+    return QuestionArchetype(QA_FORMAT_DIRECT if _DIRECT_Q_RE.match(question or "") else QA_FORMAT_LIST)
 
 
 def is_statement_lead(question: str) -> bool:
-    """True when an "explain" question is phrased as a STATEMENT ("This is how...",
-    "The day...") rather than a real interrogative ("Why...", "How..."). Used only
-    by the hook builder to decide whether a "?" belongs at the end."""
+    """True when a direct question is phrased as a STATEMENT."""
     return bool(_STATEMENT_LEAD_RE.match(question or ""))
+

@@ -51,6 +51,8 @@ class ResearchSession(BaseModel):
     # Absent from session.json files written before this field existed — the
     # default keeps those old sessions loading instead of failing validation.
     feedback_log: list[FeedbackNote] = Field(default_factory=list)
+    # Format of the session for Q&A: 'list' or 'direct'. None for micro or unconfirmed.
+    format: str | None = None
     # Candidates the next general-research round must carry forward rather than
     # replace, with the ids (and therefore the gates) they already have. Set by
     # rescout_keeping_confirmed and spent — and cleared — by the run_general

@@ -31,6 +31,7 @@ _TIMEOUT = 180.0
 _REQUEST_FAILED = object()
 
 _CARDINALITIES = ("exhaustive", "options", "pinpoint")
+_FORMATS = ("list", "direct")
 _FIELD_TYPES = ("string", "string_array")
 _FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _MAX_EXTRA_FIELDS = 6
@@ -41,7 +42,7 @@ _MAX_PROMPT_CHARS = 4000
 RESERVED_FIELD_NAMES = frozenset({
     "title", "summary", "character_or_thing", "series_issue_year",
     "what_visibly_happens", "evidence_urls", "rank_reason", "id", "flags",
-    "claim_citation", "notes", "candidates",
+    "claim_citation", "notes", "candidates", "answer_thesis",
     # micro-only fields the compiler adds (MICRO_DETAIL_PROPS)
     "aftermath", "context_behind", "unrevealed", "detail_citations",
 })
@@ -54,6 +55,7 @@ class PlanField(BaseModel):
 
 
 class ResearchPlan(BaseModel):
+    format: str = "list"          # "list" | "direct"
     unit: str = ""                # what ONE candidate represents
     cardinality: str = ""         # "exhaustive" | "options" | "pinpoint"
     ranking: str = ""             # "" = unordered, else the criterion
@@ -64,6 +66,8 @@ class ResearchPlan(BaseModel):
 def validate_plan(plan: ResearchPlan) -> str | None:
     """Return a reason the plan is unsafe to compile, or None when it is fine."""
 
+    if plan.format and plan.format not in _FORMATS:
+        return f"format must be one of {_FORMATS}, got {plan.format!r}"
     if plan.cardinality not in _CARDINALITIES:
         return f"cardinality must be one of {_CARDINALITIES}, got {plan.cardinality!r}"
     if len(plan.extra_fields) > _MAX_EXTRA_FIELDS:
@@ -129,13 +133,15 @@ MICRO_DETAIL_PROPS: dict[str, Any] = {
 }
 
 
-def compile_schema(plan: ResearchPlan, mode: str = "") -> dict[str, Any]:
+def compile_schema(
+    plan: ResearchPlan, mode: str = "", qa_format: str = ""
+) -> dict[str, Any]:
     """You.com-strict output schema for one validated plan.
 
     Same wrapper shape as workflow.general_output_schema: additionalProperties
     false at every object level, every property required, and NO
     minItems/maxItems (the Research API rejects them — probed 2026-08-21).
-    ``mode="micro"`` adds MICRO_DETAIL_PROPS; any other mode is the Q&A shape.
+    ``mode="micro"`` adds MICRO_DETAIL_PROPS; direct format adds answer_thesis.
     """
 
     item_props: dict[str, Any] = dict(_CORE_ITEM_PROPS)
@@ -152,22 +158,29 @@ def compile_schema(plan: ResearchPlan, mode: str = "") -> dict[str, Any]:
         # these names with an extra_field of the wrong type.
         item_props.update(copy.deepcopy(MICRO_DETAIL_PROPS))
 
+    is_direct = (qa_format == "direct") or (getattr(plan, "format", "") == "direct")
+    top_props: dict[str, Any] = {
+        "candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": item_props,
+                "required": list(item_props),
+            },
+        },
+        "notes": {"type": "string"},
+    }
+    required = ["candidates", "notes"]
+    if mode != "micro" and is_direct:
+        top_props["answer_thesis"] = {"type": "string"}
+        required.append("answer_thesis")
+
     return {
         "type": "object",
         "additionalProperties": False,
-        "properties": {
-            "candidates": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": item_props,
-                    "required": list(item_props),
-                },
-            },
-            "notes": {"type": "string"},
-        },
-        "required": ["candidates", "notes"],
+        "properties": top_props,
+        "required": required,
     }
 
 
@@ -299,13 +312,14 @@ _CARDINALITY_BLOCKS: dict[str, str] = {
 
 
 def assemble_prompt(
-    plan: ResearchPlan, digest: str, *, user_intent: str = "", mode: str = ""
+    plan: ResearchPlan, digest: str, *, user_intent: str = "", mode: str = "", qa_format: str = ""
 ) -> str:
     """Deterministic prompt assembly — pure code, no LLM call.
 
     Order: invariant rules, the user's unchanged request, the unit sentence,
     the cardinality block, the ranking block (only when plan.ranking is set),
-    the plan's own research_prompt, then the digest.
+    the direct Q&A rule block (when format is direct), the plan's own
+    research_prompt, then the digest.
     """
 
     sections = [
@@ -326,6 +340,14 @@ def assemble_prompt(
             f"Order candidates by {plan.ranking}, best first, and justify "
             "each position in rank_reason."
         )
+    is_direct = (qa_format == "direct") or (getattr(plan, "format", "") == "direct")
+    if mode != "micro" and is_direct:
+        sections.append(
+            "Direct Q&A instructions:\n"
+            "- State ONE grounded answer thesis in `answer_thesis` answering the question plainly from comic canon.\n"
+            "- Return candidates as the sequential story/evidence beats that establish or explain the answer.\n"
+            "- Candidates do NOT need to be from different comics; they can be beats from the same comic or storyline."
+        )
     if mode == "micro":
         sections.append(_MICRO_SCOUT_RULES)
         sections.append(_MICRO_DETAIL_RULES)
@@ -337,6 +359,7 @@ def assemble_prompt(
 _PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "format": {"type": "string", "enum": list(_FORMATS)},
         "unit": {"type": "string"},
         "cardinality": {"type": "string", "enum": list(_CARDINALITIES)},
         "ranking": {"type": "string"},
@@ -355,14 +378,14 @@ _PLAN_SCHEMA: dict[str, Any] = {
         },
         "research_prompt": {"type": "string"},
     },
-    "required": ["unit", "cardinality", "ranking", "extra_fields", "research_prompt"],
+    "required": ["format", "unit", "cardinality", "ranking", "extra_fields", "research_prompt"],
     "additionalProperties": False,
 }
 
 _SYSTEM_PROMPT = """You are the Stage 1 research planner for a comic-book Q&A/story channel.
 
 Your ONLY job: read one Master research question (plus a mode hint and any \
-feedback) and fill a small ResearchPlan JSON object — four knobs the calling \
+feedback) and fill a small ResearchPlan JSON object — five knobs the calling \
 code compiles into a research prompt and a strict output schema. You never \
 write raw JSON Schema and you never restate citation/URL/"what visibly \
 happens" rules inside research_prompt — the calling code adds those \
@@ -370,13 +393,16 @@ automatically for every plan. Keep research_prompt focused on what makes \
 THIS question specific.
 
 Fields you fill:
+- format: exactly one of "list" (independent cases across comics) or \
+"direct" (one grounded answer developed through story/evidence beats, for \
+Why/How and What-is/concept questions).
 - unit: free text naming what ONE candidate represents ("one character", \
-"one issue", "one single drawn scene", "one verdict", "one alternate \
-version", ...).
+"one issue", "one story beat", "one single drawn scene", "one verdict", \
+"one alternate version", ...).
 - cardinality: exactly one of "exhaustive" (the list IS the answer — sweep \
 every source, never stop at the famous names), "options" (candidates are \
 alternatives for the Master to pick from), or "pinpoint" (a closed, \
-pre-bounded set named in the question — cover exactly that range).
+pre-bounded set or sequential beats).
 - ranking: "" for unordered, else the ranking criterion as free text \
 ("fan-consensus best", "most brutal", "strongest shown on page").
 - extra_fields: 0-6 additional per-item fields beyond the core ones the \
@@ -388,28 +414,31 @@ evidence_urls, claim_citation). Each is {name: lowercase_snake_case, type: "stri
 NEVER narrow a scope the Master did not narrow. Do not add qualifiers such as \
 one continuity only, a date range, a publisher line, "main canon", or \
 "explicitly shown on-panel" unless the question itself states them — silent \
-narrowing throws away real answers (measured: adding "main continuity" and \
-"explicitly on-panel" to an open resistance question cut a 12-answer result \
-down to 5). An open question keeps an open research_prompt; borderline cases \
-belong in the results labeled as borderline, not excluded.
+narrowing throws away real answers. An open question keeps an open \
+research_prompt; borderline cases belong in the results labeled as \
+borderline, not excluded.
 
 Question families (few-shots to calibrate the knobs — NOT a taxonomy to \
 branch on; a question that matches none of these still gets a plan):
-- feats & power ("best Hulk strength feats") -> unit: one feat; \
+- feats & power ("best Hulk strength feats") -> format: list; unit: one feat; \
 cardinality: exhaustive; ranking: yes (e.g. "most impressive")
-- broken constants ("times Batman used a gun") -> unit: one violation; \
+- broken constants ("times Batman used a gun") -> format: list; unit: one violation; \
 cardinality: exhaustive; ranking: none
-- wins/losses/deaths ("who beat Thanos 1v1") -> unit: one fight/death; \
+- wins/losses/deaths ("who beat Thanos 1v1") -> format: list; unit: one fight/death; \
 cardinality: exhaustive; ranking: none
-- artifacts & mantles ("everyone who lifted Mjolnir") -> unit: one \
+- direct why/how ("Why did Magneto build Genosha") -> format: direct; unit: one story beat; \
+cardinality: pinpoint; ranking: none
+- direct concepts & identities ("What is the Anti-Life Equation") -> format: direct; unit: one revelation/evidence beat; \
+cardinality: pinpoint; ranking: none
+- artifacts & mantles ("everyone who lifted Mjolnir") -> format: list; unit: one \
 holder/lift; cardinality: exhaustive; ranking: none
-- resistances ("who resisted the Anti-Life Equation") -> unit: one \
+- resistances ("who resisted the Anti-Life Equation") -> format: list; unit: one \
 character; cardinality: exhaustive; ranking: none
-- issue lookups ("exact issues of Deathstroke in Unkillables #1-3") -> \
+- issue lookups ("exact issues of Deathstroke in Unkillables #1-3") -> format: list; \
 unit: one issue/beat; cardinality: pinpoint; ranking: none
-- single moments ("most brutal Punisher page") -> unit: one scene; \
+- single moments ("most brutal Punisher page") -> format: list; unit: one scene; \
 cardinality: options; ranking: yes
-- versions & debates ("every evil Superman across universes") -> unit: one \
+- versions & debates ("every evil Superman across universes") -> format: list; unit: one \
 version/question; cardinality: exhaustive or options; ranking: optional
 
 Return ONLY the ResearchPlan JSON — no prose."""

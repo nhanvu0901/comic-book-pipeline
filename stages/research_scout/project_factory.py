@@ -233,7 +233,7 @@ def create_project_from_session(
 
     unresolved_reader_urls: list[dict] = []
     if session.mode is ScoutMode.QA:
-        research = _qa_research(session, selected)
+        research = _qa_research(session, selected, store=store)
         try:
             answer_research.build_contexts(
                 session.user_intent, research, project_slug, allow_missing_reader_urls=override
@@ -264,8 +264,16 @@ def create_project_from_session(
 
 def _validate_selection_count(session: ResearchSession) -> None:
     count = len(session.selected_specific_candidate_ids)
-    if session.mode is ScoutMode.QA and not 3 <= count <= 5:
-        raise ScoutUserError("QA requires three to five selected candidates")
+    if session.mode is ScoutMode.QA:
+        from stages.question_archetype import is_direct_format, question_archetype
+
+        fmt = getattr(session, "format", None) or str(question_archetype(session.user_intent))
+        if is_direct_format(fmt):
+            if not 2 <= count <= 5:
+                raise ScoutUserError("Direct Q&A requires 2 to 5 selected story beats")
+        else:
+            if not 3 <= count <= 5:
+                raise ScoutUserError("QA requires three to five selected candidates")
     if session.mode is ScoutMode.MICRO and count != 1:
         raise ScoutUserError("MICRO requires exactly one selected candidate")
 
@@ -405,7 +413,50 @@ def _has_visual_event(candidate: Mapping[str, Any]) -> bool:
 def _qa_research(
     session: ResearchSession,
     selected: list[tuple[dict[str, Any], dict[str, Any] | None]],
+    store: SessionStore | None = None,
 ) -> dict[str, Any]:
+    from stages.question_archetype import is_direct_format, question_archetype
+
+    fmt = getattr(session, "format", None) or str(question_archetype(session.user_intent))
+    is_direct = is_direct_format(fmt)
+    qa_fmt = "direct" if is_direct else "list"
+
+    answer_summary = ""
+    if store is not None:
+        try:
+            cand_artifact = _read_artifact(store, session.id, "general/candidates.v1.json")
+            if isinstance(cand_artifact, Mapping):
+                answer_summary = str(
+                    cand_artifact.get("answer_thesis") or cand_artifact.get("answer_summary") or ""
+                ).strip()
+        except Exception:
+            pass
+        if not answer_summary:
+            try:
+                res_artifact = _read_artifact(store, session.id, "general/research.v1.json")
+                if isinstance(res_artifact, Mapping):
+                    answer_summary = str(
+                        res_artifact.get("answer_thesis") or res_artifact.get("answer_summary") or ""
+                    ).strip()
+            except Exception:
+                pass
+
+    if is_direct:
+        if not answer_summary:
+            for candidate, gate in selected:
+                cand_thesis = _first_text(candidate, "answer_thesis", "summary", "how_or_why")
+                if cand_thesis:
+                    answer_summary = cand_thesis
+                    break
+                if gate and gate.get("reason"):
+                    answer_summary = str(gate["reason"]).strip()
+                    break
+        if not answer_summary:
+            answer_summary = f"The comic evidence reveals how {session.user_intent.rstrip('?.')}"
+    else:
+        if not answer_summary:
+            answer_summary = session.user_intent
+
     items = []
     for candidate, gate in selected:
         gate = gate or {}
@@ -435,7 +486,8 @@ def _qa_research(
         )
     return {
         "question": session.user_intent,
-        "answer_summary": session.user_intent,
+        "answer_summary": answer_summary,
+        "format": qa_fmt,
         "source_engine": "research_scout",
         "items": items,
     }

@@ -118,6 +118,58 @@ Pin the exact issue+year the feat happened in; if you cannot, mark the item WEAK
 issues, years, or reader URLs. Output STRICT JSON and nothing else."""
 
 
+_ANSWER_SYSTEM_DIRECT = """You are a comic-lore research analyst. You are given a QUESTION \
+about comics (Why/How, or What-is / concept revelation) and RAW You.com Web Search evidence. \
+Use only that supplied evidence to answer the question with a coherent, grounded explanation \
+developed through 2 to {max_items} sequential story/evidence beats.
+
+The beats may come from the SAME comic/arc or from different published issues that show the \
+story developing. Do NOT force separate independent characters or separate comics if the \
+answer lives in one cohesive story.
+
+Anti-fabrication is the whole job — a wrong comic here becomes a wrong download and \
+a wrong video downstream. Follow these rules exactly:
+
+- ANSWER THE QUESTION with 2 to {max_items} beats. Each beat is one concrete moment or \
+evidence stage in the explanation, grounded in a SPECIFIC published comic. Fewer real beats \
+is ALWAYS better than padding with invented ones — if you can only verify 2, return 2.
+
+- PER BEAT, fill every field from what the sources actually say (never guess):
+  * entity — the character, artifact, or entity at the center of this beat.
+  * how_or_why — 1-2 PLAIN sentences of what HAPPENS or is revealed (events, not opinions; drop \
+"epic", "shocking", "underrated"). This is the fact the video narrates.
+  * source_comic — series + issue, e.g. "Thanos" #13 or "Final Crisis" #6.
+  * source_year — the publication year of THAT issue (4 digits).
+  * drawable_moment — ONE concrete visual a single panel would show (a pose, a face, \
+an action). Downstream we must FIND a panel for this, so make it panel-sized and \
+literal, not a whole scene.
+  * verification_note — cite TWO OR MORE independent real sources that confirm the \
+beat (name them / their URLs). If you found only ONE source, still include it but \
+begin this note with "WEAK:" so the caller knows.
+  * surprise_level — "low" | "medium" | "high".
+  * relationships — 1 PLAIN sentence naming what the entity IS to other characters \
+in THIS moment. "" if the moment involves no such relationship.
+  * stakes_why — 1 PLAIN sentence on why THIS moment matters or what rule it breaks.
+  * reader_url — a batcave.biz reader URL for the source series, form \
+"https://batcave.biz/reader/<news_id>/<chapter_id>". If you only find a series \
+landing page and cannot open a real reader URL with both ids, set reader_url to "".
+
+- ORDER the beats in chronological story or logical explanation order (cause -> effect -> revelation). \
+Do NOT force surprise-ascending sorting if it disrupts the narrative sequence.
+
+- answer_summary — ONE plain, direct sentence stating the definitive ANSWER THESIS grounded \
+in comic sources (e.g. "Darkseid's Anti-Life Equation is a mathematical proof of despair that strips free will"). \
+State the plain answer clearly.
+
+- constant_broken — ONE sentence naming the famous constant or assumption broken, or "" if none.
+
+- viewer_context — 1-2 PLAIN, spoiler-free sentences of the bare baseline context a viewer needs \
+to understand what the question is about.
+
+- If you cannot verify an item from real sources, DROP it. Do not invent feats, \
+issues, years, or reader URLs. Output STRICT JSON and nothing else."""
+
+
 def _extract_json(text: str) -> dict | None:
     """Grab the first {...} object from the model text and parse it.
 
@@ -200,7 +252,7 @@ def _message_content(payload: dict) -> str:
     return str(content or "")
 
 
-def _research_with_youcom(question: str, hint: str, max_items: int) -> str:
+def _research_with_youcom(question: str, hint: str, max_items: int, *, is_direct: bool = False) -> str:
     """Get raw Web Search evidence, then structure it with the fixed OpenRouter model."""
     if not config.OPENROUTER_API_KEY:
         raise RuntimeError("research_answer: OPENROUTER_API_KEY is not set")
@@ -208,10 +260,12 @@ def _research_with_youcom(question: str, hint: str, max_items: int) -> str:
     raw = YouComClient().search(query, profile=None)
     if not raw.ok:
         raise RuntimeError(f"research_answer: You.com Web Search failed: {raw.error}")
+    sys_prompt = (_ANSWER_SYSTEM_DIRECT if is_direct else _ANSWER_SYSTEM).format(max_items=max_items)
+    item_range = f"2 to {max_items}" if is_direct else f"3 to {max_items}"
     user = (
         f"QUESTION: {question}\n\n"
         f"RESEARCH HINT (verify; do not trust blindly): {hint or 'none'}\n\n"
-        f"Return 3 to {max_items} items. STRICT JSON only, no prose around it:\n"
+        f"Return {item_range} items. STRICT JSON only, no prose around it:\n"
         '{"answer_summary":"","constant_broken":"","viewer_context":"",'
         '"items":[{"entity":"","how_or_why":"","source_comic":"",'
         '"source_year":"","drawable_moment":"","verification_note":"",'
@@ -222,7 +276,7 @@ def _research_with_youcom(question: str, hint: str, max_items: int) -> str:
     body = {
         "model": config.SCOUT_EVIDENCE_MODEL,
         "messages": [
-            {"role": "system", "content": _ANSWER_SYSTEM.format(max_items=max_items)},
+            {"role": "system", "content": sys_prompt},
             {"role": "user", "content": user},
         ],
         "response_format": {"type": "json_object"},
@@ -466,16 +520,32 @@ def _chapter_issue_number(chapter: dict) -> float | None:
         return None
 
 
-def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=print) -> dict:
+def research_answer(
+    question: str,
+    *,
+    max_items: int = 6,
+    hint: str = "",
+    format: str = "auto",
+    log=print,
+) -> dict:
     """Research a comic Q&A question into ordered, verified answer items.
 
-    Returns {"question", "answer_summary", "source_engine", "items": [...]} with
-    items in PRESENTATION order (least surprising first, shock last). Raises
-    RuntimeError/ValueError on unusable research — the whole video depends on this,
-    so we fail loud rather than hand an empty/fabricated answer to the pipeline."""
+    Supports both 'list' (independent countdown cases) and 'direct' (one grounded
+    answer developed through sequential story/evidence beats).
+    Returns {"question", "answer_summary", "format", "source_engine", "items": [...]}.
+    Raises RuntimeError/ValueError on unusable research."""
+    from stages.question_archetype import is_direct_format, question_archetype
+
     question = (question or "").strip()
     if not question:
         raise ValueError("research_answer: empty question")
+
+    if format == "auto":
+        is_direct = is_direct_format(question_archetype(question))
+    else:
+        is_direct = is_direct_format(format)
+    qa_format = "direct" if is_direct else "list"
+
     # Grounding hint (2026-07-06): abstract "Why/How <famous character> <paradox>"
     # questions give the researcher no concrete anchor — it wanders the web and runs
     # out of turns. A scout-supplied hint names the LIKELY story so the agent spends
@@ -486,9 +556,9 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
         f"if the sources disagree with the hint, follow the sources): {hint.strip()}\n\n"
         if (hint or "").strip() else ""
     )
-    log(f"[answer-research] researching: {question!r} (<= {max_items} items"
+    log(f"[answer-research] researching ({qa_format}): {question!r} (<= {max_items} items"
         f"{', hinted' if hint_block else ''}) …")
-    raw = _research_with_youcom(question, hint.strip(), max_items)
+    raw = _research_with_youcom(question, hint.strip(), max_items, is_direct=is_direct)
     if not raw:
         raise RuntimeError("research_answer: You.com/OpenRouter returned nothing")
 
@@ -502,18 +572,24 @@ def research_answer(question: str, *, max_items: int = 6, hint: str = "", log=pr
             f"{head!r}" + (f" … raw tail: {tail!r}" if tail else "")
         )
 
-    items = _order_by_surprise(_clean_items(data.get("items")))[:max_items]
-    if len(items) < _MIN_ITEMS:
+    min_items = 2 if is_direct else _MIN_ITEMS
+    cleaned = _clean_items(data.get("items"))
+    if is_direct:
+        items = cleaned[:max_items]
+    else:
+        items = _order_by_surprise(cleaned)[:max_items]
+
+    if len(items) < min_items:
         raise MissingReaderUrlsError(
-            f"research_answer: only {len(items)} verified item(s) — need >= {_MIN_ITEMS} "
-            "for a listicle (research produced too few to trust)"
+            f"research_answer: only {len(items)} verified item(s) — need >= {min_items} "
+            f"for {qa_format} (research produced too few to trust)"
         )
     summary = (data.get("answer_summary") or "").strip()
-    log(f"[answer-research] ✓ {len(items)} items (surprise: "
-        f"{', '.join(i['surprise_level'] for i in items)})")
+    log(f"[answer-research] ✓ {len(items)} items ({qa_format})")
     return {
         "question": question,
         "answer_summary": summary,
+        "format": qa_format,
         # ADDITIVE question-level story context (optional; "" when the model omits it).
         "constant_broken": (data.get("constant_broken") or "").strip(),
         "viewer_context": (data.get("viewer_context") or "").strip(),
@@ -618,6 +694,8 @@ def build_contexts(
         "items": answer_items,
         "unresolved_reader_urls": unresolved,
     }
+    if "format" in research:
+        answer_ctx["format"] = research["format"]
     root = get_project_dirs(slug)["root"]
     root.mkdir(parents=True, exist_ok=True)
     answer_path = root / "answer_context.json"

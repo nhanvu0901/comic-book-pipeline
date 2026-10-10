@@ -3,14 +3,15 @@
 USER INTENT: {user_intent}
 ANGLE: {angle}
 
-Treat the intent as an EXHAUSTIVE ENUMERATION task, never a "best answer" task.
-If it is phrased like "who has…" / "what has…", first reformulate it as "list
-EVERY character or thing that…", then answer the reformulated version.
+Format guidance:
+- For list questions ("who has...", "times X happened", independent cases): treat the intent as an
+  EXHAUSTIVE ENUMERATION task across different comics. One candidate per distinct character/thing/moment.
+- For direct questions (Why/How, What-is/concept): develop ONE grounded answer thesis in `answer_thesis`
+  and return candidates as the sequential story/evidence beats that establish or demonstrate the answer.
+  Do NOT force separate comics or independent cases for direct questions.
 
 Rules:
-- One candidate per distinct character/thing/moment — never merge entries and
-  never collapse the list down to the single strongest answer.
-- Sweep EVERY retrieved source and include EVERY distinct item any source
+- Sweep EVERY retrieved source. Seek coverage from about {count} distinct source pages
   supports. Full, partial, assisted, and temporary cases all count — state the
   difference in the summary. Seek coverage from about {count} distinct source pages
   when the research supports it, but there is no candidate minimum: return only

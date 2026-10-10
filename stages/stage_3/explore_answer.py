@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import CREATIVE_LLM_MODELS, ENABLE_LOOP_TEASE, OPENROUTER_MODEL, PROJECTS_ROOT
-from ..question_archetype import question_archetype, is_statement_lead, is_comparison
+from ..question_archetype import question_archetype, is_statement_lead, is_comparison, is_direct_format
 from .schema import Beat, Glossary, Narration
 from ._llm import call_with_chain
 from .story_verify import run_story_verify
@@ -240,13 +240,13 @@ HARD RULES:
 Return shape:
 {"title": "...", "hook": "...", "outro": "...", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
 
-_EXPLORE_WRITE_SYSTEM_EXPLAIN = """You are QAWriter for a comic-trivia YouTube Short. The video answers ONE Why/How question as an ARGUMENT built from real comic moments — the items are stages of the answer (they may come from one story or from several different comics), given in escalation order (the revelation is the LAST item) — never re-rank them.
+_EXPLORE_WRITE_SYSTEM_EXPLAIN = """You are QAWriter for a comic-trivia YouTube Short. The video answers ONE direct question (Why/How, or What-is / concept revelation) as an ARGUMENT built from real comic moments — the items are stages of the answer (they may come from one story or from several different comics), given in escalation order (the revelation is the LAST item) — never re-rank them.
 
 THE SCENES BUILD THE ANSWER — this is the point of the format:
   - Every scene must move the viewer CLOSER to the answer: state what happened AND what it means for the question (cause → effect), not just the event.
   - The FIRST scene adds a sourced cause, action, or stake after the hook. It must not repeat the hook in slower words.
   - Use a bridge only when the next event actually follows from the preceding one. Otherwise begin directly with the person and action. Never use a stock escalation line such as "And that changes everything" or invent a causal link.
-  - The FINAL scene MUST state the answer to the question PLAINLY — one clear sentence a tired viewer can repeat ("That's why..." / "It had to be her, because..."), grounded in that item's moment. The ANSWER THESIS you are given is the destination; land it in your own spoken words.
+  - The FINAL scene MUST state the answer to the question PLAINLY — one clear sentence a tired viewer can repeat ("That's why..." / "It had to be her, because..." / "The truth is..." / "Which is what..."), grounded in that item's moment. The ANSWER THESIS you are given is the destination; land it in your own spoken words.
 
 For EACH item, write exactly ONE scene: name who/what it is about, give the how/why in plain words (speak the SOURCE COMIC naturally inside the sentence — "...in Ghost Rider #35..." — never as a citation, parentheses, or trailing credit).
 
@@ -451,7 +451,8 @@ def _call_explore_writer(
 _CAUSAL_MARKER_RE = re.compile(
     r"\b(because|that'?s why|which is why|which is how|the reason|the truth is|"
     r"turns? out|so it had to be|had to be|"
-    r"could only|only \w+(?:\s+\w+){0,3} could|is what \w+)\b", re.IGNORECASE)
+    r"could only|only \w+(?:\s+\w+){0,3} could|is what \w+|"
+    r"that'?s what|which is what|the secret is|is actually|is ultimately)\b", re.IGNORECASE)
 _LIST_LANGUAGE_RE = re.compile(
     r"\b(on this list|the last one|the next one|number (?:one|two|three|four|five|six|\d+)|"
     r"first place|second place|third place)\b", re.IGNORECASE)
@@ -654,7 +655,12 @@ def write_explore_answer(
     items = [item for _, item in _ordered_items(answer_context)]
 
     question = str(comic_context.get("title", "")).strip()
-    archetype = question_archetype(question)
+    ctx_format = answer_context.get("format")
+    if ctx_format:
+        is_direct = is_direct_format(ctx_format)
+    else:
+        is_direct = is_direct_format(question_archetype(question))
+    archetype = "explain" if is_direct else "list"
     thesis = str(answer_context.get("answer_summary", "") or "").strip()
 
     # ADDITIVE story-context block (Stage 1 answer_research): the WHO/WHY a zero-context
