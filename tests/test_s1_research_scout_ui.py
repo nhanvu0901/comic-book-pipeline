@@ -1891,3 +1891,193 @@ def test_create_project_turns_a_typed_title_into_a_safe_folder_name(tmp_path, mo
     _run_recorded_task(page)
 
     assert created == ["wolverine_origins"]
+
+
+# ─── 'None of these' records the turned-down batch in the ledger ────────────
+# Master pressing the re-roll button is the moment a batch is rejected. Every
+# question on screen that he did NOT pick is appended to the ledger as a
+# `rejected` event (stages/research_scout/scout_rejections.py), off the UI
+# thread, so a reload — or a different session — cannot offer it again.
+
+
+def _run_task_at(page, index):
+    (func,), _kwargs = page.tasks[index]
+    asyncio.run(func())
+
+
+def _recording_env(tmp_path, monkeypatch, *, batches):
+    page, controls, calls = _discover_env(tmp_path, monkeypatch, batches=batches)
+    recorded = []
+
+    def _fake_record(mode, entries, *, context=None, log=print):
+        recorded.append({"mode": mode, "questions": [e.get("question") or e.get("moment") for e in entries],
+                         "context": context})
+        return "recorded"
+
+    monkeypatch.setattr(s1_research_scout, "record_rejected_questions", _fake_record)
+    return page, controls, calls, recorded
+
+
+def _press_reroll(page, controls):
+    """Press the button, then run what it scheduled: the record task first (queued
+    before the discovery), the discovery last."""
+    before = len(page.tasks)
+    _by_key(controls, "discovered-reroll").on_click(object())
+    scheduled = len(page.tasks) - before
+    for index in range(before, before + scheduled):
+        _run_task_at(page, index)
+    return scheduled
+
+
+def test_rerolling_records_exactly_the_questions_on_screen(tmp_path, monkeypatch):
+    page, controls, calls, recorded = _recording_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?"),
+                 _batch("Who survived a Phoenix hit?")],
+    )
+    _discover_twice(page, controls)
+    assert recorded == []  # the first batch was merely offered, not turned down
+
+    _press_reroll(page, controls)
+
+    assert recorded == [{
+        "mode": "qa",
+        "questions": ["Who has lifted Mjolnir?", "Whose healing factor failed?"],
+        "context": None,
+    }]
+    assert len(calls) == 2  # and the re-roll itself still ran
+
+
+def test_a_question_master_picked_is_never_recorded_as_rejected(tmp_path, monkeypatch):
+    page, controls, _calls, recorded = _recording_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?",
+                        "Who walked off a planet-buster?"),
+                 _batch("Who survived a Phoenix hit?")],
+    )
+    _discover_twice(page, controls)
+    _by_key(controls, "discovered-questions").on_change(_FakeEvent("1"))
+
+    _press_reroll(page, controls)
+
+    assert recorded[0]["questions"] == ["Who has lifted Mjolnir?", "Who walked off a planet-buster?"]
+
+
+def test_the_batch_is_recorded_before_the_discovery_runs_and_off_the_ui_thread(
+    tmp_path, monkeypatch,
+):
+    """The record is its own task, queued ahead of the discovery: a slow or locked
+    ledger can never delay (or fail) the re-roll the user is waiting on."""
+    page, controls, _calls, recorded = _recording_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?"), _batch("Who survived a Phoenix hit?")],
+    )
+    _discover_twice(page, controls)
+    before = len(page.tasks)
+
+    _by_key(controls, "discovered-reroll").on_click(object())
+
+    assert len(page.tasks) - before == 2
+    assert recorded == []  # nothing ran inline on the click
+
+
+def test_micro_rerolls_record_the_moments_with_the_selected_year(tmp_path, monkeypatch):
+    page, controls, _calls, recorded = _recording_env(
+        tmp_path, monkeypatch,
+        batches=[[{"moment": "Cyclops faces Darkchild in a duel of truths.",
+                   "series_issue_year": "Amazing X-Men #2 (2025)", "angle": _ANGLES[0]}],
+                 [{"moment": "Another moment.", "angle": _ANGLES[0]}]],
+    )
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    _by_key(controls, "scout-year").value = "2025"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+
+    _press_reroll(page, controls)
+
+    assert recorded[0]["mode"] == "micro"
+    assert recorded[0]["questions"] == ["Cyclops faces Darkchild in a duel of truths."]
+    assert recorded[0]["context"] == {"publication_year": 2025}
+
+
+def _real_recorder_env(tmp_path, monkeypatch, *, batches):
+    """No fake recorder: the real one writing to a throwaway 'server' ledger."""
+    from stages.research_scout import scout_rejections
+    from stages.research_scout.ledger import Ledger
+
+    page, controls, calls = _discover_env(tmp_path, monkeypatch, batches=batches)
+    store = Ledger(tmp_path / "ledger" / "ledger.db", _writer_guard=lambda: True)
+    monkeypatch.setattr(scout_rejections, "Ledger", lambda *a, **k: store)
+    return page, controls, calls, store
+
+
+def test_pressing_none_of_these_twice_does_not_duplicate_rows(tmp_path, monkeypatch):
+    page, controls, _calls, store = _real_recorder_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?"),
+                 [],  # nothing new: the batch stays on screen
+                 []],
+    )
+    _discover_twice(page, controls)
+
+    _press_reroll(page, controls)
+    _press_reroll(page, controls)
+
+    rows = [e for e in store.events() if e["kind"] == "rejected"]
+    assert sorted(e["text"] for e in rows) == ["Who has lifted Mjolnir?", "Whose healing factor failed?"]
+
+
+def test_an_angle_fallback_batch_is_not_recorded(tmp_path, monkeypatch):
+    page, controls, _calls, store = _real_recorder_env(
+        tmp_path, monkeypatch,
+        batches=[[{"question": "times a famous power or rule failed",
+                   "angle": "times a famous power or rule failed", "fallback": True}],
+                 _batch("Who survived a Phoenix hit?")],
+    )
+    _discover_twice(page, controls)
+
+    _press_reroll(page, controls)
+
+    assert store.count_events() == 0
+
+
+def test_on_a_read_only_host_the_reroll_still_works_and_says_why_nothing_was_saved(
+    tmp_path, monkeypatch, capsys,
+):
+    """This Mac: the ledger is read-only. No crash, no block, one log line."""
+    monkeypatch.setattr(
+        "stages.research_scout.ledger.DEFAULT_DB_PATH", tmp_path / "ledger" / "ledger.db",
+    )
+    monkeypatch.delenv("SCOUT_LEDGER_WRITER", raising=False)
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?"), _batch("Who survived a Phoenix hit?")],
+    )
+    _discover_twice(page, controls)
+
+    _press_reroll(page, controls)
+
+    assert len(calls) == 2
+    assert "Who survived a Phoenix hit?" in _text_content(controls)
+    assert "read-only" in capsys.readouterr().out
+    assert not (tmp_path / "ledger").exists()
+
+
+def test_a_recorder_that_blows_up_never_blocks_the_reroll(tmp_path, monkeypatch):
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("Who has lifted Mjolnir?"), _batch("Who survived a Phoenix hit?")],
+    )
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("ledger exploded")
+
+    monkeypatch.setattr(s1_research_scout, "record_rejected_questions", _boom)
+    _discover_twice(page, controls)
+
+    _press_reroll(page, controls)  # must not raise
+
+    assert len(calls) == 2
+    assert "Who survived a Phoenix hit?" in _text_content(controls)

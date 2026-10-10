@@ -257,3 +257,58 @@ def test_reads_back_through_the_shadow_reader_on_a_non_server_host(tmp_path):
 
     assert (source, status) == ("export", "ready")
     assert [e["kind"] for e in events] == ["rejected"]
+
+
+# ─── the bridge wrapper the UI calls ────────────────────────────────────────
+
+
+def test_bridge_wrapper_records_and_logs_what_it_did(tmp_path, monkeypatch):
+    import ui.bridge as bridge
+
+    store = _server(tmp_path)
+    monkeypatch.setattr(scout_rejections, "Ledger", lambda *a, **k: store)
+    lines = []
+
+    result = bridge.record_rejected_questions(
+        "qa", _qa("Who has lifted Mjolnir?", "Whose healing factor failed?"), log=lines.append,
+    )
+
+    assert result == "recorded"
+    assert len(_rejected(store)) == 2
+    assert any("2" in line and "remember" in line.lower() for line in lines)
+
+
+def test_bridge_wrapper_on_a_read_only_host_logs_one_line_and_does_not_raise(tmp_path, monkeypatch):
+    import ui.bridge as bridge
+
+    monkeypatch.setattr(scout_rejections, "Ledger", lambda *a, **k: _read_only(tmp_path))
+    lines = []
+
+    result = bridge.record_rejected_questions("qa", _qa("Who has lifted Mjolnir?"), log=lines.append)
+
+    assert result == "read_only"
+    assert len(lines) == 1 and "read-only" in lines[0]
+
+
+def test_bridge_wrapper_swallows_any_failure(tmp_path, monkeypatch):
+    import ui.bridge as bridge
+
+    def explode(*_a, **_k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(scout_rejections, "record_rejected", explode)
+    lines = []
+
+    result = bridge.record_rejected_questions("qa", _qa("Who has lifted Mjolnir?"), log=lines.append)
+
+    assert result == "failed"
+    assert "database is locked" in lines[0]
+
+
+def test_bridge_wrapper_swallows_an_unsupported_mode(monkeypatch):
+    import ui.bridge as bridge
+
+    lines = []
+
+    assert bridge.record_rejected_questions("recap", _qa("Anything?"), log=lines.append) == "failed"
+    assert lines

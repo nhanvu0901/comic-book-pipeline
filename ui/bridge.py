@@ -169,6 +169,35 @@ def start_scout_session(
     return workflow.start(scout_mode, intent, publication_year=publication_year)
 
 
+def record_rejected_questions(
+    mode: str, entries: list[dict] | tuple[dict, ...], *,
+    context: dict | None = None, log: Callable[[str], None] = print,
+) -> str:
+    """Remember the batch Master just turned down with 'None of these'.
+
+    One ``rejected`` ledger event per question (see
+    stages.research_scout.scout_rejections), so a reload cannot offer it again.
+    Writes happen on the Windows server only; elsewhere this logs one line and
+    skips. It NEVER raises — the re-roll the user is waiting on must not depend
+    on the ledger — and returns the recorder's status, or ``failed``.
+    """
+    from stages.research_scout import scout_rejections
+
+    count = len(entries)
+    try:
+        result = scout_rejections.record_rejected(mode, entries, context=context)
+    except Exception as exc:
+        log(f"[bridge] re-roll: could not save the {count} turned-down question(s) to the ledger ({exc}); the re-roll goes on.")
+        return "failed"
+    if result == "read_only":
+        log("[bridge] re-roll: central ledger is read-only here, so the turned-down questions are not remembered after a reload.")
+    elif result == "recorded":
+        log(f"[bridge] re-roll: remembered the turned-down question(s) in the ledger (batch of {count}).")
+    elif result == "export_pending":
+        log("[bridge] re-roll: turned-down question(s) saved, but the ledger export refresh failed; retry ledger export.")
+    return result
+
+
 def discover_questions(
     mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = (),
     publication_year: int | None = None,

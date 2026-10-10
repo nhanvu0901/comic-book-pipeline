@@ -43,6 +43,7 @@ from ..bridge import (
     load_scout_gates,
     load_scout_session,
     list_bank_suggestions,
+    record_rejected_questions,
     rerun_scout_general,
     rescout_keeping_confirmed,
     rescout_keeping_selected,
@@ -1106,10 +1107,40 @@ def build(
             on_success=_show_discovered,
         )
 
+    def _remember_turned_down(mode: str) -> None:
+        """'None of these' turns down every question on screen except the one
+        Master ticked. Record them in the ledger so a reload (which empties
+        `discovered_offered`) cannot offer them again.
+
+        Its own task, queued before the discovery's: a slow or locked ledger can
+        neither delay nor fail the re-roll, and a read-only host (the Mac) just
+        logs one line inside record_rejected_questions."""
+        shown = [
+            dict(entry) for index, entry in enumerate(discovered_holder[0])
+            if str(index) != discovered_pick[0]
+        ]
+        if not shown:
+            return
+        try:
+            year = _selected_year() if mode == ScoutMode.MICRO.value else None
+        except ValueError:
+            year = None
+        context = {"publication_year": year} if year is not None else None
+
+        async def _record() -> None:
+            try:
+                await run_blocking(record_rejected_questions, mode, shown, context=context)
+            except Exception as exc:  # never let the ledger break the chat
+                print(f"[ui] re-roll: turned-down questions were not recorded: {exc}")
+
+        page.run_task(_record)
+
     def _reroll_click(_e) -> None:
         if busy[0]:
             return
-        _discover_batch(mode_group.value or ScoutMode.QA.value)
+        mode = mode_group.value or ScoutMode.QA.value
+        _remember_turned_down(mode)
+        _discover_batch(mode)
 
     def _send_click(_e) -> None:
         if busy[0]:
