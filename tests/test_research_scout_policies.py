@@ -216,3 +216,23 @@ def test_reddit_scouts_but_does_not_verify():
     profiles = PolicyBundle.load(ScoutMode.QA).source_profiles
     assert "reddit.com" in profiles["general_research"]["domains"]
     assert "reddit.com" not in profiles["specific_web_search"]["domains"]
+
+
+def test_policy_json_load_falls_back_to_earlier_version_when_newer_missing():
+    """If code references a newer versioned policy asset (e.g. source_profiles.v2.json)
+    not yet present on disk, _load_json falls back to the highest available earlier
+    version (e.g. v1) without crashing, preserving pipeline resiliency."""
+    from stages.research_scout.policies import _POLICIES_ROOT, _load_json
+
+    # source_profiles.v2.json does not exist in this worktree, but v1 does
+    assert not (_POLICIES_ROOT / "source_profiles.v2.json").is_file()
+    assert (_POLICIES_ROOT / "source_profiles.v1.json").is_file()
+
+    fallback_data = _load_json("source_profiles.v2.json")
+    v1_data = _load_json("source_profiles.v1.json")
+    assert fallback_data == v1_data
+
+    # A completely nonexistent asset still raises FileNotFoundError
+    with pytest.raises(FileNotFoundError):
+        _load_json("nonexistent_policy_asset.v1.json")
+
