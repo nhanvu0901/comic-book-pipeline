@@ -14,6 +14,8 @@ import pytest
 
 import stages.stage_3.gemini_prompt as gp
 import stages.stage_3.pipeline as pl
+from stages.stage_3.ending import SUBSCRIBE_CTA
+from stages.stage_4.pipeline import narration_hash, verify_narration_hash
 
 HOOK = ("Captain America battled the Red Skull in the middle of Hell with a weapon that "
         "makes evil explode.")
@@ -83,10 +85,32 @@ def test_pasted_micro_script_speaks_its_hook_once(tmp_path, monkeypatch):
     assert texts.count(HOOK) == 1
     assert [scene["is_intro"] for scene in narration["scenes"]] == [True] + [False] * 4
     assert len(texts) == 5                         # the hook plus the four story sentences
-    assert narration["total_word_count"] == 87     # what the writer's own count said
+    assert texts[-1].endswith(SUBSCRIBE_CTA)
+    assert narration["total_word_count"] == 87 + len(SUBSCRIBE_CTA.split())
     spoken = " ".join(texts)
     for audit in AUDIT_WORDS:
         assert audit not in spoken, audit
+
+
+def test_pasted_script_defaults_to_one_spoken_cta_on_last_beat(tmp_path, monkeypatch):
+    name = _micro_project(tmp_path, monkeypatch)
+    script = f"Hook: {HOOK}\n\n{BODY}\n\nOutro: That is how it ends."
+
+    narration = gp.parse_and_save_script(name, script, log=lambda *_: None)
+    saved = json.loads((tmp_path / name / "narration.json").read_text())
+    assert saved == narration
+    assert saved["scenes"][0]["text"] == HOOK
+    assert saved["scenes"][-1]["text"] == (
+        "That is how it ends. Make sure to subscribe for more content.")
+    assert " ".join(saved["scenes"][-1]["visual_beats"]) == saved["scenes"][-1]["text"]
+    assert saved["total_word_count"] == sum(s["word_count"] for s in saved["scenes"])
+    assert (tmp_path / name / "master_narration.md").read_text() == script
+    assert (tmp_path / name / "narration.tts.sha256").read_text() == narration_hash(saved["scenes"])
+    verify_narration_hash(tmp_path / name / "narration.tts.sha256", saved["scenes"])
+
+    already = script + " Make sure to subscribe for more content."
+    rerun = gp.parse_and_save_script(name, already, log=lambda *_: None)
+    assert rerun["scenes"][-1]["text"].count("Make sure to subscribe") == 1
 
 
 def test_a_closing_line_the_script_repeats_is_spoken_once(tmp_path, monkeypatch):
@@ -97,7 +121,8 @@ def test_a_closing_line_the_script_repeats_is_spoken_once(tmp_path, monkeypatch)
     narration = gp.parse_and_save_script(name, script, log=lambda *_: None)
 
     texts = [scene["text"] for scene in narration["scenes"]]
-    assert texts.count(HOOK) == 1 and texts.count(outro) == 1
+    assert texts.count(HOOK) == 1
+    assert texts[-1] == f"{outro} {SUBSCRIBE_CTA}"
     assert [scene["is_outro"] for scene in narration["scenes"]][-1] is True
 
 
@@ -184,10 +209,10 @@ def test_a_story_that_opens_on_the_hook_again_speaks_it_once(tmp_path, monkeypat
         "He fights using the Antidivine, an angel-slaying sword that he transforms into a circular shield.",
         "But realizing they can't defeat Mephisto, Steve makes a deal with the devil.",
         "Mephisto promises to end dictatorships and ensure democracies flourish in exchange for "
-        "Steve's soul, which Steve accepts.",
+        f"Steve's soul, which Steve accepts. {SUBSCRIBE_CTA}",
     ]
     assert [scene["is_intro"] for scene in narration["scenes"]] == [True, False, False, False]
-    assert narration["total_word_count"] == 60     # what the reply's own count said
+    assert narration["total_word_count"] == 60 + len(SUBSCRIBE_CTA.split())
     spoken = " ".join(texts)
     for audit in AUDIT_WORDS:
         assert audit not in spoken, audit
@@ -361,7 +386,7 @@ SPOKEN WORD COUNT: 87
     narration = gp.parse_and_save_script(name, reordered, log=lambda *_: None)
 
     assert len(narration["scenes"]) == 5
-    assert narration["total_word_count"] == 87
+    assert narration["total_word_count"] == 87 + len(SUBSCRIBE_CTA.split())
     spoken = " ".join(scene["text"] for scene in narration["scenes"])
     for audit in AUDIT_WORDS:
         assert audit not in spoken, audit

@@ -38,6 +38,12 @@ def test_existing_subscribe_call_is_not_duplicated():
     assert narration["scenes"][0]["text"] == "Subscribe for more stories."
 
 
+def test_story_mention_of_subscriber_does_not_count_as_a_call_to_action():
+    narration = {"scenes": [{"text": "The hero found the subscriber list."}]}
+    assert ensure_subscribe_cta(narration) is True
+    assert narration["scenes"][0]["text"].endswith("Make sure to subscribe for more content.")
+
+
 def test_saved_narration_feeds_the_full_final_line_to_tts(tmp_path, monkeypatch):
     from stages.stage_3 import pipeline
     from stages.stage_3.schema import Narration, Scene

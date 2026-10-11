@@ -99,6 +99,7 @@ def test_paragraph_n_is_item_n(tmp_path, monkeypatch):
     nar = _parse(tmp_path, monkeypatch, f"{HOOK}\n\n{P1}\n\n{P2}\n\n{P3}\n\n{OUTRO}")
     assert _body_chapters(tmp_path, nar) == [(1, "#1"), (2, "#2"), (3, "#3")]
     assert [b["name"] for b in nar["beats"]] == ["Deadpool", "Black Panther", "Skrull"]
+    assert nar["scenes"][-1]["text"] == OUTRO + " Make sure to subscribe for more content."
 
 
 def test_paragraphs_are_never_resorted_by_their_wording(tmp_path, monkeypatch):
@@ -116,7 +117,7 @@ def test_two_sentence_hook_and_closing_are_recognised(tmp_path, monkeypatch):
     outro = [s for s in nar["scenes"] if s["is_outro"]]
     assert nar["hook"] == HOOK
     assert [s["text"] for s in intro] == [HOOK]
-    assert [s["text"] for s in outro] == [OUTRO]
+    assert [s["text"] for s in outro] == [OUTRO + " Make sure to subscribe for more content."]
 
 
 def test_intro_and_outro_sit_on_the_first_and_last_item(tmp_path, monkeypatch):

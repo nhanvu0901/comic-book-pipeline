@@ -770,19 +770,25 @@ def parse_and_save_script(
     if items:
         narration_dict["answer_items_signature"] = answer_items_signature(answer_ctx)
 
+    # The pasted script is the author's source record; narration.json is the spoken
+    # artifact used by TTS and Stage 5. Add the same default ending as generated modes.
+    from .ending import ensure_subscribe_cta
+    ensure_subscribe_cta(narration_dict)
+
     # Save narration.json
     out_narration = root / "narration.json"
     out_narration.write_text(json.dumps(narration_dict, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # Save sha256
-    text_corpus = " ".join(s["text"] for s in scenes)
-    h = hashlib.sha256(text_corpus.encode("utf-8")).hexdigest()
-    (root / "narration.tts.sha256").write_text(h)
+    from stages.stage_4.pipeline import narration_hash
+    (root / "narration.tts.sha256").write_text(narration_hash(scenes))
 
     # Save raw input to master_narration.md for audit/record
     (root / "master_narration.md").write_text(raw_text, encoding="utf-8")
 
-    log(f"[parse_script] Saved narration.json: {len(scenes)} scenes, {total_words} words, ~{duration}s")
+    log(f"[parse_script] Saved narration.json: {len(scenes)} scenes, "
+        f"{narration_dict['total_word_count']} words, "
+        f"~{narration_dict['estimated_duration_seconds']}s")
     return narration_dict
 
 
@@ -862,6 +868,6 @@ def reanchor_narration_to_pages(project_name: str, log: Callable[[str], None] = 
     # Save updated narration
     narration_file.write_text(json.dumps(narration, indent=2, ensure_ascii=False), encoding="utf-8")
     narration_tts = root / "narration.tts.sha256"
-    raw_spoken = " ".join(str(s.get("text") or "").strip() for s in scenes)
-    narration_tts.write_text(hashlib.sha256(raw_spoken.encode("utf-8")).hexdigest())
+    from stages.stage_4.pipeline import narration_hash
+    narration_tts.write_text(narration_hash(scenes))
     return True

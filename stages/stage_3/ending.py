@@ -14,7 +14,7 @@ def ensure_subscribe_cta(narration: dict) -> bool:
         return False
     last = scenes[-1]
     original = str(last.get("text") or "").strip()
-    if not original or re.search(r"\bsubscrib\w*\b", original, re.IGNORECASE):
+    if not original or re.search(r"\bsubscribe\b", original, re.IGNORECASE):
         return False
 
     last["text"] = f"{original} {SUBSCRIBE_CTA}"

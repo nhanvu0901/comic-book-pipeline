@@ -339,6 +339,8 @@ def test_micro_moment_script_can_be_approved_before_pages_exist(tmp_path, monkey
 
     assert gp.reanchor_narration_to_pages("micro_before_download", log=lambda _message: None)
     updated = json.loads((project / "narration.json").read_text(encoding="utf-8"))
+    from stages.stage_4.pipeline import narration_hash
+    assert (project / "narration.tts.sha256").read_text() == narration_hash(updated["scenes"])
     assert updated["scenes"][0]["page_ref"] == 2
     assert all(scene["page_ref"] > 1 for scene in updated["scenes"])
     assert [beat["page_refs"] for beat in updated["beats"]] == [
