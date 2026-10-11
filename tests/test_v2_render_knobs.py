@@ -2,6 +2,7 @@
 only a caller that SETS the env changes anything. Test #1 (byte-identical when unset) is the
 hard pass condition — the recap/Q&A render must be unaffected unless the knob is set."""
 from PIL import Image
+import pytest
 
 import config
 import stages.stage_5.pipeline as pipeline
@@ -96,13 +97,16 @@ def test_explicit_final_clip_keeps_its_visual_for_the_full_outro(monkeypatch):
     assert all(s.clip_path == "selected.mp4" and s.source_image == "ending.png" for s in ending)
 
 
-def test_final_fragment_panel_lock_is_not_replaced_by_loop(monkeypatch):
+@pytest.mark.parametrize("final_locks", [
+    {"2:1": {"panels": [{"page": 2, "panel": 0}]}},
+    {"2:1": {"source": "old metadata"}, "2": {"page": 2, "panel": 0}},
+])
+def test_final_fragment_panel_lock_is_not_replaced_by_loop(monkeypatch, final_locks):
     monkeypatch.setattr(shots, "SEAMLESS_LOOP", True)
     monkeypatch.setattr(shots, "SHOT_MAX_SECONDS", 0.0)
     monkeypatch.setattr(shots, "_apply_review_locks", lambda narration, project: None)
     monkeypatch.setattr(shots, "_qa_locks", lambda project: {})
-    monkeypatch.setattr(shots, "_review_locks", lambda project: {
-        "2:1": {"panels": [{"page": 2, "panel": 0}]}})
+    monkeypatch.setattr(shots, "_review_locks", lambda project: final_locks)
     monkeypatch.setattr(shots, "_build_shots_per_scene", lambda *args: [
         _shot(0, 2.0, src="opening.png", scene_id=1, is_intro=True),
         _shot(1, 3.0, src="ending.png", scene_id=2),
@@ -116,6 +120,31 @@ def test_final_fragment_panel_lock_is_not_replaced_by_loop(monkeypatch):
     assert len(built) == 2
     assert built[-1].source_image == "ending.png"
     assert built[-1].duration_seconds == 3.0
+
+
+def test_stale_clip_id_and_metadata_only_lock_do_not_suppress_loop(monkeypatch):
+    """Neither a failed MP4 marker nor an empty lock represents a selected visual."""
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", True)
+    monkeypatch.setattr(shots, "LOOP_TAIL_SECONDS", 1.0)
+    monkeypatch.setattr(shots, "SHOT_MAX_SECONDS", 0.0)
+    monkeypatch.setattr(shots, "_apply_review_locks", lambda narration, project: None)
+    monkeypatch.setattr(shots, "_qa_locks", lambda project: {})
+    monkeypatch.setattr(shots, "_review_locks", lambda project: {
+        "outro": {"source": "old-selection"}})
+
+    def built(*args):
+        ending = _shot(1, 4.0, src="ending.png", scene_id=2)
+        ending.clip_id = "stale"
+        ending.clip_fallback = "local MP4 missing"
+        return [_shot(0, 2.0, src="opening.png", scene_id=1, is_intro=True), ending]
+
+    monkeypatch.setattr(shots, "_build_shots_per_scene", built)
+    result = shots.build_shots({"scenes": [
+        {"scene_id": 1, "text": "Opening.", "is_intro": True},
+        {"scene_id": 2, "text": "Ending.", "is_outro": True},
+    ]}, project="sample")
+    assert result[-1].source_image == "opening.png"
+    assert result[-1].duration_seconds == 1.0
 
 
 def test_short_final_beat_keeps_its_visual_instead_of_losing_most_to_echo(monkeypatch):

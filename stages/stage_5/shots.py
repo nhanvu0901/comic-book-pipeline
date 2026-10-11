@@ -546,9 +546,17 @@ def build_shots(
     final_frags = [b for b in (final_scene.get("visual_beats") or []) if _vb_text(b)]
     final_key = (f"{final_sid}:{len(final_frags) - 1}" if len(final_frags) > 1
                  else "outro" if final_scene.get("is_outro") else final_sid)
-    final_lock = review_locks.get(final_key) or review_locks.get(final_sid)
-    final_selected = bool(final_lock or (shots and any(
-        getattr(shots[-1], field, "") for field in ("clip_path", "clip_id", "custom_image"))))
+    from ..review_gate import lock_custom_image, lock_panels
+    final_selected = any(
+        bool(lock_panels(lock) or lock_custom_image(lock))
+        for key in {final_key, final_sid}
+        if isinstance(lock := review_locks.get(key), dict)
+    )
+    if shots:
+        last = shots[-1]
+        final_selected = final_selected or bool(
+            getattr(last, "custom_image", "") or
+            (getattr(last, "clip_path", "") and not getattr(last, "clip_fallback", "")))
     final_duration = float(getattr(shots[-1], "duration_seconds", 0.0)) if shots else 0.0
     loop = (SEAMLESS_LOOP and not final_selected and LOOP_TAIL_SECONDS > 0
             and final_duration >= MIN_FINAL_VISUAL_SECONDS + LOOP_TAIL_SECONDS)

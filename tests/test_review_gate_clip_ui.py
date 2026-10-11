@@ -263,7 +263,8 @@ def test_selected_area_shows_picked_mp4_then_restores_comic_panel(screen):
 
     clips.upsert_beat_clip(screen.root, entry)
     web_routes._broadcast_moment_picked({"project": "qa", "state": "ready", **entry})
-    assert any(isinstance(c, Video) for c in _walk_visible(screen.root_ctrl))
+    videos = [c for c in _walk_visible(screen.root_ctrl) if isinstance(c, Video)]
+    assert videos and videos[0].playlist[0].resource == str(preview)
     assert any("youtube.com/watch?v=ccccccccccc" in t for t in _texts(screen.root_ctrl))
     assert "p01·0" not in _texts(screen.root_ctrl), "the selected area must show MP4 instead of its fallback panel"
 
@@ -273,6 +274,23 @@ def test_selected_area_shows_picked_mp4_then_restores_comic_panel(screen):
     undo[0].on_click(None)
     assert not any(isinstance(c, Video) for c in _walk_visible(screen.root_ctrl))
     assert "p01·0" in _texts(screen.root_ctrl)
+
+
+def test_selected_mp4_uses_preview_api_in_web_mode(screen, monkeypatch):
+    """A browser gets a project-scoped HTTP URL, with a version after a replacement pick."""
+    monkeypatch.setattr(bridge, "WEB_MODE", True)
+    preview = screen.root / "review" / "clips" / "preview_2_0.mp4"
+    preview.write_bytes(b"preview")
+    entry = {"id": "ccccccccccc", "beat": "2:0", "file": "review/clips/c.mp4",
+             "preview_file": "review/clips/preview_2_0.mp4", "start": 0.0}
+    screen.build()
+    clips.upsert_beat_clip(screen.root, entry)
+    web_routes._broadcast_moment_picked({"project": "qa", "state": "ready", **entry})
+
+    videos = [c for c in _walk_visible(screen.root_ctrl) if isinstance(c, Video)]
+    assert len(videos) == 1
+    assert videos[0].playlist[0].resource == (
+        f"/api/clip_preview?project=qa&beat=2%3A0&t={preview.stat().st_mtime_ns}")
 
 
 def test_the_pick_listener_repaints_the_card_and_is_not_stacked(screen):

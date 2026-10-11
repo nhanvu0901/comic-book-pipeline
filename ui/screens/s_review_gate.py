@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 from typing import Callable
+from urllib.parse import urlencode
 
 import flet as ft
 from flet_video import Video, VideoMedia
@@ -37,6 +38,7 @@ from pathlib import Path
 
 import config
 from config import MUSIC_GENRE, MUSIC_GENRES, PROJECTS_ROOT
+from .. import bridge
 
 
 def _project_dir(project: str) -> Path:
@@ -1418,7 +1420,11 @@ def build(
                 rel = str(entry.get("preview_file") or entry.get("file") or "")
                 root = _project_dir(project).resolve()
                 media_path = (root / rel).resolve() if rel else root
-                media = (Video(playlist=[VideoMedia(resource=asset_src(media_path))],
+                resource = asset_src(media_path)
+                if bridge.WEB_MODE and entry.get("preview_file") and media_path.is_file():
+                    resource = "/api/clip_preview?" + urlencode({
+                        "project": project, "beat": beat_key, "t": media_path.stat().st_mtime_ns})
+                media = (Video(playlist=[VideoMedia(resource=resource)],
                                autoplay=False, show_controls=True, muted=True,
                                width=160, height=284)
                          if rel and media_path.is_relative_to(root) and media_path.is_file()
