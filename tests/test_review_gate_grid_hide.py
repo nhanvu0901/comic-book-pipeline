@@ -253,6 +253,39 @@ def test_headless_build_has_grid_jump_and_hide(monkeypatch, capsys):
               f"narration_textfields={len(narration_fields)} unhide_btn={len(unhide)}")
 
 
+def test_direct_candidate_tiles_show_panel_comic_without_changing_beat_citation(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(bridge, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(sg, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(sg.config, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(sg.config, "ENABLE_VIDEO_CLIPS", False)
+    root = tmp_path / "direct_ui"
+    (root / "review").mkdir(parents=True)
+    (root / "narration.json").write_text(json.dumps({"scenes": [
+        {"scene_id": 2, "text": "One answer", "page_ref": 1, "panel_ref": -1}]}))
+    (root / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
+    (root / "review" / "candidates.json").write_text(json.dumps({"beats": [{
+        "scene_id": 2, "beat_key": "2", "unit": "scene", "narration_text": "One answer",
+        "page_ref": 1, "panel_ref": None, "pre_selected": [],
+        "source": {"title": "Original Sin #7"},
+        "candidates": [
+            {"page": 1, "panel": 0, "thumb": "", "dialog": "",
+             "panel_source": {"title": "Original Sin #7", "issue_label": "#1"}},
+            {"page": 26, "panel": 0, "thumb": "", "dialog": "",
+             "panel_source": {"title": "The Unworthy Thor #5", "issue_label": "#2"}},
+        ],
+    }]}))
+
+    _page, screen = _build("direct_ui", monkeypatch)
+    grids = [c for c in _walk(screen) if isinstance(c, ft.GridView)]
+    assert len(grids) == 1 and len(grids[0].controls) == 2
+    tile_texts = [{c.value for c in _walk(tile) if isinstance(c, ft.Text)}
+                  for tile in grids[0].controls]
+    assert "Original Sin #7" in tile_texts[0]
+    assert "The Unworthy Thor #5" in tile_texts[1]
+    assert "The Unworthy Thor #5" not in tile_texts[0]
+
+
 # ─── sandbox: ✕ end-to-end (locked panel → confirm → lock dropped) ───────────
 
 @needs_project

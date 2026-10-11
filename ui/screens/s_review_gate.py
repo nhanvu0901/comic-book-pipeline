@@ -1466,14 +1466,25 @@ def build(
                     meta.append(ft.Text("⚓", size=9, color=ACCENT, tooltip="anchor panel"))
                 meta += [ft.Container(expand=True), hide_btn, lock_icon]
 
+                # A direct Q&A beat may cite one comic while the chosen drawing comes
+                # from another. Show the panel's actual comic on its tile; source_items
+                # above remains the beat's research citation.
+                panel_title = str((c.get("panel_source") or {}).get("title") or "")
+                tile_content = [
+                    ft.Container(content=_thumb(c.get("thumb", "")), ink=True,
+                                 on_click=_open_preview(beat_key, unit, scene_id, key, c),
+                                 tooltip=tooltip or None),
+                ]
+                if panel_title:
+                    tile_content.append(ft.Text(
+                        panel_title, size=9, color=TEXT_MUTED, max_lines=2,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                        tooltip=f"Panel từ {panel_title}"))
+                tile_content.append(ft.Row(meta, spacing=1,
+                                           vertical_alignment=ft.CrossAxisAlignment.CENTER))
                 tile = ft.Container(
-                    content=ft.Column([
-                        ft.Container(content=_thumb(c.get("thumb", "")), ink=True,
-                                     on_click=_open_preview(beat_key, unit, scene_id, key, c),
-                                     tooltip=tooltip or None),
-                        ft.Row(meta, spacing=1,
-                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Column(tile_content, spacing=1,
+                                      horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     padding=3, border=ft.border.all(2 if is_selected else 1,
                                                      ACCENT if is_selected else BORDER),
                     border_radius=4, bgcolor=BG_ELEVATED if is_selected else None,
