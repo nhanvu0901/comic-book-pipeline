@@ -26,6 +26,7 @@ Reference: keiyoushi/extensions-source BatCave.kt uses the same flow
 import hashlib
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,58 @@ _POW_PREFIX = "00"  # hex prefix the SHA-256 hash must start with
 
 # Module-level cached session — solve the challenge once per process.
 _session: cf_req.Session | None = None
+_session_lock = threading.Lock()
+
+# A flaky network (the production box's DNS answered only about half of its lookups) used to
+# fail a page after ONE attempt, so a 24-page chapter nearly always came back with holes.
+# Retry what looks transient, give up fast on what cannot get better (a 404).
+_ATTEMPTS = 5            # first try + 4 retries
+_RETRY_BASE_DELAY = 1.5  # seconds; grows with the attempt number
+# Pages in a row that ran out of retries on a network error before the chapter is abandoned:
+# with the network down, retrying every remaining page would hang the download for an hour.
+_GIVE_UP_AFTER = 3
+_failure = threading.local()   # why the last page/list fetch failed, for the error message
+
+
+def _short_reason(exc: BaseException) -> str:
+    """One status-line reason: the exception kind and message without libcurl's docs link."""
+    text = str(exc).split(" See https://", 1)[0].strip()
+    return f"{type(exc).__name__}: {text}"[:240]
+
+
+def _network_looks_down() -> bool:
+    """The last failed fetch on this thread was a transient error that outlasted every retry."""
+    return bool(getattr(_failure, "transient", False))
+
+
+def last_download_error() -> str:
+    """The reason the most recent failed fetch on this thread gave up, or ''."""
+    return getattr(_failure, "reason", "")
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """True for a failure a retry can plausibly cure: no HTTP answer at all (DNS, connect,
+    timeout, reset), a throttled/overloaded server, or a file the OS had locked for a moment."""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status = getattr(response, "status_code", 0) or 0
+        return status in (408, 425, 429) or status >= 500
+    return isinstance(exc, (cf_req.RequestsError, OSError))
+
+
+def _retry_transient(call, what: str):
+    """Run call(); on a transient failure wait a little and try again, up to _ATTEMPTS
+    times. The last exception is re-raised so the caller still decides what a failure means."""
+    for attempt in range(1, _ATTEMPTS + 1):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 — classified below, re-raised when final
+            if attempt == _ATTEMPTS or not _is_transient(exc):
+                raise
+            delay = _RETRY_BASE_DELAY * attempt
+            print(f"[scraper] {what}: {_short_reason(exc)} — retry {attempt}/{_ATTEMPTS - 1} "
+                  f"in {delay:.1f}s")
+            time.sleep(delay)
 
 
 # ─── Challenge solver ────────────────────────────────────────────────────────
@@ -58,7 +111,7 @@ def _new_session() -> cf_req.Session:
     sess = cf_req.Session(impersonate="chrome")
 
     print("[scraper] Solving batcave.biz challenge...")
-    r = sess.get(f"{SITE_BASE}/", timeout=15)
+    r = _retry_transient(lambda: sess.get(f"{SITE_BASE}/", timeout=15), "challenge page")
     m = re.search(r'token:\s*"([^"]+)"', r.text)
     if not m:
         raise RuntimeError(
@@ -68,7 +121,7 @@ def _new_session() -> cf_req.Session:
     token = m.group(1)
 
     nonce, dt = _solve_pow(token)
-    sess.post(
+    _retry_transient(lambda: sess.post(
         f"{SITE_BASE}/_v",
         data={
             "token": token,
@@ -86,7 +139,7 @@ def _new_session() -> cf_req.Session:
             "dpr": "2",
         },
         timeout=15,
-    )
+    ), "challenge answer")
 
     if not any(k in sess.cookies for k in ("__guard_trust", "__guard_token", "__guard_id")):
         raise RuntimeError(
@@ -99,9 +152,10 @@ def _new_session() -> cf_req.Session:
 def _get_session() -> cf_req.Session:
     """Return a cached session; re-solve the challenge if it was dropped."""
     global _session
-    if _session is None or not any(k in _session.cookies for k in ("__guard_trust", "__guard_token", "__guard_id")):
-        _session = _new_session()
-    return _session
+    with _session_lock:
+        if _session is None or not any(k in _session.cookies for k in ("__guard_trust", "__guard_token", "__guard_id")):
+            _session = _new_session()
+        return _session
 
 
 # ─── HTML → window.__DATA__ extraction ────────────────────────────────────────
@@ -110,7 +164,7 @@ def _get_session() -> cf_req.Session:
 def _fetch_data(url: str) -> dict[str, Any] | None:
     """Fetch a batcave.biz page and return its window.__DATA__ JSON, or None."""
     sess = _get_session()
-    r = sess.get(url, timeout=20)
+    r = _retry_transient(lambda: sess.get(url, timeout=20), "reader page")
 
     # If guard cookies expired, retry once with a fresh session.
     if r.status_code == 404 and "token:" in r.text:
@@ -118,7 +172,7 @@ def _fetch_data(url: str) -> dict[str, Any] | None:
         global _session
         _session = None
         sess = _get_session()
-        r = sess.get(url, timeout=20)
+        r = _retry_transient(lambda: sess.get(url, timeout=20), "reader page")
 
     if r.status_code != 200:
         print(f"[scraper] GET {url} → status={r.status_code}")
@@ -145,18 +199,19 @@ def _ajax_chapter_images(reader_url: str, news_id, chapter_id) -> list[str]:
         return []
     sess = _get_session()
     try:
-        r = sess.post(
+        r = _retry_transient(lambda: sess.post(
             f"{SITE_BASE}/engine/ajax/controller.php?mod=api&action=reader/getChapterData",
             data={"news_id": news_id, "chapter_id": chapter_id},
             headers={"X-Requested-With": "XMLHttpRequest", "Referer": reader_url},
             timeout=20,
-        )
+        ), "chapter page list")
         if r.status_code != 200:
             print(f"[scraper] getChapterData → status={r.status_code}")
             return []
         return (r.json().get("data") or {}).get("images") or []
     except Exception as e:  # noqa: BLE001 — network/JSON errors both mean "no images"
         print(f"[scraper] getChapterData failed: {e}")
+        _failure.reason = _short_reason(e)
         return []
 
 
@@ -166,7 +221,8 @@ def _ajax_chapter_images(reader_url: str, news_id, chapter_id) -> list[str]:
 def _download_image(url: str, save_path: Path) -> bool:
     """Download one image via the shared session with Referer header."""
     sess = _get_session()
-    try:
+
+    def _fetch_and_save() -> None:
         r = sess.get(
             url,
             headers={"Referer": f"{SITE_BASE}/"},
@@ -175,9 +231,16 @@ def _download_image(url: str, save_path: Path) -> bool:
         r.raise_for_status()
         save_path.parent.mkdir(parents=True, exist_ok=True)
         save_path.write_bytes(r.content)
+
+    try:
+        _retry_transient(_fetch_and_save, "image")
+        _failure.reason = ""
+        _failure.transient = False
         return True
     except Exception as e:
         print(f"[scraper] Download failed {url}: {e}")
+        _failure.reason = _short_reason(e)
+        _failure.transient = _is_transient(e)
         return False
 
 
@@ -278,8 +341,13 @@ def scrape_issue_pages(
 
     raw_images = data.get("images") or []
     if not raw_images and data.get("rdr_ajax"):
+        _failure.reason = ""
         raw_images = _ajax_chapter_images(
             reader_url, data.get("news_id"), data.get("chapter_id"))
+        if not raw_images and last_download_error():
+            # A network failure, not a layout change — do not send anyone chasing the site.
+            raise RuntimeError(
+                f"could not load the page list for {reader_url}: {last_download_error()}")
     if not raw_images:
         # Fail loud: a silent [] used to produce a 0-page manifest the rest of the
         # pipeline happily "succeeded" on (status=ok, 0 pages).
@@ -310,24 +378,44 @@ def scrape_issue_pages(
     print(f"[scraper] Found {len(image_urls)} pages — downloading...")
 
     missing: list[int] = []
+    reasons: list[str] = []
+    stalled = 0       # pages in a row that ran out of retries on a network error
+    gave_up = False
     for i, (url, page_path) in enumerate(zip(image_urls, expected), start=1):
         if page_path.exists():
             continue
 
         print(f"[scraper] Page {i}/{len(image_urls)}...", end=" ", flush=True)
+        _failure.reason = ""
+        _failure.transient = False
         if _download_image(url, page_path):
             print("✓")
+            stalled = 0
         else:
             missing.append(i)
+            reasons.append(last_download_error())
             print("✗")
+            # A permanent hole (a 404) says nothing about the pages after it; a network
+            # that stayed down through every retry says the same about all of them.
+            stalled = stalled + 1 if _network_looks_down() else 0
+            if stalled >= _GIVE_UP_AFTER:
+                missing.extend(j for j in range(i + 1, len(image_urls) + 1)
+                               if not expected[j - 1].exists())
+                gave_up = True
+                break
         time.sleep(0.2)
 
     if missing:
         # Fail loud: a chapter with holes used to be returned as if complete, and the
         # comic shipped with pages missing. What did arrive stays cached for the retry.
+        # Say WHY too — "page(s) 5, 8" alone hid a DNS outage behind a missing-pages report.
+        why = next((r for r in reasons if r), "")
         raise RuntimeError(
             f"{len(missing)} of {len(image_urls)} page(s) did not download for {reader_url}: "
             f"page(s) {', '.join(str(n) for n in missing)}"
+            + (f" — {why}" if why else "")
+            + (f" — stopped after {_GIVE_UP_AFTER} pages in a row failed: the network looks "
+               "down, the rest were not tried" if gave_up else "")
         )
     return expected
 

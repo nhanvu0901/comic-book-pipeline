@@ -83,9 +83,20 @@ def _run() -> None:
     # the desktop client reads them lazily off disk.
     from .bridge import PROJECTS_ROOT, set_web_mode
     set_web_mode(True)
-    # 0.0.0.0 so it answers on every interface — the LAN NIC and any VPN adapter alike.
-    ft.run(main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=args.port,
-           assets_dir=str(PROJECTS_ROOT))
+    import config
+    if not config.ENABLE_VIDEO_CLIPS:
+        # 0.0.0.0 so it answers on every interface — the LAN NIC and any VPN adapter alike.
+        ft.run(main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=args.port,
+               assets_dir=str(PROJECTS_ROOT))
+    else:
+        from fastapi import FastAPI
+        import uvicorn
+        from .web_routes import router as clip_router
+        flet_asgi = ft.run(main, export_asgi_app=True, assets_dir=str(PROJECTS_ROOT))
+        app = FastAPI()
+        app.include_router(clip_router)
+        app.mount("/", flet_asgi)
+        uvicorn.run(app, host="0.0.0.0", port=args.port)
 
 
 if __name__ == "__main__":

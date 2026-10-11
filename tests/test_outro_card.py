@@ -12,7 +12,9 @@ def _ffprobe_duration(path):
 
 
 @pytest.mark.integration
-def test_build_outro_card_makes_clip_of_right_duration(tmp_path):
+def test_build_outro_card_makes_clip_of_right_duration(tmp_path, monkeypatch):
+    import stages.stage_5.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "has_filter", lambda ff, name: False)
     out = tmp_path / "card.mp4"
     res = _build_outro_card(out, duration=3.5, logo=None,
                             channel_name="Grimframe", handle="@grimframe")

@@ -331,11 +331,15 @@ def test_crossfade_pads_all_but_last(monkeypatch):
     assert abs(base[-1].duration_seconds - plain[-1].duration_seconds) < 0.01
 
 
-def test_render_chapter_card(tmp_path):
+def test_render_chapter_card(tmp_path, monkeypatch):
     import art_pipeline.assemble as A
+    monkeypatch.setattr(A, "has_filter", lambda ff, name: False)
     out = tmp_path / "card.png"
     A._render_chapter_card(2, "The City That Isn't There", out, w=640, h=360)
     assert out.exists() and out.stat().st_size > 0
+    from PIL import Image
+    with Image.open(out) as card:
+        assert len(card.convert("RGB").getcolors(640 * 360)) > 2  # background + lettering
     ffprobe = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
     if shutil.which(ffprobe) or os.path.exists(ffprobe):
         dims = subprocess.run(
@@ -385,8 +389,9 @@ def _make_silent(ff, path, seconds, w=320, h=180):
                    capture_output=True, text=True, check=True)
 
 
-def test_overlay_chapter_cards_preserves_duration(tmp_path):
+def test_overlay_chapter_cards_preserves_duration(tmp_path, monkeypatch):
     import art_pipeline.assemble as A
+    monkeypatch.setattr(A, "has_filter", lambda ff, name: False)
     from stages.stage_5.pipeline import _probe_duration
     ff = A._resolve_ffmpeg()
     silent = tmp_path / "video_silent.mp4"

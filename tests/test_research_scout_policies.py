@@ -14,16 +14,17 @@ def test_general_micro_template_is_external_and_records_hash():
         user_intent="new Hulk moment",
         angle="power failure",
         count="20",
-        digest="none",
+        avoid="none",
     )
     assert "new Hulk moment" in rendered.text
-    assert rendered.version == "general_micro.v1"
+    assert rendered.version == "general_micro.v2"
     assert len(rendered.sha256) == 64
+    assert "SCOUTED DIGEST" not in rendered.text
 
 
 def test_missing_required_placeholder_fails_loudly():
     bundle = PolicyBundle.load(ScoutMode.QA)
-    with pytest.raises(ValueError, match="digest"):
+    with pytest.raises(ValueError, match="avoid"):
         bundle.render("general", user_intent="Hulk", angle="immunity")
 
 
@@ -36,7 +37,7 @@ def test_render_rejects_unknown_template_and_extra_values():
             "general",
             user_intent="Hulk",
             angle="immunity",
-            digest="none",
+            avoid="none",
             unexpected="value",
         )
 
@@ -45,13 +46,13 @@ def test_mode_selects_distinct_general_and_specific_templates():
     qa = PolicyBundle.load(ScoutMode.QA)
     micro = PolicyBundle.load(ScoutMode.MICRO)
     qa_general = qa.render(
-        "general", user_intent="Hulk", angle="immunity", count="20", digest="none",
+        "general", user_intent="Hulk", angle="immunity", count="20", avoid="none",
     )
     micro_general = micro.render(
-        "general", user_intent="Hulk", angle="immunity", count="20", digest="none",
+        "general", user_intent="Hulk", angle="immunity", count="20", avoid="none",
     )
     assert qa_general.version == "general_qa.v2"
-    assert micro_general.version == "general_micro.v1"
+    assert micro_general.version == "general_micro.v2"
     assert qa_general.text != micro_general.text
 
 
@@ -82,7 +83,7 @@ def test_specific_and_evidence_templates_accept_their_declared_values():
 
 def test_policy_json_assets_are_valid_and_expose_required_gates():
     bundle = PolicyBundle.load(ScoutMode.MICRO)
-    assert len(bundle.source_profiles["general_research"]["domains"]) == 8
+    assert len(bundle.source_profiles["general_research"]["domains"]) == 10
     assert len(bundle.source_profiles["specific_web_search"]["domains"]) == 7
     assert bundle.source_profiles["general_research"]["domains"] is not bundle.source_profiles["specific_web_search"]["domains"]
     assert len(bundle.general_angles["qa"]) == 5
@@ -115,6 +116,19 @@ def test_evidence_gate_v2_keeps_v1s_placeholder_set():
     assert v2 == v1 == {"user_intent", "angle", "digest", "candidate", "raw_evidence"}
 
 
+def test_general_and_discover_templates_use_only_avoid_placeholder():
+    from stages.research_scout.policies import _PROMPTS_ROOT, _placeholders
+
+    for filename in (
+        "general_qa.v2.md", "general_micro.v2.md",
+        "discover_qa.v2.md", "discover_micro.v2.md",
+    ):
+        placeholders = _placeholders((_PROMPTS_ROOT / filename).read_text(encoding="utf-8"))
+        assert "avoid" in placeholders, filename
+        assert "digest" not in placeholders, filename
+        assert "SCOUTED DIGEST" not in (_PROMPTS_ROOT / filename).read_text(encoding="utf-8"), filename
+
+
 def test_evidence_gate_v2_tells_the_gate_what_an_unfetchable_source_means():
     """A cited URL nobody could open is unverified, not contradicted. Letting
     that produce `rejected` is the defect this version exists to close."""
@@ -138,7 +152,7 @@ def test_evidence_gate_v2_tells_the_gate_what_an_unfetchable_source_means():
 def _render_general(mode):
     return PolicyBundle.load(mode).render(
         "general", user_intent="final twist of the fight", angle="a reveal",
-        count="6", digest="none",
+        count="6", avoid="none",
     ).text
 
 
@@ -156,18 +170,14 @@ def test_general_micro_template_carries_the_three_rules_in_order_and_qa_does_not
     assert "is not an event" not in qa
     # the fixed template asks for the same canonical identity / url shape as the planner path
     assert rules.missing_format_rules(micro) == []
-    assert "Series Title #N" not in qa
+    assert '"Series Title #N (YYYY)"' in qa
 
 
-def test_general_micro_template_keeps_the_pinned_breadth_wording():
-    """The three rules were added below this paragraph; it must not be reflowed."""
+def test_general_micro_fallback_requests_multiple_distinct_scenes():
     micro = _render_general(ScoutMode.MICRO)
-    assert micro.startswith(
-        "# General micro-moment research scout\n\n"
-        "Find source-supported comic moments for this request. Seek about 6 distinct source pages\n"
-        "when available; there is no candidate minimum. State the\n"
-        "actual source and candidate counts in notes and never pad the list.\n"
-    )
+    assert "up to 10 distinct, source-supported comic moments" in micro
+    assert "never stop after the first scene" in micro
+    assert "never pad" in micro
 
 
 def test_specific_micro_template_flags_a_moment_that_rests_on_a_reaction_or_teaser():

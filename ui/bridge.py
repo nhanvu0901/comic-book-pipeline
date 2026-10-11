@@ -3,10 +3,12 @@ Async wrappers around the synchronous stage pipelines so the UI can run
 them off the event loop via page.run_task().
 """
 import asyncio
+import contextlib
 import json
 import os
 import queue
 import re
+import threading
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -124,14 +126,13 @@ def _scout_store(root: Path | None = None):
 
 def _scout_workflow(root: Path | None = None):
     from stages.research_scout.workflow import ScoutWorkflow
-    from stages.youcom_scout import build_scouted_digest
 
-    # Without the digest the prompt renders "SCOUTED DIGEST:" empty and the scout
-    # happily re-proposes produced/banned questions (found 2026-08-21).
-    return ScoutWorkflow(store=_scout_store(root), digest=build_scouted_digest())
+    return ScoutWorkflow(store=_scout_store(root))
 
 
-def start_scout_session(mode: str, user_intent: str):
+def start_scout_session(
+    mode: str, user_intent: str, *, publication_year: int | None = None,
+):
     from stages.research_scout.bank_fallback import bank_suggestions_for_mode
     from stages.research_scout.models import ScoutMode
 
@@ -160,14 +161,46 @@ def start_scout_session(mode: str, user_intent: str):
             # Full batch, not count=1: it is the same single research call
             # either way, and asking for one question while handing the prompt
             # all five angles just makes the prompt contradict itself.
-            batch = workflow.discover_questions(scout_mode)
+            batch = workflow.discover_questions(
+                scout_mode, publication_year=publication_year,
+            )
             field = "question" if scout_mode is ScoutMode.QA else "moment"
             intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
-    return workflow.start(scout_mode, intent)
+    return workflow.start(scout_mode, intent, publication_year=publication_year)
+
+
+def record_rejected_questions(
+    mode: str, entries: list[dict] | tuple[dict, ...], *,
+    context: dict | None = None, log: Callable[[str], None] = print,
+) -> str:
+    """Remember the batch Master just turned down with 'None of these'.
+
+    One ``rejected`` ledger event per question (see
+    stages.research_scout.scout_rejections), so a reload cannot offer it again.
+    Writes happen on the Windows server only; elsewhere this logs one line and
+    skips. It NEVER raises — the re-roll the user is waiting on must not depend
+    on the ledger — and returns the recorder's status, or ``failed``.
+    """
+    from stages.research_scout import scout_rejections
+
+    count = len(entries)
+    try:
+        result = scout_rejections.record_rejected(mode, entries, context=context)
+    except Exception as exc:
+        log(f"[bridge] re-roll: could not save the {count} turned-down question(s) to the ledger ({exc}); the re-roll goes on.")
+        return "failed"
+    if result == "read_only":
+        log("[bridge] re-roll: central ledger is read-only here, so the turned-down questions are not remembered after a reload.")
+    elif result == "recorded":
+        log(f"[bridge] re-roll: remembered the turned-down question(s) in the ledger (batch of {count}).")
+    elif result == "export_pending":
+        log("[bridge] re-roll: turned-down question(s) saved, but the ledger export refresh failed; retry ledger export.")
+    return result
 
 
 def discover_questions(
-    mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = ()
+    mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = (),
+    publication_year: int | None = None,
 ) -> list[dict]:
     """Tier B on its own, WITHOUT starting a session — the human-review step
     that stages/youcom_scout.py::is_burned's docstring deliberately relies on.
@@ -189,7 +222,8 @@ def discover_questions(
     from stages.research_scout.models import ScoutMode
 
     return _scout_workflow().discover_questions(
-        ScoutMode(mode), count=count, exclude=tuple(exclude)
+        ScoutMode(mode), count=count, exclude=tuple(exclude),
+        publication_year=publication_year,
     )
 
 
@@ -279,10 +313,16 @@ def archive_scout_session(session_id: str, reason: str = "Research restarted"):
         )
 
 
-def create_scout_project(session_id: str, project_slug: str, *, override: bool = False) -> str:
+def create_scout_project(
+    session_id: str, project_slug: str, *, override: bool = False,
+    series_diversity_override: bool = False,
+) -> str:
     from stages.research_scout.project_factory import create_project_from_session
 
-    return create_project_from_session(session_id, project_slug, override=override)
+    return create_project_from_session(
+        session_id, project_slug, override=override,
+        series_diversity_override=series_diversity_override,
+    )
 
 
 def return_scout_project_to_research(project_name: str):
@@ -503,7 +543,42 @@ def run_stage_1(
 
 # ─── Stage 2: Download ─────────────────────────────────────────────────────
 
+class DownloadInProgress(RuntimeError):
+    """A download for this project is already running — in this tab or another."""
+
+
+_downloads_running: set[str] = set()
+_downloads_guard = threading.Lock()
+
+
+@contextlib.contextmanager
+def _one_download_per_project(project_name: str):
+    """Hold a project's download slot for the length of one download.
+
+    The Stage 1 button, Download from URL(s) and the saga switch all write the same
+    raw_comic/chNN_page_*.jpg names, and a page already on disk counts as cached — so two
+    runs on one project mix the pages of two different comics into one chapter, and slow
+    each other down. The UI's own busy flags only cover one tab and one button each, so the
+    slot lives here, where every tab shares it."""
+    with _downloads_guard:
+        if project_name in _downloads_running:
+            raise DownloadInProgress(
+                f"A download for '{project_name}' is already running — wait for it to "
+                "finish (watch the log), then click again if pages are still missing.")
+        _downloads_running.add(project_name)
+    try:
+        yield
+    finally:
+        with _downloads_guard:
+            _downloads_running.discard(project_name)
+
+
 def run_stage_download(project_name: str, log: Callable[[str], None]) -> list[dict]:
+    with _one_download_per_project(project_name):
+        return _run_stage_download(project_name, log)
+
+
+def _run_stage_download(project_name: str, log: Callable[[str], None]) -> list[dict]:
     from config import get_project_dirs
     ctx_path = get_project_dirs(project_name)["root"] / "comic_context.json"
     ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
@@ -533,6 +608,17 @@ def run_stage_download_from_url(
 ) -> list[dict]:
     """URL-direct download: skip Stage 1. raw_input can be either a series URL
     or one-or-more reader URLs (whitespace/newline/comma separated)."""
+    with _one_download_per_project(project_name):
+        return _run_stage_download_from_url(project_name, raw_input, issues, enrich, log)
+
+
+def _run_stage_download_from_url(
+    project_name: str,
+    raw_input: str,
+    issues: str,
+    enrich: bool,
+    log: Callable[[str], None],
+) -> list[dict]:
     from stages.stage_2.url_mode import (
         classify_url, download_from_readers, download_from_series,
     )
@@ -566,6 +652,16 @@ def run_stage_download_saga(
     then downloads. raw_input is either ONE series URL (→ download_saga, auto
     ≤max_issues) or N reader URLs (→ download_saga_from_readers, one issue each).
     N==1 collapses to today's single-comic shape."""
+    with _one_download_per_project(project_name):
+        return _run_stage_download_saga(project_name, raw_input, max_issues, log)
+
+
+def _run_stage_download_saga(
+    project_name: str,
+    raw_input: str,
+    max_issues: int,
+    log: Callable[[str], None],
+) -> list[dict]:
     from stages.stage_2.url_mode import (
         classify_url, download_saga, download_saga_from_readers,
     )
@@ -605,9 +701,11 @@ def load_raw_pages(project_name: str) -> list[dict]:
 
 # ─── Stage 3: Preprocess ──────────────────────────────────────────────────
 
-def run_stage_2(project_name: str, log: Callable[[str], None]) -> list[dict]:
+def run_stage_2(
+    project_name: str, log: Callable[[str], None], *, start_page: int = 1,
+) -> list[dict]:
     from stages.stage_2 import preprocess_project
-    return preprocess_project(project_name, progress=log, force_refresh=False)
+    return preprocess_project(project_name, progress=log, force_refresh=False, start_page=start_page)
 
 
 def load_preprocessed(project_name: str) -> list[dict]:
@@ -845,8 +943,63 @@ def run_stage_4(
 
 # ─── Stage 5 ────────────────────────────────────────────────────────────────
 
+def _render_signature(path: Path) -> tuple[int, int, int, int, int] | None:
+    from stages.research_scout.production_ledger import render_signature
+    return render_signature(path)
+
+
+def _load_render_marker(project_dir: Path) -> tuple[int, int, int, int, int] | None:
+    from stages.research_scout.production_ledger import _marker_signature
+    return _marker_signature(project_dir)
+
+
+def _mark_render_verified(project_dir: Path, signature: tuple[int, int, int, int, int],
+                          log: Callable[[str], None]) -> None:
+    marker_path = project_dir / "final.mp4.verified.json"
+    try:
+        write_json_atomic(marker_path, {"verified_final_signature": list(signature)})
+    except Exception as exc:
+        log(f"[bridge] final.mp4 is valid, but its durable render sidecar could not be saved: {exc}")
+
+
+def _record_render_milestone(project_name: str, log: Callable[[str], None]) -> None:
+    from stages.research_scout.production_ledger import record_milestone
+
+    try:
+        result = record_milestone(project_name, "produced", projects_root=PROJECTS_ROOT)
+    except Exception as exc:
+        log(f"[bridge] final.mp4 rendered, but the production ledger update failed; retry ledger reconciliation: {exc}")
+        return
+    if result == "read_only":
+        log("[bridge] final.mp4 rendered; central ledger is read-only here, and this local project remains in scout inventory.")
+    elif result == "export_pending":
+        log("[bridge] final.mp4 rendered and ledger event saved, but export refresh failed; retry ledger export.")
+    elif result == "unresolved_identity":
+        log("[bridge] final.mp4 rendered, but its comic identity could not be resolved for the ledger.")
+
+
+def _verify_render_and_record(project_name: str, log: Callable[[str], None], *,
+                              prior_signature: tuple[int, int, int, int, int] | None = None,
+                              require_fresh: bool = False) -> Path:
+    project_dir = PROJECTS_ROOT / project_name
+    final = project_dir / "final.mp4"
+    signature = _render_signature(final)
+    if signature is None:
+        raise RuntimeError("Render finished but final.mp4 is missing or empty")
+    if require_fresh and signature == prior_signature and _load_render_marker(project_dir) != signature:
+        raise RuntimeError("Stage 5 returned success but did not produce a fresh or previously verified final.mp4")
+    from stages.research_scout.production_ledger import is_verified_final
+    if not is_verified_final(project_dir):
+        raise RuntimeError("Render finished but final.mp4 failed MP4 verification")
+    _mark_render_verified(project_dir, signature, log)
+    _record_render_milestone(project_name, log)
+    return final
+
 def run_stage_5(project_name: str, log: Callable[[str], None]) -> str:
     from stages.stage_5.pipeline import assemble_project
+
+    project_dir = PROJECTS_ROOT / project_name
+    prior_signature = _render_signature(project_dir / "final.mp4")
 
     import builtins
     original = print
@@ -855,7 +1008,10 @@ def run_stage_5(project_name: str, log: Callable[[str], None]) -> str:
         final = assemble_project(project_name, force=True)
     finally:
         builtins.print = original
-    return str(final)
+    verified = _verify_render_and_record(
+        project_name, log, prior_signature=prior_signature, require_fresh=True,
+    )
+    return str(verified)
 
 
 # ─── Stage 6: Review & Edit (storyboard) ───────────────────────────────────
@@ -998,6 +1154,9 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     import subprocess
     import sys
 
+    project_dir = PROJECTS_ROOT / project_name
+    prior_signature = _render_signature(project_dir / "final.mp4")
+
     # Master is explicitly re-rendering edited narration from Stage 7 (Review & Edit).
     # Sync the review gate's narration_sha1 so ensure_reviewed recognises Master's explicit approval.
     try:
@@ -1038,9 +1197,9 @@ def run_stage6_render(project_name: str, log: Callable[[str], None]) -> str:
     env.pop("CLAUDE_SDK_MODEL", None)
     _run([py, "-m", "stages.stage_5", "--project", project_name, "--force"], env)
 
-    final = PROJECTS_ROOT / project_name / "final.mp4"
-    if not final.exists():
-        raise RuntimeError("Stage 5 finished but final.mp4 is missing")
+    final = _verify_render_and_record(
+        project_name, log, prior_signature=prior_signature, require_fresh=True,
+    )
     return str(final)
 
 

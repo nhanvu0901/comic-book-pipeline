@@ -120,6 +120,8 @@ def test_qa_factory_requires_three_confirmed_reader_urls(tmp_path, monkeypatch):
 def test_qa_factory_builds_contexts_once_from_selected_confirmed_gates(tmp_path, monkeypatch):
     _wire_roots(tmp_path, monkeypatch)
     candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    candidates[1]["series_issue_year"] = "Batman #2 (2024)"
+    candidates[2]["series_issue_year"] = "Iron Man #3 (2024)"
     gates = [_gate(candidate["id"]) for candidate in candidates]
     session = _session(tmp_path, ScoutMode.QA, candidates, gates)
     calls = []
@@ -141,6 +143,46 @@ def test_qa_factory_builds_contexts_once_from_selected_confirmed_gates(tmp_path,
         "drawable_moment", "verification_note", "surprise_level",
     }
     assert all(required <= set(item) for item in research["items"])
+
+
+def test_qa_series_diversity_soft_gate_requires_override(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    candidates[1]["series_issue_year"] = "Thor #22 (2025)"
+    candidates[2]["series_issue_year"] = "Thor #33 (2026)"
+    candidates[1]["series_issue_year"] = "Thor #22 (2025)"
+    candidates[2]["series_issue_year"] = "Thor #33 (2026)"
+    session = _session(tmp_path, ScoutMode.QA, candidates, [_gate(c["id"]) for c in candidates])
+
+    with pytest.raises(ValueError, match="series diversity"):
+        factory.create_project_from_session(session.id, "same-series")
+    with pytest.raises(ValueError, match="series diversity"):
+        factory.create_project_from_session(session.id, "same-series-gate-override", override=True)
+    assert not (tmp_path / "projects" / "same-series").exists()
+
+
+def test_qa_series_diversity_override_is_written_to_audit(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    candidates[1]["series_issue_year"] = "Thor #22 (2025)"
+    candidates[2]["series_issue_year"] = "Thor #33 (2026)"
+    session = _session(tmp_path, ScoutMode.QA, candidates, [_gate(c["id"]) for c in candidates])
+    monkeypatch.setattr(
+        factory.answer_research, "build_contexts", lambda *a, **k: (tmp_path, tmp_path)
+    )
+
+    factory.create_project_from_session(
+        session.id, "same-series", series_diversity_override=True,
+    )
+
+    store = SessionStore(tmp_path / "research-sessions")
+    audit = [json.loads(line) for line in
+             (store.session_dir(session.id) / "audit.jsonl").read_text().splitlines()]
+    diversity = [event for event in audit if event["event"] == "series_diversity_overridden"]
+    assert len(diversity) == 1
+    assert diversity[0]["detail"]["series_diversity_override"] is True
+    assert diversity[0]["detail"]["selected_series_count"] == 1
+    assert not any(event["event"] == "gates_overridden" for event in audit)
 
 
 def test_qa_factory_rejects_legacy_single_gate_reused_for_all_candidates(tmp_path, monkeypatch):
@@ -173,6 +215,8 @@ def test_factory_preserves_build_contexts_reader_url_failure_and_does_not_mark_c
 ):
     _wire_roots(tmp_path, monkeypatch)
     candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    candidates[1]["series_issue_year"] = "Batman #2 (2024)"
+    candidates[2]["series_issue_year"] = "Iron Man #3 (2024)"
     session = _session(tmp_path, ScoutMode.QA, candidates, [_gate(c["id"]) for c in candidates])
 
     def fail_loudly(*args, **kwargs):
@@ -228,6 +272,8 @@ def test_a_clean_session_reports_no_flags_at_all(tmp_path, monkeypatch):
 def test_an_inconclusive_verdict_blocks_but_can_be_overridden(tmp_path, monkeypatch):
     _wire_roots(tmp_path, monkeypatch)
     candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    candidates[1]["series_issue_year"] = "Batman #2 (2024)"
+    candidates[2]["series_issue_year"] = "Iron Man #3 (2024)"
     gates = [_gate("a", verdict="inconclusive"), _gate("b"), _gate("c")]
     session = _session(tmp_path, ScoutMode.QA, candidates, gates)
     monkeypatch.setattr(
@@ -245,6 +291,8 @@ def test_an_inconclusive_verdict_blocks_but_can_be_overridden(tmp_path, monkeypa
 def test_a_model_emitted_flag_blocks_but_can_be_overridden(tmp_path, monkeypatch):
     _wire_roots(tmp_path, monkeypatch)
     candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    candidates[1]["series_issue_year"] = "Batman #2 (2024)"
+    candidates[2]["series_issue_year"] = "Iron Man #3 (2024)"
     gates = [_gate("a", flags=["panel_is_a_flashback"]), _gate("b"), _gate("c")]
     session = _session(tmp_path, ScoutMode.QA, candidates, gates)
     monkeypatch.setattr(
@@ -287,6 +335,8 @@ def test_a_duplicate_selection_is_a_defect_and_override_cannot_wave_it_through(
 def test_an_override_is_recorded_in_the_audit_with_each_candidates_reason(tmp_path, monkeypatch):
     _wire_roots(tmp_path, monkeypatch)
     candidates = [_candidate(chr(97 + i), index=i + 1) for i in range(3)]
+    candidates[1]["series_issue_year"] = "Batman #2 (2024)"
+    candidates[2]["series_issue_year"] = "Iron Man #3 (2024)"
     gates = [_gate("a", verdict="inconclusive"), _gate("b"), _gate("c")]
     session = _session(tmp_path, ScoutMode.QA, candidates, gates)
     monkeypatch.setattr(

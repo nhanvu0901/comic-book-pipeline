@@ -1,3 +1,8 @@
+HARD RULES — non-negotiable:
+1. Verify one real scene from one real published comic-book issue; no movie, TV, game, toy, arc, or range.
+2. Require one exact issue number and publication year. Respect any selected publication year.
+3. Confirm the action and consequence from retrieved sources; do not infer missing events.
+
 # Specific micro-moment verification research
 
 Verify ONE proposed single-issue moment. Do not enumerate alternatives and do
@@ -6,9 +11,6 @@ this exact issue, holds up.
 
 USER INTENT: {user_intent}
 ANGLE: {angle}
-DIGEST:
-{digest}
-
 CANDIDATE:
 {candidate}
 

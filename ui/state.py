@@ -37,6 +37,7 @@ class AppState:
     current_stage: int = 1
     approved: dict[str, bool] = field(default_factory=dict)  # str keys for JSON
     dirty: dict[str, bool] = field(default_factory=dict)
+    approved_narration_sha256: str = ""
 
     # Stage 1
     last_prompt: str = ""
@@ -63,9 +64,11 @@ class AppState:
     def is_dirty(self, stage: int) -> bool:
         return bool(self.dirty.get(str(stage), False))
 
-    def mark_approved(self, stage: int) -> None:
+    def mark_approved(self, stage: int, *, narration_sha256: str = "") -> None:
         self.approved[str(stage)] = True
         self.dirty[str(stage)] = False
+        if stage == 2:
+            self.approved_narration_sha256 = narration_sha256
 
     def mark_dirty(self, stage: int) -> None:
         self.dirty[str(stage)] = True
@@ -88,6 +91,7 @@ class AppState:
         self.current_stage = 1
         self.approved = {}
         self.dirty = {}
+        self.approved_narration_sha256 = ""
         # This is deliberately project-scoped state, rather than guessing from
         # arbitrary unfinished sessions when Stage 1 is opened later.
         self.returned_scout_project = self.project_name
@@ -132,11 +136,13 @@ def save_state(s: AppState) -> None:
 
 
 def list_projects() -> list[str]:
-    """Scan PROJECTS_ROOT for project directories containing comic_context.json."""
+    """Scan PROJECTS_ROOT for project directories containing comic_context.json — or
+    screen_context.json, which is what a screen_qa project (no comic at all) is rooted in."""
     if not PROJECTS_ROOT.exists():
         return []
     out: list[str] = []
     for d in sorted(PROJECTS_ROOT.iterdir()):
-        if d.is_dir() and (d / "comic_context.json").exists():
+        if d.is_dir() and ((d / "comic_context.json").exists()
+                           or (d / "screen_context.json").exists()):
             out.append(d.name)
     return out

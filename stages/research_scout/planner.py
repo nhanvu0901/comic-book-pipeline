@@ -15,6 +15,7 @@ import copy
 import json
 import re
 import socket
+from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
 import urllib.error
@@ -28,7 +29,24 @@ from . import cited_sources
 
 
 _TIMEOUT = 180.0
-_REQUEST_FAILED = object()
+_MAX_FAILURE_MESSAGE_CHARS = 300
+
+
+@dataclass(frozen=True)
+class RequestFailure:
+    status: int | None
+    message: str
+
+    def as_text(self, service: str = "OpenRouter") -> str:
+        prefix = f"{service} HTTP {self.status}: " if self.status is not None else f"{service}: "
+        return (prefix + self.message)[:_MAX_FAILURE_MESSAGE_CHARS]
+
+
+@dataclass(frozen=True)
+class PlanResult:
+    plan: "ResearchPlan | None"
+    error: RequestFailure | None = None
+
 
 _CARDINALITIES = ("exhaustive", "options", "pinpoint")
 _FORMATS = ("list", "direct")
@@ -184,6 +202,35 @@ def compile_schema(
     }
 
 
+# Hard eligibility rules are code-owned and always lead the research prompt.
+_HARD_RULES = {
+    "qa": (
+        "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
+        '1. One candidate = ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid.\n'
+        '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later.\n'
+        "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
+        '4. Report what DID happen in a specific issue, never hypotheticals such as "who could".\n'
+        "5. Return every supported qualifying issue, up to 15; prefer distinct series, but never pad with weak or unsupported entries."
+    ),
+    "micro": (
+        "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
+        "1. One candidate = ONE scene or tightly connected sequence from ONE real published comic-book ISSUE; write `series_issue_year` exactly as `Series Title #N (YYYY)`. Movies, TV, games, toys, multi-issue arcs, and issue ranges are invalid.\n"
+        "2. Use the selected publication year exactly when supplied; otherwise use the current year as the default recency window (`micro_recency`). Honor an explicitly requested older year or era when no selected year overrides it.\n"
+        "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
+        "4. Name who acts, the concrete action or reveal, and its direct consequence, each supported by a retrieved page.\n"
+        "5. Return up to 10 distinct supported scenes; never pad with weak or unsupported entries."
+    ),
+}
+
+_DIRECT_QA_HARD_RULES = (
+    "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
+    '1. Every candidate must cite ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid.\n'
+    '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later.\n'
+    "3. One candidate per distinct supported story/evidence beat. Separate beats may cite the same issue; never repeat the same claim.\n"
+    '4. Report what DID happen in a specific issue, never hypotheticals such as "who could".\n'
+    "5. Return the beats needed to establish one grounded answer, up to 15; never pad with weak or unsupported entries."
+)
+
 # Invariant rules every research round relies on, regardless of plan — adapted
 # from research_prompts/general_qa.v2.md. The planner's own research_prompt
 # must NOT restate these; folding them in twice would just pad the prompt.
@@ -198,9 +245,7 @@ _INVARIANT_RULES = (
     "source names them; never invent missing issue details.\n"
     "- Describe what VISIBLY happens on the page, not implied or inferred "
     "meaning.\n"
-    "- Real published events only.\n"
-    "- Widely-debated hypothetical picks go LAST and must say \"hypothetical\" "
-    "in the summary."
+    "- Real published events only; exclude hypothetical picks."
 )
 
 _MICRO_INVARIANT_RULES = (
@@ -237,9 +282,11 @@ _MICRO_SCOUT_RULES = (
     "- Give the setup, the specific action or reveal that changes the "
     "situation, and its direct consequence. Name who acts or speaks. Reject "
     "abstract claims such as tactical patience without a sourced action.\n"
-    "- For an open-ended scout, prefer published issues from the current year "
-    "and then the previous year; the workflow appends the live year window. "
-    "Honor an explicitly requested older issue, year, or era. A broken "
+    "- For an open-ended scout, use only the selected publication year, or "
+    "the current year when none is selected; the workflow appends the exact year. "
+    "A selected year is exact; report a conflicting named issue rather than "
+    "changing the year. Otherwise honor an explicitly requested older issue, "
+    "year, or era. A broken "
     "character rule, loud spectacle, second famous name, and low YouTube "
     "coverage are ranking bonuses, not mandatory gates.\n"
     "- Keep summary and what_visibly_happens focused on the same scene. Do not "
@@ -312,7 +359,13 @@ _CARDINALITY_BLOCKS: dict[str, str] = {
 
 
 def assemble_prompt(
-    plan: ResearchPlan, digest: str, *, user_intent: str = "", mode: str = "", qa_format: str = ""
+    plan: ResearchPlan,
+    digest: str = "",
+    *,
+    user_intent: str = "",
+    mode: str = "",
+    qa_format: str = "",
+    avoid_lines: tuple[str, ...] | list[str] = (),
 ) -> str:
     """Deterministic prompt assembly — pure code, no LLM call.
 
@@ -322,7 +375,9 @@ def assemble_prompt(
     research_prompt, then the digest.
     """
 
+    is_direct = mode != "micro" and (qa_format == "direct" or (not qa_format and plan.format == "direct"))
     sections = [
+        _HARD_RULES["micro" if mode == "micro" else "qa"] if not is_direct else _DIRECT_QA_HARD_RULES,
         _MICRO_INVARIANT_RULES if mode == "micro" else _INVARIANT_RULES,
     ]
     if user_intent:
@@ -331,8 +386,12 @@ def assemble_prompt(
             "The user intent is authoritative. Keep the requested comic, issue, "
             "and scope even if the planner instruction or digest suggests another."
         )
+    unit = (
+        "distinct story/evidence beat" if is_direct else
+        "distinct comic-book issue" if mode != "micro" else "distinct issue-scene"
+    )
     sections.extend([
-        f"One candidate per {plan.unit} — never merge entries.",
+        f"One candidate per {unit} — never merge entries.",
         _CARDINALITY_BLOCKS[plan.cardinality],
     ])
     if plan.ranking.strip():
@@ -340,19 +399,21 @@ def assemble_prompt(
             f"Order candidates by {plan.ranking}, best first, and justify "
             "each position in rank_reason."
         )
-    is_direct = (qa_format == "direct") or (getattr(plan, "format", "") == "direct")
     if mode != "micro" and is_direct:
         sections.append(
             "Direct Q&A instructions:\n"
             "- State ONE grounded answer thesis in `answer_thesis` answering the question plainly from comic canon.\n"
             "- Return candidates as the sequential story/evidence beats that establish or explain the answer.\n"
-            "- Candidates do NOT need to be from different comics; they can be beats from the same comic or storyline."
+            "- Separate supported beats can be from the same issue or storyline."
         )
     if mode == "micro":
         sections.append(_MICRO_SCOUT_RULES)
         sections.append(_MICRO_DETAIL_RULES)
     sections.append(plan.research_prompt)
-    sections.append(f"SCOUTED DIGEST:\n{digest}")
+    if avoid_lines:
+        sections.append(
+            "ALREADY DONE — do not reuse these prior issues:\n" + "\n".join(avoid_lines[:50])
+        )
     return "\n\n".join(sections)
 
 
@@ -411,7 +472,7 @@ evidence_urls, claim_citation). Each is {name: lowercase_snake_case, type: "stri
 "string_array", description}.
 - research_prompt: the research instruction specific to this question.
 
-NEVER narrow a scope the Master did not narrow. Do not add qualifiers such as \
+NEVER narrow a scope the Master did not narrow. The channel baseline publication policy is 2010 or later; this is not a question-specific narrowing. "Modern" means published in 2010 or later, never post-1985 or post-Crisis. Do not add qualifiers such as \
 one continuity only, a date range, a publisher line, "main canon", or \
 "explicitly shown on-panel" unless the question itself states them — silent \
 narrowing throws away real answers. An open question keeps an open \
@@ -445,26 +506,33 @@ Return ONLY the ResearchPlan JSON — no prose."""
 
 
 def make_plan(user_intent: str, feedback_notes: list[str], mode: str) -> ResearchPlan | None:
-    """Ask config.SCOUT_PLANNER_MODEL to fill a ResearchPlan for one question.
+    """Compatibility wrapper: return only the plan, as callers historically expect."""
+    return make_plan_detailed(user_intent, feedback_notes, mode).plan
+
+
+def make_plan_detailed(
+    user_intent: str, feedback_notes: list[str], mode: str,
+) -> PlanResult:
+    """Ask the planner and preserve a safe reason when falling back.
 
     One repair retry on invalid/unvalidatable JSON (same shape as
-    openrouter_gate.review). Transport failures are never retried. Returns
-    None on any failure — the caller (workflow.run_general) falls back to
-    today's fixed template/schema instead of ever raising.
+    openrouter_gate.review). Transport failures are never retried. This detailed
+    API never raises for an upstream failure; ``make_plan`` keeps the old
+    ``ResearchPlan | None`` contract for injected and legacy callers.
     """
 
     if not config.OPENROUTER_API_KEY:
-        return None
+        return PlanResult(None, RequestFailure(None, "OPENROUTER_API_KEY is not set"))
 
     model = config.SCOUT_PLANNER_MODEL
     user_message = _user_message(user_intent, feedback_notes, mode)
 
     first_content = _request(_request_body(model, user_message), timeout=_TIMEOUT)
-    if first_content is _REQUEST_FAILED:
-        return None
+    if isinstance(first_content, RequestFailure):
+        return PlanResult(None, first_content)
     plan, reason = _parse_plan(first_content)
     if plan is not None:
-        return plan
+        return PlanResult(plan)
 
     repair_message = (
         f"{user_message}\n\nYour previous response was rejected because "
@@ -472,17 +540,24 @@ def make_plan(user_intent: str, feedback_notes: list[str], mode: str) -> Researc
         "fixing exactly that problem."
     )
     repaired_content = _request(_request_body(model, repair_message), timeout=_TIMEOUT)
-    if repaired_content is _REQUEST_FAILED:
-        return None
-    repaired_plan, _ = _parse_plan(repaired_content)
-    return repaired_plan
+    if isinstance(repaired_content, RequestFailure):
+        return PlanResult(None, repaired_content)
+    repaired_plan, repair_reason = _parse_plan(repaired_content)
+    if repaired_plan is not None:
+        return PlanResult(repaired_plan)
+    return PlanResult(
+        None,
+        RequestFailure(None, _safe_error_message(f"invalid plan JSON: {repair_reason}")),
+    )
 
 
 def _user_message(user_intent: str, feedback_notes: list[str], mode: str) -> str:
     parts = [str(user_intent), f"MODE HINT: {mode}"]
+    if mode == "qa":
+        parts.append("Channel policy: issues are published 2010 or later unless the question itself names another period. Modern means 2010 or later.")
     if mode == "micro":
         from .micro_recency import recent_micro_instruction
-        parts.append(recent_micro_instruction())
+        parts.append(recent_micro_instruction(user_intent=user_intent))
     notes = [str(note) for note in feedback_notes if str(note).strip()]
     if notes:
         parts.append(
@@ -498,8 +573,9 @@ def _request_body(model: str, user_message: str) -> dict[str, Any]:
     if "MODE HINT: micro" in user_message:
         system_prompt += (
             "\nFor micro mode only, the channel's default scope is recently "
-            "published issues. Honor the live year window in the user message; "
-            "an explicitly requested older issue, year, or era overrides it."
+            "published issues. Honor the exact year in the user message. "
+            "A selected publication year takes priority; otherwise an "
+            "explicitly requested older issue, year, or era may override the default."
             "\nFor micro mode the code also adds aftermath, context_behind, "
             "unrevealed and detail_citations to every candidate and writes the "
             "research rules for them; never choose those names as extra_fields."
@@ -537,16 +613,45 @@ def _request(body: dict[str, Any], *, timeout: float) -> Any:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        socket.timeout,
-        OSError,
-        ValueError,
-    ):
-        return _REQUEST_FAILED
+    except Exception as exc:
+        return _request_failure(exc)
     return _message_content(payload)
+
+
+def _request_failure(exc: Exception) -> RequestFailure:
+    status = exc.code if isinstance(exc, urllib.error.HTTPError) else None
+    message: str | None = None
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            body = exc.read(8192)
+            parsed = json.loads(body.decode("utf-8", errors="replace"))
+            error_obj = parsed.get("error") if isinstance(parsed, Mapping) else None
+            if isinstance(error_obj, Mapping) and isinstance(error_obj.get("message"), str):
+                message = error_obj["message"]
+        except Exception:
+            pass
+    if not message:
+        reason = getattr(exc, "reason", None)
+        text = str(reason if reason is not None else exc)
+        message = "timeout" if _is_timeout(exc, text) else (text or exc.__class__.__name__)
+    return RequestFailure(status, _safe_error_message(message))
+
+
+def _is_timeout(exc: Exception, text: str = "") -> bool:
+    return isinstance(exc, (TimeoutError, socket.timeout)) or any(
+        token in text.casefold() for token in ("timeout", "timed out", "deadline exceeded")
+    )
+
+
+def _safe_error_message(message: str) -> str:
+    """Flatten and redact configured credentials before a reason is persisted."""
+    safe = str(message)
+    api_key = str(config.OPENROUTER_API_KEY or "")
+    if api_key:
+        safe = safe.replace(api_key, "[redacted]")
+    safe = re.sub(r"(?i)Bearer\s+\S+", "Bearer [redacted]", safe)
+    safe = " ".join(safe.split())
+    return (safe or "request failed")[:_MAX_FAILURE_MESSAGE_CHARS]
 
 
 def _message_content(payload: Any) -> Any:

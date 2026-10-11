@@ -6,6 +6,7 @@ import urllib.error
 from urllib.parse import parse_qs, urlparse
 
 from stages.research_scout.youcom import RawCall, YouComClient, compact_search_query
+from stages.research_scout.youcom import MAX_ERROR_BODY_CHARS, MAX_RESEARCH_PROMPT_CHARS
 
 
 def test_candidate_url_not_in_raw_sources_is_blocked():
@@ -85,6 +86,48 @@ def test_research_effort_override_is_sent(monkeypatch):
         "find a moment", {"type": "object"}, None, effort="deep"
     )
     assert json.loads(seen["request"].data)["research_effort"] == "deep"
+
+
+def test_research_rejects_overlong_prompt_before_api_call(monkeypatch):
+    def should_not_call(*args, **kwargs):
+        raise AssertionError("API must not be called")
+
+    monkeypatch.setattr("urllib.request.urlopen", should_not_call)
+    prompt = "x" * (MAX_RESEARCH_PROMPT_CHARS + 1)
+    try:
+        YouComClient(api_key="fixture-key").research(prompt, {}, None)
+    except ValueError as exc:
+        assert f"{MAX_RESEARCH_PROMPT_CHARS + 1:,}" in str(exc)
+    else:
+        raise AssertionError("expected prompt preflight failure")
+
+
+def test_422_echo_is_truncated_in_text_and_payload():
+    from stages.research_scout.youcom import _error_response
+
+    long_body = ("secret prompt " * 500).encode()
+    error = urllib.error.HTTPError("https://api.you.com", 422, "bad input", {}, io.BytesIO(long_body))
+    result = _error_response("research", error, status_code=422)
+    assert result.status_code == 422
+    assert len(result.response_text) == MAX_ERROR_BODY_CHARS
+    assert result.payload["truncated"] is True
+    assert result.payload["original_chars"] == len(long_body)
+
+
+def test_422_nested_json_echo_does_not_survive_in_raw_call_payload():
+    from stages.research_scout.youcom import _error_response
+
+    echo = "hidden echoed prompt " * 300
+    long_body = json.dumps({"detail": {"request": {"input": echo}}}).encode()
+    error = urllib.error.HTTPError("https://api.you.com", 422, "bad input", {}, io.BytesIO(long_body))
+    result = _error_response("research", error, status_code=422)
+    assert len(result.response_text) <= MAX_ERROR_BODY_CHARS
+    assert result.payload == {
+        "error_body_prefix": long_body.decode()[:MAX_ERROR_BODY_CHARS],
+        "original_chars": len(long_body),
+        "truncated": True,
+    }
+    assert echo not in json.dumps(result.payload)
 
 
 def test_search_uses_compact_web_search_settings(monkeypatch):

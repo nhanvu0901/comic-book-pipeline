@@ -1,0 +1,68 @@
+{
+  "mode": "screen_qa",
+  "title": "How Did The Avengers Travel Through Time?",
+  "scenes": [
+    {
+      "scene_id": 1,
+      "text": "Scott Lang reveals that five hours in the quantum realm equaled five years outside.",
+      "page_ref": 0,
+      "panel_ref": 0,
+      "word_count": 14,
+      "target_seconds": 4.2,
+      "is_intro": true,
+      "is_outro": false,
+      "visual_beats": [
+        {
+          "text": "Scott Lang reveals that five hours in the quantum realm",
+          "query": "Scott Lang van quantum tunnel"
+        },
+        {
+          "text": "equaled five years outside.",
+          "query": "Avengers compound discussing quantum time"
+        }
+      ]
+    },
+    {
+      "scene_id": 2,
+      "text": "Tony Stark tests an inverted Mobius strip, solving time travel navigation overnight.",
+      "page_ref": 0,
+      "panel_ref": 0,
+      "word_count": 12,
+      "target_seconds": 3.9,
+      "is_intro": false,
+      "is_outro": false,
+      "visual_beats": [
+        {
+          "text": "Tony Stark tests an inverted Mobius strip,",
+          "query": "Tony Stark mobius strip simulation"
+        },
+        {
+          "text": "solving time travel navigation overnight.",
+          "query": "Tony Stark Eureka quantum GPS"
+        }
+      ]
+    },
+    {
+      "scene_id": 3,
+      "text": "The team assembles the quantum platform to launch their historic time heist.",
+      "page_ref": 0,
+      "panel_ref": 0,
+      "word_count": 12,
+      "target_seconds": 4.0,
+      "is_intro": false,
+      "is_outro": true,
+      "visual_beats": [
+        {
+          "text": "The team assembles the quantum platform",
+          "query": "Avengers quantum suits hangar"
+        },
+        {
+          "text": "to launch their historic time heist.",
+          "query": "Avengers hand over circle quantum platform"
+        }
+      ]
+    }
+  ],
+  "hook": "How did the Avengers travel back in time in Endgame?",
+  "banner_title": "How Did The Avengers Travel Through Time?"
+}

@@ -55,9 +55,24 @@ def main() -> int:
     model = ChatterboxTTS.from_pretrained(device=device)
     print(json.dumps({"ready": True, "device": device, "sr": int(model.sr)}), flush=True)
 
+    import random
+    import numpy as np
+
+    def _set_seed(seed_val: int) -> None:
+        torch.manual_seed(seed_val)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed_val)
+        np.random.seed(seed_val)
+        random.seed(seed_val)
+
     prompt = job.get("audio_prompt") or None
     temperature = float(job.get("temperature", 0.8))
     for i, ch in enumerate(job["chunks"]):
+        seed = ch.get("seed")
+        if seed is None and job.get("seed") is not None:
+            seed = int(job["seed"]) + i * 1000
+        if seed is not None:
+            _set_seed(int(seed))
         try:
             wav = model.generate(
                 ch["text"],

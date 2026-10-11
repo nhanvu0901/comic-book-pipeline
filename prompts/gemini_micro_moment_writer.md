@@ -1,7 +1,6 @@
-# GEMINI PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)
+# CHATGPT PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)
 
-> **Run settings:** Gemini 3.1 Pro or Gemini 3.5 Flash. Temperature **1.0**.
-> Google Search grounding **ON**. Thinking level **HIGH**.
+> **Run settings:** ChatGPT with web search enabled for PHASE 1.
 > This prompt runs in **two turns**. Paste everything below `---`, attach the scout's
 > verification block, and let it finish PHASE 1. Only then reply `WRITE`.
 
@@ -329,6 +328,14 @@ needed. Report dialogue indirectly only when it matters. Do not describe
 panels, poses, colors, camera moves, issue numbers, or the narrator's
 research process. Use spoken English with ordinary verbs, contractions,
 and a mix of short and medium sentences.
+
+READING LEVEL
+Write HOOK OPTIONS and FINAL SCRIPT in easy English at about a U.S. grade
+6–7 reading level (target 6.5). Use familiar words, short direct sentences,
+and one idea at a time. Explain a needed comic term in a few plain words only
+when the fact sheet supports that explanation. Keep proper names exact, and
+never simplify a fact so much that its meaning changes. Source quotes in
+PHASE 1 stay verbatim.
 
 The final sentence states a concrete verified outcome: how it ends or what the
 twist turns out to be when the sheet has AFTERMATH, otherwise the strongest

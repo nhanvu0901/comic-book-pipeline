@@ -16,6 +16,8 @@ import urllib.request
 RESEARCH_API = "https://api.you.com/v1/research"
 SEARCH_API = "https://api.you.com/v1/search"
 _DEFAULT_TIMEOUT = 1800
+MAX_RESEARCH_PROMPT_CHARS = 40_000
+MAX_ERROR_BODY_CHARS = 2_000
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,11 @@ class YouComClient:
         *,
         effort: str = "standard",
     ) -> RawCall:
+        if len(prompt) > MAX_RESEARCH_PROMPT_CHARS:
+            raise ValueError(
+                f"You.com Research prompt is {len(prompt):,} characters; "
+                f"maximum is {MAX_RESEARCH_PROMPT_CHARS:,}."
+            )
         body = {
             "input": prompt,
             "research_effort": effort,
@@ -156,14 +163,24 @@ def _error_response(api: str, error: urllib.error.HTTPError, *, status_code: int
         text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
     except OSError:
         text = ""
-    try:
-        payload: Any = json.loads(text) if text else {}
-    except (TypeError, ValueError):
-        payload = text
+    # Some 422 responses echo the full prompt. Keep diagnostics bounded in
+    # both response_text and the structured payload so audit serialization
+    # cannot persist the echoed request.
+    if len(text) > MAX_ERROR_BODY_CHARS:
+        payload: Any = {
+            "error_body_prefix": text[:MAX_ERROR_BODY_CHARS],
+            "original_chars": len(text),
+            "truncated": True,
+        }
+    else:
+        try:
+            payload = json.loads(text) if text else {}
+        except (TypeError, ValueError):
+            payload = text
     return RawCall(
         api=api,
         payload=payload,
         error=f"HTTP {status_code}",
         status_code=status_code,
-        response_text=text,
+        response_text=text[:MAX_ERROR_BODY_CHARS],
     )

@@ -43,8 +43,21 @@ YOUCOM_RESEARCH_EFFORT = os.getenv("YOUCOM_RESEARCH_EFFORT", "standard")
 # confirming one item each deserve the deep pass. A single knob made the cheap
 # phase as expensive as the others or the expensive ones as shallow.
 YOUCOM_DISCOVER_EFFORT = os.getenv("YOUCOM_DISCOVER_EFFORT", YOUCOM_RESEARCH_EFFORT)
-YOUCOM_GENERAL_EFFORT = os.getenv("YOUCOM_GENERAL_EFFORT", "deep")
+YOUCOM_GENERAL_EFFORT = os.getenv("YOUCOM_GENERAL_EFFORT", "standard")
 YOUCOM_VERIFY_EFFORT = os.getenv("YOUCOM_VERIFY_EFFORT", "deep")
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    """Read an integer environment setting, falling back and clamping safely."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+# The scout may make at most one top-up call; set to 0 to disable it.
+SCOUT_TOPUP_ROUNDS = _bounded_int_env("SCOUT_TOPUP_ROUNDS", 1, 0, 1)
 
 _DEFAULT_LLM_CHAIN = (
     "minimax/minimax-m2.5:free,"
@@ -533,6 +546,14 @@ BG_MUSIC_SILENCE_DB = float(os.getenv("BG_MUSIC_SILENCE_DB", "-35"))
 
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
+
+# ─── Video Clips in Q&A ────────────────────────────────────────────────────
+ENABLE_VIDEO_CLIPS = bool(int(os.getenv("ENABLE_VIDEO_CLIPS", "0")))
+CLIP_SPEED_MIN = float(os.getenv("CLIP_SPEED_MIN", "0.8"))
+CLIP_SPEED_MAX = float(os.getenv("CLIP_SPEED_MAX", "1.25"))
+CLIP_MAX_HOLD = float(os.getenv("CLIP_MAX_HOLD", "0.3"))
+_chatterbox_seed_env = os.getenv("CHATTERBOX_SEED")
+CHATTERBOX_SEED = (int(_chatterbox_seed_env) if _chatterbox_seed_env is not None else 42) if ENABLE_VIDEO_CLIPS else None
 
 # ─── Comic Scraper ──────────────────────────────────────────────────────────
 # headless=False opens a visible Chrome window — much more reliable against Cloudflare

@@ -1,0 +1,40 @@
+[    0.0s] project D:\code\cbp-video-test-p3v\projects\screen_fixture  seed=42 POST_ATEMPO=1.15
+[    5.8s] [clip] transcoding TcMBFSGVi1c.mp4 (1920x1080) → TcMBFSGVi1c_60.0_3.0.mp4 (1920x1080, h264, 30 fps)
+[    7.4s] real section downloaded: TcMBFSGVi1c_60.0_3.0.mp4
+[    7.6s] picks written, project approved
+[review-gate] 'screen_fixture' approved — proceeding
+[stage4] reused cached Chatterbox audio (10.29s, 38 words)
+[   91.0s] TTS done: audio 10.29s, 3 scene timings
+[   91.0s] [review-gate] 'screen_fixture' approved — proceeding
+[   91.1s] [stage5] clips: 3 shot(s) carry a clip (3/3 beat(s) placed)
+[   91.1s] [screen_qa] planning 4 shots over 3 scene(s), 10.50s of video for 10.29s of audio
+[   91.1s] [stage5] shot 000 (scene 1, CLIP TcMBFSGVi1c @0.00s, 3.70s, speed=0.81x, hold=0.00s)
+[stage5] Real-ESRGAN upscale failed ([WinError 2] The system cannot find the file specified) — using original panel
+[   92.5s] [stage5] shot 001 (scene 2, pan_down, 2.10s)
+[   93.4s] [screen_qa] shot 002: clip failed (ffprobe failed on D:\code\cbp-video-test-p3v\projects\screen_fixture\review\clips\broken.mp4: [mov,mp4,m4a,3gp,3g2,mj2 @ 0000025adaf70840] moov atom not found
+D:\code\cbp-video-test-p3v\projects\screen_fixture\review\clips\broken.mp4: Invalid data found when processing input) — trying the backup clip
+[   93.4s] [stage5] shot 002 (scene 2, CLIP bad-backup @0.00s, 1.53s, speed=1.00x, hold=0.00s)
+[   93.7s] [stage5] shot 003 (scene 3, CLIP gen_a @0.00s, 3.17s, speed=0.80x, hold=1.67s)
+[   94.3s] [screen_qa] wrote shots.json (4 shots: 2 clip, 1 backup, 1 still, 0 card)
+[   94.3s] [screen_qa] assembling 4 shots → video_silent.mp4
+[   94.5s] [stage5] loudnorm pass 1: measured I=-17.93 LUFS, LRA=1.30 LU → applying a single corrective gain
+[   94.5s] [stage5] loudnorm TTS → audio_mixed.wav
+[   94.7s] [screen_qa] final encode → final.mp4
+[   96.7s] [screen_qa] done: D:\code\cbp-video-test-p3v\projects\screen_fixture\final.mp4 (10.29s)
+[   96.7s] final: D:\code\cbp-video-test-p3v\projects\screen_fixture\final.mp4  10.288s  shots=4
+
+=== REPORT ===
+video {'codec_name': 'h264', 'profile': 'High', 'width': 1080, 'height': 1920, 'pix_fmt': 'yuv420p', 'r_frame_rate': '30/1'}
+audio {'codec_name': 'aac', 'sample_rate': '48000', 'channels': 2}
+audio.wav=10.288s  video_silent=10.500s  final=10.288s
+shot  level      start    dur   frames  beats
+   0  clip         0.00   3.70    111  ['1:0', '1:1']
+   1  still        3.70   2.10     63  ['2:0']
+   2  backup_clip   5.80   1.53     46  ['2:1']  notes=['L1: ffprobe failed on D:\\code\\cbp-video-test-p3v\\projects\\screen_fixture\\review\\clips\\broken.mp4: [mov,mp4,m4a,3gp,3g2,mj2 @ 0000025adaf70840] moov atom not found D:\\code\\cbp-video-test-p3v\\projects\\screen_fixture\\review\\clips\\broken.mp4: Invalid data found when processing input']
+   3  clip         7.33   3.17     95  ['3:0', '3:1']
+
+scene boundaries (end of scene i  vs  start of next scene's first shot):
+  scene 1 ends 3.705s ; scene 2 first shot starts 3.700s ; next scene's speech begins 3.705s
+  scene 2 ends 7.318s ; scene 3 first shot starts 7.333s ; next scene's speech begins 7.318s
+[   96.8s] E2E OK
+EXIT=0 

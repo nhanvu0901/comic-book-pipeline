@@ -53,7 +53,7 @@ def test_micro_moment_prompt_generation(tmp_path, monkeypatch):
     prompt_text, file_path = gp.generate_gemini_writer_prompt("batman_test")
 
     assert file_path.exists()
-    assert "GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)" in prompt_text
+    assert "CHATGPT PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)" in prompt_text
     assert "THE QUESTION:" not in prompt_text
     assert "Batman / Bruce Wayne" in prompt_text
     assert "Batman is trapped in a collapsing vault" in prompt_text
@@ -86,7 +86,7 @@ _MICRO_PLACEHOLDERS = (
 )
 # Phrases the tests above, the importer and the writer's own contract rely on.
 _MICRO_PINNED_PHRASES = (
-    "GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)",
+    "CHATGPT PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)",
     "HOOK AND FIRST BEAT",
     "A question is allowed",
     "same concrete person-and-event promise",

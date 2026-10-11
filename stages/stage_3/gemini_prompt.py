@@ -175,7 +175,7 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
         template = MICRO_TEMPLATE_PATH.read_text(encoding="utf-8") if MICRO_TEMPLATE_PATH.exists() else ""
         if not template:
             template = (
-                "# GEMINI PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)\n\n"
+                "# CHATGPT PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)\n\n"
                 "## INPUT\n\n```\n"
                 "MOMENT:        {{MOMENT}}\n"
                 "SCOUT JSON:\n{{SCOUT_JSON}}\n```\n"

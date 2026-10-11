@@ -18,7 +18,7 @@ never managed to look".
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import json
 import re
@@ -26,7 +26,7 @@ import socket
 from typing import Any
 import urllib.error
 import urllib.request
-from urllib.parse import parse_qsl, urlencode, urlsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
 
 READER_PREFIX = "https://r.jina.ai/"
@@ -80,6 +80,135 @@ class ClaimCitation:
 
     url: str
     quote: str
+
+
+@dataclass(frozen=True)
+class URLRebind:
+    """A model citation safely rebound to a URL returned by You.com."""
+
+    url: str
+    reason: str
+
+
+def match_key(url: str) -> str:
+    """Canonical comparison key for harmless URL formatting/model rewrites.
+
+    `canonical_url` intentionally remains unchanged for existing evidence
+    identity checks. This broader key additionally folds mobile/www hosts,
+    default ports, percent escapes and MediaWiki underscore/space variants.
+    """
+    try:
+        parts = urlsplit(str(url).strip())
+        host = _normalized_host(parts.hostname or "")
+        if not host:
+            return ""
+        port = parts.port
+        if port and not ((parts.scheme.casefold() == "https" and port == 443)
+                         or (parts.scheme.casefold() == "http" and port == 80)):
+            host = f"{host}:{port}"
+        path = unquote(parts.path).rstrip("/") or "/"
+        if "/wiki/" in path:
+            path = path.replace("_", " ")
+        kept = sorted((k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                      if not k.casefold().startswith("utm_")
+                      and k.casefold() not in _TRACKING_QUERY_KEYS)
+        return f"{host}{path}" + (f"?{urlencode(kept, doseq=True)}" if kept else "")
+    except (TypeError, ValueError):
+        return ""
+
+
+def rebind_citation_url(
+    model_url: str,
+    returned_sources: Sequence[Mapping[str, Any]],
+    quote: str = "",
+) -> URLRebind | None:
+    """Bind a rewritten model URL to one returned source using T1–T3.
+
+    T2 only accepts matching source-specific structural IDs and refuses any
+    numeric-token disagreement. T3 is the sole fallback permitted to override
+    a numeric URL disagreement, and only when the normalized quote occurs in
+    exactly one retrieved snippet.
+    """
+    model_key = match_key(model_url)
+    if not model_key:
+        return None
+    rows = [s for s in returned_sources if isinstance(s, Mapping)
+            and isinstance(s.get("url"), str) and match_key(s["url"])]
+    exact = [s for s in rows if match_key(s["url"]) == model_key]
+    if len(exact) == 1:
+        return URLRebind(str(exact[0]["url"]), "t1_match_key")
+
+    model_parts = _url_structure(model_url)
+    if model_parts:
+        model_nums = _url_numbers(model_url)
+        structural = []
+        for source in rows:
+            url = str(source["url"])
+            if _same_host(model_url, url) and _url_structure(url) == model_parts:
+                if model_nums == _url_numbers(url):
+                    structural.append(source)
+        if len(structural) == 1:
+            return URLRebind(str(structural[0]["url"]), "t2_structural_id")
+
+    normalized_quote = normalize_quote(quote)
+    if normalized_quote:
+        quote_hits = []
+        for source in rows:
+            snippets = source.get("snippets")
+            if isinstance(snippets, str):
+                snippets = [snippets]
+            if not isinstance(snippets, (list, tuple)):
+                continue
+            snippet_text = normalize_quote(" ".join(str(x) for x in snippets if x))
+            if normalized_quote in snippet_text:
+                quote_hits.append(source)
+        if len(quote_hits) == 1:
+            return URLRebind(str(quote_hits[0]["url"]), "t3_unique_snippet")
+    return None
+
+
+def _same_host(left: str, right: str) -> bool:
+    try:
+        a, b = urlsplit(left), urlsplit(right)
+        return _normalized_host(a.hostname or "") == _normalized_host(b.hostname or "")
+    except ValueError:
+        return False
+
+
+def _normalized_host(host: str) -> str:
+    """Fold presentation aliases consistently for T1 and source-family IDs."""
+    return re.sub(r"^(?:www|m|amp)\.", "", host.casefold())
+
+
+def _url_numbers(url: str) -> tuple[str, ...]:
+    try:
+        return tuple(re.findall(r"\d+", unquote(urlsplit(url).path)))
+    except ValueError:
+        return ()
+
+
+def _url_structure(url: str) -> tuple[str, ...] | None:
+    """Recognize stable issue/page IDs on common comic source URL families."""
+    try:
+        parts = urlsplit(url)
+        host = _normalized_host(parts.hostname or "")
+        path = unquote(parts.path)
+    except ValueError:
+        return None
+    if host.endswith("fandom.com"):
+        title = path.rsplit("/wiki/", 1)[-1]
+        match = re.match(r"(.+)_Vol_(\d+)_(\d+)(?:_|$)", title, re.IGNORECASE)
+        if match:
+            return ("fandom", re.sub(r"[_ ]+", "_", match[1]).casefold(), match[2], match[3])
+    if host == "leagueofcomicgeeks.com":
+        match = re.search(r"/comic/(\d+)(?:/|$)", path, re.IGNORECASE)
+        if match:
+            return ("leagueofcomicgeeks", match[1])
+    if host.endswith("batcave.biz"):
+        match = re.search(r"/(\d+)-[^/]+/?$", path, re.IGNORECASE)
+        if match:
+            return ("batcave", match[1])
+    return None
 
 
 def claim_citation(candidate: Any) -> ClaimCitation | None:

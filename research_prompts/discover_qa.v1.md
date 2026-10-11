@@ -1,3 +1,8 @@
+HARD RULES — non-negotiable:
+1. Discover real comic-book questions only; no movie, TV, or game answers.
+2. Unless a question names another period, answer scope is issues published in 2010 or later. Modern means 2010 or later.
+3. Do not require a minimum number of series or answer items.
+
 # Discover Q&A research scout
 
 ANGLE: {angle}
@@ -10,7 +15,5 @@ through story/evidence beats (Why/How, What-is/concept questions). Real fan
 debates and articles only — never invent a question because it sounds viral.
 Cite the URL where fans actually ask or answer it.
 
-Use the supplied digest as prior context.
-
-SCOUTED DIGEST:
+ALREADY DONE — avoid relevant prior questions and issues:
 {digest}

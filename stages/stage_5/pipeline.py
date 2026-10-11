@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import PROJECTS_ROOT
-from utils.ffmpeg_filter import filter_path
+from utils.ffmpeg_filter import filter_path, has_filter
 from ..review_gate import ensure_reviewed
 from ..stage_4.pipeline import verify_narration_hash
 from .audio import mix_audio
@@ -56,6 +56,15 @@ def assemble_project(
     scene_timings = (
         json.loads(scene_timings_path.read_text()) if scene_timings_path.exists() else []
     )
+
+    # screen_qa (video clips / stills / cards, no comic page) has its own shot builder and
+    # renderer in stage_5/screen_shots.py; every other mode falls straight through unchanged.
+    if str(narration.get("mode") or "") == "screen_qa":
+        from .screen_shots import run_screen_qa_pipeline
+        return run_screen_qa_pipeline(
+            project_name, root, narration, force=force, panels_only=panels_only, log=log,
+            audio_path=audio_path, audio_duration=audio_duration,
+            scene_timings=scene_timings, word_timestamps=word_timestamps)
 
     shots_dir = root / "shots"
     shots_dir.mkdir(parents=True, exist_ok=True)
@@ -106,6 +115,12 @@ def assemble_project(
             log(f"[stage5] loaded cluster_to_name: {len(cluster_to_name)} named clusters")
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             log(f"[stage5] cluster_to_name.json unreadable: {exc}")
+
+    # Video clips (opt-in): fetch any manifest entry that only names a source_url, so build_shots
+    # finds a local file. No review/clips/clips.json → returns at once. Never raises.
+    if not panels_only:
+        from .clips import prefetch_clips
+        prefetch_clips(project_name, log=log)
 
     shots = build_shots(
         narration,
@@ -176,7 +191,9 @@ def assemble_project(
         if sp.exists() and not force:
             log(f"[stage5] reusing {sp.name}")
         else:
-            if not getattr(s, "custom_image", None) and (not s.source_image or not Path(s.source_image).is_file()):
+            # A clip shot checks its fallback panel only if the clip fails (render_shot).
+            if (not getattr(s, "custom_image", None) and not getattr(s, "clip_path", "")
+                    and (not s.source_image or not Path(s.source_image).is_file())):
                 raise RuntimeError(
                     f"Shot {s.shot_id} has invalid source_image: {s.source_image!r}. "
                     "Comic pages may not be downloaded or preprocessed. "
@@ -190,6 +207,11 @@ def assemble_project(
     # upscale factor) so we can inspect "why did this shot pick that panel"
     # without re-running. Flags shots upscaled ≥3× (too-zoomed candidates).
     _write_shots_log(shots, caption_chunks, shots_dir, root / "shots.json", log)
+    wanted = [s for s in shots if getattr(s, "clip_path", "") or getattr(s, "clip_fallback", "")]
+    if wanted:
+        fell = [s.shot_id for s in wanted if s.clip_fallback]
+        log(f"[stage5] clips: {len(wanted) - len(fell)}/{len(wanted)} clip shot(s) rendered"
+            + (f", panel fallback on shot(s) {fell} (reasons in shots.json)" if fell else ""))
 
     from config import (ENABLE_OUTRO_CARD, OUTRO_CARD_SECONDS, CHANNEL_NAME,
                         CHANNEL_HANDLE, CHANNEL_LOGO_PATH)
@@ -264,6 +286,7 @@ def _write_shots_log(shots, caption_chunks, shots_dir, out_path, log):
     downstream reads it."""
     import re
     from PIL import Image
+    from .clips import shot_log_entry
     from .shots import OUTPUT_W, OUTPUT_H
 
     def _page_of(src: str) -> int | None:
@@ -301,6 +324,9 @@ def _write_shots_log(shots, caption_chunks, shots_dir, out_path, log):
             "scale_factor": scale,
             "upscale_warning": bool(scale and scale >= 3.0),
         })
+        clip = shot_log_entry(s)
+        if clip:
+            entries[-1]["clip"] = clip
     out_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
     n_warn = sum(1 for e in entries if e["upscale_warning"])
     log(f"[stage5] wrote shots.json ({len(entries)} shots, {n_warn} with upscale_warning ≥3×)")
@@ -377,11 +403,57 @@ def _assemble_video(shots, shot_paths, out_path: Path,
     skips the whip step entirely — no stable seed possible, so no behavior change.
     """
     groups = _group_shots_by_scene(shots, shot_paths)
-    whip = _pick_whip_boundaries(project, shots) if project else {}
-    if not whip:
-        return _assemble_groups(shots, groups, out_path,
-                                outro_card=outro_card, outro_dur=outro_dur)
-    return _assemble_with_whips(shots, groups, whip, out_path, outro_card, outro_dur)
+    # Hard cuts around clip shots are part of the ENABLE_VIDEO_CLIPS feature: with the flag OFF a
+    # project that carries a (legacy opt-in) clips.json assembles exactly as it always did.
+    from config import ENABLE_VIDEO_CLIPS
+    has_clips = ENABLE_VIDEO_CLIPS and any(
+        getattr(s, "clip_path", "") and not getattr(s, "clip_fallback", "") for s in shots)
+    if not has_clips:
+        whip = _pick_whip_boundaries(project, shots) if project else {}
+        if not whip:
+            return _assemble_groups(shots, groups, out_path,
+                                    outro_card=outro_card, outro_dur=outro_dur)
+        return _assemble_with_whips(shots, groups, whip, out_path, outro_card, outro_dur)
+
+    shot_is_clip = {s.shot_id: bool(getattr(s, "clip_path", "") and not getattr(s, "clip_fallback", "")) for s in shots}
+    group_shot_map = _group_shots_only(shots)
+
+    runs: list[tuple[bool, list[list]]] = []
+    for gi, g in enumerate(groups):
+        g_shots = group_shot_map[gi][1] if gi < len(group_shot_map) else []
+        g_is_clip = any(shot_is_clip.get(s.shot_id, False) for s in g_shots)
+        if runs and runs[-1][0] == g_is_clip:
+            runs[-1][1].append(g)
+        else:
+            runs.append((g_is_clip, [g]))
+
+    tmp = out_path.parent / "_clip_runs"
+    tmp.mkdir(parents=True, exist_ok=True)
+    run_paths: list[Path] = []
+    n_runs = len(runs)
+
+    for ri, (is_clip, run_groups) in enumerate(runs):
+        is_last = (ri == n_runs - 1)
+        card = outro_card if is_last else None
+        cdur = outro_dur if is_last else 0.0
+        run_out = tmp / f"run_{ri:03d}.mp4"
+
+        if is_clip:
+            all_paths = []
+            for _sid, ps, _dur in run_groups:
+                all_paths.extend(ps)
+            if card:
+                all_paths.append(card)
+            _concat(all_paths, run_out)
+        else:
+            _assemble_groups(
+                shots, run_groups, run_out,
+                outro_card=card, outro_dur=cdur,
+                is_first_run=(ri == 0),
+            )
+        run_paths.append(run_out)
+
+    return _concat(run_paths, out_path)
 
 
 def _assemble_groups(shots, groups, out_path: Path, *,
@@ -652,6 +724,38 @@ def _trim_clip_head(src: Path, out_path: Path, skip_seconds: float) -> Path:
            "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", str(out_path)]
     _run(cmd)
     return out_path
+def _shift_up_mirrored(img, px: int, out_w: int | None = None, out_h: int | None = None):
+    from PIL import Image
+    from .shots import OUTPUT_W, OUTPUT_H
+    w = out_w or OUTPUT_W
+    h = out_h or OUTPUT_H
+    canvas = Image.new("RGB", (w, h))
+    canvas.paste(img, (0, -px))
+    if px > 0:
+        sample_h = min(px, h)
+        sample = img.crop((0, h - sample_h, w, h))
+        mirrored = sample.transpose(Image.FLIP_TOP_BOTTOM)
+        canvas.paste(mirrored, (0, h - sample_h))
+    return canvas
+
+
+def _shift_from_below_mirrored(img, px: int, out_w: int | None = None, out_h: int | None = None):
+    from PIL import Image
+    from .shots import OUTPUT_W, OUTPUT_H
+    w = out_w or OUTPUT_W
+    h = out_h or OUTPUT_H
+    canvas = Image.new("RGB", (w, h))
+    canvas.paste(img, (0, px))
+    if px > 0:
+        sample_h = min(px, h)
+        sample = img.crop((0, 0, w, sample_h))
+        mirrored = sample.transpose(Image.FLIP_TOP_BOTTOM)
+        canvas.paste(mirrored, (0, 0))
+    return canvas
+
+
+_shift_up = _shift_up_mirrored
+_shift_from_below = _shift_from_below_mirrored
 
 
 def _build_whip_bridge(prev_clip: Path, next_clip: Path, out_path: Path,
@@ -687,20 +791,10 @@ def _build_whip_bridge(prev_clip: Path, next_clip: Path, out_path: Path,
         return img.resize((OUTPUT_W, small_h)).resize((OUTPUT_W, OUTPUT_H), Image.BILINEAR)
 
     def _shift_up(img: "Image.Image", px: int) -> "Image.Image":
-        canvas = Image.new("RGB", (OUTPUT_W, OUTPUT_H))
-        canvas.paste(img, (0, -px))
-        if px > 0:
-            edge = img.crop((0, OUTPUT_H - 1, OUTPUT_W, OUTPUT_H)).resize((OUTPUT_W, px))
-            canvas.paste(edge, (0, OUTPUT_H - px))
-        return canvas
+        return _shift_up_mirrored(img, px, OUTPUT_W, OUTPUT_H)
 
     def _shift_from_below(img: "Image.Image", px: int) -> "Image.Image":
-        canvas = Image.new("RGB", (OUTPUT_W, OUTPUT_H))
-        canvas.paste(img, (0, px))
-        if px > 0:
-            edge = img.crop((0, 0, OUTPUT_W, 1)).resize((OUTPUT_W, px))
-            canvas.paste(edge, (0, 0))
-        return canvas
+        return _shift_from_below_mirrored(img, px, OUTPUT_W, OUTPUT_H)
 
     def _flash(img: "Image.Image", alpha: float) -> "Image.Image":
         if alpha <= 0:
@@ -879,6 +973,23 @@ def _build_outro_card(out_path: Path, *, duration: float, logo: str | None,
         W, H = 1080, 1920
         name = _ass_drawtext_escape(channel_name.upper())
         sub = _ass_drawtext_escape(f"SUBSCRIBE FOR MORE  {handle}")
+        if not has_filter(ff, "drawtext"):
+            from utils.text_card import render_text_card
+            png = out_path.with_suffix(".png")
+            render_text_card(
+                png, width=W, height=H, background="#0A0A0A", font_path=font,
+                logo_path=logo, logo_width=360, logo_center_y=H // 2 - 200,
+                lines=[(channel_name.upper(), "white", 96, 0.5 + 120 / H),
+                       (f"SUBSCRIBE FOR MORE  {handle}", "#CC2222", 44,
+                        0.5 + 260 / H)])
+            try:
+                _run([ff, "-y", "-loop", "1", "-framerate", str(FPS), "-i", str(png),
+                      "-t", f"{duration}", "-c:v", "libx264", "-preset", "medium",
+                      "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(FPS), "-an",
+                      str(out_path)])
+            finally:
+                png.unlink(missing_ok=True)
+            return out_path
         # base dark canvas
         inputs = ["-f", "lavfi", "-i", f"color=c=0x0A0A0A:s={W}x{H}:d={duration}:r={FPS}"]
         filters = []

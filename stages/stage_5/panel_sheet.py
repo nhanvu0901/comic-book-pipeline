@@ -41,6 +41,24 @@ def _crop_thumb(source_image: str, bbox: dict | None, thumb_h: int) -> Image.Ima
     return img.resize((max(1, round(w * scale)), thumb_h))
 
 
+def _clip_thumb(clip_path: str, at: float, thumb_h: int) -> Image.Image | None:
+    """The clip's frame at `at` seconds, thumb_h tall; None when it can't be read."""
+    import io
+    import subprocess
+    try:
+        from .shots import _require_ffmpeg
+        res = subprocess.run(
+            [_require_ffmpeg(), "-v", "error", "-ss", f"{max(0.0, at):.3f}", "-i", str(clip_path),
+             "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-"],
+            capture_output=True, timeout=60)
+        if res.returncode != 0 or not res.stdout:
+            return None
+        img = Image.open(io.BytesIO(res.stdout)).convert("RGB")
+    except Exception:
+        return None
+    return img.resize((max(1, round(img.width * thumb_h / img.height)), thumb_h))
+
+
 def build_panel_sheet(shots: list, out_path, cols: int = 4, thumb_h: int = 320) -> Path:
     """Build the sheet at `out_path` (JPEG). `shots` is a list of Shot dataclasses
     or plain dicts (both shots list and shots.json entries work) in render order.
@@ -63,13 +81,21 @@ def build_panel_sheet(shots: list, out_path, cols: int = 4, thumb_h: int = 320) 
         custom = _get(s, "custom_image", "") or ""
         src = custom or (_get(s, "source_image", "") or "")
         bbox = None if custom else _get(s, "panel_bbox", None)
-        try:
-            thumb = _crop_thumb(src, bbox, thumb_h)
-        except Exception:
-            thumb = Image.new("RGB", (round(thumb_h * 0.75), thumb_h), _PLACEHOLDER)
+        # A clip shot shows the clip's frame at its in-point (what the render opens on);
+        # if that frame can't be grabbed, the fallback panel below is what will render anyway.
+        clip = _get(s, "clip_path", "") or ""
+        thumb = _clip_thumb(clip, float(_get(s, "clip_in", 0) or 0), thumb_h) if clip else None
+        if thumb is None:
+            clip = ""
+            try:
+                thumb = _crop_thumb(src, bbox, thumb_h)
+            except Exception:
+                thumb = Image.new("RGB", (round(thumb_h * 0.75), thumb_h), _PLACEHOLDER)
         thumb_w = max(thumb_w, thumb.width)
         label = f"s{_get(s, 'scene_id', '?')}#{i}"
-        if custom:
+        if clip:
+            label += " CLIP"
+        elif custom:
             label += " CUSTOM"
         else:
             page = _page_of(src)

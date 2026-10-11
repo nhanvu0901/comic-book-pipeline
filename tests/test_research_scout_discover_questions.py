@@ -53,8 +53,8 @@ class _ScriptedYouCom:
         return type("RawCall", (), {"api": "research", "payload": payload, "error": None})()
 
 
-def _workflow(tmp_path, client, digest=""):
-    return ScoutWorkflow(store=SessionStore(tmp_path), client=client, digest=digest)
+def _workflow(tmp_path, client):
+    return ScoutWorkflow(store=SessionStore(tmp_path), client=client)
 
 
 def _qa_angles():
@@ -108,7 +108,7 @@ def test_count_caps_the_batch(tmp_path):
 
 
 def test_burned_candidates_are_dropped_and_the_rest_survive(tmp_path):
-    # The digest line is an EXACT copy of the candidate text, guaranteeing
+    # The excluded question is an EXACT copy of the candidate text, guaranteeing
     # is_burned()'s token-overlap check (>=60% containment, >=2 non-format
     # shared tokens) fires on that one and only that one.
     burned = "Times Superman's invulnerability failed against kryptonite radiation"
@@ -116,9 +116,9 @@ def test_burned_candidates_are_dropped_and_the_rest_survive(tmp_path):
         {"question": burned},
         {"question": "Which villains have escaped Arkham through the front door?"},
     ])
-    workflow = _workflow(tmp_path, client, digest=f"- {burned}")
+    workflow = _workflow(tmp_path, client)
 
-    batch = workflow.discover_questions(ScoutMode.QA)
+    batch = workflow.discover_questions(ScoutMode.QA, exclude=[burned])
 
     assert [entry["question"] for entry in batch] == [
         "Which villains have escaped Arkham through the front door?"
@@ -173,10 +173,10 @@ def test_a_client_exception_falls_back_to_the_angle_and_never_raises(tmp_path):
 def test_an_all_burned_result_falls_back_to_the_angle(tmp_path):
     burned_text = "Times Superman's invulnerability failed against kryptonite radiation"
     client = _ScriptedYouCom(candidates=[{"question": burned_text}])
-    workflow = _workflow(tmp_path, client, digest=f"- {burned_text}")
+    workflow = _workflow(tmp_path, client)
     angle = workflow.next_angle(ScoutMode.QA)
 
-    batch = workflow.discover_questions(ScoutMode.QA)
+    batch = workflow.discover_questions(ScoutMode.QA, exclude=[burned_text])
 
     assert [entry["question"] for entry in batch] == [angle]
     assert batch[0]["fallback"] is True
@@ -194,18 +194,16 @@ def test_a_real_batch_is_never_flagged_as_a_fallback(tmp_path):
 # ─── the prompt and the schema actually sent ────────────────────────────────
 
 
-def test_the_prompt_carries_every_angle_the_digest_and_the_exclusions(tmp_path):
+def test_the_prompt_carries_every_angle_and_the_exclusions_without_legacy_digest(tmp_path):
     """One rotated angle bought one lane per call. Feeding all five angles is
     what makes five DIFFERENT questions out of the same single research call."""
-    digest = "- Already produced: some unrelated moment"
     client = _ScriptedYouCom(candidates=[{"question": "A fresh question nobody asked yet"}])
-    workflow = _workflow(tmp_path, client, digest=digest)
+    workflow = _workflow(tmp_path, client)
 
     workflow.discover_questions(ScoutMode.QA, exclude=["An already-rejected question?"])
 
     for angle in _qa_angles():
         assert angle in client.seen_prompt
-    assert digest in client.seen_prompt
     assert "An already-rejected question?" in client.seen_prompt
 
 
@@ -232,7 +230,8 @@ def test_micro_mode_uses_the_micro_discover_prompt_qa_uses_the_qa_one(tmp_path):
 
     # Wording lifted from run_discover / run_micro (stages/youcom_scout.py) —
     # each mode's distinguishing phrase must land in the prompt actually sent.
-    assert "LIST of 3 or more separate moments" in qa_client.seen_prompt
+    assert "LIST of 3 or more separate moments" not in qa_client.seen_prompt
+    assert "Do not impose a minimum number of series" in qa_client.seen_prompt
     assert "LIST of 3 or more separate moments" not in micro_client.seen_prompt
     assert "MICRO MOMENT" in micro_client.seen_prompt
     assert "turning_point" in micro_client.seen_schema["properties"]["candidates"]["items"]["properties"]
@@ -278,10 +277,15 @@ def test_micro_discovery_rejects_old_and_unresolved_issues_before_count(tmp_path
 
     batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, count=2)
 
-    assert [entry["moment"] for entry in batch] == ["Current", "Previous"]
+    assert [entry["moment"] for entry in batch] == ["Current"]
     assert [entry["moment"] for entry in _workflow(
         tmp_path, client
     ).discover_questions(ScoutMode.MICRO, count=1)] == ["Current"]
+    selected = _workflow(tmp_path, client).discover_questions(
+        ScoutMode.MICRO, count=2, publication_year=year - 1,
+    )
+    assert [entry["moment"] for entry in selected] == ["Previous"]
+    assert f"Search published issues from {year - 1} only" in client.seen_prompt
 
 
 def test_micro_discovery_skips_thin_unsourced_leads(tmp_path):
@@ -361,3 +365,134 @@ def test_the_bridge_hands_the_whole_batch_through(tmp_path, monkeypatch):
         "First fresh question?", "Second fresh question?",
     ]
     assert "Old question?" in client.seen_prompt
+
+
+# ─── the hard filter reads the FULL avoid list; only the prompt is capped ───
+
+
+def _ledger_event(mode, kind, text, ts, *, label=None):
+    return {
+        "id": f"{mode}-{kind}-{text}-{ts}", "ts": ts, "mode": mode, "kind": kind, "key": "",
+        "keys": [], "label": label or text, "text": text, "entities": [], "scope": "item",
+        "reason_code": "", "refs": {},
+    }
+
+
+def _scripted_ledger(monkeypatch, tmp_path, events):
+    from stages.research_scout import avoid_list, ledger_shadow
+
+    monkeypatch.setattr(avoid_list.config, "PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setattr(
+        ledger_shadow, "_read_events", lambda **kwargs: (list(events), "export", "ready", None),
+    )
+    banlist = tmp_path / "qa_question_banlist.md"
+    banlist.write_text("| Date | Question | Reason |\n|---|---|---|\n", encoding="utf-8")
+    monkeypatch.setattr(avoid_list, "_banlist_path", lambda: banlist)
+
+
+_LANES = [
+    "Which vampires fought Dracula {n}", "Which robots rebelled against Skynet {n}",
+    "Which pirates sailed with Blackbeard {n}", "Which knights guarded Camelot {n}",
+]
+
+
+def _sixty_old_to_new(monkeypatch, tmp_path):
+    """60 produced Q&A lanes. Lane 1 is the OLDEST — it falls past the 50th line
+    of the prompt list; lane 60 is the newest."""
+    events = []
+    for number in range(1, 61):
+        lane = f"zq{number:02d}x unique{number:02d}y marker{number:02d}z lane"
+        events.append(_ledger_event("qa", "produced", lane, f"2026-02-{number // 3 + 1:02d}T{number % 24:02d}:00:00Z"))
+    _scripted_ledger(monkeypatch, tmp_path, events)
+    return events
+
+
+def test_a_produced_question_beyond_the_50th_avoid_line_is_still_burned(tmp_path, monkeypatch):
+    """The regression: the avoid list was cut to 50 BEFORE it became the burn
+    digest, so after a couple of re-rolls older produced/banned questions fell
+    out of the hard filter and could be offered again."""
+    events = _sixty_old_to_new(monkeypatch, tmp_path)
+    oldest = min(events, key=lambda e: e["ts"])["text"]
+    client = _ScriptedYouCom(candidates=[
+        {"question": oldest},
+        {"question": "Which villains have escaped Arkham through the front door?"},
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+
+    assert [entry["question"] for entry in batch] == [
+        "Which villains have escaped Arkham through the front door?"
+    ]
+    # ...while that same row really is outside the prompt's 50 lines.
+    assert oldest not in client.seen_prompt
+
+
+def _prompt_avoid_lines(prompt):
+    section = prompt.split("ALREADY DONE — avoid these relevant prior questions/issues:\n", 1)[1]
+    return [line for line in section.splitlines() if line.strip()]
+
+
+def test_the_prompt_avoid_section_is_still_capped_at_fifty(tmp_path, monkeypatch):
+    _sixty_old_to_new(monkeypatch, tmp_path)
+    client = _ScriptedYouCom(candidates=[{"question": "A fresh question?"}])
+
+    _workflow(tmp_path, client).discover_questions(ScoutMode.QA, exclude=["Shown just now?"])
+
+    lines = _prompt_avoid_lines(client.seen_prompt)
+    assert len(lines) == 50
+    assert lines[0] == "Shown just now?"  # session-shown first
+    # then the NEWEST ledger rows, not an alphabetical slice
+    assert any("marker60z" in line for line in lines)
+    assert not any("marker01z" in line for line in lines)
+
+
+def test_a_question_turned_down_in_an_earlier_session_is_burned(tmp_path, monkeypatch):
+    """What `discovered_offered` forgets on reload, the ledger remembers."""
+    turned_down = "Which heroes have wielded the Infinity Gauntlet successfully?"
+    _scripted_ledger(monkeypatch, tmp_path, [
+        _ledger_event("qa", "rejected", turned_down, "2026-10-01T00:00:00Z"),
+    ])
+    client = _ScriptedYouCom(candidates=[
+        {"question": turned_down},
+        {"question": "Who has out-lasted Deadpool in a healing contest?"},
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+
+    assert [entry["question"] for entry in batch] == [
+        "Who has out-lasted Deadpool in a healing contest?"
+    ]
+    assert turned_down in client.seen_prompt
+
+
+def test_a_rejected_micro_moment_is_burned_but_a_qa_rejection_is_not_applied_to_micro(
+    tmp_path, monkeypatch,
+):
+    year = date.today().year
+    rejected_moment = "Hero opens the sealed door and frees a prisoner from the vault."
+    qa_rejection = "Villain steals the crown jewels during a royal parade."
+    _scripted_ledger(monkeypatch, tmp_path, [
+        _ledger_event("micro", "rejected", rejected_moment, "2026-10-01T00:00:00Z",
+                      label=f"Hero #2 ({year})"),
+        _ledger_event("qa", "rejected", qa_rejection, "2026-10-01T00:00:01Z"),
+    ])
+
+    def candidate(text, number):
+        return {
+            "moment": text, "series_issue_year": f"Hero #{number} ({year})",
+            "turning_point": "Hero opens the sealed door.",
+            "what_visibly_happens": "Hero opens the sealed door and frees a prisoner.",
+            "why_it_lands": "The prisoner can now leave the room.",
+            "evidence_urls": ["https://publisher.test/hero"],
+        }
+
+    client = _ScriptedYouCom(candidates=[
+        candidate(rejected_moment, 2), candidate(qa_rejection, 3),
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO)
+
+    # The micro rejection is burned. The Q&A rejection belongs to another mode,
+    # so the very same words are still a fresh candidate in micro.
+    assert [entry["moment"] for entry in batch] == [qa_rejection]
+    assert rejected_moment in client.seen_prompt and qa_rejection not in client.seen_prompt

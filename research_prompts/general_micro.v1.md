@@ -1,3 +1,8 @@
+HARD RULES — non-negotiable:
+1. One candidate is one real scene from one published comic-book issue; no movie, TV, game, toy, arc, or issue range.
+2. Use the selected year exactly; otherwise use the current year unless the request names another period.
+3. Each issue appears at most once. Return only sourced candidates and do not pad.
+
 # General micro-moment research scout
 
 Find source-supported comic moments for this request. Seek about {count} distinct source pages
@@ -13,9 +18,12 @@ viewer needs, (2) the specific action or reveal that changes the situation,
 and (3) its direct consequence. A longer recap is useful only when this one
 turn can stand alone. Do not stitch together payoffs from different issues or
 scenes. A broken character rule, loud visual spectacle, or second famous name
-can improve rank. Honor an explicitly requested older issue, year, or era;
-otherwise search current published issues first and the previous year's issues
-next. The appended RECENT MICRO DEFAULT gives the calendar years for this run.
+can improve rank. The selected Year field is exact; if a named issue has a
+different publication year, report the conflict. With no selected year, honor
+an explicitly requested older issue, year, or era. Otherwise search only
+issues published in the current
+calendar year. The appended RECENT MICRO DEFAULT gives the exact year for
+this run.
 
 In `summary`, give the setup → turn → consequence in 2–3 plain sentences.
 In `what_visibly_happens`, name the exact action or spoken revelation and only
@@ -64,5 +72,5 @@ The request's own wording (e.g. "final twist", "shocking reveal") says what
 the user hopes to find; it is never evidence. Do not echo it into a candidate
 unless a source states it.
 
-SCOUTED DIGEST:
+ALREADY DONE — avoid these issues:
 {digest}

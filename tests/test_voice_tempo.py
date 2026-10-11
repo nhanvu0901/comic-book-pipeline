@@ -50,8 +50,10 @@ def test_the_stage4_command_defaults_to_the_mode_pace_too(monkeypatch):
 
 def test_stage7_rerender_does_not_force_a_pace(tmp_path, monkeypatch):
     import subprocess
+    from stages.research_scout import production_ledger
 
     monkeypatch.setattr(bridge, "PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setattr(production_ledger, "_probe_mp4", lambda _path: True)
     (tmp_path / "projects" / "p").mkdir(parents=True)
     (tmp_path / "projects" / "p" / "final.mp4").write_bytes(b"x")
     commands = []
@@ -61,6 +63,8 @@ def test_stage7_rerender_does_not_force_a_pace(tmp_path, monkeypatch):
 
         def __init__(self, cmd, **_kw):
             commands.append(cmd)
+            if "stages.stage_5" in cmd:
+                (tmp_path / "projects" / "p" / "final.mp4").write_bytes(b"fresh render")
 
         def wait(self):
             return 0

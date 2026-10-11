@@ -1,3 +1,8 @@
+HARD RULES — non-negotiable:
+1. Discover one real comic-book scene from one published issue per moment; never use movie, TV, game, toy, arc, or issue-range candidates.
+2. Respect a user-selected publication year exactly; otherwise honor an explicit requested period, or use the current year.
+3. Do not invent questions or moments. Return only sourced candidates.
+
 # Discover micro-moment research scout
 
 Find {count} DIFFERENT comic-book MICRO MOMENTS for a 35–50 second Short.
@@ -14,10 +19,11 @@ reversed. These are search leads, not required formulas. A famous character's
 usual rule being broken is a bonus, not a gate.
 
 Prefer a recognizable subject and a promise that a new viewer can understand
-without a lore lecture. For an open-ended scout, search current releases first
-and the previous year's published issues next; the appended RECENT MICRO DEFAULT
-gives the calendar years for this run. A second famous
-character, a loud fight, a fan quote, or an uncovered YouTube lane can improve
+without a lore lecture. For an open-ended scout, search issues published in
+the selected year only; when no year is selected, use the current calendar
+year. The appended RECENT MICRO DEFAULT gives the exact year for this run.
+A second famous character, a loud fight, a fan quote, or an uncovered
+YouTube lane can improve
 rank, but none is mandatory. Quiet decisions and dialogue qualify when the
 source establishes what someone does or says and what changes because of it.
 
@@ -52,7 +58,5 @@ EXCLUDE — already offered to this user and turned down. Do not return these
 moments or rewordings of them:
 {exclude}
 
-Use the supplied digest as prior context.
-
-SCOUTED DIGEST:
-{digest}
+ALREADY DONE — avoid these relevant prior moments/issues:
+{avoid}
