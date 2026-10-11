@@ -11,7 +11,9 @@ import json
 
 import pytest
 
+import config
 import stages.review_gate as rg
+import stages.stage_5.shots as shots
 from stages.stage_3.write_script import _defining_line_fallback
 
 
@@ -62,7 +64,8 @@ def _page(n: int, issue: str) -> dict:
     }
 
 
-def _project(tmp_path, slug: str, *, qa: bool, bookends: bool = False) -> None:
+def _project(tmp_path, slug: str, *, qa: bool, bookends: bool = False,
+             qa_format: str = "list", same_anchor: bool = False) -> None:
     root = tmp_path / slug
     (root / "preprocessed").mkdir(parents=True)
     for n, issue in ((1, "#1"), (2, "#1"), (3, "#2"), (4, "#2")):
@@ -70,7 +73,8 @@ def _project(tmp_path, slug: str, *, qa: bool, bookends: bool = False) -> None:
     # one body scene per issue, no bookends (those always get the full pool by design)
     scenes = [
         {"scene_id": 2, "text": "first", "page_ref": 1, "panel_ref": 0},
-        {"scene_id": 3, "text": "second", "page_ref": 3, "panel_ref": 0},
+        {"scene_id": 3, "text": "second", "page_ref": 1 if same_anchor else 3,
+         "panel_ref": 0},
     ]
     if bookends:
         # A FRAGMENTED hook/closer — bookend_row_keys hands these back as unit "fragment",
@@ -86,7 +90,7 @@ def _project(tmp_path, slug: str, *, qa: bool, bookends: bool = False) -> None:
     ctx = {"plot_source": "answer_research"} if qa else {"title": "Arc"}
     (root / "comic_context.json").write_text(json.dumps(ctx))
     if qa:
-        (root / "answer_context.json").write_text(json.dumps({"items": [
+        (root / "answer_context.json").write_text(json.dumps({"format": qa_format, "items": [
             {"source_comic": "A", "source_year": "2020", "reader_url": "u",
              "drawable_moment": "m", "verification_note": ""},
             {"source_comic": "B", "source_year": "2021", "reader_url": "u",
@@ -116,6 +120,50 @@ def test_qa_still_scopes_each_row_to_its_cited_issue(tmp_path, monkeypatch):
     pools = _pools_seen(tmp_path, monkeypatch, "qa_arc", qa=True)
     assert pools == {"2": {1, 2}, "3": {3, 4}}, (
         f"Q&A keeps one pool per cited issue, got {pools}")
+
+
+def test_direct_qa_body_uses_both_comics_despite_placeholder_page_refs(tmp_path, monkeypatch):
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
+    _project(tmp_path, "direct_qa", qa=True, bookends=True,
+             qa_format="direct", same_anchor=True)
+
+    beats = json.loads(rg.build_candidates("direct_qa").read_text())["beats"]
+    by_key = {b["beat_key"]: b for b in beats}
+    for key in ("2", "3", "1:0", "1:1", "4:0", "4:1"):
+        assert {c["page"] for c in by_key[key]["candidates"]} == {1, 2, 3, 4}
+    assert by_key["2"]["page_ref"] == by_key["3"]["page_ref"] == 1
+    assert by_key["2"]["source"]["title"] == "A"
+    assert {c["panel_source"]["title"] for c in by_key["2"]["candidates"]} == {"A", "B"}
+
+
+def test_list_qa_placeholder_anchor_stays_issue_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(rg, "_write_thumb", lambda *a, **k: True)
+    _project(tmp_path, "list_placeholder", qa=True, same_anchor=True)
+    beats = json.loads(rg.build_candidates("list_placeholder").read_text())["beats"]
+    pools = {b["beat_key"]: {c["page"] for c in b["candidates"]} for b in beats}
+    assert pools == {"2": {1, 2}, "3": {1, 2}}
+
+
+def test_stage5_accepts_direct_qa_lock_from_another_issue(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(rg, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", False)
+    root = tmp_path / "direct_lock"
+    (root / "review").mkdir(parents=True)
+    (root / "comic_context.json").write_text(json.dumps({"plot_source": "answer_research"}))
+    (root / "review" / "locks.json").write_text(json.dumps({"approved": True, "locks": {
+        "2:0": {"panels": [{"page": 3, "panel": 0}], "source": "batcave"},
+    }}))
+    narration = {"scenes": [{"scene_id": 2, "text": "one beat", "page_ref": 1,
+                              "panel_ref": 0, "visual_beats": ["one beat"]}]}
+    pages = {n: _page(n, issue) for n, issue in ((1, "#1"), (3, "#2"))}
+    built = shots.build_shots(
+        narration, scene_timings=[{"scene_id": 2, "start": 0.0, "end": 3.0}],
+        caption_chunks=[{"text": "one beat", "start": 0.0, "end": 3.0}],
+        pages_by_number=pages, project="direct_lock")
+    assert built and all(shot.source_image == "/tmp/p3.jpg" for shot in built)
 
 
 # ─── fragmented bookends keep the whole-project pool ─────────────────────────

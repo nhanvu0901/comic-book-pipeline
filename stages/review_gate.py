@@ -3,7 +3,7 @@ narration text + panel choices in the review UI.
 
 State lives in projects/<slug>/review/:
   • locks.json      — approval flag + per-scene panel LOCKS (the review UI writes this).
-  • candidates.json — every panel of each beat's issue, page-sorted, for Master to pick from
+  • candidates.json — every panel of each beat's eligible pool, page-sorted, for Master to pick from
                       (this module writes it).
   • thumbs/         — cropped panel previews referenced by candidates.json.
 
@@ -677,7 +677,7 @@ def _page_sorted_candidates(sub_pages: dict) -> list[dict]:
 
 
 def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
-    """List every panel of each review ROW's issue, page-sorted, and write review/candidates.json
+    """List every panel of each review ROW's eligible pool, page-sorted, and write review/candidates.json
     + thumbs. Master picks panels by eye in the review UI, so nothing is scored or ranked: every
     candidate carries score 0.0.
 
@@ -698,7 +698,7 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     (list, may be empty — the panel(s) already anchored/pinned), and "unit". Old fields keep
     their name + position so the existing review UI never breaks.
 
-    `k` is a CAP on candidates per beat; k<=0 → emit ALL panels of the beat's OWN issue.
+    `k` is a CAP on candidates per beat; k<=0 → emit ALL eligible panels.
     Candidates are page-sorted, so a cap keeps the same first k panels for every beat of an
     issue — callers pass 0."""
     root = _project_root(project_name)
@@ -731,12 +731,9 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
     pages_by_number = _load_preprocessed_pages(root)
     _sync_thumbs(root / "review" / "thumbs", pages_by_number, log=log)
 
-    # Per-issue candidate scoping (general, keyed on data). In a multi-issue project
-    # (saga / Q&A countdown) each beat is anchored — via its page_ref — to ONE issue,
-    # and its panel MUST come from that issue. A row's pool is whatever pages it is handed,
-    # so restricting pages_by_number to the beat's own issue keeps a "Punisher /
-    # Thunderbolts #29" beat from being offered a Thanos page. Single-issue
-    # projects have one group → the whole pool (no-op).
+    # Issue labels identify a beat's citation and, for list Q&A only, restrict its
+    # eligible panel pool. Direct Q&A can narrate one answer across several comics;
+    # its page_ref may even be a placeholder shared by every beat.
     page_to_issue = {
         int(p.get("page_number", 0) or 0): str(p.get("issue_label", "") or "")
         for p in pages_by_number.values()
@@ -747,18 +744,29 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
         return page_to_issue.get(int(scene.get("page_ref", 0) or 0), "") if multi_issue else ""
 
     qa_mode = _plot_source(root) == "answer_research"
+    list_qa = qa_mode and answer_ctx.get("format", "list") != "direct"
 
     def _pool_issue_of(scene) -> str:
         """Issue used to SCOPE a row's candidate pool (citation labels keep _issue_of).
 
-        Scoping is a Q&A contract, not a general one: each countdown item cites ONE issue
+        Scoping is a list Q&A contract: each countdown item cites ONE issue
         and its panel must come from that issue, so a "Thunderbolts #29" beat must not be
         offered a Thanos page. A recap/micro tells a SINGLE story that merely spans
         issues — there is no per-beat citation to honour, and scoping just silos each row
         to whichever issue its page_ref landed in. Seen 2026-07-27 on an arc recap: body
         rows offered 86 panels while the bookends offered 444, so the same story was picked
-        from five disjoint pools. Those modes get the whole project pool."""
-        return _issue_of(scene) if qa_mode else ""
+        from five disjoint pools. Direct Q&A and recap/micro get the whole project pool."""
+        return _issue_of(scene) if list_qa else ""
+
+    # This describes where a *candidate panel* was downloaded from. It is deliberately
+    # separate from beat.source, which remains the narration's research citation.
+    panel_source_by_page = {}
+    if multi_issue and qa_mode and not list_qa:
+        for page, issue_label in page_to_issue.items():
+            cited = _beat_source({}, comic_ctx, answer_ctx, issue_label=issue_label)
+            panel_source_by_page[page] = {
+                "title": cited.get("title", ""), "issue_label": issue_label,
+            }
 
     intro_scene = next((s for s in scenes if s.get("is_intro")), None)
     outro_scene = next((s for s in scenes if s.get("is_outro")), None)
@@ -891,6 +899,8 @@ def build_candidates(project_name: str, k: int = 0, *, log=print) -> Path:
                 "thumb": thumb, "desc": str(panel.get("description", "") or ""),
                 "dialog": _panel_dialog_str(panel, page_tb),
             }
+            if page in panel_source_by_page:
+                entry["panel_source"] = panel_source_by_page[page]
             # Money-shot flag (present only when the funnel confirmed this panel — the no-money
             # path leaves the 6-key schema byte-identical).
             if c.get("money"):
