@@ -268,6 +268,9 @@ SHOT_MAX_SECONDS = float(os.getenv("SHOT_MAX_SECONDS", "0"))
 # SHORT tail (this many seconds) instead of a full ≤cap hold — the seam is a quick replay-cue,
 # and the opening panel must not eat a chunk of a 35-60s micro Short (intro < ~15% runtime).
 LOOP_TAIL_SECONDS = float(os.getenv("LOOP_TAIL_SECONDS", "1.0"))
+# A loop cue must leave enough time for the finale's own image to read before the opening
+# frame returns. If the final shot is shorter than this hold plus the loop cue, omit the cue.
+MIN_FINAL_VISUAL_SECONDS = float(os.getenv("MIN_FINAL_VISUAL_SECONDS", "1.5"))
 # PANEL_FIT_MODE (default "contain" = OLD): "fill" cover-crops a LANDSCAPE panel to fill the 9:16
 # frame (center-weighted, sides cropped) instead of the contain+blur letterbox. Exceptions keep
 # contain: a panel with critical baked text (_panel_has_critical_text, threaded via Shot.keep_contain)
@@ -535,17 +538,27 @@ def build_shots(
     # granularity, so time-splitting a held fragment would only re-chop it into sub-shots that
     # SHARE the caption + panel ("1 scene hiện nhiều lần"). Force it off for micro_moment; every
     # other mode still honors SHOT_MAX_SECONDS via env (recap/Q&A byte-identical when unset).
-    # A LOCKED outro beats the loop: _close_loop would clone the cold-open panel over the final
-    # shot (and the loop_tail carve exists only to keep that echo short), which is exactly the
-    # "Stage 5 picks its own panel" the outro lock is there to stop. Master locked the last frame
-    # → render it. No outro lock → both steps run as before.
-    loop = SEAMLESS_LOOP and not outro_lock
+    # The loop echo replaces the final shot's visual. A final beat explicitly chosen in review
+    # (panel, custom image or MP4) must keep that visual through its complete spoken line.
+    # The legacy "outro" key and fragment keys share this rule; unselected endings still loop.
+    final_scene = (narration.get("scenes") or [])[-1] if narration.get("scenes") else {}
+    final_sid = str(final_scene.get("scene_id") or "")
+    final_frags = [b for b in (final_scene.get("visual_beats") or []) if _vb_text(b)]
+    final_key = (f"{final_sid}:{len(final_frags) - 1}" if len(final_frags) > 1
+                 else "outro" if final_scene.get("is_outro") else final_sid)
+    final_lock = review_locks.get(final_key) or review_locks.get(final_sid)
+    final_selected = bool(final_lock or (shots and any(
+        getattr(shots[-1], field, "") for field in ("clip_path", "clip_id", "custom_image"))))
+    final_duration = float(getattr(shots[-1], "duration_seconds", 0.0)) if shots else 0.0
+    loop = (SEAMLESS_LOOP and not final_selected and LOOP_TAIL_SECONDS > 0
+            and final_duration >= MIN_FINAL_VISUAL_SECONDS + LOOP_TAIL_SECONDS)
     shots = _time_split_shots(shots, 0.0 if micro else SHOT_MAX_SECONDS,
                               loop_tail=LOOP_TAIL_SECONDS if loop else 0.0)
     if loop:
         _close_loop(shots)
     elif SEAMLESS_LOOP:
-        print("[stage5] loop-close skipped — outro panel is locked by review-gate")
+        reason = "final visual selected in review" if final_selected else "final visual needs its full hold"
+        print(f"[stage5] loop-close skipped — {reason}")
     _bubble_clean_audit(shots, pages_by_number or {})
     return shots
 

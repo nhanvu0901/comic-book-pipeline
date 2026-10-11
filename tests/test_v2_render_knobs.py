@@ -60,6 +60,81 @@ def test_build_shots_loop_tail_splits_last_shot(monkeypatch):
     assert abs(sum(s.duration_seconds for s in built) - 9.0) < 1e-3
 
 
+def test_explicit_final_clip_keeps_its_visual_for_the_full_outro(monkeypatch):
+    """The loop echo must not replace footage selected for the final spoken beat."""
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", True)
+    monkeypatch.setattr(shots, "LOOP_TAIL_SECONDS", 1.0)
+    monkeypatch.setattr(shots, "SHOT_MAX_SECONDS", 0.0)
+    monkeypatch.setattr(shots, "_apply_review_locks", lambda narration, project: None)
+    monkeypatch.setattr(shots, "_review_locks", lambda project: {})
+    monkeypatch.setattr(shots, "_qa_locks", lambda project: {})
+    monkeypatch.setattr(shots, "_build_shots_per_scene", lambda *args: [
+        _shot(0, 2.0, src="opening.png", scene_id=1, is_intro=True),
+        _shot(1, 4.0, src="ending.png", scene_id=2),
+    ])
+
+    from stages.stage_5 import clips
+
+    def pick_final_clip(built, project, narration, **kwargs):
+        built[-1].clip_path = "selected.mp4"
+        built[-1].clip_id = "selected"
+        return built
+
+    monkeypatch.setattr(clips, "apply_clip_manifest", pick_final_clip)
+    narration = {"mode": "recap", "scenes": [
+        {"scene_id": 1, "text": "Opening image.", "target_seconds": 2.0,
+         "source_image": "opening.png", "panel_bbox": {"x": 0, "y": 0, "w": 700, "h": 1200},
+         "is_intro": True},
+        {"scene_id": 2, "text": "Final answer. Make sure to subscribe for more content.",
+         "target_seconds": 4.0, "source_image": "ending.png",
+         "panel_bbox": {"x": 0, "y": 0, "w": 700, "h": 1200}, "is_outro": True},
+    ]}
+    built = shots.build_shots(narration, scene_timings=[], word_timestamps=[], project="sample")
+    ending = [s for s in built if s.scene_id == 2]
+    assert ending
+    assert sum(s.duration_seconds for s in ending) >= 4.0 - 0.01
+    assert all(s.clip_path == "selected.mp4" and s.source_image == "ending.png" for s in ending)
+
+
+def test_final_fragment_panel_lock_is_not_replaced_by_loop(monkeypatch):
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", True)
+    monkeypatch.setattr(shots, "SHOT_MAX_SECONDS", 0.0)
+    monkeypatch.setattr(shots, "_apply_review_locks", lambda narration, project: None)
+    monkeypatch.setattr(shots, "_qa_locks", lambda project: {})
+    monkeypatch.setattr(shots, "_review_locks", lambda project: {
+        "2:1": {"panels": [{"page": 2, "panel": 0}]}})
+    monkeypatch.setattr(shots, "_build_shots_per_scene", lambda *args: [
+        _shot(0, 2.0, src="opening.png", scene_id=1, is_intro=True),
+        _shot(1, 3.0, src="ending.png", scene_id=2),
+    ])
+    narration = {"mode": "recap", "scenes": [
+        {"scene_id": 1, "text": "Opening.", "is_intro": True},
+        {"scene_id": 2, "text": "The final image stays. Subscribe for more.", "is_outro": True,
+         "visual_beats": ["The final image stays.", "Subscribe for more."]},
+    ]}
+    built = shots.build_shots(narration, project="sample")
+    assert len(built) == 2
+    assert built[-1].source_image == "ending.png"
+    assert built[-1].duration_seconds == 3.0
+
+
+def test_short_final_beat_keeps_its_visual_instead_of_losing_most_to_echo(monkeypatch):
+    monkeypatch.setattr(shots, "SEAMLESS_LOOP", True)
+    monkeypatch.setattr(shots, "LOOP_TAIL_SECONDS", 1.0)
+    monkeypatch.setattr(shots, "SHOT_MAX_SECONDS", 0.0)
+    monkeypatch.setattr(shots, "_build_shots_per_scene", lambda *args: [
+        _shot(0, 2.0, src="opening.png", scene_id=1, is_intro=True),
+        _shot(1, 1.8, src="ending.png", scene_id=2),
+    ])
+    built = shots.build_shots({"scenes": [
+        {"scene_id": 1, "text": "Opening.", "is_intro": True},
+        {"scene_id": 2, "text": "Final answer.", "is_outro": True},
+    ]})
+    assert len(built) == 2
+    assert built[-1].source_image == "ending.png"
+    assert built[-1].duration_seconds == 1.8
+
+
 # ── (b) SHOT_MAX_SECONDS=3.5 → no shot > 3.5s, total unchanged, same panel preserved ──────────
 def test_time_split_caps_duration_and_preserves_panel():
     orig = [_shot(0, 9.0, src="a.png", w=700, h=1200),

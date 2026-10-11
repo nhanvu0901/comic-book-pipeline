@@ -11,9 +11,11 @@ import pytest
 
 import ui  # noqa: F401 — flet compat patches before screens import it
 import flet as ft
+from flet_video import Video
 
 import config
 from stages.stage_4 import background_tts, tts_status
+from stages.stage_5 import clips
 from ui import bridge, web_routes
 from ui.screens import s_review_gate as sg
 from ui.state import AppState
@@ -247,6 +249,30 @@ def test_rollback_removes_only_that_beats_clip(screen):
     assert "2:0" in screen.locks()["locks"]                          # the panel locks are untouched
     undo_left = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     assert len(undo_left) == 1, "the rolled-back card loses its undo button"
+
+
+def test_selected_area_shows_picked_mp4_then_restores_comic_panel(screen):
+    """A ready pick has a visible preview and source, while rollback restores the panel lock."""
+    preview = screen.root / "review" / "clips" / "preview_2_0.mp4"
+    preview.write_bytes(b"preview")
+    entry = {"id": "ccccccccccc", "beat": "2:0", "file": "review/clips/c.mp4",
+             "preview_file": "review/clips/preview_2_0.mp4", "start": 0.0,
+             "source_url": "https://www.youtube.com/watch?v=ccccccccccc", "source_start": 12.5}
+    root = screen.build()
+    assert "p01·0" in _texts(root)
+
+    clips.upsert_beat_clip(screen.root, entry)
+    web_routes._broadcast_moment_picked({"project": "qa", "state": "ready", **entry})
+    assert any(isinstance(c, Video) for c in _walk_visible(screen.root_ctrl))
+    assert any("youtube.com/watch?v=ccccccccccc" in t for t in _texts(screen.root_ctrl))
+    assert "p01·0" not in _texts(screen.root_ctrl), "the selected area must show MP4 instead of its fallback panel"
+
+    undo = [c for c in _walk(screen.root_ctrl)
+            if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
+    # The first rollback belongs to the newly picked 2:0 beat in video order.
+    undo[0].on_click(None)
+    assert not any(isinstance(c, Video) for c in _walk_visible(screen.root_ctrl))
+    assert "p01·0" in _texts(screen.root_ctrl)
 
 
 def test_the_pick_listener_repaints_the_card_and_is_not_stacked(screen):

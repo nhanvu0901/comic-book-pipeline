@@ -559,7 +559,8 @@ WHAT THEY HAVE IN COMMON:
 HARD RULES:
   - 8-30 words, ONE sentence or fragment.
   - NO "the comic is", NO comic title, NO issue number.
-  - NOT a question. No meta talk ("in this video"). No hashtags. No CTA.
+  - NOT a question. No meta talk ("in this video"). No hashtags. No CTA in this draft;
+    the pipeline appends its standard spoken subscribe line after draft validation.
   - No moral, no lesson, no "and that is why...". State what IS, not what it means.
       ✓ "Even now, Marius only restores his sight when there's absolutely no other option."
       ✗ "The scariest monster is the one you might become." (a moral — banned)
@@ -699,6 +700,7 @@ HARD RULES:
   - It POINTS FORWARD at the story's aftermath, irony, or unanswered weight — phrased as intrigue.
   - It MUST NOT state a NEW fact that the plot below does not support (no invented sequel, no made-up detail). It teases what was ALREADY implied.
   - NOT a question. No meta talk, no hashtags, no "subscribe", no comic title.
+    The pipeline adds its standard subscribe line after the story draft is finalized.
   - Tone: ominous, resonant — matches a dark comic retelling.
   - PLAIN, CONCRETE language (IELTS 6.5 / B2) — the intrigue comes from WHAT is
     left unresolved, not from fancy wording. No poetic double meanings stacked
@@ -2592,7 +2594,8 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
 10) FORBIDDEN
    - No em-dashes (—), no brackets, no parenthetical asides — this is spoken aloud.
-   - No "what do you think in the comments", no "subscribe", no questions to viewer at the end.
+   - No "what do you think in the comments", no "subscribe", no questions to viewer in the
+     story draft. The pipeline adds the standard subscribe line after validation.
    - No stage directions, no scene numbers inside text.
    - No comic SOUND-EFFECTS / onomatopoeia (KA-THOOM, BOOM, SNIKT, KRAKA). Those are
      lettering ART, not story — describe the ACTION instead ("a thunderclap shook the
@@ -2927,6 +2930,7 @@ def _is_critical_error(msg: str) -> bool:
 
 
 _HALLUC_BLACKLIST = (
+    # Draft-only guard: the standard CTA is appended after this check, at save time.
     "meme", "memes", "spammed", "spamming", "spam", "subscribe", "like and",
     "comment below", "morphin", "szn", "online's", "chat with",
     "follow me", "smash that",

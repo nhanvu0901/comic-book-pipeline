@@ -145,6 +145,9 @@ def test_full_build_only_loopclose_shot_is_zoom_out(monkeypatch):
     monkeypatch.setattr(S, "_match_panels",
                         lambda units, *a, **k: [(panel, "page_1.png")] * len(units))
     monkeypatch.setattr(S, "SEAMLESS_LOOP", True)
+    # This test covers an ending long enough to leave a readable finale before its loop cue.
+    caption_chunks[-1]["end"] = 10.4
+    scene_timings[-1]["end"] = 10.4
     built = S.build_shots(narration, scene_timings=scene_timings,
                           caption_chunks=caption_chunks, pages_by_number={})
     zo = [i for i, sh in enumerate(built) if sh.motion == "zoom_out"]

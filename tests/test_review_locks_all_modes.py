@@ -151,6 +151,10 @@ def test_outro_lock_pins_outro_anchor_and_skips_loop_close(tmp_path, monkeypatch
     # no outro lock → untouched anchor AND the loop closes exactly as before
     closed.clear()
     _recap_project(tmp_path, monkeypatch, {})
+    from stages.stage_5.schema import Shot
+    monkeypatch.setattr(shots, "_build_shots_per_chunk", lambda *a, **k: [
+        Shot(shot_id=0, scene_id=3, duration_seconds=3.0, panel_bbox={},
+             source_image="outro.png", motion="zoom_in")])
     narration = {"scenes": [{"scene_id": 1, "text": "hook", "is_intro": True},
                             {"scene_id": 3, "text": "bye", "is_outro": True,
                              "page_ref": 99, "panel_ref": 0}]}

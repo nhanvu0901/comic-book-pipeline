@@ -203,6 +203,8 @@ def save_narration(
     root = get_project_dirs(project_name)["root"]
     path = root / "narration.json"
     data = narration.to_dict()
+    from .ending import ensure_subscribe_cta
+    ensure_subscribe_cta(data)
     _enrich_scenes_with_panel_metadata(data, root, log)
     # GROUNDING CHECK — text↔shown-panel, runs HERE (not at write_script) because this is
     # the only point each scene carries panel_description. FLAG + LOG only; catches a line

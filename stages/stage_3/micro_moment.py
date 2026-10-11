@@ -701,7 +701,7 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
       narration line, never a character's quoted words — no separate meaning
       line, no landing, the video cuts off right on it.
     - "question": ONE specific question raised by the verified result (never a
-      generic comment prompt or "subscribe"). It asks what the verified result
+      generic comment prompt or "subscribe" in the draft). It asks what the verified result
       means, never what happens next or who is behind something.
 
   VISUAL BEATS (every scene) — split each scene into the 2-3 separate MOMENTS it contains, so
@@ -1159,6 +1159,7 @@ def _validate_micro_scenes(
         if style == "question":
             if not last_text.endswith("?"):
                 issues.append("ending_style is 'question' but the last scene doesn't end in '?'")
+            # Validate the model draft before the shared saver appends its standard CTA.
             if "subscribe" in last_text.lower():
                 issues.append("ending_style 'question' should bait a COMMENT, not ask to subscribe")
     # Reuse recap's third-person "you"-quota lint (soft) on the hook + body scene list.

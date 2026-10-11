@@ -157,7 +157,8 @@ what the video is about after hearing only this line.
 naming anything. If the hook would still make sense pasted onto a different video, it is wrong.
   * "outro" — the LAST spoken line, 6-16 words. It must NOT restate the body's final \
 sentence in other words. Say what the whole thing MEANS, or land one hard image the body \
-earned. Closing on a word from the hook (or its exact opposite) is the strongest ending.
+earned. Closing on a word from the hook (or its exact opposite) is the strongest ending. \
+Do not add a subscribe request here; the pipeline adds its standard spoken line after validation.
 
 FIDELITY IS ABSOLUTE. Every fact you use must already be in the body below. Do not invent a \
 motive, a consequence, or an event — if the body does not say it, you may not either.

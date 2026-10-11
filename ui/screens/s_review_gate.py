@@ -29,6 +29,7 @@ import time
 from typing import Callable
 
 import flet as ft
+from flet_video import Video, VideoMedia
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def _narration_fingerprint(doc: dict | None) -> str:
 
 
 from ..bridge import (
-    image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
+    asset_src, image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
     load_preprocessed, load_review_candidates, load_review_locks, list_review_projects,
     narration_sha1, review_thumb_path, run_blocking, save_hidden_panels,
     save_music_config, save_narration_edits, save_review_locks,
@@ -825,7 +826,9 @@ def build(
                 if payload.get("state") == "error":
                     _show_snack(f"Beat {bk}: {payload.get('message') or 'không chọn được clip'}")
                     return
-                clips_by_beat[bk] = payload
+                # The completed pick writes clips.json before broadcasting. Read that entry so
+                # the preview and source survive a screen rebuild (legacy payloads still work).
+                clips_by_beat[bk] = _load_clips_manifest(project).get(bk) or payload
                 _withdraw_approval()
                 _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
             # keyed by this page + project: a screen that rebuilds replaces its listener, not stacks one
@@ -1017,6 +1020,7 @@ def build(
                 refs["mp4_badge"].update()
             except Exception:
                 pass
+        refs["selected_area"].content = refs["refresh_selected"]()
         refs["warn_chip"].visible = (
             unit == "scene" and len(selected) < MIN_PANELS and not locked_custom and not has_clip)
         try:
@@ -1024,6 +1028,7 @@ def build(
             refs["auto_badge"].update()
             refs["count_chip"].update()
             refs["warn_chip"].update()
+            refs["selected_area"].update()
         except Exception:
             pass
         _refresh_dup_badges()
@@ -1407,6 +1412,41 @@ def build(
         tile_pages: list[int] = []
         n_tiles = len(_ordered) + len(_custom_entries)
 
+        def _selected_content() -> ft.Control:
+            entry = clips_by_beat.get(beat_key)
+            if entry:
+                rel = str(entry.get("preview_file") or entry.get("file") or "")
+                root = _project_dir(project).resolve()
+                media_path = (root / rel).resolve() if rel else root
+                media = (Video(playlist=[VideoMedia(resource=asset_src(media_path))],
+                               autoplay=False, show_controls=True, muted=True,
+                               width=160, height=284)
+                         if rel and media_path.is_relative_to(root) and media_path.is_file()
+                         else ft.Text("MP4 preview unavailable", size=11, color=WARN))
+                url = str(entry.get("source_url") or "")
+                details = [ft.Text(f"MP4 · {entry.get('title') or entry.get('id') or Path(rel).name}",
+                                   size=11, color=SUCCESS)]
+                if url:
+                    details.append(ft.Text(url, size=10, color=TEXT_MUTED,
+                                           selectable=True, max_lines=2))
+                if entry.get("source_start") is not None:
+                    details.append(ft.Text(f"From {float(entry['source_start']):.1f}s",
+                                           size=10, color=TEXT_MUTED))
+                return ft.Row([media, ft.Column(details, spacing=4)], spacing=12)
+
+            panel_keys = _selected_keys(beat_key)
+            picked = [c for c in _ordered
+                      if (int(c.get("page", -1)), int(c.get("panel", -1))) in panel_keys]
+            images = [ft.Column([_thumb(c.get("thumb", ""), height=100),
+                                 ft.Text(f"p{int(c.get('page', 0)):02d}·{int(c.get('panel', 0))}",
+                                         size=10, color=TEXT_MUTED)], spacing=3)
+                      for c in picked]
+            if locked := _normalize_lock_custom_image(locks.get(beat_key)):
+                images.append(ft.Column([_thumb(locked, height=100),
+                                         ft.Text("Custom image", size=10, color=TEXT_MUTED)], spacing=3))
+            return (ft.Row(images, spacing=8, wrap=True) if images else
+                    ft.Text("Auto panel selection", size=10, color=TEXT_MUTED))
+
         # VERTICAL GridView (was a 1-row horizontal ListView showing ~4 tiles): ~18-24
         # tiles on screen at once, which is the whole point — the candidate pool is the
         # same for every beat, so Master re-skims it once per beat.
@@ -1611,7 +1651,11 @@ def build(
                                "count_chip": count_chip, "warn_chip": warn_chip,
                                "unit": unit, "custom_tiles": custom_tiles,
                                "open_gallery": _open_gallery, "n_tiles": n_tiles}
-        if auto_open:
+        selected_area = ft.Container(content=_selected_content(), padding=8,
+                                     border=ft.border.all(1, BORDER), border_radius=4)
+        card_refs[beat_key]["selected_area"] = selected_area
+        card_refs[beat_key]["refresh_selected"] = _selected_content
+        if auto_open and not has_clip:
             _open_gallery()
 
         def _add_image_click(_e, bk=beat_key):
@@ -1700,6 +1744,7 @@ def build(
         children: list[ft.Control] = [header, text_control]
         if source_items:
             children.append(ft.Row(source_items, spacing=14, wrap=True))
+        children.extend([ft.Text("Selected", size=10, color=TEXT_MUTED), selected_area])
         if drawable_moment:
             children.append(ft.Text(f"Looking for: {drawable_moment}", size=11,
                                      color=TEXT_MUTED, italic=True))

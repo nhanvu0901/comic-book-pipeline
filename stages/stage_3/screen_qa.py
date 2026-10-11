@@ -627,6 +627,9 @@ def save_screen_narration(
     root = get_project_dirs(project_name)["root"]
     root.mkdir(parents=True, exist_ok=True)
     out_path = root / "narration.json"
-    write_json_atomic(out_path, narration.to_dict())
+    from .ending import ensure_subscribe_cta
+    data = narration.to_dict()
+    ensure_subscribe_cta(data)
+    write_json_atomic(out_path, data)
     log(f"[screen_qa] saved narration → {out_path}")
     return out_path
