@@ -1016,6 +1016,29 @@ def test_second_empty_send_offers_a_batch_of_questions_and_starts_no_session(
     assert not root.exists() or not any(root.iterdir())
 
 
+def test_long_discovery_angle_cannot_squeeze_question_into_a_character_column(
+    tmp_path, monkeypatch,
+):
+    """The angle can wrap below the question, even in a narrow chat column."""
+    question = "What does a familiar hero's signature power actually do?"
+    angle = (
+        "What is a familiar hero's signature power, and how does its "
+        "in-universe rule work across modern comic stories?"
+    )
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[[{"question": question, "angle": angle, "proposed_format": "direct"}]],
+    )
+    _discover_twice(page, controls)
+
+    choices = _by_key(controls, "discovered-questions").content.controls
+    details = choices[0].content.controls[1]
+    assert isinstance(details, ft.Column)
+    assert isinstance(details.controls[0], ft.Text)
+    assert details.controls[0].value == question
+    assert angle in _text_content(details)
+
+
 def test_picking_a_question_fills_the_box_and_leaves_the_batch_on_screen(
     tmp_path, monkeypatch,
 ):

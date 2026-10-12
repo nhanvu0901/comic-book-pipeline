@@ -838,17 +838,20 @@ def build(
             angle = str(entry.get("angle") or "").strip()
             fmt = str(entry.get("proposed_format") or entry.get("format") or "").strip()
             text_desc = _discovered_text(entry)
-            badges: list[ft.Control] = []
-            if fmt:
-                badges.append(ft.Text(f"[{fmt.capitalize()}]", size=11, weight=ft.FontWeight.BOLD, color=ACCENT, selectable=True))
-            if angle:
-                badges.append(ft.Text(f"[{angle}]", size=11, color=TEXT_MUTED, selectable=True))
+            # Discovery angles are full prompts, often longer than the question.
+            # Giving one an intrinsic width beside the question can leave the
+            # question only a character wide inside the chat column.
             entry_details: list[ft.Control] = [
-                ft.Row([
-                    ft.Text(text_desc, size=13, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True, expand=True),
-                    ft.Row(badges, spacing=4) if badges else ft.Container(),
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Text(text_desc, size=13, weight=ft.FontWeight.BOLD,
+                        color=TEXT_PRIMARY, selectable=True),
             ]
+            if fmt:
+                entry_details.append(ft.Text(f"[{fmt.capitalize()}]", size=11,
+                                             weight=ft.FontWeight.BOLD, color=ACCENT,
+                                             selectable=True))
+            if angle:
+                entry_details.append(ft.Text(f"[{angle}]", size=11,
+                                             color=TEXT_MUTED, selectable=True))
             meta_parts = []
             if entry.get("character"):
                 meta_parts.append(f"Character: {entry['character']}")
