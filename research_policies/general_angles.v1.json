@@ -1,10 +1,10 @@
 {
   "qa": [
-    "unexpected defeats of an apparently unbeatable character",
-    "times a famous power or rule failed",
-    "characters who survived an impossible consequence",
-    "underestimated victories with a clear visual turning point",
-    "the hidden cost of a signature ability"
+    "direct: What is a famous comic power or concept, and how does it work?",
+    "direct: Why or how did a famous character's identity, belief, or role change?",
+    "direct: What is a distinctive comic world, team, or universe, and how does it work?",
+    "direct Reddit discussion: What, Why, How, or When question about print-comic lore asked in a recent Reddit post; return the exact post URL and Research-reported date, never claim trending",
+    "list: times a famous character did something surprising, or the distinct abilities of a famous character, with separate comic issues as answer evidence"
   ],
   "micro": [
     "a small act by a famous character with a surprising direct consequence",

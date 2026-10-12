@@ -34,6 +34,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from stages.question_archetype import question_archetype
+from stages.research_scout.reddit_discovery import is_narrow_direct_question, reddit_signal
+
 REPO = Path(__file__).resolve().parent.parent
 API = "https://api.you.com/v1/research"
 MAX_RESEARCH_PROMPT_CHARS = 40_000
@@ -232,13 +235,9 @@ def _same_issue(a: str, b: str) -> bool:
 
 # ─── stages ──────────────────────────────────────────────────────────────────────
 
-DISCOVER_ANGLES = [
-    "famous weakness/immunity debates — who resisted or was immune to a famous power",
-    "who broke a famously unbreakable object or rule",
-    "who resisted famous mind control or telepathy",
-    "fun-casual angle: who made a famously stoic character break composure",
-    "the newest debates fans have about 2024-2026 comics",
-]
+DISCOVER_ANGLES = json.loads(
+    (REPO / "research_policies" / "general_angles.v1.json").read_text(encoding="utf-8")
+)["qa"]
 
 _DISCOVER_PROPS = {
     "question": {"type": "string"}, "subject": {"type": "string"},
@@ -246,6 +245,8 @@ _DISCOVER_PROPS = {
     "why_fans_ask_it": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
     "sample_answer_items": {"type": "array", "items": {"type": "string"}},
+    "reddit_discussion_url": {"type": "string"},
+    "reddit_post_date": {"type": "string"},
 }
 
 _ITEM_PROPS = {
@@ -280,6 +281,13 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             "Propose the format in `proposed_format`: 'list' if the answer is a list across "
             "different comics, or 'direct' if it is one grounded answer developed through "
             "story/evidence beats (Why/How, What-is/concept questions). "
+            "Favor broad What/Why/How/When questions about comic concepts, characters, "
+            "and worlds; keep one list question about times X did Y or abilities of X. "
+            "Do not put an issue number into a direct question: issues are answer evidence. "
+            "For the Reddit angle, require a print-comic lore post from the last 90 days, "
+            "not MCU/news. Put its exact post URL in reddit_discussion_url and evidence_urls "
+            "and its Research-reported ISO date in reddit_post_date; leave both fields empty "
+            "for other angles. Research alone cannot verify trending or popularity. "
             "Real fan debates only — never invent a question because it sounds viral. Cite the URL where "
             "fans actually ask or answer it.\n"
             f"Angle for THIS search: {angle}."
@@ -290,6 +298,13 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             c["_angle"] = angle
             rows.append(c)
     for c in rows:
+        c["proposed_format"] = str(question_archetype(str(c.get("question", ""))))
+        if is_narrow_direct_question(str(c.get("question", ""))):
+            continue
+        if "reddit" in str(c.get("_angle", "")).lower() and (
+            c["proposed_format"] != "direct" or reddit_signal(c) is None
+        ):
+            continue
         hit = is_burned(c.get("question", ""), digest)
         if hit:
             c["_dropped_as_burned"] = hit

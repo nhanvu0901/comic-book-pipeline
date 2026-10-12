@@ -84,14 +84,14 @@ def test_each_entry_names_the_angle_it_came_from(tmp_path):
     recovered from the candidate's position in the requested one-per-angle run."""
     angles = _qa_angles()
     client = _ScriptedYouCom(candidates=[
-        {"question": "Echoed angle question?", "angle": angles[3]},
+        {"question": "Echoed angle question?", "angle": angles[2]},
         {"question": "Forgot to echo the angle?"},
     ])
     workflow = _workflow(tmp_path, client)
 
     batch = workflow.discover_questions(ScoutMode.QA)
 
-    assert batch[0]["angle"] == angles[3]
+    assert batch[0]["angle"] == angles[2]
     assert batch[1]["angle"] == angles[1]  # second slot of the one-per-angle run
 
 
@@ -305,6 +305,83 @@ def test_micro_discovery_skips_thin_unsourced_leads(tmp_path):
     batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO)
 
     assert [entry["series_issue_year"] for entry in batch] == [f"Hero #2 ({year})"]
+
+
+def test_qa_policy_favors_broad_direct_questions_and_keeps_list_lane():
+    angles = _qa_angles()
+    from stages.youcom_scout import DISCOVER_ANGLES
+    assert DISCOVER_ANGLES == angles
+    assert len(angles) == 5
+    assert not any("unexpected defeats" in a or "hidden cost" in a or
+                   "power or rule failed" in a or "underestimated victories" in a or
+                   "impossible consequence" in a for a in angles)
+    assert sum("direct" in a for a in angles) >= 3
+    assert any("reddit" in a.lower() for a in angles)
+    assert any("list" in a and "abilities" in a for a in angles)
+
+
+def test_direct_questions_stay_broad_and_format_is_inferred_from_wording(tmp_path):
+    client = _ScriptedYouCom(candidates=[
+        {"question": "What is the Quantum Compass?", "subject": "Quantum Compass", "proposed_format": "list"},
+        {"question": "What is the Quantum Compass in Captain Cosmic #42?", "subject": "Quantum Compass"},
+        {"question": "Why did Thor become unworthy?", "subject": "Thor", "proposed_format": "list"},
+        {"question": "What are the abilities of Starwarden?", "subject": "Starwarden", "proposed_format": "direct"},
+    ])
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+    assert [(c["question"], c["proposed_format"]) for c in batch] == [
+        ("What is the Quantum Compass?", "direct"),
+        ("Why did Thor become unworthy?", "direct"),
+        ("What are the abilities of Starwarden?", "list"),
+    ]
+
+
+def test_reddit_lane_requires_post_url_and_recent_research_reported_date(tmp_path):
+    reddit_angle = next(a for a in _qa_angles() if "reddit" in a.lower())
+    url = "https://www.reddit.com/r/comicbooks/comments/abc123/what_is_a_power/"
+    client = _ScriptedYouCom(candidates=[
+        {"question": "What is Spider-Sense?", "angle": reddit_angle,
+         "reddit_discussion_url": url, "reddit_post_date": "2001-01-01",
+         "evidence_urls": [url]},
+        {"question": "Why did Thor become unworthy?", "angle": reddit_angle,
+         "reddit_discussion_url": "https://example.com/not-reddit", "reddit_post_date": str(date.today()),
+         "evidence_urls": ["https://example.com/not-reddit"]},
+        {"question": "How does the Green Lantern ring work?", "angle": reddit_angle,
+         "reddit_discussion_url": url, "reddit_post_date": str(date.today()),
+         "evidence_urls": [url]},
+    ])
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+    assert len(batch) == 1
+    assert batch[0]["reddit_signal"] == "research_reported_recent_discussion"
+    assert batch[0]["reddit_post_date"] == str(date.today())
+    assert "popularity_rank" not in batch[0]
+
+
+def test_reddit_lane_rejects_trivia_lists_and_keeps_diverse_subjects(tmp_path):
+    reddit_angle = next(a for a in _qa_angles() if "reddit" in a.lower())
+    url = "https://www.reddit.com/r/comicbooks/comments/abc123/a_question/"
+    client = _ScriptedYouCom(candidates=[
+        {"question": "What powers do the Avengers, X-Men, and Titans have?",
+         "angle": reddit_angle, "reddit_discussion_url": url,
+         "reddit_post_date": str(date.today()), "evidence_urls": [url]},
+        {"question": "How does the Sun Shield work?", "subject": "Sun Shield"},
+        {"question": "Why does the Sun Shield change color?", "subject": "Sun Shield"},
+    ])
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+    assert [entry["question"] for entry in batch] == ["How does the Sun Shield work?"]
+
+
+def test_reddit_recency_is_research_reported_not_a_popularity_score():
+    from datetime import timedelta
+    from stages.research_scout.reddit_discovery import reddit_signal
+
+    today = date(2026, 10, 12)
+    url = "https://www.reddit.com/r/comicbooks/comments/abc123/a_question/"
+    lead = {"reddit_discussion_url": url, "reddit_post_date": "2026-10-01",
+            "evidence_urls": [url], "upvotes": 10000, "comments": 500}
+    assert reddit_signal(lead, today=today) == "research_reported_recent_discussion"
+    assert reddit_signal({**lead, "reddit_post_date": str(today + timedelta(days=1))}, today=today) is None
+    assert reddit_signal({**lead, "evidence_urls": []}, today=today) is None
+    assert reddit_signal({**lead, "reddit_discussion_url": "https://reddit.com/r/comicbooks/"}, today=today) is None
 
 
 # ─── the bridge above it ────────────────────────────────────────────────────

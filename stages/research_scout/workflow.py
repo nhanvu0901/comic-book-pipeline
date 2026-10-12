@@ -29,6 +29,7 @@ from . import ledger_shadow
 from .errors import ScoutUserError
 from .models import EvidenceGate, FeedbackNote, ResearchSession, ScoutMode, SessionState
 from .planner import ResearchPlan
+from .reddit_discovery import is_narrow_direct_question, reddit_signal
 from .policies import PolicyBundle
 from .storage import SessionStore
 from .youcom import RawCall, YouComClient
@@ -885,12 +886,31 @@ class ScoutWorkflow:
         burn_digest = "\n".join(f"- {line}" for line in question_avoid)
         picked: list[dict[str, Any]] = []
         seen: set[str] = set()
+        seen_subjects: set[str] = set()
         for index, candidate in enumerate(_extract_candidates(_raw_payload(raw))):
             text = str(candidate.get(field, "")).strip()
             if not text or text.casefold() in seen:
                 continue
             if is_burned(text, burn_digest):
                 continue
+            if mode is ScoutMode.QA:
+                subject = str(candidate.get("subject", "")).strip().casefold()
+                if subject and subject in seen_subjects:
+                    continue
+                if is_narrow_direct_question(text):
+                    continue
+                labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
+                if "reddit" in labelled.lower() and (
+                    "angle" in candidate or "reddit_discussion_url" in candidate
+                    or "reddit_post_date" in candidate
+                ):
+                    if str(question_archetype(text)) != "direct":
+                        continue
+                    signal = reddit_signal(candidate)
+                    if signal is None:
+                        continue
+                else:
+                    signal = None
             if mode is ScoutMode.MICRO:
                 if micro_release_rejection_reason(
                     candidate, publication_year=publication_year,
@@ -907,10 +927,11 @@ class ScoutWorkflow:
             labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
             candidate_entry = {**candidate, field: text, "angle": labelled}
             if mode is ScoutMode.QA:
-                prop_fmt = str(candidate.get("proposed_format") or "").strip().lower()
-                if prop_fmt not in ("list", "direct"):
-                    prop_fmt = str(question_archetype(text))
-                candidate_entry["proposed_format"] = prop_fmt
+                candidate_entry["proposed_format"] = str(question_archetype(text))
+                if signal:
+                    candidate_entry["reddit_signal"] = signal
+                if subject:
+                    seen_subjects.add(subject)
             picked.append(candidate_entry)
             if mode is ScoutMode.QA and len(picked) >= count:
                 break

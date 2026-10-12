@@ -24,7 +24,7 @@ QA_FORMAT_LIST = "list"
 QA_FORMAT_DIRECT = "direct"
 
 _DIRECT_INTERROGATIVE_LEAD = (
-    r"why|how|what\s+made|"
+    r"why|how|when|what\s+made|"
     r"what\s+(?:actually\s+|really\s+|exactly\s+)?(?:is|was|are|were)(?!\s+\d+\b)|"
     r"what\s+happened\s+(?:to|when|in)\b"
 )
@@ -36,6 +36,12 @@ _DIRECT_STATEMENT_LEAD = (
 )
 _DIRECT_Q_RE = re.compile(
     rf"^\s*(?:{_DIRECT_INTERROGATIVE_LEAD}|{_DIRECT_STATEMENT_LEAD})\b", re.IGNORECASE,
+)
+_LIST_Q_RE = re.compile(
+    r"^\s*(?:how\s+many\b|what\s+are\s+"
+    r"(?:(?:some|the|distinct|unique|hidden|forgotten)\s+)*"
+    r"(?:[\w'-]+'s\s+)?(?:abilities|powers)\b)",
+    re.IGNORECASE,
 )
 _STATEMENT_LEAD_RE = re.compile(rf"^\s*(?:{_DIRECT_STATEMENT_LEAD})\b", re.IGNORECASE)
 
@@ -81,10 +87,12 @@ def is_comparison(question: str) -> bool:
 
 def question_archetype(question: str) -> QuestionArchetype:
     """"direct" for Why/How/What-is/concept questions, else "list"."""
-    return QuestionArchetype(QA_FORMAT_DIRECT if _DIRECT_Q_RE.match(question or "") else QA_FORMAT_LIST)
+    return QuestionArchetype(
+        QA_FORMAT_DIRECT if _DIRECT_Q_RE.match(question or "") and not _LIST_Q_RE.match(question or "")
+        else QA_FORMAT_LIST
+    )
 
 
 def is_statement_lead(question: str) -> bool:
     """True when a direct question is phrased as a STATEMENT."""
     return bool(_STATEMENT_LEAD_RE.match(question or ""))
-

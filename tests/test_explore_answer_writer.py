@@ -210,8 +210,15 @@ def test_question_archetype_detection():
     assert qa("Here's how Wolverine really heals") == "explain"
     assert qa("Here's why Joker never kills Batman") == "explain"
     assert qa("Why does Batman always work alone") == "explain"
+    assert qa("When did Thor become unworthy?") == "explain"
+    assert qa("What is Spider-Sense?") == "explain"
     # list family stays list
     assert qa("Who has survived Ghost Rider's Penance Stare?") == "list"
+    assert qa("What are the abilities of Spider-Man?") == "list"
+    assert qa("What are some distinct abilities Spider-Man has?") == "list"
+    assert qa("What are Spider-Man's powers?") == "list"
+    assert qa("Times Spider-Man used his Spider-Sense to save someone") == "list"
+    assert qa("How many times did Hulk lift Mjolnir?") == "list"
     assert qa("4 villains who broke a hero's body") == "list"
     assert qa("") == "list"
 
