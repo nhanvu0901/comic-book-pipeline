@@ -328,12 +328,14 @@ def test_direct_questions_stay_broad_and_format_is_inferred_from_wording(tmp_pat
         {"question": "What is the Quantum Compass in Captain Cosmic #42?", "subject": "Quantum Compass"},
         {"question": "Why did Thor become unworthy?", "subject": "Thor", "proposed_format": "list"},
         {"question": "What are the abilities of Starwarden?", "subject": "Starwarden", "proposed_format": "direct"},
+        {"question": "What exactly does the Sun Shield do?", "subject": "Sun Shield", "proposed_format": "list"},
     ])
     batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
     assert [(c["question"], c["proposed_format"]) for c in batch] == [
         ("What is the Quantum Compass?", "direct"),
         ("Why did Thor become unworthy?", "direct"),
         ("What are the abilities of Starwarden?", "list"),
+        ("What exactly does the Sun Shield do?", "direct"),
     ]
 
 

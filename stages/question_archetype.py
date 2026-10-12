@@ -25,7 +25,7 @@ QA_FORMAT_DIRECT = "direct"
 
 _DIRECT_INTERROGATIVE_LEAD = (
     r"why|how|when|what\s+made|"
-    r"what\s+(?:actually\s+|really\s+|exactly\s+)?(?:is|was|are|were)(?!\s+\d+\b)|"
+    r"what\s+(?:actually\s+|really\s+|exactly\s+)?(?:is|was|are|were|does)(?!\s+\d+\b)|"
     r"what\s+happened\s+(?:to|when|in)\b"
 )
 _DIRECT_STATEMENT_LEAD = (

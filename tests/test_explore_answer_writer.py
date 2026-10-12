@@ -212,6 +212,9 @@ def test_question_archetype_detection():
     assert qa("Why does Batman always work alone") == "explain"
     assert qa("When did Thor become unworthy?") == "explain"
     assert qa("What is Spider-Sense?") == "explain"
+    assert qa("What does Spider-Sense do?") == "explain"
+    assert qa("What exactly does Wonder Woman's Lasso of Truth do?") == "explain"
+    assert qa("What really does the Lasso of Truth mean to Wonder Woman?") == "explain"
     # list family stays list
     assert qa("Who has survived Ghost Rider's Penance Stare?") == "list"
     assert qa("What are the abilities of Spider-Man?") == "list"
