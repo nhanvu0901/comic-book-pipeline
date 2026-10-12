@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import flet as ft
 
@@ -1037,6 +1038,37 @@ def test_long_discovery_angle_cannot_squeeze_question_into_a_character_column(
     assert isinstance(details.controls[0], ft.Text)
     assert details.controls[0].value == question
     assert angle in _text_content(details)
+
+
+def test_discovery_stays_readable_at_compact_viewport_widths(tmp_path, monkeypatch):
+    question = "How does a famous hero's signature power work in comics?"
+    page, shell, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[[{"question": question, "angle": "What is a signature power and how does it work?"}]],
+    )
+    _discover_twice(page, shell)
+    right_rail = _by_key(shell, "scout-right-rail")
+    sessions_button = _by_key(shell, "scout-sessions-button")
+    scout_bubble = next(
+        node for node in _walk(shell)
+        if isinstance(node, ft.Container)
+        and node.width == s1_research_scout._BUBBLE_WIDTH
+        and question in _text_content(node)
+    )
+    assert scout_bubble.expand and scout_bubble.expand_loose
+
+    monkeypatch.setattr(shell, "update", lambda: None)
+    for width in (900, 1024, 1100):
+        shell.on_size_change(SimpleNamespace(width=width, control=shell))
+        assert right_rail.visible is False
+        assert sessions_button.visible is True
+        assert question in _text_content(shell)
+
+    sessions_button.on_click(object())
+    assert "UNFINISHED SESSIONS" in _text_content(page.dialogs[-1])
+    shell.on_size_change(SimpleNamespace(width=1280, control=shell))
+    assert right_rail.visible is True
+    assert sessions_button.visible is False
 
 
 def test_picking_a_question_fills_the_box_and_leaves_the_batch_on_screen(

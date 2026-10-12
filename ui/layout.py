@@ -125,36 +125,58 @@ def three_col(
     on_go: Callable[[int], None],
     header_title: str = "",
     header_subtitle: str = "",
+    compact_action: ft.Control | None = None,
+    right_key: str | None = None,
 ) -> ft.Control:
-    return ft.Row(
+    right_panel = ft.Container(
+        key=right_key,
+        content=right,
+        width=320,
+        bgcolor=BG_PANEL,
+        border=ft.border.only(left=ft.BorderSide(1, BORDER)),
+        padding=20,
+    )
+    if compact_action is not None:
+        compact_action.visible = False
+    shell = ft.Row(
         [
             stepper_nav(state, on_go),
             ft.Container(
                 content=ft.Column(
-                    [_header(header_title, header_subtitle), center],
+                    [_header(header_title, header_subtitle, action=compact_action), center],
                     spacing=0, expand=True,
                 ),
                 expand=True,
                 bgcolor=BG,
             ),
-            ft.Container(
-                content=right,
-                width=320,
-                bgcolor=BG_PANEL,
-                border=ft.border.only(left=ft.BorderSide(1, BORDER)),
-                padding=20,
-            ),
+            right_panel,
         ],
         spacing=0,
         expand=True,
         vertical_alignment=ft.CrossAxisAlignment.STRETCH,
     )
+    if compact_action is not None:
+        def _fit_compact(event) -> None:
+            # The web viewport can be narrower than page.window.min_width.
+            # Keep the central work area readable and expose the rail through
+            # the screen's compact action without rebuilding its in-memory UI.
+            compact = event.width < 1200
+            if right_panel.visible == (not compact):
+                return
+            right_panel.visible = not compact
+            compact_action.visible = compact
+            event.control.update()
+
+        shell.on_size_change = _fit_compact
+    return shell
 
 
-def _header(title: str, subtitle: str) -> ft.Control:
+def _header(title: str, subtitle: str, *, action: ft.Control | None = None) -> ft.Control:
     parts: list[ft.Control] = [
         ft.Text(title, size=22, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True),
     ]
+    if action is not None:
+        parts[0] = ft.Row([parts[0], ft.Container(expand=True), action], spacing=8)
     if subtitle:
         parts.append(ft.Text(subtitle, size=12, color=TEXT_MUTED, selectable=True))
     return ft.Container(

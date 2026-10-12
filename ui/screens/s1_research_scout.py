@@ -372,6 +372,8 @@ def _user_bubble(content: ft.Control) -> ft.Control:
             border_radius=10,
             padding=12,
             width=_BUBBLE_WIDTH,
+            expand=True,
+            expand_loose=True,
         ),
     ], alignment=ft.MainAxisAlignment.END)
 
@@ -388,6 +390,8 @@ def _scout_bubble(content: ft.Control) -> ft.Control:
             border_radius=10,
             padding=12,
             width=_BUBBLE_WIDTH,
+            expand=True,
+            expand_loose=True,
         ),
     ], alignment=ft.MainAxisAlignment.START)
 
@@ -398,6 +402,8 @@ def _system_bubble(text: str, *, danger: bool = False) -> ft.Control:
             content=ft.Text(text, size=11, color=DANGER if danger else TEXT_MUTED,
                             text_align=ft.TextAlign.LEFT, selectable=True),
             width=_BUBBLE_WIDTH,
+            expand=True,
+            expand_loose=True,
         ),
     ], alignment=ft.MainAxisAlignment.CENTER)
 
@@ -1537,7 +1543,7 @@ def build(
 
     # ─── Right rail ─────────────────────────────────────────────────────
 
-    def _render_resume_list() -> ft.Control:
+    def _render_resume_list(*, key_prefix: str = "") -> ft.Control:
         sessions = list_scout_sessions(root=RESEARCH_SESSIONS_ROOT)
         if not sessions:
             return ft.Text("No unfinished research sessions.", size=11, color=TEXT_MUTED, selectable=True)
@@ -1548,7 +1554,7 @@ def build(
                     # placed INSIDE an ink=True on_click container risks the tap being
                     # swallowed by the outer InkWell instead of reaching the button.
                     ft.Container(
-                        key=f"resume-session-{session.id}",
+                        key=f"{key_prefix}resume-session-{session.id}",
                         content=ft.Column([
                             ft.Text(f"{session.mode.value.upper()} · {session.user_intent}",
                                     size=12, color=TEXT_PRIMARY, selectable=True),
@@ -1560,7 +1566,7 @@ def build(
                         on_click=lambda _e, s=session: _resume_click(s),
                     ),
                     ft.IconButton(
-                        key=f"delete-session-{session.id}",
+                        key=f"{key_prefix}delete-session-{session.id}",
                         icon=ft.Icons.DELETE_OUTLINE,
                         icon_size=16,
                         icon_color=DANGER,
@@ -1576,7 +1582,7 @@ def build(
             for session in sessions
         ], spacing=6)   # the whole rail scrolls; a nested unbounded scroll never engaged
 
-    def _build_right_rail_controls() -> list[ft.Control]:
+    def _build_right_rail_controls(*, key_prefix: str = "") -> list[ft.Control]:
         session = session_holder[0]
         controls: list[ft.Control] = [
             ft.Text("STEP 1 OF 8", size=10, color=TEXT_MUTED, selectable=True),
@@ -1592,7 +1598,7 @@ def build(
             controls.append(ft.Row([
                 ft.Text("CURRENT STATE", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD, selectable=True),
                 ft.Container(
-                    key="current-state",
+                    key=f"{key_prefix}current-state",
                     content=ft.Text(session.state.value.replace("_", " ").upper(),
                                     size=10, color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD, selectable=True),
                     bgcolor=BG_PANEL,
@@ -1604,12 +1610,24 @@ def build(
             controls.append(ft.Container(height=12))
         controls.extend([
             ft.Text("UNFINISHED SESSIONS", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD, selectable=True),
-            _render_resume_list(),
+            _render_resume_list(key_prefix=key_prefix),
             ft.Container(height=12),
             secondary_button("New research (archive current)", _new_research_click),
             secondary_button("Archive research session", _archive_click, disabled=session is None),
         ])
         return controls
+
+    def _open_compact_sessions(_event) -> None:
+        page.show_dialog(ft.AlertDialog(
+            title=ft.Text("Research sessions and actions", selectable=True),
+            content=ft.Container(
+                content=ft.Column(_build_right_rail_controls(key_prefix="compact-"), spacing=7,
+                                  scroll=ft.ScrollMode.AUTO),
+                width=320,
+                height=500,
+            ),
+            actions=[ft.TextButton("Close", on_click=lambda _e: page.pop_dialog())],
+        ))
 
     # ─── Render plumbing ────────────────────────────────────────────────
 
@@ -1699,4 +1717,8 @@ def build(
             "Choose Q&A or one visual moment, then verify the source before "
             "creating a project."
         ),
+        compact_action=ft.TextButton(
+            "Sessions", key="scout-sessions-button", on_click=_open_compact_sessions,
+        ),
+        right_key="scout-right-rail",
     )
