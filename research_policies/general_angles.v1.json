@@ -1,10 +1,10 @@
 {
   "qa": [
-    "direct: What is a famous comic power or concept, and how does it work?",
-    "direct: Why or how did a famous character's identity, belief, or role change?",
-    "direct: What is a distinctive comic world, team, or universe, and how does it work?",
-    "direct: When or why did a familiar character's recurring status, power, or relationship change, and what does it mean?",
-    "list: times a famous character did something surprising, or the distinct abilities of a famous character, with separate comic issues as answer evidence"
+    "direct: What is a signature power or defining concept tied to a widely recognized hero, and how does it work?",
+    "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story?",
+    "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, and how does it work?",
+    "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it?",
+    "list: times a widely recognized hero did something surprising, or the distinct abilities of that hero, with separate comic issues as answer evidence"
   ],
   "micro": [
     "a small act by a famous character with a surprising direct consequence",

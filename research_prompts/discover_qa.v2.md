@@ -5,9 +5,13 @@ HARD RULES — non-negotiable:
 
 # Discover Q&A research scout
 
-Find {count} DIFFERENT, fan-friendly PRINT comic-book questions about well-known
-characters, powers, concepts, teams, or worlds. Favor broad What/Why/How/When
-questions a newcomer can understand without knowing an issue number or event.
+Find {count} DIFFERENT, fan-friendly PRINT comic-book questions about a
+household-recognizable hero, that hero's signature power, or a world tied to a
+widely recognizable hero or team. A casual superhero viewer should recognize
+the anchor by name even if the comic concept itself is new to them. Favor broad
+What/Why/How/When questions a newcomer can understand without knowing an issue
+number or event. Replace a niche team, supporting identity, or obscure power
+with a clearer familiar anchor when both are supported by real sources.
 The question is the topic; cite exact comic issues later as ANSWER evidence.
 Do not put an issue number, year, or narrow scene in a direct question.
 Support two formats:
@@ -24,6 +28,10 @@ about an adjacent character or publisher is not evidence for the question.
 
 Use the four direct angles for four distinct What/Why/How/When questions. Do
 not turn a changing status or relationship into a question about one named issue.
+Ask about in-universe meaning, rules, and character motivation rather than the
+editorial history of a retcon or the removal of an old continuity detail.
+Prefer enduring fan questions that make sense across stories; skip temporary
+costume changes, single crossover power losses, and narrow continuity repairs.
 For the list lane, prefer examples supported by issues published in 2010 or
 later unless the question explicitly asks about another period.
 

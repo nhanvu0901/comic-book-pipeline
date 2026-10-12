@@ -38,7 +38,7 @@ _DIRECT_Q_RE = re.compile(
     rf"^\s*(?:{_DIRECT_INTERROGATIVE_LEAD}|{_DIRECT_STATEMENT_LEAD})\b", re.IGNORECASE,
 )
 _LIST_Q_RE = re.compile(
-    r"^\s*(?:how\s+many\b|what\s+are\s+"
+    r"^\s*(?:how\s+many\b|what\s+are\s+some\b|what\s+are\s+"
     r"(?:(?:some|the|distinct|unique|hidden|forgotten)\s+)*"
     r"(?:[\w'-]+'s\s+)?(?:abilities|powers)\b|"
     r"what\s+are\s+some\s+of\b[^?]{0,100}\b"

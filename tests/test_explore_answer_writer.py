@@ -219,6 +219,7 @@ def test_question_archetype_detection():
     assert qa("What are Spider-Man's powers?") == "list"
     assert qa("Times Spider-Man used his Spider-Sense to save someone") == "list"
     assert qa("What are some of Wonder Woman's strangest feats or transformations?") == "list"
+    assert qa("What are some surprising things Spider-Man has done in the comics?") == "list"
     assert qa("How many times did Hulk lift Mjolnir?") == "list"
     assert qa("4 villains who broke a hero's body") == "list"
     assert qa("") == "list"

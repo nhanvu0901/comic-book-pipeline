@@ -318,6 +318,8 @@ def test_qa_policy_favors_broad_direct_questions_and_keeps_list_lane():
     assert sum(a.startswith("direct:") for a in angles) == 4
     assert not any("reddit" in a.lower() for a in angles)
     assert any("list" in a and "abilities" in a for a in angles)
+    assert all("widely recognized" in a for a in angles)
+    assert "recurring choice" in angles[3]
 
 
 def test_direct_questions_stay_broad_and_format_is_inferred_from_wording(tmp_path):
@@ -361,6 +363,9 @@ def test_full_qa_batch_needs_no_reddit_leads(tmp_path):
     assert "reddit_discussion_url" not in client.seen_schema["properties"]["candidates"]["items"]["properties"]
     assert "different concept families" in client.seen_prompt
     assert "Reddit discussion angle" not in client.seen_prompt
+    assert "household-recognizable hero" in client.seen_prompt
+    assert "editorial history of a retcon" in client.seen_prompt
+    assert "skip temporary" in client.seen_prompt
 
 
 def test_duplicate_subject_is_skipped_without_losing_other_lanes(tmp_path):
