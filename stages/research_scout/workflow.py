@@ -29,11 +29,10 @@ from . import ledger_shadow
 from .errors import ScoutUserError
 from .models import EvidenceGate, FeedbackNote, ResearchSession, ScoutMode, SessionState
 from .planner import ResearchPlan
-from .reddit_discovery import is_narrow_direct_question, reddit_signal
 from .policies import PolicyBundle
 from .storage import SessionStore
 from .youcom import RawCall, YouComClient
-from stages.question_archetype import question_archetype
+from stages.question_archetype import is_narrow_direct_question, question_archetype
 
 
 def _intent_with_feedback(session: ResearchSession) -> str:
@@ -899,18 +898,6 @@ class ScoutWorkflow:
                     continue
                 if is_narrow_direct_question(text):
                     continue
-                labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
-                if "reddit" in labelled.lower() and (
-                    "angle" in candidate or "reddit_discussion_url" in candidate
-                    or "reddit_post_date" in candidate
-                ):
-                    if str(question_archetype(text)) != "direct":
-                        continue
-                    signal = reddit_signal(candidate)
-                    if signal is None:
-                        continue
-                else:
-                    signal = None
             if mode is ScoutMode.MICRO:
                 if micro_release_rejection_reason(
                     candidate, publication_year=publication_year,
@@ -928,8 +915,6 @@ class ScoutWorkflow:
             candidate_entry = {**candidate, field: text, "angle": labelled}
             if mode is ScoutMode.QA:
                 candidate_entry["proposed_format"] = str(question_archetype(text))
-                if signal:
-                    candidate_entry["reddit_signal"] = signal
                 if subject:
                     seen_subjects.add(subject)
             picked.append(candidate_entry)

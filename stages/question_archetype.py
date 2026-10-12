@@ -40,7 +40,9 @@ _DIRECT_Q_RE = re.compile(
 _LIST_Q_RE = re.compile(
     r"^\s*(?:how\s+many\b|what\s+are\s+"
     r"(?:(?:some|the|distinct|unique|hidden|forgotten)\s+)*"
-    r"(?:[\w'-]+'s\s+)?(?:abilities|powers)\b)",
+    r"(?:[\w'-]+'s\s+)?(?:abilities|powers)\b|"
+    r"what\s+are\s+some\s+of\b[^?]{0,100}\b"
+    r"(?:feats|transformations|abilities|powers)\b)",
     re.IGNORECASE,
 )
 _STATEMENT_LEAD_RE = re.compile(rf"^\s*(?:{_DIRECT_STATEMENT_LEAD})\b", re.IGNORECASE)
@@ -54,6 +56,9 @@ _COMPARISON_RE = re.compile(
     r"|\bcan'?t\s+do\b"                     # "...can't do..."
     r"|\bthat\s+makes?\b.*\bstronger\s+than\b",  # "...that make(s) X stronger than Y"
     re.IGNORECASE,
+)
+_ISSUE_OR_YEAR_RE = re.compile(
+    r"#\s*\d+\b|\b(?:vol(?:ume)?\.?\s*\d+|19\d{2}|20\d{2})\b", re.I,
 )
 
 
@@ -90,6 +95,13 @@ def question_archetype(question: str) -> QuestionArchetype:
     return QuestionArchetype(
         QA_FORMAT_DIRECT if _DIRECT_Q_RE.match(question or "") and not _LIST_Q_RE.match(question or "")
         else QA_FORMAT_LIST
+    )
+
+
+def is_narrow_direct_question(question: str) -> bool:
+    """A broad direct discovery question should not name an issue or year."""
+    return str(question_archetype(question)) == QA_FORMAT_DIRECT and bool(
+        _ISSUE_OR_YEAR_RE.search(question)
     )
 
 

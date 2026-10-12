@@ -19,17 +19,11 @@ Set `proposed_format` to 'list' or 'direct'. Ground each question in a real fan
 discussion or documented comics explanation; never invent a viral-sounding
 question. Cite the URL where fans ask or answer it. Do not claim a topic is
 "trending", "most talked about", or repeatedly asked based on a single hit.
+Only cite sources whose retrieved text discusses that exact topic; an article
+about an adjacent character or publisher is not evidence for the question.
 
-For the Reddit discussion angle, seek a PRINT-comic lore question in a Reddit
-post from the last 90 days. Exclude MCU, film, TV, games, release news, and
-solicitation posts. It must be a direct What/Why/How/When question about ONE
-recognizable concept, character, or world, not a broad trivia request covering
-many unrelated subjects. Put the exact Reddit post URL in `reddit_discussion_url` and
-`evidence_urls`; put the Research-reported ISO date (YYYY-MM-DD) in
-`reddit_post_date`. If either is unavailable, do not return that Reddit-angle
-candidate. Research-reported dates are unverified until the post is fetched.
-Set both Reddit fields to empty strings for all other angles. Research snippets
-do not reliably provide upvotes/comments, so do not score popularity here.
+Use the four direct angles for four distinct What/Why/How/When questions. Do
+not turn a changing status or relationship into a question about one named issue.
 For the list lane, prefer examples supported by issues published in 2010 or
 later unless the question explicitly asks about another period.
 
@@ -38,7 +32,9 @@ and return the candidates in that same order. Copy the angle you worked
 verbatim into that candidate's `angle` field.
 
 Two questions that differ only in wording are ONE question. Use different
-subjects across the batch, and preserve both direct and list formats.
+subjects and different concept families across the batch. Do not pair a broad
+concept explainer with an abilities list for a character defined by that same
+concept. Preserve both direct and list formats.
 
 ANGLES:
 {angles}

@@ -34,8 +34,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from stages.question_archetype import question_archetype
-from stages.research_scout.reddit_discovery import is_narrow_direct_question, reddit_signal
+from stages.question_archetype import is_narrow_direct_question, question_archetype
 
 REPO = Path(__file__).resolve().parent.parent
 API = "https://api.you.com/v1/research"
@@ -245,8 +244,6 @@ _DISCOVER_PROPS = {
     "why_fans_ask_it": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
     "sample_answer_items": {"type": "array", "items": {"type": "string"}},
-    "reddit_discussion_url": {"type": "string"},
-    "reddit_post_date": {"type": "string"},
 }
 
 _ITEM_PROPS = {
@@ -284,10 +281,9 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             "Favor broad What/Why/How/When questions about comic concepts, characters, "
             "and worlds; keep one list question about times X did Y or abilities of X. "
             "Do not put an issue number into a direct question: issues are answer evidence. "
-            "For the Reddit angle, require a print-comic lore post from the last 90 days, "
-            "not MCU/news. Put its exact post URL in reddit_discussion_url and evidence_urls "
-            "and its Research-reported ISO date in reddit_post_date; leave both fields empty "
-            "for other angles. Research alone cannot verify trending or popularity. "
+            "Use four broad direct angles and one distinct abilities/times list angle. "
+            "Print comics only, not MCU or adaptation lore. Do not infer popularity "
+            "from one source hit. "
             "Real fan debates only — never invent a question because it sounds viral. Cite the URL where "
             "fans actually ask or answer it.\n"
             f"Angle for THIS search: {angle}."
@@ -300,10 +296,6 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     for c in rows:
         c["proposed_format"] = str(question_archetype(str(c.get("question", ""))))
         if is_narrow_direct_question(str(c.get("question", ""))):
-            continue
-        if "reddit" in str(c.get("_angle", "")).lower() and (
-            c["proposed_format"] != "direct" or reddit_signal(c) is None
-        ):
             continue
         hit = is_burned(c.get("question", ""), digest)
         if hit:
