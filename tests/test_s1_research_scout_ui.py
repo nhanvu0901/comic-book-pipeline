@@ -9,6 +9,7 @@ import ui.screens.s1_research_scout as s1_research_scout
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
+from stages.research_scout.saved_scout import SavedScoutStore
 from tests.ui_test_doubles import StrictFakePage as FakePage
 from ui import app
 from ui.state import AppState
@@ -856,7 +857,130 @@ def test_send_with_empty_input_and_no_session_creates_no_session(tmp_path):
     send = next(node for node in _walk(controls) if getattr(node, "key", None) == "chat-send")
     send.on_click(object())
 
-    assert not root.exists() or not any(root.iterdir())
+    assert not any(path.is_dir() and (path / "session.json").exists()
+                   for path in root.iterdir())
+
+
+def test_discover_saves_full_batch_and_saved_view_restores_pick_without_research(
+    tmp_path, monkeypatch,
+):
+    first = {"question": "What does a hero's sixth sense do?", "angle": "Explain a power",
+             "proposed_format": "direct", "evidence_urls": ["https://example.org/story"],
+             "subject": "A hero"}
+    page, controls, calls = _discover_env(tmp_path, monkeypatch, batches=[[first]])
+    _discover_twice(page, controls)
+    root = tmp_path / "research_sessions"
+    rows = SavedScoutStore(root).list_entries()
+    assert len(rows) == 1 and rows[0]["entry"] == first
+
+    reloaded_page, reloaded = _build(tmp_path)
+    _by_key(reloaded, "saved-scout-button").on_click(object())
+    dialog = reloaded_page.dialogs[-1]
+    assert "Saved Scout" in dialog.title.value
+    assert first["question"] in _text_content(dialog)
+    assert first["angle"] in _text_content(dialog)
+    assert first["evidence_urls"][0] in _text_content(dialog)
+    _by_key(dialog, f"saved-pick-{rows[0]['id']}").on_click(object())
+
+    assert _intent_field(reloaded).value == first["question"]
+    assert calls and len(calls) == 1
+    assert not reloaded_page.tasks
+
+
+def test_reroll_defers_instead_of_rejecting_and_saves_the_new_batch(tmp_path, monkeypatch):
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("What does one power do?"), _batch("Why does another power fail?")],
+    )
+    rejected = []
+    monkeypatch.setattr(s1_research_scout, "record_rejected_questions",
+                        lambda *args, **kwargs: rejected.append(args))
+    _discover_twice(page, controls)
+    _by_key(controls, "discovered-reroll").on_click(object())
+    _run_recorded_task(page)
+
+    assert _intent_field(controls).value == ""
+    rows = SavedScoutStore(tmp_path / "research_sessions").list_entries("qa")
+    assert [(row["entry"]["question"], row["status"]) for row in rows] == [
+        ("Why does another power fail?", "saved"),
+        ("What does one power do?", "deferred"),
+    ]
+    assert rejected == []
+
+
+def test_saved_micro_pick_restores_mode_issue_and_year_without_research(tmp_path, monkeypatch):
+    entry = {"moment": "A hero opens the sealed door.",
+             "series_issue_year": "Hero #2 (2025)", "angle": "A familiar rule breaks",
+             "evidence_urls": ["https://example.org/hero"]}
+    page, controls, calls = _discover_env(tmp_path, monkeypatch, batches=[[entry]])
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    _by_key(controls, "scout-year").value = "2025"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+
+    reloaded_page, reloaded = _build(tmp_path)
+    row = SavedScoutStore(tmp_path / "research_sessions").list_entries("micro")[0]
+    _by_key(reloaded, "saved-scout-button").on_click(object())
+    _by_key(reloaded_page.dialogs[-1], f"saved-pick-{row['id']}").on_click(object())
+
+    assert _by_key(reloaded, "scout-mode").value == "micro"
+    assert _by_key(reloaded, "scout-year").value == "2025"
+    assert "Hero #2 (2025)" in _intent_field(reloaded).value
+    assert len(calls) == 1 and reloaded_page.tasks == []
+
+
+def test_saved_pick_leaves_an_open_session_resumable_without_archiving(tmp_path):
+    root = tmp_path / "research_sessions"
+    session = SessionStore(root).create(ScoutMode.QA, "An unfinished question?")
+    SavedScoutStore(root).save_batch("micro", [{"moment": "The door opens."}])
+    page, controls = _build(tmp_path, session)
+    row = SavedScoutStore(root).list_entries("micro")[0]
+
+    _by_key(controls, "saved-scout-button").on_click(object())
+    _by_key(page.dialogs[-1], f"saved-pick-{row['id']}").on_click(object())
+
+    assert _intent_field(controls).value == "The door opens."
+    assert _by_key(controls, "scout-mode").value == "micro"
+    assert SessionStore(root).load(session.id).state == session.state
+    assert session.id in _text_content(controls)
+    assert page.tasks == []
+
+
+def test_only_saved_view_discard_marks_rejected(tmp_path, monkeypatch):
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch, batches=[_batch("Why did the rule fail?")],
+    )
+    _discover_twice(page, controls)
+    store = SavedScoutStore(tmp_path / "research_sessions")
+    row = store.list_entries()[0]
+    recorded = []
+    monkeypatch.setattr(s1_research_scout, "record_rejected_questions",
+                        lambda *args, **kwargs: recorded.append(args))
+    _by_key(controls, "saved-scout-button").on_click(object())
+    _by_key(page.dialogs[-1], f"saved-discard-{row['id']}").on_click(object())
+    _run_recorded_task(page)
+
+    assert store.list_entries() == []
+    assert store.list_entries(include_discarded=True)[0]["status"] == "rejected"
+    assert recorded and recorded[0][0] == "qa"
+
+
+def test_discard_stays_rejected_if_legacy_ledger_write_fails(tmp_path, monkeypatch):
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch, batches=[_batch("Why did the rule fail?")],
+    )
+    _discover_twice(page, controls)
+    store = SavedScoutStore(tmp_path / "research_sessions")
+    row = store.list_entries()[0]
+    monkeypatch.setattr(s1_research_scout, "record_rejected_questions",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ledger locked")))
+    _by_key(controls, "saved-scout-button").on_click(object())
+    _by_key(page.dialogs[-1], f"saved-discard-{row['id']}").on_click(object())
+    _run_recorded_task(page)
+
+    assert store.list_entries(include_discarded=True)[0]["status"] == "rejected"
 
 
 def test_micro_checkbox_exclusivity_keeps_one_selected(tmp_path):
@@ -1014,7 +1138,8 @@ def test_second_empty_send_offers_a_batch_of_questions_and_starts_no_session(
     assert len(calls) == 1
     # Nothing is chosen for the user, and nothing is researched.
     assert _intent_field(controls).value == ""
-    assert not root.exists() or not any(root.iterdir())
+    assert not any(path.is_dir() and (path / "session.json").exists()
+                   for path in root.iterdir())
 
 
 def test_long_discovery_angle_cannot_squeeze_question_into_a_character_column(
@@ -1066,6 +1191,9 @@ def test_discovery_stays_readable_at_compact_viewport_widths(tmp_path, monkeypat
 
     sessions_button.on_click(object())
     assert "UNFINISHED SESSIONS" in _text_content(page.dialogs[-1])
+    _by_key(page.dialogs[-1], "compact-saved-scout-button").on_click(object())
+    assert page.dialogs[-1].title.value == "Saved Scout"
+    assert question in _text_content(page.dialogs[-1])
     shell.on_size_change(SimpleNamespace(width=1280, control=shell))
     assert right_rail.visible is True
     assert sessions_button.visible is False
@@ -1948,191 +2076,64 @@ def test_create_project_turns_a_typed_title_into_a_safe_folder_name(tmp_path, mo
     assert created == ["wolverine_origins"]
 
 
-# ─── 'None of these' records the turned-down batch in the ledger ────────────
-# Master pressing the re-roll button is the moment a batch is rejected. Every
-# question on screen that he did NOT pick is appended to the ledger as a
-# `rejected` event (stages/research_scout/scout_rejections.py), off the UI
-# thread, so a reload — or a different session — cannot offer it again.
+# ─── Saved Scout semantics: reroll defers, only Discard rejects ─────────────
 
 
-def _run_task_at(page, index):
-    (func,), _kwargs = page.tasks[index]
-    asyncio.run(func())
-
-
-def _recording_env(tmp_path, monkeypatch, *, batches):
-    page, controls, calls = _discover_env(tmp_path, monkeypatch, batches=batches)
-    recorded = []
-
-    def _fake_record(mode, entries, *, context=None, log=print):
-        recorded.append({"mode": mode, "questions": [e.get("question") or e.get("moment") for e in entries],
-                         "context": context})
-        return "recorded"
-
-    monkeypatch.setattr(s1_research_scout, "record_rejected_questions", _fake_record)
-    return page, controls, calls, recorded
-
-
-def _press_reroll(page, controls):
-    """Press the button, then run what it scheduled: the record task first (queued
-    before the discovery), the discovery last."""
-    before = len(page.tasks)
-    _by_key(controls, "discovered-reroll").on_click(object())
-    scheduled = len(page.tasks) - before
-    for index in range(before, before + scheduled):
-        _run_task_at(page, index)
-    return scheduled
-
-
-def test_rerolling_records_exactly_the_questions_on_screen(tmp_path, monkeypatch):
-    page, controls, calls, recorded = _recording_env(
+def test_reroll_preserves_every_entry_even_the_one_already_picked(tmp_path, monkeypatch):
+    page, controls, _calls = _discover_env(
         tmp_path, monkeypatch,
-        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?"),
-                 _batch("Who survived a Phoenix hit?")],
-    )
-    _discover_twice(page, controls)
-    assert recorded == []  # the first batch was merely offered, not turned down
-
-    _press_reroll(page, controls)
-
-    assert recorded == [{
-        "mode": "qa",
-        "questions": ["Who has lifted Mjolnir?", "Whose healing factor failed?"],
-        "context": None,
-    }]
-    assert len(calls) == 2  # and the re-roll itself still ran
-
-
-def test_a_question_master_picked_is_never_recorded_as_rejected(tmp_path, monkeypatch):
-    page, controls, _calls, recorded = _recording_env(
-        tmp_path, monkeypatch,
-        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?",
-                        "Who walked off a planet-buster?"),
-                 _batch("Who survived a Phoenix hit?")],
+        batches=[_batch("What does one power do?", "Why does another power fail?"),
+                 _batch("How does a third power work?")],
     )
     _discover_twice(page, controls)
     _by_key(controls, "discovered-questions").on_change(_FakeEvent("1"))
-
-    _press_reroll(page, controls)
-
-    assert recorded[0]["questions"] == ["Who has lifted Mjolnir?", "Who walked off a planet-buster?"]
-
-
-def test_the_batch_is_recorded_before_the_discovery_runs_and_off_the_ui_thread(
-    tmp_path, monkeypatch,
-):
-    """The record is its own task, queued ahead of the discovery: a slow or locked
-    ledger can never delay (or fail) the re-roll the user is waiting on."""
-    page, controls, _calls, recorded = _recording_env(
-        tmp_path, monkeypatch,
-        batches=[_batch("Who has lifted Mjolnir?"), _batch("Who survived a Phoenix hit?")],
-    )
-    _discover_twice(page, controls)
-    before = len(page.tasks)
-
     _by_key(controls, "discovered-reroll").on_click(object())
-
-    assert len(page.tasks) - before == 2
-    assert recorded == []  # nothing ran inline on the click
-
-
-def test_micro_rerolls_record_the_moments_with_the_selected_year(tmp_path, monkeypatch):
-    page, controls, _calls, recorded = _recording_env(
-        tmp_path, monkeypatch,
-        batches=[[{"moment": "Cyclops faces Darkchild in a duel of truths.",
-                   "series_issue_year": "Amazing X-Men #2 (2025)", "angle": _ANGLES[0]}],
-                 [{"moment": "Another moment.", "angle": _ANGLES[0]}]],
-    )
-    mode = _by_key(controls, "scout-mode")
-    mode.value = "micro"
-    mode.on_change(_FakeEvent("micro"))
-    _by_key(controls, "scout-year").value = "2025"
-    _send(controls).on_click(object())
     _run_recorded_task(page)
 
-    _press_reroll(page, controls)
+    assert _intent_field(controls).value == ""
+    rows = SavedScoutStore(tmp_path / "research_sessions").list_entries("qa")
+    previous = [row for row in rows if row["status"] == "deferred"]
+    assert [row["entry"]["question"] for row in previous] == [
+        "What does one power do?", "Why does another power fail?",
+    ]
+    assert all(row["status"] != "rejected" for row in rows)
 
-    assert recorded[0]["mode"] == "micro"
-    assert recorded[0]["questions"] == ["Cyclops faces Darkchild in a duel of truths."]
-    assert recorded[0]["context"] == {"publication_year": 2025}
+
+def test_fallback_angle_is_not_saved_as_a_discovery(tmp_path, monkeypatch):
+    page, controls, _calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[[{"question": "an unfilled angle", "angle": "an unfilled angle",
+                  "fallback": True}]],
+    )
+    _discover_twice(page, controls)
+
+    assert "an unfilled angle" in _text_content(controls)
+    assert SavedScoutStore(tmp_path / "research_sessions").list_entries() == []
 
 
-def _real_recorder_env(tmp_path, monkeypatch, *, batches):
-    """No fake recorder: the real one writing to a throwaway 'server' ledger."""
+def test_save_failure_keeps_paid_batch_visible_and_blocks_reroll(tmp_path, monkeypatch):
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch,
+        batches=[_batch("What does one power do?"), _batch("Why does another fail?")],
+    )
+    monkeypatch.setattr(s1_research_scout, "save_scout_batch",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
+    _discover_twice(page, controls)
+
+    assert "What does one power do?" in _text_content(controls)
+    assert "Could not save" in _text_content(controls)
+    _by_key(controls, "discovered-reroll").on_click(object())
+    assert len(calls) == 1
+
+
+def test_legacy_rejections_do_not_appear_in_saved_scout(tmp_path, monkeypatch):
     from stages.research_scout import scout_rejections
     from stages.research_scout.ledger import Ledger
 
-    page, controls, calls = _discover_env(tmp_path, monkeypatch, batches=batches)
     store = Ledger(tmp_path / "ledger" / "ledger.db", _writer_guard=lambda: True)
-    monkeypatch.setattr(scout_rejections, "Ledger", lambda *a, **k: store)
-    return page, controls, calls, store
+    scout_rejections.record_rejected("qa", [{"question": "A historical rejection?"}], ledger=store)
+    page, controls = _build(tmp_path)
+    _by_key(controls, "saved-scout-button").on_click(object())
 
-
-def test_pressing_none_of_these_twice_does_not_duplicate_rows(tmp_path, monkeypatch):
-    page, controls, _calls, store = _real_recorder_env(
-        tmp_path, monkeypatch,
-        batches=[_batch("Who has lifted Mjolnir?", "Whose healing factor failed?"),
-                 [],  # nothing new: the batch stays on screen
-                 []],
-    )
-    _discover_twice(page, controls)
-
-    _press_reroll(page, controls)
-    _press_reroll(page, controls)
-
-    rows = [e for e in store.events() if e["kind"] == "rejected"]
-    assert sorted(e["text"] for e in rows) == ["Who has lifted Mjolnir?", "Whose healing factor failed?"]
-
-
-def test_an_angle_fallback_batch_is_not_recorded(tmp_path, monkeypatch):
-    page, controls, _calls, store = _real_recorder_env(
-        tmp_path, monkeypatch,
-        batches=[[{"question": "times a famous power or rule failed",
-                   "angle": "times a famous power or rule failed", "fallback": True}],
-                 _batch("Who survived a Phoenix hit?")],
-    )
-    _discover_twice(page, controls)
-
-    _press_reroll(page, controls)
-
-    assert store.count_events() == 0
-
-
-def test_on_a_read_only_host_the_reroll_still_works_and_says_why_nothing_was_saved(
-    tmp_path, monkeypatch, capsys,
-):
-    """This Mac: the ledger is read-only. No crash, no block, one log line."""
-    monkeypatch.setattr(
-        "stages.research_scout.ledger.DEFAULT_DB_PATH", tmp_path / "ledger" / "ledger.db",
-    )
-    monkeypatch.delenv("SCOUT_LEDGER_WRITER", raising=False)
-    page, controls, calls = _discover_env(
-        tmp_path, monkeypatch,
-        batches=[_batch("Who has lifted Mjolnir?"), _batch("Who survived a Phoenix hit?")],
-    )
-    _discover_twice(page, controls)
-
-    _press_reroll(page, controls)
-
-    assert len(calls) == 2
-    assert "Who survived a Phoenix hit?" in _text_content(controls)
-    assert "read-only" in capsys.readouterr().out
-    assert not (tmp_path / "ledger").exists()
-
-
-def test_a_recorder_that_blows_up_never_blocks_the_reroll(tmp_path, monkeypatch):
-    page, controls, calls = _discover_env(
-        tmp_path, monkeypatch,
-        batches=[_batch("Who has lifted Mjolnir?"), _batch("Who survived a Phoenix hit?")],
-    )
-
-    def _boom(*_a, **_k):
-        raise RuntimeError("ledger exploded")
-
-    monkeypatch.setattr(s1_research_scout, "record_rejected_questions", _boom)
-    _discover_twice(page, controls)
-
-    _press_reroll(page, controls)  # must not raise
-
-    assert len(calls) == 2
-    assert "Who survived a Phoenix hit?" in _text_content(controls)
+    assert "No saved discoveries yet." in _text_content(page.dialogs[-1])
+    assert SavedScoutStore(tmp_path / "research_sessions").list_entries() == []

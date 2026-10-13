@@ -1,9 +1,11 @@
-"""Remember the questions Master turned down with 'None of these — find 5 more'.
+"""Remember explicit Saved Scout discards and historical reroll rejections.
 
-Each question of the batch on screen is appended to the ledger as one
-``rejected`` item event (reason ``scout_reroll_rejected``). Discover's question
-avoid list reads them back (``ledger_inventory.active_rejections``), in that
-mode only, so a question turned down once stays turned down after a reload.
+Older versions appended each rerolled batch as ``scout_reroll_rejected``.
+Those events remain rejected and are never migrated into Saved Scout. New
+``scout_saved_discarded`` events are written only by the explicit Discard action.
+Discover's question avoid list reads them back
+(``ledger_inventory.active_rejections``), in that mode only, so a rejected
+question stays excluded after a reload.
 
 Nothing else reads these rows as a decision: ``rejected`` is outside the
 ledger's active kinds, so micro's hard issue duplicate, recap and the Q&A
@@ -37,8 +39,10 @@ from .ledger import Ledger, _canonical_json, _now
 from .ledger_inventory import _REJECTION_LIFTS, active_rejections, question_identity
 
 REASON_REJECTED = "scout_reroll_rejected"
+REASON_DISCARDED = "scout_saved_discarded"
 REASON_LIFTED = "scout_reroll_unrejected"
 SOURCE = "scout_reroll"
+SOURCE_SAVED = "saved_scout"
 
 # The field of a discover entry that holds the rejected text, per mode.
 _TEXT_FIELD = {"qa": "question", "micro": "moment"}
@@ -53,14 +57,17 @@ def _mode(mode: Any) -> str:
     return value
 
 
-def _entry_rows(mode: str, entries: Sequence[Mapping[str, Any]], context: Mapping[str, Any] | None) -> list[dict]:
+def _entry_rows(
+    mode: str, entries: Sequence[Mapping[str, Any]], context: Mapping[str, Any] | None,
+    reason_code: str, source: str,
+) -> list[dict]:
     """Ledger events for the real, distinct questions among ``entries``."""
     field = _TEXT_FIELD[mode]
     picked: dict[str, Mapping[str, Any]] = {}
     texts: dict[str, str] = {}
     for entry in entries:
-        # ``fallback`` is the raw angle shown when research found nothing: not a
-        # question Master read, so not one he turned down.
+        # ``fallback`` is the raw angle shown when research found nothing: it
+        # was never a real discovered item that could be discarded.
         if not isinstance(entry, Mapping) or entry.get("fallback"):
             continue
         text = " ".join(str(entry.get(field) or "").split())
@@ -74,7 +81,7 @@ def _entry_rows(mode: str, entries: Sequence[Mapping[str, Any]], context: Mappin
         issue = str(entry.get("series_issue_year") or "").strip()
         character = str(entry.get("character") or "").strip()
         refs: dict[str, Any] = {
-            "source": SOURCE, "angle": str(entry.get("angle") or "").strip(),
+            "source": source, "angle": str(entry.get("angle") or "").strip(),
             "position": position, "batch_size": len(picked), "batch_id": batch_id,
         }
         if issue:
@@ -84,7 +91,7 @@ def _entry_rows(mode: str, entries: Sequence[Mapping[str, Any]], context: Mappin
         rows.append({
             "mode": mode, "kind": "rejected", "key": "", "text": texts[identity],
             "label": issue or texts[identity], "entities": [character] if character else [],
-            "scope": "item", "reason_code": REASON_REJECTED, "refs": refs,
+            "scope": "item", "reason_code": reason_code, "refs": refs,
         })
     return rows
 
@@ -129,6 +136,7 @@ def _refresh_export(store: Ledger) -> bool:
 def record_rejected(
     mode: Any, entries: Sequence[Mapping[str, Any]], *,
     ledger: Ledger | None = None, context: Mapping[str, Any] | None = None,
+    reason_code: str = REASON_REJECTED, source: str = SOURCE,
 ) -> str:
     """Append one ``rejected`` event per distinct question in ``entries``.
 
@@ -137,7 +145,7 @@ def record_rejected(
     failed). Raises only for a mode that has no rejections (recap).
     """
     mode_value = _mode(mode)
-    rows = _entry_rows(mode_value, entries, context)
+    rows = _entry_rows(mode_value, entries, context, reason_code, source)
     if not rows:
         return "nothing_to_record"
     store = ledger or Ledger()

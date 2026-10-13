@@ -173,29 +173,59 @@ def record_rejected_questions(
     mode: str, entries: list[dict] | tuple[dict, ...], *,
     context: dict | None = None, log: Callable[[str], None] = print,
 ) -> str:
-    """Remember the batch Master just turned down with 'None of these'.
+    """Record an explicit Saved Scout discard in the legacy rejection ledger.
 
-    One ``rejected`` ledger event per question (see
+    One ``rejected`` ledger event per discarded question (see
     stages.research_scout.scout_rejections), so a reload cannot offer it again.
     Writes happen on the Windows server only; elsewhere this logs one line and
-    skips. It NEVER raises — the re-roll the user is waiting on must not depend
-    on the ledger — and returns the recorder's status, or ``failed``.
+    skips. It NEVER raises: Saved Scout already marks the item rejected even if
+    the legacy ledger is unavailable. Returns the status, or ``failed``.
     """
     from stages.research_scout import scout_rejections
 
     count = len(entries)
     try:
-        result = scout_rejections.record_rejected(mode, entries, context=context)
+        result = scout_rejections.record_rejected(
+            mode, entries, context=context,
+            reason_code=scout_rejections.REASON_DISCARDED,
+            source=scout_rejections.SOURCE_SAVED,
+        )
     except Exception as exc:
-        log(f"[bridge] re-roll: could not save the {count} turned-down question(s) to the ledger ({exc}); the re-roll goes on.")
+        log(f"[bridge] discard: could not save the {count} rejected item(s) to the ledger ({exc}).")
         return "failed"
     if result == "read_only":
-        log("[bridge] re-roll: central ledger is read-only here, so the turned-down questions are not remembered after a reload.")
+        log("[bridge] discard: central ledger is read-only here; Saved Scout still remembers the discard.")
     elif result == "recorded":
-        log(f"[bridge] re-roll: remembered the turned-down question(s) in the ledger (batch of {count}).")
+        log(f"[bridge] discard: remembered {count} rejected item(s) in the ledger.")
     elif result == "export_pending":
-        log("[bridge] re-roll: turned-down question(s) saved, but the ledger export refresh failed; retry ledger export.")
+        log("[bridge] discard: rejected item(s) saved, but the ledger export refresh failed; retry ledger export.")
     return result
+
+
+def save_scout_batch(mode: str, entries, *, context=None, root: Path | None = None):
+    from stages.research_scout.saved_scout import SavedScoutStore
+
+    return SavedScoutStore(root or RESEARCH_SESSIONS_ROOT).save_batch(
+        mode, entries, context=context,
+    )
+
+
+def list_saved_scout(*, root: Path | None = None):
+    from stages.research_scout.saved_scout import SavedScoutStore
+
+    return SavedScoutStore(root or RESEARCH_SESSIONS_ROOT).list_entries()
+
+
+def defer_scout_batch(batch_id: str, *, root: Path | None = None) -> None:
+    from stages.research_scout.saved_scout import SavedScoutStore
+
+    SavedScoutStore(root or RESEARCH_SESSIONS_ROOT).defer_batch(batch_id)
+
+
+def discard_saved_scout_entry(entry_id: str, *, root: Path | None = None):
+    from stages.research_scout.saved_scout import SavedScoutStore
+
+    return SavedScoutStore(root or RESEARCH_SESSIONS_ROOT).discard_entry(entry_id)
 
 
 def discover_questions(

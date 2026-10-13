@@ -16,9 +16,10 @@ from .ledger import STATE_PRECEDENCE
 from .models import ScoutMode
 
 _ACTIVE = {"in_progress", "produced", "published", "banned"}
-# A re-roll turns a *question* down; it says nothing about the issue behind it.
-# 'rejected' is therefore NOT in _ACTIVE (that set drives micro's hard issue gate
-# and QA's production inventory) and counts only for discover's question avoid,
+# Historical rerolls and explicit Saved Scout discards reject question text;
+# neither says anything about the issue behind it. 'rejected' is NOT in _ACTIVE
+# (which drives micro's hard issue gate and QA's production inventory). It
+# counts only for discover's question avoid,
 # through active_rejections() below. A later event of one of these kinds for the
 # same text lifts the rejection; neither touches Ledger.effective_state.
 _REJECTION_LIFTS = frozenset({"proposed", "unbanned"})

@@ -23,6 +23,7 @@ from datetime import date
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
+from stages.research_scout.saved_scout import SavedScoutStore
 from stages.research_scout.workflow import ScoutWorkflow
 
 
@@ -140,6 +141,19 @@ def test_exclude_suppresses_the_batch_the_user_has_already_seen(tmp_path):
     assert [entry["question"] for entry in batch] == [
         "Who has out-lasted Deadpool in a healing contest?"
     ]
+
+
+def test_saved_questions_are_excluded_after_reload_without_becoming_rejections(tmp_path):
+    saved = "What does a hero's sixth sense do in comics?"
+    SavedScoutStore(tmp_path).save_batch("qa", [{"question": saved, "angle": "power"}])
+    client = _ScriptedYouCom(candidates=[
+        {"question": saved}, {"question": "Why can a hero resist telepathy?"},
+    ])
+
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+
+    assert [entry["question"] for entry in batch] == ["Why can a hero resist telepathy?"]
+    assert saved in client.seen_prompt
 
 
 def test_the_same_question_twice_in_one_batch_is_only_offered_once(tmp_path):

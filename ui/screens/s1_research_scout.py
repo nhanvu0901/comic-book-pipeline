@@ -15,6 +15,7 @@ checkbox round deciding who became the project, with the radio pick discarded.
 from __future__ import annotations
 
 from datetime import date
+import json
 from typing import Callable
 
 import flet as ft
@@ -33,7 +34,9 @@ from ..bridge import (
     approve_scout_selection,
     back_scout_candidates,
     create_scout_project,
+    defer_scout_batch,
     delete_scout_session,
+    discard_saved_scout_entry,
     discover_questions,
     format_exception,
     list_scout_sessions,
@@ -43,12 +46,14 @@ from ..bridge import (
     load_scout_gates,
     load_scout_session,
     list_bank_suggestions,
+    list_saved_scout,
     record_rejected_questions,
     rerun_scout_general,
     rescout_keeping_confirmed,
     rescout_keeping_selected,
     run_blocking,
     run_scout_general,
+    save_scout_batch,
     start_scout_session,
     verify_scout_selection,
 )
@@ -560,9 +565,11 @@ def build(
     bank_shown = [False]
     # Tier B: the batch of discovered questions currently offered in the chat,
     # which one is ticked, every question offered so far (the re-roll's
-    # `exclude`, so a new batch can't repeat one the user already turned down),
+    # `exclude`, so a new batch can't repeat one the user already saw),
     # and the one-line note a re-roll that found nothing new leaves behind.
     discovered_holder: list[list[dict]] = [[]]
+    discovered_batch_id = [""]
+    discovered_save_failed = [False]
     discovered_pick = [""]
     discovered_offered: list[str] = []
     discovered_note = [""]
@@ -597,6 +604,8 @@ def build(
         bank_shown[0] = False
         bank_suggestions_holder[0] = []
         discovered_holder[0] = []
+        discovered_batch_id[0] = ""
+        discovered_save_failed[0] = False
         discovered_pick[0] = ""
         discovered_offered.clear()
         discovered_note[0] = ""
@@ -1088,7 +1097,8 @@ def build(
                 discovered_pick[0] = ""
                 _render_full()
 
-    def _show_discovered(batch) -> None:
+    def _show_discovered(result) -> None:
+        batch = result["entries"]
         entries = [entry for entry in (batch or []) if _discovered_text(entry)]
         already = {text.casefold() for text in discovered_offered}
         fresh = [
@@ -1115,62 +1125,69 @@ def build(
         discovered_note[0] = ""
         discovered_pick[0] = ""
         discovered_holder[0] = fresh
+        discovered_batch_id[0] = result["batch_id"]
+        discovered_save_failed[0] = bool(result.get("save_error"))
+        if discovered_save_failed[0]:
+            discovered_note[0] = (
+                f"Could not save this batch ({result['save_error']}). "
+                "Choose or copy a question now; reroll is paused to protect this result."
+            )
         discovered_offered.extend(_discovered_text(entry) for entry in fresh)
         _render_full()
 
     def _discover_batch(mode: str) -> None:
         """One research call, whether it is the first batch or a re-roll. The
         questions already offered go along as `exclude` so the model is not paid
-        to hand back a batch the user has just turned down."""
+        to hand back a batch the user has just deferred."""
         excluded = list(discovered_offered)
         try:
             year = _selected_year() if mode == ScoutMode.MICRO.value else None
         except ValueError as exc:
             _render_full(error=str(exc))
             return
-        _run_busy(
-            f"Finding {_DISCOVER_BATCH} questions…",
-            lambda: discover_questions(
+        previous_batch_id = discovered_batch_id[0]
+
+        def _work():
+            if previous_batch_id:
+                defer_scout_batch(previous_batch_id, root=RESEARCH_SESSIONS_ROOT)
+            batch = discover_questions(
                 mode, count=_DISCOVER_BATCH, exclude=excluded, publication_year=year,
             ) if mode == ScoutMode.MICRO.value else discover_questions(
                 mode, count=_DISCOVER_BATCH, exclude=excluded,
-            ),
+            )
+            try:
+                saved = save_scout_batch(
+                    mode, batch,
+                    context={"publication_year": year} if year is not None else None,
+                    root=RESEARCH_SESSIONS_ROOT,
+                )
+            except Exception as exc:
+                return {"entries": batch, "batch_id": "", "save_error": str(exc)}
+            return {"entries": batch, "batch_id": saved["id"] if saved else ""}
+
+        _run_busy(
+            f"Finding {_DISCOVER_BATCH} questions…",
+            _work,
             on_success=_show_discovered,
         )
-
-    def _remember_turned_down(mode: str) -> None:
-        """'None of these' turns down every question on screen except the one
-        Master ticked. Record them in the ledger so a reload (which empties
-        `discovered_offered`) cannot offer them again.
-
-        Its own task, queued before the discovery's: a slow or locked ledger can
-        neither delay nor fail the re-roll, and a read-only host (the Mac) just
-        logs one line inside record_rejected_questions."""
-        shown = [
-            dict(entry) for index, entry in enumerate(discovered_holder[0])
-            if str(index) != discovered_pick[0]
-        ]
-        if not shown:
-            return
-        try:
-            year = _selected_year() if mode == ScoutMode.MICRO.value else None
-        except ValueError:
-            year = None
-        context = {"publication_year": year} if year is not None else None
-
-        async def _record() -> None:
-            try:
-                await run_blocking(record_rejected_questions, mode, shown, context=context)
-            except Exception as exc:  # never let the ledger break the chat
-                print(f"[ui] re-roll: turned-down questions were not recorded: {exc}")
-
-        page.run_task(_record)
 
     def _reroll_click(_e) -> None:
         if busy[0]:
             return
+        if discovered_save_failed[0]:
+            _render_full()
+            return
         mode = mode_group.value or ScoutMode.QA.value
-        _remember_turned_down(mode)
+        if discovered_pick[0]:
+            try:
+                picked = discovered_holder[0][int(discovered_pick[0])]
+                if (intent_field.value or "").strip() == _discovered_intent(
+                    picked, ScoutMode(mode),
+                ).strip():
+                    intent_field.value = ""
+            except (ValueError, IndexError):
+                pass
+            discovered_pick[0] = ""
         _discover_batch(mode)
 
     def _send_click(_e) -> None:
@@ -1582,6 +1599,110 @@ def build(
             for session in sessions
         ], spacing=6)   # the whole rail scrolls; a nested unbounded scroll never engaged
 
+    def _pick_saved_scout(row: dict) -> None:
+        """Leave any open session resumable and prefill a new intent, without research."""
+        if busy[0]:
+            return
+        mode = ScoutMode(row["mode"])
+        selected_specific.clear()
+        verifying.clear()
+        override_holder[0] = False
+        series_diversity_override_holder[0] = False
+        _reset_production_form()
+        session_holder[0] = None
+        state.scout_session_id = ""
+        state.returned_scout_project = ""
+        state.returned_scout_session_id = ""
+        state.scout_mode = mode.value
+        mode_group.value = mode.value
+        _forget_suggestions()
+        intent_field.value = _discovered_intent(row["entry"], mode)
+        state.last_prompt = intent_field.value
+        year = row["context"].get("publication_year") if mode is ScoutMode.MICRO else None
+        year_field.value = str(year) if year is not None else ""
+        page.pop_dialog()
+        _render_full()
+
+    def _discard_saved_scout(row: dict) -> None:
+        if busy[0]:
+            return
+        try:
+            discarded = discard_saved_scout_entry(row["id"], root=RESEARCH_SESSIONS_ROOT)
+        except Exception as exc:
+            page.pop_dialog()
+            _render_full(error=format_exception(exc))
+            return
+        if discarded is None:
+            page.pop_dialog()
+            _open_saved_scout(None)
+            return
+
+        async def _record_rejection() -> None:
+            try:
+                await run_blocking(
+                    record_rejected_questions, discarded["mode"], [discarded["entry"]],
+                    context=discarded["context"] or None,
+                )
+            except Exception as exc:
+                print(f"[ui] Saved Scout discard is stored; ledger write failed: {exc}")
+
+        page.run_task(_record_rejection)
+        page.pop_dialog()
+        _open_saved_scout(None)
+
+    def _open_saved_scout(_event) -> None:
+        try:
+            rows = list_saved_scout(root=RESEARCH_SESSIONS_ROOT)
+        except Exception as exc:
+            _render_full(error=format_exception(exc))
+            return
+        cards: list[ft.Control] = []
+        for row in rows:
+            entry = row["entry"]
+            details = [
+                ft.Text(_discovered_text(entry), size=13, color=TEXT_PRIMARY,
+                        weight=ft.FontWeight.BOLD, selectable=True),
+                ft.Text(
+                    f"{row['mode'].upper()} · {row['status'].capitalize()} · {row['created_at'][:10]}",
+                    size=10, color=ACCENT, selectable=True,
+                ),
+            ]
+            for key, value in entry.items():
+                if key in {"question", "moment", "fallback"} or value in (None, "", []):
+                    continue
+                shown = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+                details.append(ft.Text(
+                    f"{key.replace('_', ' ').capitalize()}: {shown}",
+                    size=11, color=TEXT_MUTED, selectable=True,
+                ))
+            cards.append(ft.Container(
+                content=ft.Column([
+                    *details,
+                    ft.Row([
+                        ft.TextButton(
+                            "Use in intent", key=f"saved-pick-{row['id']}",
+                            on_click=lambda _e, r=row: _pick_saved_scout(r),
+                        ),
+                        ft.TextButton(
+                            "Discard", key=f"saved-discard-{row['id']}",
+                            on_click=lambda _e, r=row: _discard_saved_scout(r),
+                        ),
+                    ], spacing=8),
+                ], spacing=4),
+                padding=10, border=ft.border.all(1, BORDER), border_radius=6,
+            ))
+        page.show_dialog(ft.AlertDialog(
+            title=ft.Text("Saved Scout", selectable=True),
+            content=ft.Container(
+                content=ft.Column(
+                    cards or [ft.Text("No saved discoveries yet.", color=TEXT_MUTED, selectable=True)],
+                    spacing=8, scroll=ft.ScrollMode.AUTO,
+                ),
+                width=560, height=480,
+            ),
+            actions=[ft.TextButton("Close", on_click=lambda _e: page.pop_dialog())],
+        ))
+
     def _build_right_rail_controls(*, key_prefix: str = "") -> list[ft.Control]:
         session = session_holder[0]
         controls: list[ft.Control] = [
@@ -1608,7 +1729,16 @@ def build(
                 ),
             ], spacing=8))
             controls.append(ft.Container(height=12))
+        def _open_saved_from_compact(event) -> None:
+            page.pop_dialog()
+            _open_saved_scout(event)
+
+        saved_button = secondary_button(
+            "Saved Scout", _open_saved_from_compact if key_prefix else _open_saved_scout,
+        )
+        saved_button.key = f"{key_prefix}saved-scout-button"
         controls.extend([
+            saved_button,
             ft.Text("UNFINISHED SESSIONS", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD, selectable=True),
             _render_resume_list(key_prefix=key_prefix),
             ft.Container(height=12),

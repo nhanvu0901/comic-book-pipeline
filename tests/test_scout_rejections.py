@@ -1,8 +1,8 @@
-"""The scout's 'None of these — find 5 more' press is Master turning a batch down.
+"""Legacy reroll rejections and new explicit Saved Scout discards.
 
-That decision is recorded as one append-only ``rejected`` ledger event per
-question, so a later session (even after a reload, even on another machine
-reading the export) will not offer the same lane again.
+Both remain append-only ``rejected`` ledger events, so a later session (even
+after a reload, even on another machine reading the export) avoids the same
+lane. A current reroll itself does not call this module.
 
 Writes exist only on the Windows server (the ledger's writer guard); a read-only
 host must skip cleanly. Undo is a later ``proposed`` event for the same text.
@@ -275,6 +275,8 @@ def test_bridge_wrapper_records_and_logs_what_it_did(tmp_path, monkeypatch):
 
     assert result == "recorded"
     assert len(_rejected(store)) == 2
+    assert all(row["reason_code"] == "scout_saved_discarded" for row in _rejected(store))
+    assert all(row["refs"]["source"] == "saved_scout" for row in _rejected(store))
     assert any("2" in line and "remember" in line.lower() for line in lines)
 
 

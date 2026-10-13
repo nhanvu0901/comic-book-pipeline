@@ -102,18 +102,24 @@ def _banlist_questions() -> list[str]:
     return questions
 
 
-def question_avoid_lines(mode: ScoutMode | str, extra_held=()) -> list[str]:
+def question_avoid_lines(
+    mode: ScoutMode | str, extra_held=(), *, saved_root: Path | None = None,
+) -> list[str]:
     """EVERY question discover must not hand back, in priority order, uncapped.
 
-    Order: what this session already showed (newest batch first), then the ledger
-    rows newest first — production/ban questions and, in their own mode only, the
-    questions Master turned down with 'None of these' — then the banlist file.
+    Order: what this session already showed, saved discoveries, then ledger
+    production/ban and historical rejection rows, then the banlist file.
     Feeds discover's hard ``is_burned`` filter; the prompt takes
     ``relevant_question_avoid_lines``, the first 50 of this.
     """
     held = [" ".join(str(item).split()) for item in extra_held]
     held = [item for item in held if item][::-1]
     mode_value = str(getattr(mode, "value", mode))
+    saved: list[str] = []
+    if mode_value in {ScoutMode.QA.value, ScoutMode.MICRO.value}:
+        from .saved_scout import SavedScoutStore
+
+        saved = SavedScoutStore(saved_root or config.RESEARCH_SESSIONS_ROOT).avoid_texts(mode_value)
     ledger_rows: list[tuple[str, str]] = []
     if mode_value in {ScoutMode.QA.value, ScoutMode.MICRO.value}:
         try:
@@ -122,7 +128,7 @@ def question_avoid_lines(mode: ScoutMode | str, extra_held=()) -> list[str]:
             pass
     banned = _banlist_questions() if mode_value == ScoutMode.QA.value else []
     lines: dict[str, str] = {}
-    for text in [*held, *(text for _stamp, text in ledger_rows), *banned]:
+    for text in [*held, *saved, *(text for _stamp, text in ledger_rows), *banned]:
         text = " ".join(text.split())
         lines.setdefault(ledger_inventory.question_identity(text), text)
     return list(lines.values())

@@ -1,13 +1,14 @@
 """Discover's question avoid list: what it holds, in what order, and its two sizes.
 
-* ``question_avoid_lines`` is the FULL list (every active ledger question, every
-  active rejection, every banlist row, plus what the session already showed). It
+* ``question_avoid_lines`` is the FULL list (saved discoveries, active ledger
+  questions and rejections, banlist rows, and what the session showed). It
   feeds the hard ``is_burned`` filter and has no cap — the way micro's code gate
   uses the uncapped ``inventory_issue_keys``.
 * ``relevant_question_avoid_lines`` is that list cut to the prompt's 50, session
   first, then the newest ledger rows.
 
-A ``rejected`` row counts here and nowhere else.
+Saved and rejected question text both count here, while only explicit Discard
+or historical rejection writes a ``rejected`` ledger row.
 """
 import pytest
 

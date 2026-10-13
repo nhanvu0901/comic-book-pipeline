@@ -854,7 +854,9 @@ class ScoutWorkflow:
         # must not come back; only the prompt's AVOID section is cut to its size
         # budget (session-shown first, then the newest ledger rows) — the same
         # split micro makes between inventory_issue_keys and the prompt labels.
-        question_avoid = avoid_list.question_avoid_lines(mode, extra_held=excluded)
+        question_avoid = avoid_list.question_avoid_lines(
+            mode, extra_held=excluded, saved_root=self.store.root,
+        )
         prompt = bundle.render(
             "discover",
             angles="\n".join(f"- {a}" for a in angles),
