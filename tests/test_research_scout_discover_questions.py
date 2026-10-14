@@ -25,6 +25,7 @@ from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.saved_scout import SavedScoutStore
 from stages.research_scout.workflow import ScoutWorkflow
+from stages.question_archetype import question_archetype
 
 
 class _ScriptedYouCom:
@@ -414,6 +415,22 @@ def test_qa_hook_rejects_copied_question_even_with_cosmetic_differences(tmp_path
     row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
     assert row["viewer_hook"] == ""
     assert row["question"] == question
+
+
+def test_what_happens_when_hook_keeps_direct_explanation(tmp_path):
+    question = "How does the Speed Force work, and what are its limits?"
+    hook = "What happens when the Speed Force changes what the Flash can do?"
+    client = _ScriptedYouCom(candidates=[{
+        "question": question,
+        "viewer_hook": hook,
+        "subject": "The Flash",
+        "sample_answer_items": ["The Speed Force gives the Flash abilities beyond running."],
+        "evidence_urls": ["https://example.org/speed-force"],
+    }])
+    row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
+    assert row["proposed_format"] == "direct"
+    assert row["viewer_hook"] == hook
+    assert question_archetype("What are some powers the Flash has used?") == "list"
 
 
 def test_list_hook_keeps_list_question_and_format(tmp_path):
