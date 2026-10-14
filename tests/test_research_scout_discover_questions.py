@@ -342,13 +342,15 @@ def test_qa_policy_favors_broad_direct_questions_and_keeps_list_lane():
 def test_qa_discover_prompt_asks_for_grounded_hook_without_replacing_research_question(tmp_path):
     client = _ScriptedYouCom(candidates=[{"question": "What is Spider-Sense?"}])
     _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
-    prompt = client.seen_prompt
+    prompt = " ".join(client.seen_prompt.split())
     assert "viewer_hook" in prompt
     assert "same answer scope" in prompt
     assert "source" in prompt.lower()
     assert "research question" in prompt.lower()
     assert "four direct" in prompt.lower()
     assert "one list" in prompt.lower()
+    assert "empty string" in prompt.lower()
+    assert "do not copy" in prompt.lower()
 
 
 def test_qa_hook_is_normalized_and_format_still_uses_research_question(tmp_path):
@@ -367,7 +369,7 @@ def test_qa_hook_is_normalized_and_format_still_uses_research_question(tmp_path)
     assert row["proposed_format"] == "direct"
 
 
-def test_qa_hook_falls_back_on_scope_drift_speculation_or_movie_framing(tmp_path):
+def test_qa_hook_is_empty_on_scope_drift_speculation_or_movie_framing(tmp_path):
     question = "What does the Beacon Veil do in the comics?"
     hooks = [
         "How does Doctor Fate's helmet work?",
@@ -384,10 +386,10 @@ def test_qa_hook_falls_back_on_scope_drift_speculation_or_movie_framing(tmp_path
             "evidence_urls": ["https://example.org/beacon-veil"],
         }])
         row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
-        assert row["viewer_hook"] == question
+        assert row["viewer_hook"] == ""
 
 
-def test_qa_hook_without_a_source_url_falls_back_to_research_question(tmp_path):
+def test_qa_hook_without_a_source_url_is_empty(tmp_path):
     question = "What does the Beacon Veil do in the comics?"
     client = _ScriptedYouCom(candidates=[{
         "question": question,
@@ -397,7 +399,21 @@ def test_qa_hook_without_a_source_url_falls_back_to_research_question(tmp_path):
         "evidence_urls": [],
     }])
     row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
-    assert row["viewer_hook"] == question
+    assert row["viewer_hook"] == ""
+
+
+def test_qa_hook_rejects_copied_question_even_with_cosmetic_differences(tmp_path):
+    question = "How does Scarlet Witch's chaos magic work?"
+    client = _ScriptedYouCom(candidates=[{
+        "question": question,
+        "viewer_hook": "  HOW does Scarlet Witch's chaos magic work ?  ",
+        "subject": "Scarlet Witch",
+        "sample_answer_items": ["Chaos magic can change probability."],
+        "evidence_urls": ["https://example.org/chaos-magic"],
+    }])
+    row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
+    assert row["viewer_hook"] == ""
+    assert row["question"] == question
 
 
 def test_list_hook_keeps_list_question_and_format(tmp_path):
@@ -473,7 +489,7 @@ def test_full_qa_batch_needs_no_reddit_leads(tmp_path):
     assert "single continuity difference" in client.seen_prompt
     assert "older self-contained Elseworld" in client.seen_prompt
     assert "catchall list of surprising things" in client.seen_prompt
-    assert "distinct, shorter hook" in " ".join(client.seen_prompt.split())
+    assert "source-documented curiosity" in " ".join(client.seen_prompt.split())
 
 
 def test_duplicate_subject_is_skipped_without_losing_other_lanes(tmp_path):

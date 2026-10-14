@@ -64,30 +64,33 @@ def _hook_tokens(value: str) -> set[str]:
 
 
 def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
-    """Keep only a conservative, question-shaped hook; the research intent stays factual.
+    """Keep only a distinct, conservative hook; empty means no safe hook.
 
     Source URLs alone cannot verify a new claim. The related answer notes returned
-    in the same call can support hook wording, but a doubtful hook falls back to
-    the research question for the human to edit.
+    in the same call can support hook wording, but a doubtful hook stays empty.
     """
     hook = re.sub(r"\s+", " ", str(candidate.get("viewer_hook") or "")).strip()
     if not hook or len(hook) > 180 or not hook.endswith("?"):
-        return question
+        return ""
+    if re.findall(r"[a-z0-9]+", hook.casefold()) == re.findall(
+        r"[a-z0-9]+", question.casefold()
+    ):
+        return ""
     urls = candidate.get("evidence_urls")
     if not isinstance(urls, list) or not any(
         isinstance(url, str) and re.match(r"^https?://[^/\s]+", url)
         for url in urls
     ):
-        return question
+        return ""
     if not _HOOK_QUESTION_START.match(hook) or hook.casefold().startswith("what if "):
-        return question
+        return ""
     if _HOOK_ADAPTATION.search(hook) or question_archetype(hook) != question_archetype(question):
-        return question
+        return ""
 
     question_terms = _hook_tokens(question) - _HOOK_GENERIC_WORDS
     hook_terms = _hook_tokens(hook) - _HOOK_GENERIC_WORDS
     if question_terms and not question_terms.intersection(hook_terms):
-        return question
+        return ""
 
     answer_items = candidate.get("sample_answer_items")
     if not isinstance(answer_items, list):
@@ -100,11 +103,11 @@ def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
     ])
     supported_terms = _hook_tokens(support)
     if (hook_terms & _HOOK_STAKES_WORDS) - supported_terms:
-        return question
+        return ""
     # A newly named person/world is an especially easy way to change the topic.
     for name in re.findall(r"\b[A-Z][a-z]+(?:[- ][A-Z][a-z]+)*\b", hook):
         if _hook_tokens(name) - _HOOK_GENERIC_WORDS - supported_terms:
-            return question
+            return ""
     return hook
 
 
@@ -920,7 +923,7 @@ class ScoutWorkflow:
         fallback_item: dict[str, Any] = {field: angle, "angle": angle, "fallback": True}
         if mode is ScoutMode.QA:
             fallback_item["proposed_format"] = str(question_archetype(angle))
-            fallback_item["viewer_hook"] = angle
+            fallback_item["viewer_hook"] = ""
         fallback = [fallback_item]
 
         excluded = [str(item).strip() for item in exclude if str(item).strip()]

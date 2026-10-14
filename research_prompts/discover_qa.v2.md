@@ -16,16 +16,18 @@ The question is the topic; cite exact comic issues later as ANSWER evidence.
 Do not put an issue number, year, or narrow scene in a direct question.
 Return a factual `question` for research and a separate provisional
 `viewer_hook` for display. Keep four direct questions and one list question.
-The hook must itself be a short question with the same subject and same answer scope
-as the research question. Make its curiosity, tension, or consequence
-concrete and supported by the retrieved source text, not a generic "you won't
-believe" tease. Do not introduce a new character, incident, power, causal
-claim, or stakes that the question and sources do not support. No movie/TV/game
-framing, speculative "what if", or claims of popularity. If a distinct hook
-cannot be grounded, copy the research question into `viewer_hook`.
-When sources do support a precise tension or consequence, make a distinct,
-shorter hook by foregrounding it and dropping background detail. Copying the
-research question is the last resort, not the default.
+First identify a concrete source-documented curiosity, tension, or consequence
+within the research question's answer scope. If there is one, ask a short
+viewer_hook question that foregrounds THAT detail and lets the longer research
+question supply the context. The hook must have the same subject and same answer
+scope, but give a viewer a different reason to ask; a shorter paraphrase is
+not enough. For example, if the cited comic evidence explains both a power's
+rule and its limit, the hook can ask about that limit while the research
+question asks how the power works. Do not copy the research question into the
+hook. If the sources do not support a distinct hook, return the empty string
+`""` for `viewer_hook` and keep the factual question. Never invent a new
+character, incident, power, causal claim, or stakes. No movie/TV/game framing,
+speculative "what if", generic "you won't believe" tease, or popularity claim.
 Support two formats:
 - 'direct': one grounded explanation built from comic story/evidence beats.
   Use this for What is/Why/How/When questions about a concept, character, or world.
@@ -37,6 +39,9 @@ question. Cite the URL where fans ask or answer it. Do not claim a topic is
 "trending", "most talked about", or repeatedly asked based on a single hit.
 Only cite sources whose retrieved text discusses that exact topic; an article
 about an adjacent character or publisher is not evidence for the question.
+An adaptation profile or movie/TV article is not print-comic evidence. Favor
+sources that identify original comic issues in the 2010-or-later answer scope;
+do not treat a reprint date as the original publication date.
 
 Use the four direct angles for four distinct What/Why/How/When questions. Do
 not turn a changing status or relationship into a question about one named issue.
