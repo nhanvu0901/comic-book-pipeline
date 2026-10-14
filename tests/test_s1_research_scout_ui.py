@@ -887,6 +887,49 @@ def test_discover_saves_full_batch_and_saved_view_restores_pick_without_research
     assert not reloaded_page.tasks
 
 
+def test_qa_hook_leads_discover_and_saved_cards_but_pick_uses_research_question(
+    tmp_path, monkeypatch,
+):
+    question = "What does a hero's sixth sense do?"
+    hook = "How can the hero sense danger before it arrives?"
+    entry = {"question": question, "viewer_hook": hook, "angle": "A familiar power",
+             "proposed_format": "direct", "evidence_urls": ["https://example.org/story"]}
+    page, controls, calls = _discover_env(tmp_path, monkeypatch, batches=[[entry]])
+    _discover_twice(page, controls)
+
+    bubble = _by_key(controls, "discovered-questions")
+    labels = [n.value for n in _walk(bubble) if isinstance(n, ft.Text)]
+    assert labels.index(hook) < labels.index(question)
+    _by_key(controls, "discovered-questions").on_change(_FakeEvent("0"))
+    assert _intent_field(controls).value == question
+
+    row = SavedScoutStore(tmp_path / "research_sessions").list_entries("qa")[0]
+    assert row["entry"]["viewer_hook"] == hook
+    reloaded_page, reloaded = _build(tmp_path)
+    _by_key(reloaded, "saved-scout-button").on_click(object())
+    dialog = reloaded_page.dialogs[-1]
+    saved_labels = [n.value for n in _walk(dialog) if isinstance(n, ft.Text)]
+    assert saved_labels.index(hook) < saved_labels.index(question)
+    _by_key(dialog, f"saved-pick-{row['id']}").on_click(object())
+    assert _intent_field(reloaded).value == question
+    assert len(calls) == 1 and reloaded_page.tasks == []
+
+
+def test_legacy_saved_qa_without_hook_still_shows_and_prefills_question(tmp_path):
+    question = "Why does a hero keep that rule?"
+    root = tmp_path / "research_sessions"
+    SavedScoutStore(root).save_batch("qa", [{"question": question, "angle": "A rule"}])
+    page, controls = _build(tmp_path)
+    row = SavedScoutStore(root).list_entries("qa")[0]
+
+    _by_key(controls, "saved-scout-button").on_click(object())
+    dialog = page.dialogs[-1]
+    assert question in _text_content(dialog)
+    _by_key(dialog, f"saved-pick-{row['id']}").on_click(object())
+    assert _intent_field(controls).value == question
+    assert page.tasks == []
+
+
 def test_reroll_defers_instead_of_rejecting_and_saves_the_new_batch(tmp_path, monkeypatch):
     page, controls, _calls = _discover_env(
         tmp_path, monkeypatch,

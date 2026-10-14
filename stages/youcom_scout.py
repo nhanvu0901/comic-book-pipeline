@@ -240,6 +240,7 @@ DISCOVER_ANGLES = json.loads(
 
 _DISCOVER_PROPS = {
     "question": {"type": "string"}, "subject": {"type": "string"},
+    "viewer_hook": {"type": "string"},
     "proposed_format": {"type": "string"},
     "why_fans_ask_it": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
@@ -285,6 +286,10 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             "Keep one list question about times X did Y or abilities of X. "
             "Do not put an issue number into a direct question: issues are answer evidence. "
             "Use four broad direct angles and one distinct abilities/times list angle. "
+            "Return a factual research question plus a short provisional viewer_hook "
+            "question with the same subject and answer scope. Ground its specific "
+            "curiosity, tension, or consequence in the cited comic sources; when no "
+            "distinct hook is supported, copy the research question. "
             "Print comics only, not MCU or adaptation lore. Do not infer popularity "
             "from one source hit. "
             "Real fan debates only — never invent a question because it sounds viral. Cite the URL where "
@@ -309,6 +314,7 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     lines = ["# DISCOVER — candidates for Master\n"]
     for c in kept:
         lines += [f"## {c.get('question')}",
+                  f"- viewer hook (draft): {c.get('viewer_hook', '')}",
                   f"- subject: {c.get('subject')} | angle: {c.get('_angle')} | format: {c.get('proposed_format', 'list')}",
                   f"- why fans ask: {c.get('why_fans_ask_it','')[:300]}",
                   f"- sample items: {'; '.join(c.get('sample_answer_items') or [])[:400]}",

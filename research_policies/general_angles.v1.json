@@ -1,10 +1,10 @@
 {
   "qa": [
-    "direct: What is a signature power or defining concept tied to a widely recognized hero, and how does it work?",
-    "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story?",
-    "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, and how does it work?",
-    "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it?",
-    "list: times a widely recognized hero did something surprising, or the distinct abilities of that hero, with separate comic issues as answer evidence"
+    "direct: What is a signature power or defining concept tied to a widely recognized hero, how does it work, and what concrete curiosity about its limits or effects do sources support?",
+    "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story, with a source-supported consequence beyond one incident?",
+    "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, how does it work, and what surprising tension follows from its rules?",
+    "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it; what source-supported tension makes that recurring choice interesting?",
+    "list: times a widely recognized hero performed one clearly named kind of action, or the distinct abilities of that hero, with separate comic issues as answer evidence and a concrete source-supported curiosity across the examples"
   ],
   "micro": [
     "a small act by a famous character with a surprising direct consequence",

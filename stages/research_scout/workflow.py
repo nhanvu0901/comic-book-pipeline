@@ -35,6 +35,79 @@ from .youcom import RawCall, YouComClient
 from stages.question_archetype import is_narrow_direct_question, question_archetype
 
 
+_HOOK_QUESTION_START = re.compile(
+    r"^(?:what|why|how|when|who|which|where|can|could|does|do|did|is|are|was|were|has|have)\b",
+    re.IGNORECASE,
+)
+_HOOK_ADAPTATION = re.compile(
+    r"\b(?:mcu|movie|film|cinematic|television|tv|live.action|video game)\b",
+    re.IGNORECASE,
+)
+_HOOK_GENERIC_WORDS = {
+    "what", "why", "how", "when", "who", "which", "where", "can", "could",
+    "does", "do", "did", "is", "are", "was", "were", "has", "have", "the",
+    "and", "for", "from", "with", "into", "about", "some", "that", "this",
+    "its", "his", "her", "their", "comic", "comics", "story", "stories",
+    "modern", "work", "works", "really", "actually", "exactly",
+}
+_HOOK_STAKES_WORDS = {
+    "kill", "kills", "killed", "death", "die", "dies", "died", "destroy",
+    "destroys", "destroyed", "save", "saves", "saved", "rescue", "rescues",
+    "rescued", "betray", "betrays", "betrayed", "secret", "secrets", "hidden",
+    "impossible", "unbeatable", "always", "never", "erase", "erases",
+    "erased", "doom", "doomed", "problem", "problems",
+}
+
+
+def _hook_tokens(value: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
+    """Keep only a conservative, question-shaped hook; the research intent stays factual.
+
+    Source URLs alone cannot verify a new claim. The related answer notes returned
+    in the same call can support hook wording, but a doubtful hook falls back to
+    the research question for the human to edit.
+    """
+    hook = re.sub(r"\s+", " ", str(candidate.get("viewer_hook") or "")).strip()
+    if not hook or len(hook) > 180 or not hook.endswith("?"):
+        return question
+    urls = candidate.get("evidence_urls")
+    if not isinstance(urls, list) or not any(
+        isinstance(url, str) and re.match(r"^https?://[^/\s]+", url)
+        for url in urls
+    ):
+        return question
+    if not _HOOK_QUESTION_START.match(hook) or hook.casefold().startswith("what if "):
+        return question
+    if _HOOK_ADAPTATION.search(hook) or question_archetype(hook) != question_archetype(question):
+        return question
+
+    question_terms = _hook_tokens(question) - _HOOK_GENERIC_WORDS
+    hook_terms = _hook_tokens(hook) - _HOOK_GENERIC_WORDS
+    if question_terms and not question_terms.intersection(hook_terms):
+        return question
+
+    answer_items = candidate.get("sample_answer_items")
+    if not isinstance(answer_items, list):
+        answer_items = []
+    support = " ".join([
+        question, str(candidate.get("subject") or ""),
+        str(candidate.get("why_fans_ask_it") or ""),
+        str(candidate.get("source_evidence") or ""),
+        *(str(item) for item in answer_items),
+    ])
+    supported_terms = _hook_tokens(support)
+    if (hook_terms & _HOOK_STAKES_WORDS) - supported_terms:
+        return question
+    # A newly named person/world is an especially easy way to change the topic.
+    for name in re.findall(r"\b[A-Z][a-z]+(?:[- ][A-Z][a-z]+)*\b", hook):
+        if _hook_tokens(name) - _HOOK_GENERIC_WORDS - supported_terms:
+            return question
+    return hook
+
+
 def _intent_with_feedback(session: ResearchSession) -> str:
     """Fold every non-blank feedback note into the intent sent to the next prompt."""
     notes = [f.text for f in session.feedback_log if f.text.strip()]
@@ -847,6 +920,7 @@ class ScoutWorkflow:
         fallback_item: dict[str, Any] = {field: angle, "angle": angle, "fallback": True}
         if mode is ScoutMode.QA:
             fallback_item["proposed_format"] = str(question_archetype(angle))
+            fallback_item["viewer_hook"] = angle
         fallback = [fallback_item]
 
         excluded = [str(item).strip() for item in exclude if str(item).strip()]
@@ -917,6 +991,7 @@ class ScoutWorkflow:
             candidate_entry = {**candidate, field: text, "angle": labelled}
             if mode is ScoutMode.QA:
                 candidate_entry["proposed_format"] = str(question_archetype(text))
+                candidate_entry["viewer_hook"] = _normalize_viewer_hook(text, candidate)
                 if subject:
                     seen_subjects.add(subject)
             picked.append(candidate_entry)

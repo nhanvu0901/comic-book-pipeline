@@ -6,6 +6,7 @@ from stages.research_scout.saved_scout import SavedScoutStore
 def test_batch_survives_reload_with_full_payload_mode_and_context(tmp_path):
     first = {
         "question": "What does a hero's sixth sense do?",
+        "viewer_hook": "How does the hero know danger is coming?",
         "proposed_format": "direct",
         "angle": "Explain a familiar power",
         "source_evidence": "Several published stories explain its limits.",

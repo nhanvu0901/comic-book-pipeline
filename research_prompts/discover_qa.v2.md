@@ -14,6 +14,18 @@ number or event. Replace a niche team, supporting identity, or obscure power
 with a clearer familiar anchor when both are supported by real sources.
 The question is the topic; cite exact comic issues later as ANSWER evidence.
 Do not put an issue number, year, or narrow scene in a direct question.
+Return a factual `question` for research and a separate provisional
+`viewer_hook` for display. Keep four direct questions and one list question.
+The hook must itself be a short question with the same subject and same answer scope
+as the research question. Make its curiosity, tension, or consequence
+concrete and supported by the retrieved source text, not a generic "you won't
+believe" tease. Do not introduce a new character, incident, power, causal
+claim, or stakes that the question and sources do not support. No movie/TV/game
+framing, speculative "what if", or claims of popularity. If a distinct hook
+cannot be grounded, copy the research question into `viewer_hook`.
+When sources do support a precise tension or consequence, make a distinct,
+shorter hook by foregrounding it and dropping background detail. Copying the
+research question is the last resort, not the default.
 Support two formats:
 - 'direct': one grounded explanation built from comic story/evidence beats.
   Use this for What is/Why/How/When questions about a concept, character, or world.
@@ -28,12 +40,20 @@ about an adjacent character or publisher is not evidence for the question.
 
 Use the four direct angles for four distinct What/Why/How/When questions. Do
 not turn a changing status or relationship into a question about one named issue.
+Give each candidate a different recognizable hero or team anchor. Do not use
+the same hero twice even when the power, belief, or world differs.
 Ask about in-universe meaning, rules, and character motivation rather than the
 editorial history of a retcon or the removal of an old continuity detail.
 Prefer enduring fan questions that make sense across stories; skip temporary
 costume changes, single crossover power losses, and narrow continuity repairs.
+For the world angle, explain the world's broad rules or premise rather than a
+single continuity difference or one changed supporting character.
+Use original print stories published in 2010 or later for this default scope;
+an older self-contained Elseworld or its newer reprint is not a modern world.
 For the list lane, prefer examples supported by issues published in 2010 or
 later unless the question explicitly asks about another period.
+The list must name a coherent action or ability family. Avoid a catchall list of surprising things
+that mixes unrelated powers, one-off choices, and events.
 
 Work exactly ONE question per ANGLE below, in the order the angles are listed,
 and return the candidates in that same order. Copy the angle you worked

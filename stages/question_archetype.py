@@ -24,7 +24,7 @@ QA_FORMAT_LIST = "list"
 QA_FORMAT_DIRECT = "direct"
 
 _DIRECT_INTERROGATIVE_LEAD = (
-    r"why|how|when|what\s+made|"
+    r"why|how|when|what\s+(?:made|makes)|"
     r"what\s+(?:actually\s+|really\s+|exactly\s+)?(?:is|was|are|were|does)(?!\s+\d+\b)|"
     r"what\s+happened\s+(?:to|when|in)\b"
 )

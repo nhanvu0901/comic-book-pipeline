@@ -853,13 +853,24 @@ def build(
             angle = str(entry.get("angle") or "").strip()
             fmt = str(entry.get("proposed_format") or entry.get("format") or "").strip()
             text_desc = _discovered_text(entry)
+            hook = str(entry.get("viewer_hook") or "").strip() if entry.get("question") else ""
             # Discovery angles are full prompts, often longer than the question.
             # Giving one an intrinsic width beside the question can leave the
             # question only a character wide inside the chat column.
-            entry_details: list[ft.Control] = [
-                ft.Text(text_desc, size=13, weight=ft.FontWeight.BOLD,
-                        color=TEXT_PRIMARY, selectable=True),
-            ]
+            entry_details: list[ft.Control] = []
+            if hook and hook != text_desc:
+                entry_details.extend([
+                    ft.Text("VIEWER HOOK · DRAFT", size=10, color=ACCENT, selectable=True),
+                    ft.Text(hook, size=14, weight=ft.FontWeight.BOLD,
+                            color=TEXT_PRIMARY, selectable=True),
+                    ft.Text("Research question", size=10, color=TEXT_MUTED, selectable=True),
+                    ft.Text(text_desc, size=12, color=TEXT_PRIMARY, selectable=True),
+                ])
+            else:
+                entry_details.append(ft.Text(
+                    text_desc, size=13, weight=ft.FontWeight.BOLD,
+                    color=TEXT_PRIMARY, selectable=True,
+                ))
             if fmt:
                 entry_details.append(ft.Text(f"[{fmt.capitalize()}]", size=11,
                                              weight=ft.FontWeight.BOLD, color=ACCENT,
@@ -1659,16 +1670,26 @@ def build(
         cards: list[ft.Control] = []
         for row in rows:
             entry = row["entry"]
+            question = _discovered_text(entry)
+            hook = str(entry.get("viewer_hook") or "").strip() if row["mode"] == "qa" else ""
             details = [
-                ft.Text(_discovered_text(entry), size=13, color=TEXT_PRIMARY,
-                        weight=ft.FontWeight.BOLD, selectable=True),
+                *([
+                    ft.Text("VIEWER HOOK · DRAFT", size=10, color=ACCENT, selectable=True),
+                    ft.Text(hook, size=14, color=TEXT_PRIMARY,
+                            weight=ft.FontWeight.BOLD, selectable=True),
+                    ft.Text("Research question", size=10, color=TEXT_MUTED, selectable=True),
+                ] if hook and hook != question else []),
+                ft.Text(question, size=12 if hook and hook != question else 13,
+                        color=TEXT_PRIMARY,
+                        weight=ft.FontWeight.NORMAL if hook and hook != question else ft.FontWeight.BOLD,
+                        selectable=True),
                 ft.Text(
                     f"{row['mode'].upper()} · {row['status'].capitalize()} · {row['created_at'][:10]}",
                     size=10, color=ACCENT, selectable=True,
                 ),
             ]
             for key, value in entry.items():
-                if key in {"question", "moment", "fallback"} or value in (None, "", []):
+                if key in {"question", "moment", "viewer_hook", "fallback"} or value in (None, "", []):
                     continue
                 shown = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
                 details.append(ft.Text(

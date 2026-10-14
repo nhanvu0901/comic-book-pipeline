@@ -231,6 +231,8 @@ def test_the_response_schema_asks_the_model_to_label_each_candidate_with_its_ang
     assert "angle" in item["properties"]
     # You.com validates OpenAI-strict style: every property must also be required.
     assert "angle" in item["required"]
+    assert item["properties"]["viewer_hook"] == {"type": "string"}
+    assert "viewer_hook" in item["required"]
 
 
 def test_micro_mode_uses_the_micro_discover_prompt_qa_uses_the_qa_one(tmp_path):
@@ -334,6 +336,91 @@ def test_qa_policy_favors_broad_direct_questions_and_keeps_list_lane():
     assert any("list" in a and "abilities" in a for a in angles)
     assert all("widely recognized" in a for a in angles)
     assert "recurring choice" in angles[3]
+    assert all("curiosity" in a or "consequence" in a or "tension" in a for a in angles)
+
+
+def test_qa_discover_prompt_asks_for_grounded_hook_without_replacing_research_question(tmp_path):
+    client = _ScriptedYouCom(candidates=[{"question": "What is Spider-Sense?"}])
+    _workflow(tmp_path, client).discover_questions(ScoutMode.QA)
+    prompt = client.seen_prompt
+    assert "viewer_hook" in prompt
+    assert "same answer scope" in prompt
+    assert "source" in prompt.lower()
+    assert "research question" in prompt.lower()
+    assert "four direct" in prompt.lower()
+    assert "one list" in prompt.lower()
+
+
+def test_qa_hook_is_normalized_and_format_still_uses_research_question(tmp_path):
+    question = "What does the Beacon Veil do in the comics?"
+    hook = "  How does the Beacon Veil warn its owner of danger?  "
+    client = _ScriptedYouCom(candidates=[{
+        "question": question, "viewer_hook": hook, "subject": "Beacon Veil",
+        "why_fans_ask_it": "Its owner knows when danger is near.",
+        "sample_answer_items": ["The Beacon Veil warns its owner about danger."],
+        "evidence_urls": ["https://example.org/beacon-veil"],
+        "proposed_format": "list",
+    }])
+    row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
+    assert row["viewer_hook"] == hook.strip()
+    assert row["question"] == question
+    assert row["proposed_format"] == "direct"
+
+
+def test_qa_hook_falls_back_on_scope_drift_speculation_or_movie_framing(tmp_path):
+    question = "What does the Beacon Veil do in the comics?"
+    hooks = [
+        "How does Doctor Fate's helmet work?",
+        "What if the Beacon Veil killed every villain?",
+        "How does the Beacon Veil work in the MCU?",
+        "The Beacon Veil secretly destroys every villain.",
+        "Why is the Beacon Veil the problem?",
+        "",
+    ]
+    for hook in hooks:
+        client = _ScriptedYouCom(candidates=[{
+            "question": question, "viewer_hook": hook, "subject": "Beacon Veil",
+            "why_fans_ask_it": "How this danger warning works.",
+            "evidence_urls": ["https://example.org/beacon-veil"],
+        }])
+        row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
+        assert row["viewer_hook"] == question
+
+
+def test_qa_hook_without_a_source_url_falls_back_to_research_question(tmp_path):
+    question = "What does the Beacon Veil do in the comics?"
+    client = _ScriptedYouCom(candidates=[{
+        "question": question,
+        "viewer_hook": "How does the Beacon Veil warn its owner of danger?",
+        "subject": "Beacon Veil",
+        "why_fans_ask_it": "The Beacon Veil warns of danger.",
+        "evidence_urls": [],
+    }])
+    row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
+    assert row["viewer_hook"] == question
+
+
+def test_list_hook_keeps_list_question_and_format(tmp_path):
+    question = "What are some surprising abilities of Superman?"
+    client = _ScriptedYouCom(candidates=[{
+        "question": question, "viewer_hook": "What can Superman do beyond flying and strength?",
+        "subject": "Superman", "why_fans_ask_it": "Superman's other abilities beyond flying and strength.",
+        "evidence_urls": ["https://example.org/superman"],
+    }])
+    row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
+    assert row["viewer_hook"] == "What can Superman do beyond flying and strength?"
+    assert row["proposed_format"] == "list"
+
+
+def test_what_makes_a_world_different_is_direct_even_with_two_clauses(tmp_path):
+    question = "What makes an alternate comic world different, and why do its rules matter?"
+    client = _ScriptedYouCom(candidates=[{
+        "question": question, "subject": "Alternate comic world",
+        "angle": _qa_angles()[2], "proposed_format": "list",
+    }])
+    row = _workflow(tmp_path, client).discover_questions(ScoutMode.QA)[0]
+    assert row["question"] == question
+    assert row["proposed_format"] == "direct"
 
 
 def test_direct_questions_stay_broad_and_format_is_inferred_from_wording(tmp_path):
@@ -382,6 +469,11 @@ def test_full_qa_batch_needs_no_reddit_leads(tmp_path):
     assert "household-recognizable hero" in client.seen_prompt
     assert "editorial history of a retcon" in client.seen_prompt
     assert "skip temporary" in client.seen_prompt
+    assert "different recognizable hero or team" in client.seen_prompt
+    assert "single continuity difference" in client.seen_prompt
+    assert "older self-contained Elseworld" in client.seen_prompt
+    assert "catchall list of surprising things" in client.seen_prompt
+    assert "distinct, shorter hook" in " ".join(client.seen_prompt.split())
 
 
 def test_duplicate_subject_is_skipped_without_losing_other_lanes(tmp_path):
