@@ -1,0 +1,210 @@
+{
+  "calls": 1,
+  "api_error": null,
+  "raw": [
+    {
+      "id": "candidate-1",
+      "question": "What does Captain America’s shield really represent in modern comics, and how do its materials and symbolism shape what it can do?",
+      "viewer_hook": "What does Captain America’s shield really represent, and why does it hit so hard?",
+      "subject": "Captain America’s shield",
+      "angle": "direct: What is a signature power or defining concept tied to a widely recognized hero, how does it work, and what concrete curiosity about its limits or effects do sources support?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Fans ask because the shield is both an iconic symbol and a deceptively complicated weapon, with modern comics adding new origin and meaning layers that change how readers understand it.",
+      "sample_answer_items": [
+        "The shield is a symbol as much as a weapon.",
+        "It is commonly described as absorbing kinetic energy because of its vibranium component.",
+        "Recent comics tie its design to hidden origins and layered meaning, not just patriotism.",
+        "A natural fan curiosity is how a shield that represents ideals can also function as one of Marvel’s most durable combat tools."
+      ],
+      "evidence_urls": [
+        "https://www.cbr.com/captain-america-shield-trivia/",
+        "https://www.cbr.com/captain-america-shield-true-secret-marvel/",
+        "https://www.cbr.com/captain-americas-shield-16-crazy-things-you-never-knew/"
+      ]
+    },
+    {
+      "id": "candidate-2",
+      "question": "Why does Captain America insist that the shield and his role are about serving people rather than ruling them, and what does that belief change about who can carry the mantle?",
+      "viewer_hook": "Why does Captain America treat the shield as something bigger than himself?",
+      "subject": "Captain America’s belief about the shield and mantle",
+      "angle": "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story, with a source-supported consequence beyond one incident?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Fans ask because Captain America’s identity is built around a belief, not just a costume, and modern comics keep testing what that belief means when the shield changes hands.",
+      "sample_answer_items": [
+        "Steve defines Captain America as serving the American people, not leading them.",
+        "The shield becomes a symbol other people can inherit, not just Steve’s personal weapon.",
+        "That idea supports the broader legacy of Sam Wilson and other successors.",
+        "The tension comes from the fact that the symbol means different things depending on who holds it."
+      ],
+      "evidence_urls": [
+        "https://www.cbr.com/captain-america-explains-what-he-represents/",
+        "https://www.cbr.com/captain-america-shield-true-secret-marvel/",
+        "https://www.cbr.com/falcon-winter-soldier-captain-america-shield-true-importance-explained/"
+      ]
+    },
+    {
+      "id": "candidate-3",
+      "question": "What makes Marvel’s new Ultimate Spider-Man world different from the main Marvel Universe, and why does Uncle Ben being alive create such a strange new tension?",
+      "viewer_hook": "What makes the new Ultimate Spider-Man world so different, and why is Uncle Ben the problem?",
+      "subject": "Marvel’s new Ultimate Spider-Man / Ultimate Universe",
+      "angle": "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, how does it work, and what surprising tension follows from its rules?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Fans ask because Ultimate Spider-Man is a clean entry point into an alternate Marvel world, but one major rule change immediately raises big questions about how Spider-Man stories work there.",
+      "sample_answer_items": [
+        "The Ultimate Universe is a separate Marvel continuity built to reimagine familiar characters.",
+        "In the new version, Peter Parker’s origin is reshaped rather than simply repeated.",
+        "Uncle Ben being alive breaks a long-running Spider-Man expectation.",
+        "That rule change creates tension because it alters the emotional foundation readers usually associate with Spider-Man stories."
+      ],
+      "evidence_urls": [
+        "https://screenrant.com/new-ultimate-spider-man-identity-reboot/",
+        "https://screenrant.com/marvel-just-broke-its-biggest-spider-man-rule/",
+        "https://screenrant.com/a-brief-history-of-the-marvel-multiverse/"
+      ]
+    },
+    {
+      "id": "candidate-4",
+      "question": "Why does Batman refuse to kill, and what makes that rule so hard to keep when he faces villains like the Joker?",
+      "viewer_hook": "Why does Batman refuse to kill when his worst enemies keep coming back?",
+      "subject": "Batman’s no-kill rule",
+      "angle": "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it; what source-supported tension makes that recurring choice interesting?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Fans ask because Batman’s no-kill rule is one of the most debated parts of his character, especially when the same villains keep returning and the story keeps tempting him to cross the line.",
+      "sample_answer_items": [
+        "Batman’s no-kill rule is treated as a core part of his identity.",
+        "Fans repeatedly debate whether the rule is moral, psychological, or practical.",
+        "The tension comes from the fact that Gotham keeps producing enemies who seem to tempt him past that line.",
+        "A good answer can point to moments when the rule is tested without turning Batman into a character who casually breaks it."
+      ],
+      "evidence_urls": [
+        "https://www.reddit.com/r/comicbooks/comments/173t8mw/batman_no_guns_and_killing_rule/",
+        "https://www.reddit.com/r/comicbooks/comments/qmkfg9/all_i_have_ever_wanted_to_do_is_kill_him_batman/",
+        "https://www.reddit.com/r/comicbooks/comments/1tg4ip/so_why_doesnt_batman_just_kill_the_joker/"
+      ]
+    },
+    {
+      "id": "candidate-5",
+      "question": "What are some surprising modern Superman abilities, and which comic issues show them in action?",
+      "viewer_hook": "What surprising powers does Superman still have in modern comics?",
+      "subject": "Superman’s overlooked modern abilities",
+      "angle": "list: times a widely recognized hero did something surprising, or the distinct abilities of that hero, with separate comic issues as answer evidence and a concrete source-supported curiosity across the examples",
+      "proposed_format": "list",
+      "why_fans_ask_it": "Fans ask because Superman’s power set is bigger than the usual strength-flight-heat vision trio, and modern comics still reveal abilities that many readers forget he has.",
+      "sample_answer_items": [
+        "Super Flare / solar flare — Superman #38",
+        "Radiation vision — Action Comics #2 (2011)",
+        "Energy absorption and recharging limits — Superman: Lost #1-2",
+        "Bio-electric aura or other overlooked powers can be added if the evidence is supported by a specific issue"
+      ],
+      "evidence_urls": [
+        "https://comicbook.com/comics/list/7-powers-you-probably-forgot-superman-still-has/",
+        "https://leagueofcomicgeeks.com/comic/1640635/superman-lost-1",
+        "https://leagueofcomicgeeks.com/comic/6334026/superman-lost-2",
+        "https://comicbook.com/comicbook/news/supergirl-easter-eggs-and-dc-comics-references-in-human-for-a-da/"
+      ]
+    }
+  ],
+  "accepted": [
+    {
+      "id": "candidate-1",
+      "question": "What does Captain America’s shield really represent in modern comics, and how do its materials and symbolism shape what it can do?",
+      "viewer_hook": "What does Captain America’s shield really represent, and why does it hit so hard?",
+      "subject": "Captain America’s shield",
+      "angle": "direct: What is a signature power or defining concept tied to a widely recognized hero, how does it work, and what concrete curiosity about its limits or effects do sources support?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Fans ask because the shield is both an iconic symbol and a deceptively complicated weapon, with modern comics adding new origin and meaning layers that change how readers understand it.",
+      "sample_answer_items": [
+        "The shield is a symbol as much as a weapon.",
+        "It is commonly described as absorbing kinetic energy because of its vibranium component.",
+        "Recent comics tie its design to hidden origins and layered meaning, not just patriotism.",
+        "A natural fan curiosity is how a shield that represents ideals can also function as one of Marvel’s most durable combat tools."
+      ],
+      "evidence_urls": [
+        "https://www.cbr.com/captain-america-shield-trivia/",
+        "https://www.cbr.com/captain-america-shield-true-secret-marvel/",
+        "https://www.cbr.com/captain-americas-shield-16-crazy-things-you-never-knew/"
+      ]
+    },
+    {
+      "id": "candidate-2",
+      "question": "Why does Captain America insist that the shield and his role are about serving people rather than ruling them, and what does that belief change about who can carry the mantle?",
+      "viewer_hook": "Why does Captain America treat the shield as something bigger than himself?",
+      "subject": "Captain America’s belief about the shield and mantle",
+      "angle": "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story, with a source-supported consequence beyond one incident?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Fans ask because Captain America’s identity is built around a belief, not just a costume, and modern comics keep testing what that belief means when the shield changes hands.",
+      "sample_answer_items": [
+        "Steve defines Captain America as serving the American people, not leading them.",
+        "The shield becomes a symbol other people can inherit, not just Steve’s personal weapon.",
+        "That idea supports the broader legacy of Sam Wilson and other successors.",
+        "The tension comes from the fact that the symbol means different things depending on who holds it."
+      ],
+      "evidence_urls": [
+        "https://www.cbr.com/captain-america-explains-what-he-represents/",
+        "https://www.cbr.com/captain-america-shield-true-secret-marvel/",
+        "https://www.cbr.com/falcon-winter-soldier-captain-america-shield-true-importance-explained/"
+      ]
+    },
+    {
+      "id": "candidate-3",
+      "question": "What makes Marvel’s new Ultimate Spider-Man world different from the main Marvel Universe, and why does Uncle Ben being alive create such a strange new tension?",
+      "viewer_hook": "What makes the new Ultimate Spider-Man world so different, and why is Uncle Ben the problem?",
+      "subject": "Marvel’s new Ultimate Spider-Man / Ultimate Universe",
+      "angle": "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, how does it work, and what surprising tension follows from its rules?",
+      "proposed_format": "list",
+      "why_fans_ask_it": "Fans ask because Ultimate Spider-Man is a clean entry point into an alternate Marvel world, but one major rule change immediately raises big questions about how Spider-Man stories work there.",
+      "sample_answer_items": [
+        "The Ultimate Universe is a separate Marvel continuity built to reimagine familiar characters.",
+        "In the new version, Peter Parker’s origin is reshaped rather than simply repeated.",
+        "Uncle Ben being alive breaks a long-running Spider-Man expectation.",
+        "That rule change creates tension because it alters the emotional foundation readers usually associate with Spider-Man stories."
+      ],
+      "evidence_urls": [
+        "https://screenrant.com/new-ultimate-spider-man-identity-reboot/",
+        "https://screenrant.com/marvel-just-broke-its-biggest-spider-man-rule/",
+        "https://screenrant.com/a-brief-history-of-the-marvel-multiverse/"
+      ]
+    },
+    {
+      "id": "candidate-4",
+      "question": "Why does Batman refuse to kill, and what makes that rule so hard to keep when he faces villains like the Joker?",
+      "viewer_hook": "Why does Batman refuse to kill when his worst enemies keep coming back?",
+      "subject": "Batman’s no-kill rule",
+      "angle": "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it; what source-supported tension makes that recurring choice interesting?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Fans ask because Batman’s no-kill rule is one of the most debated parts of his character, especially when the same villains keep returning and the story keeps tempting him to cross the line.",
+      "sample_answer_items": [
+        "Batman’s no-kill rule is treated as a core part of his identity.",
+        "Fans repeatedly debate whether the rule is moral, psychological, or practical.",
+        "The tension comes from the fact that Gotham keeps producing enemies who seem to tempt him past that line.",
+        "A good answer can point to moments when the rule is tested without turning Batman into a character who casually breaks it."
+      ],
+      "evidence_urls": [
+        "https://www.reddit.com/r/comicbooks/comments/173t8mw/batman_no_guns_and_killing_rule/",
+        "https://www.reddit.com/r/comicbooks/comments/qmkfg9/all_i_have_ever_wanted_to_do_is_kill_him_batman/",
+        "https://www.reddit.com/r/comicbooks/comments/1tg4ip/so_why_doesnt_batman_just_kill_the_joker/"
+      ]
+    },
+    {
+      "id": "candidate-5",
+      "question": "What are some surprising modern Superman abilities, and which comic issues show them in action?",
+      "viewer_hook": "What surprising powers does Superman still have in modern comics?",
+      "subject": "Superman’s overlooked modern abilities",
+      "angle": "list: times a widely recognized hero did something surprising, or the distinct abilities of that hero, with separate comic issues as answer evidence and a concrete source-supported curiosity across the examples",
+      "proposed_format": "list",
+      "why_fans_ask_it": "Fans ask because Superman’s power set is bigger than the usual strength-flight-heat vision trio, and modern comics still reveal abilities that many readers forget he has.",
+      "sample_answer_items": [
+        "Super Flare / solar flare — Superman #38",
+        "Radiation vision — Action Comics #2 (2011)",
+        "Energy absorption and recharging limits — Superman: Lost #1-2",
+        "Bio-electric aura or other overlooked powers can be added if the evidence is supported by a specific issue"
+      ],
+      "evidence_urls": [
+        "https://comicbook.com/comics/list/7-powers-you-probably-forgot-superman-still-has/",
+        "https://leagueofcomicgeeks.com/comic/1640635/superman-lost-1",
+        "https://leagueofcomicgeeks.com/comic/6334026/superman-lost-2",
+        "https://comicbook.com/comicbook/news/supergirl-easter-eggs-and-dc-comics-references-in-human-for-a-da/"
+      ]
+    }
+  ]
+}

@@ -241,6 +241,14 @@ DISCOVER_ANGLES = json.loads(
 _DISCOVER_PROPS = {
     "question": {"type": "string"}, "subject": {"type": "string"},
     "viewer_hook": {"type": "string"},
+    "canonical_anchor": {"type": "string"},
+    "concept_key": {"type": "string"},
+    "issue_evidence": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False,
+        "properties": {"issue": {"type": "string"}, "source_url": {"type": "string"},
+                       "quote": {"type": "string"}},
+        "required": ["issue", "source_url", "quote"],
+    }},
     "proposed_format": {"type": "string"},
     "why_fans_ask_it": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
@@ -291,6 +299,12 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             "source-supported curiosity, tension, or consequence. Do not copy or "
             "merely shorten the research question; use an empty string when no "
             "distinct hook is supported. "
+            "Set canonical_anchor to the hero/team in the question and concept_key "
+            "to its named power/world/rule. Supply issue_evidence for original "
+            "print issues published 2010 or later: Series #N (YYYY), source_url, "
+            "and a verbatim quote from that issue page about the question topic; "
+            "the issue's original Published/release date must appear on the page. "
+            "Lists need two distinct issues. Bare URLs are not evidence. "
             "Print comics only, not MCU or adaptation lore. Do not infer popularity "
             "from one source hit. "
             "Real fan debates only — never invent a question because it sounds viral. Cite the URL where "

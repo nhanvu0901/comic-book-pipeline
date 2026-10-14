@@ -39,6 +39,9 @@ _DIRECT_Q_RE = re.compile(
 )
 _LIST_Q_RE = re.compile(
     r"^\s*(?:how\s+many\b|what\s+are\s+some\b|what\s+are\s+"
+    r"(?:the\s+)?(?:distinct|different|multiple)\s+ways\b|"
+    r"what\s+are\s+(?:the\s+)?(?:two|three|four|five|six|seven|eight|nine|ten|\d+)\b"
+    r"[^?]{0,80}\bexamples\b|what\s+are\s+"
     r"(?:(?:some|the|distinct|unique|hidden|forgotten)\s+)*"
     r"(?:[\w'-]+'s\s+)?(?:abilities|powers)\b|"
     r"what\s+are\s+some\s+of\b[^?]{0,100}\b"

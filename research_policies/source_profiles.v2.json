@@ -14,6 +14,23 @@
     ],
     "purpose": "Discover broad candidate questions and moments from comic-focused sources."
   },
+  "qa_discover_research": {
+    "domains": [
+      "marvel.com",
+      "dc.com",
+      "marvel.fandom.com",
+      "dc.fandom.com",
+      "comicbookroundup.com",
+      "aiptcomics.com",
+      "comics.org",
+      "cbr.com",
+      "comicbook.com",
+      "leagueofcomicgeeks.com",
+      "screenrant.com",
+      "reddit.com"
+    ],
+    "purpose": "QA Discover: find dated print-issue evidence, favoring official comic sources."
+  },
   "specific_web_search": {
     "domains": [
       "marvel.fandom.com",

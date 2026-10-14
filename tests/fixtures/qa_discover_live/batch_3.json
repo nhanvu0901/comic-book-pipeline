@@ -1,0 +1,179 @@
+{
+  "calls": 1,
+  "api_error": null,
+  "raw": [
+    {
+      "angle": "direct: What is a signature power or defining concept tied to a widely recognized hero, how does it work, and what concrete curiosity about its limits or effects do sources support?",
+      "evidence_urls": [
+        "https://www.cbr.com/the-flash-strength-force-powers/",
+        "https://www.cbr.com/dc-comics-powers-the-flash-rarely-uses/",
+        "https://www.cbr.com/the-flash-15-powers-you-didnt-know-he-has/"
+      ],
+      "proposed_format": "direct",
+      "question": "What is the Speed Force for The Flash, how does it work, and what limits or side effects do the comics show when he pushes it too far or uses it in unusual ways?",
+      "sample_answer_items": [
+        "The Speed Force as the energy source behind Flash powers",
+        "How speedsters tap it for running, thinking, healing, and other abilities",
+        "Limits like connection strength, fatigue, or unusual costs when using constructs or extreme speed"
+      ],
+      "subject": "The Flash",
+      "viewer_hook": "What happens when the Speed Force stops being just super-speed and starts changing what The Flash can do?",
+      "why_fans_ask_it": "Fans want to understand why Flash powers seem broader than just running fast, and what the story says about the rules, costs, and limits of that power set.",
+      "id": "candidate-1"
+    },
+    {
+      "angle": "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story, with a source-supported consequence beyond one incident?",
+      "evidence_urls": [
+        "https://screenrant.com/xmen-age-apocalypse-best-what-if-marvel/",
+        "https://screenrant.com/all-9-original-age-of-apocalypse-stories-how-they-changed-x-men-lore-permanently-explained/",
+        "https://screenrant.com/house-of-m-vs-age-apocalypse-mutant-alternate-universe/"
+      ],
+      "proposed_format": "direct",
+      "question": "Why did Magneto become the leader of the X-Men in the Age of Apocalypse timeline, and what lasting change did that world’s survival struggle create for the mutant side of the story?",
+      "sample_answer_items": [
+        "Legion’s time-travel mistake that kills Charles Xavier and opens the door to Apocalypse’s conquest",
+        "Magneto stepping into Xavier’s role as the X-Men’s leader",
+        "The grim mutant resistance and the event’s long-term status as a major alternate timeline"
+      ],
+      "subject": "Magneto",
+      "viewer_hook": "How did Magneto end up as the X-Men’s leader in a world built by Xavier’s absence?",
+      "why_fans_ask_it": "Fans are drawn to this because it turns Magneto’s usual villain/antihero role into a defining leadership question, with consequences that reshape the whole mutant world.",
+      "id": "candidate-2"
+    },
+    {
+      "angle": "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, how does it work, and what surprising tension follows from its rules?",
+      "evidence_urls": [
+        "https://comicbook.com/comics/list/10-best-alternate-dc-earths/",
+        "https://comicbook.com/comicbook/news/comic-book-court-do-superhero-universes-need-alternate-universe-st/",
+        "https://screenrant.com/xmen-age-apocalypse-secretly-saved-marvels-universe/"
+      ],
+      "proposed_format": "direct",
+      "question": "What is the Age of Apocalypse world, how does it work as a mutant-dominated alternate timeline, and what tension comes from building a society where Apocalypse rules and Magneto leads the resistance?",
+      "sample_answer_items": [
+        "A timeline created when Legion accidentally kills Charles Xavier",
+        "Apocalypse conquering North America and creating a mutant empire",
+        "The tension of a brutal world order forcing heroes to survive, resist, and still preserve Xavier’s ideals"
+      ],
+      "subject": "Age of Apocalypse / X-Men",
+      "viewer_hook": "What makes the Age of Apocalypse feel like a full world instead of just a twist on the X-Men?",
+      "why_fans_ask_it": "Fans ask this because it is one of the clearest examples of an alternate comic universe that still has its own rules, politics, and moral pressure on the characters.",
+      "id": "candidate-3"
+    },
+    {
+      "angle": "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it; what source-supported tension makes that recurring choice interesting?",
+      "evidence_urls": [
+        "https://aiptcomics.com/2025/07/23/batman-161-review/",
+        "https://aiptcomics.com/2025/11/12/batman-162-review/",
+        "https://aiptcomics.com/2019/08/07/batman-76-review/"
+      ],
+      "proposed_format": "direct",
+      "question": "Why does Batman usually refuse to kill, and when do modern comics put him in situations where that rule is tested by sparing the Joker or facing consequences from his no-kill code?",
+      "sample_answer_items": [
+        "Batman’s core rule against killing",
+        "Modern stories where sparing the Joker becomes a major conflict point",
+        "The tension between Batman’s moral code and the anger it provokes in allies and enemies"
+      ],
+      "subject": "Batman",
+      "viewer_hook": "Why is Batman’s no-kill rule so much more dramatic when the Joker is involved?",
+      "why_fans_ask_it": "Fans keep asking this because Batman’s code is one of his defining traits, and comics repeatedly create pressure-cooker moments where the rule is challenged by his enemies and even his allies.",
+      "id": "candidate-4"
+    },
+    {
+      "angle": "list: times a widely recognized hero performed one clearly named kind of action, or the distinct abilities of that hero, with separate comic issues as answer evidence and a concrete source-supported curiosity across the examples",
+      "evidence_urls": [
+        "https://www.cbr.com/dc-comics-powers-the-flash-rarely-uses/",
+        "https://www.cbr.com/speed/",
+        "https://www.cbr.com/dc-flash-barry-allen-unknown-abilities/"
+      ],
+      "proposed_format": "list",
+      "question": "What are the distinct Speed Force abilities The Flash has used in comics beyond simple running, and which issues show him using them in different ways?",
+      "sample_answer_items": [
+        "Speed-reading and accelerated thinking",
+        "Creating Speed Force constructs or costume effects",
+        "Healing, time-related tricks, or transferring speed in battle"
+      ],
+      "subject": "The Flash",
+      "viewer_hook": "Which of The Flash’s powers are the weirdest when you look past plain super-speed?",
+      "why_fans_ask_it": "Fans like this list because The Flash is famous for one headline power, but the comics keep revealing that the Speed Force supports a much larger family of abilities.",
+      "id": "candidate-5"
+    }
+  ],
+  "accepted": [
+    {
+      "angle": "direct: What is a signature power or defining concept tied to a widely recognized hero, how does it work, and what concrete curiosity about its limits or effects do sources support?",
+      "evidence_urls": [
+        "https://www.cbr.com/the-flash-strength-force-powers/",
+        "https://www.cbr.com/dc-comics-powers-the-flash-rarely-uses/",
+        "https://www.cbr.com/the-flash-15-powers-you-didnt-know-he-has/"
+      ],
+      "proposed_format": "direct",
+      "question": "What is the Speed Force for The Flash, how does it work, and what limits or side effects do the comics show when he pushes it too far or uses it in unusual ways?",
+      "sample_answer_items": [
+        "The Speed Force as the energy source behind Flash powers",
+        "How speedsters tap it for running, thinking, healing, and other abilities",
+        "Limits like connection strength, fatigue, or unusual costs when using constructs or extreme speed"
+      ],
+      "subject": "The Flash",
+      "viewer_hook": "",
+      "why_fans_ask_it": "Fans want to understand why Flash powers seem broader than just running fast, and what the story says about the rules, costs, and limits of that power set.",
+      "id": "candidate-1"
+    },
+    {
+      "angle": "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story, with a source-supported consequence beyond one incident?",
+      "evidence_urls": [
+        "https://screenrant.com/xmen-age-apocalypse-best-what-if-marvel/",
+        "https://screenrant.com/all-9-original-age-of-apocalypse-stories-how-they-changed-x-men-lore-permanently-explained/",
+        "https://screenrant.com/house-of-m-vs-age-apocalypse-mutant-alternate-universe/"
+      ],
+      "proposed_format": "direct",
+      "question": "Why did Magneto become the leader of the X-Men in the Age of Apocalypse timeline, and what lasting change did that world’s survival struggle create for the mutant side of the story?",
+      "sample_answer_items": [
+        "Legion’s time-travel mistake that kills Charles Xavier and opens the door to Apocalypse’s conquest",
+        "Magneto stepping into Xavier’s role as the X-Men’s leader",
+        "The grim mutant resistance and the event’s long-term status as a major alternate timeline"
+      ],
+      "subject": "Magneto",
+      "viewer_hook": "How did Magneto end up as the X-Men’s leader in a world built by Xavier’s absence?",
+      "why_fans_ask_it": "Fans are drawn to this because it turns Magneto’s usual villain/antihero role into a defining leadership question, with consequences that reshape the whole mutant world.",
+      "id": "candidate-2"
+    },
+    {
+      "angle": "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, how does it work, and what surprising tension follows from its rules?",
+      "evidence_urls": [
+        "https://comicbook.com/comics/list/10-best-alternate-dc-earths/",
+        "https://comicbook.com/comicbook/news/comic-book-court-do-superhero-universes-need-alternate-universe-st/",
+        "https://screenrant.com/xmen-age-apocalypse-secretly-saved-marvels-universe/"
+      ],
+      "proposed_format": "direct",
+      "question": "What is the Age of Apocalypse world, how does it work as a mutant-dominated alternate timeline, and what tension comes from building a society where Apocalypse rules and Magneto leads the resistance?",
+      "sample_answer_items": [
+        "A timeline created when Legion accidentally kills Charles Xavier",
+        "Apocalypse conquering North America and creating a mutant empire",
+        "The tension of a brutal world order forcing heroes to survive, resist, and still preserve Xavier’s ideals"
+      ],
+      "subject": "Age of Apocalypse / X-Men",
+      "viewer_hook": "What makes the Age of Apocalypse feel like a full world instead of just a twist on the X-Men?",
+      "why_fans_ask_it": "Fans ask this because it is one of the clearest examples of an alternate comic universe that still has its own rules, politics, and moral pressure on the characters.",
+      "id": "candidate-3"
+    },
+    {
+      "angle": "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it; what source-supported tension makes that recurring choice interesting?",
+      "evidence_urls": [
+        "https://aiptcomics.com/2025/07/23/batman-161-review/",
+        "https://aiptcomics.com/2025/11/12/batman-162-review/",
+        "https://aiptcomics.com/2019/08/07/batman-76-review/"
+      ],
+      "proposed_format": "direct",
+      "question": "Why does Batman usually refuse to kill, and when do modern comics put him in situations where that rule is tested by sparing the Joker or facing consequences from his no-kill code?",
+      "sample_answer_items": [
+        "Batman’s core rule against killing",
+        "Modern stories where sparing the Joker becomes a major conflict point",
+        "The tension between Batman’s moral code and the anger it provokes in allies and enemies"
+      ],
+      "subject": "Batman",
+      "viewer_hook": "Why is Batman’s no-kill rule so much more dramatic when the Joker is involved?",
+      "why_fans_ask_it": "Fans keep asking this because Batman’s code is one of his defining traits, and comics repeatedly create pressure-cooker moments where the rule is challenged by his enemies and even his allies.",
+      "id": "candidate-4"
+    }
+  ]
+}

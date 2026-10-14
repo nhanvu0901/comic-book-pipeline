@@ -135,6 +135,7 @@ def test_the_tier_b_discover_batch_stays_out_of_the_revision_namespace(workflow)
     rename ids for a path that gains nothing from it.
     """
     workflow.client = _FakeYouCom(rounds=[["Alpha", "Beta"]])
+    workflow._qa_issue_verifier = lambda candidate, fmt: True
     batch = workflow.discover_questions(ScoutMode.QA, count=2)
 
     assert [entry["id"] for entry in batch] == ["candidate-1", "candidate-2"]

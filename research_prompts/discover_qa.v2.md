@@ -42,6 +42,20 @@ about an adjacent character or publisher is not evidence for the question.
 An adaptation profile or movie/TV article is not print-comic evidence. Favor
 sources that identify original comic issues in the 2010-or-later answer scope;
 do not treat a reprint date as the original publication date.
+For each candidate set `canonical_anchor` to the familiar hero/team named in
+the question and `concept_key` to the shortest named power, world, rule, or
+choice shared by that question's answer. Use the same key when two questions
+are about the same concept, even if one names a different character.
+Set `issue_evidence` to exact print-comic issue citations. Each item needs:
+`issue` as "Series #N (YYYY)" with the ORIGINAL issue's publication year after
+the number; `source_url` of an issue-specific publisher or comic catalog page
+that shows the issue number and its original `Published`/release date; and
+`quote` copied verbatim from that same page with a detail relevant to the
+question. The date can be separate from the quote on the page. Do not use a
+review/article publication date as the issue's date. For a list provide at least two different issues;
+for a direct question at least one. If no such source can be read, do not
+propose that candidate. A bare URL, a reprint date, and model memory are not
+issue evidence. Keep the ordinary `evidence_urls` for additional context.
 
 Use the four direct angles for four distinct What/Why/How/When questions. Do
 not turn a changing status or relationship into a question about one named issue.

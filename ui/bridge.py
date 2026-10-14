@@ -244,8 +244,9 @@ def discover_questions(
     one only drops it in the intent box for a human to read, edit, or delete,
     and pressing Send then researches it normally.
 
-    `exclude` is every question already offered in this chat, so a re-roll
-    costs one research call and comes back with a different batch. Never
+    `exclude` is every question already offered in this chat. QA discovery
+    may use a second, lane-targeted Research call if verification leaves a
+    short batch. Never
     writes to SessionStore — see
     stages.research_scout.workflow.ScoutWorkflow.discover_questions for the
     session-free discovery itself."""

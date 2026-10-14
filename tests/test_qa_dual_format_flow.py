@@ -86,7 +86,10 @@ def test_discovery_proposes_formats_with_evidence(tmp_path, monkeypatch):
                 }
             }
 
-    workflow = ScoutWorkflow(store=store, client=FakeYouCom())
+    workflow = ScoutWorkflow(
+        store=store, client=FakeYouCom(),
+        qa_issue_verifier=lambda candidate, fmt: True,
+    )
     discovered = workflow.discover_questions(ScoutMode.QA, count=2)
     assert len(discovered) == 2
 

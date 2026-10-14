@@ -15,6 +15,7 @@ from typing import Any, Callable
 import config
 
 from . import cited_sources
+from . import qa_discovery_gate
 from . import issue_identity
 from .issue_identity import micro_issue_rejection_reason
 from .micro_recency import (
@@ -109,6 +110,36 @@ def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
         if _hook_tokens(name) - _HOOK_GENERIC_WORDS - supported_terms:
             return ""
     return hook
+
+
+def _qa_discovery_topup_prompt(
+    *, missing_direct: int, missing_list: int, angles: list[str],
+    excluded: list[str], anchors: set[str], concepts: set[str],
+) -> str:
+    """Ask only for the formats lost to verification or diversity filtering."""
+    requested = []
+    if missing_direct:
+        requested.append(f"{missing_direct} direct")
+    if missing_list:
+        requested.append(f"{missing_list} list")
+    return (
+        "QA PRINT-COMIC DISCOVER TOP-UP. Return exactly " + " and ".join(requested)
+        + " new candidates using these angles:\n"
+        + "\n".join(f"- {angle}" for angle in angles)
+        + "\nNo movie/TV/game evidence. Default answer scope is original print issues "
+        "published in 2010 or later. Each candidate needs canonical_anchor, "
+        "concept_key, and issue_evidence: exact Series #N (YYYY), source_url, "
+        "and a verbatim quote from that same issue page containing a detail "
+        "relevant to the question. The page must show a separate original "
+        "Published/release date; an article date does not count. A direct needs one verified issue; a list "
+        "needs two different verified issues. Bare URLs and reprint years do not count. "
+        "Make the viewer_hook a distinct, grounded question or the empty string. "
+        "Never repeat an anchor or concept already chosen.\n"
+        + "Used anchors: " + ", ".join(sorted(anchors)) + "\n"
+        + "Used concepts: " + ", ".join(sorted(concepts)) + "\n"
+        + "Do not repeat any of these questions:\n"
+        + "\n".join(f"- {question}" for question in excluded)
+    )
 
 
 def _intent_with_feedback(session: ResearchSession) -> str:
@@ -251,6 +282,7 @@ class ScoutWorkflow:
         client: YouComClient | None = None,
         *,
         planner: Callable[[str, list[str], str], ResearchPlan | None] | None = None,
+        qa_issue_verifier: Callable[[Mapping[str, Any], str], bool] | None = None,
     ):
         self.store = store or SessionStore(config.RESEARCH_SESSIONS_ROOT)
         self.client = client or YouComClient()
@@ -259,6 +291,8 @@ class ScoutWorkflow:
         # key in this process, so nothing but run_general may reach it.
         self._uses_detailed_planner = planner is None
         self._planner = planner if planner is not None else planner_module.make_plan
+        self._qa_issue_verifier = qa_issue_verifier or qa_discovery_gate.verified_issue_evidence
+        self._qa_batch_quota = True
         self._policies: dict[ScoutMode, PolicyBundle] = {}
 
     def start(
@@ -887,8 +921,8 @@ class ScoutWorkflow:
         self, mode: ScoutMode, *, count: int = 5, exclude: Sequence[str] = (),
         publication_year: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Tier B of the Stage 1 empty-intent fallback (ui/bridge.py): spend ONE
-        research call turning angles into REAL questions/moments before handing
+        """Tier B of the Stage 1 empty-intent fallback (ui/bridge.py): use
+        Research to turn angles into REAL questions/moments before handing
         anything to the mode's normal machinery. general_qa.v2.md /
         general_micro.v1.md ENUMERATE ANSWERS TO a question — a bare angle
         ("times a famous power or rule failed") is not a question, so feeding it
@@ -898,8 +932,8 @@ class ScoutWorkflow:
         mode's text field (``question`` for QA, ``moment`` for Micro) and the
         ``angle`` it came from, so the chat can offer a labelled CHOICE with a
         re-roll instead of one take-it-or-leave-it question. This used to return
-        the first survivor and throw the rest of the batch away, which is why
-        one research call only ever bought one question.
+        the first survivor and throw the rest of the batch away. QA may make
+        one lane-targeted top-up call when verification leaves a short batch.
 
         ``exclude`` is the questions already offered in this session: they go
         into the prompt's EXCLUDE section AND into the burn filter, so a re-roll
@@ -942,6 +976,9 @@ class ScoutWorkflow:
             avoid="\n".join(question_avoid[:avoid_list.PROMPT_AVOID_LIMIT]),
         )
         prompt_text = prompt.text
+        source_profile = bundle.source_profiles.get(
+            "qa_discover_research" if mode is ScoutMode.QA else "general_research"
+        )
         if mode is ScoutMode.MICRO:
             prompt_text += "\n\n" + recent_micro_instruction(
                 publication_year=publication_year,
@@ -952,7 +989,7 @@ class ScoutWorkflow:
                 # The model labels each candidate with the angle it worked, so the
                 # chat can show an angle chip without guessing from list position.
                 _schema({**props, "angle": {"type": "string"}}),
-                bundle.source_profiles.get("general_research"),
+                source_profile,
                 effort=config.YOUCOM_DISCOVER_EFFORT,
             )
         except Exception:
@@ -964,47 +1001,97 @@ class ScoutWorkflow:
         burn_digest = "\n".join(f"- {line}" for line in question_avoid)
         picked: list[dict[str, Any]] = []
         seen: set[str] = set()
-        seen_subjects: set[str] = set()
-        for index, candidate in enumerate(_extract_candidates(_raw_payload(raw))):
-            text = str(candidate.get(field, "")).strip()
-            if not text or text.casefold() in seen:
-                continue
-            if is_burned(text, burn_digest):
-                continue
-            if mode is ScoutMode.QA:
-                subject = str(candidate.get("subject", "")).strip().casefold()
-                if subject and subject in seen_subjects:
+        seen_anchors: set[str] = set()
+        seen_concepts: set[str] = set()
+        offered: list[str] = []
+        quota = {"direct": 4, "list": 1} if (
+            mode is ScoutMode.QA and count == 5 and self._qa_batch_quota
+        ) else None
+        for attempt in range(2 if quota else 1):
+            candidates = _extract_candidates(_raw_payload(raw))
+            offered.extend(str(c.get(field, "")).strip() for c in candidates)
+            for index, candidate in enumerate(candidates):
+                text = str(candidate.get(field, "")).strip()
+                if not text or text.casefold() in seen or is_burned(text, burn_digest):
                     continue
-                if is_narrow_direct_question(text):
-                    continue
-            if mode is ScoutMode.MICRO:
-                if micro_release_rejection_reason(
-                    candidate, publication_year=publication_year,
-                ) is not None:
-                    continue
-                if not all(str(candidate.get(key, "")).strip() for key in (
-                    "turning_point", "what_visibly_happens", "why_it_lands"
-                )):
-                    continue
-                urls = candidate.get("evidence_urls")
-                if not isinstance(urls, list) or not any(str(url).strip() for url in urls):
-                    continue
-            seen.add(text.casefold())
-            labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
-            candidate_entry = {**candidate, field: text, "angle": labelled}
-            if mode is ScoutMode.QA:
-                candidate_entry["proposed_format"] = str(question_archetype(text))
-                candidate_entry["viewer_hook"] = _normalize_viewer_hook(text, candidate)
-                if subject:
-                    seen_subjects.add(subject)
-            picked.append(candidate_entry)
-            if mode is ScoutMode.QA and len(picked) >= count:
+                if mode is ScoutMode.QA:
+                    fmt = str(question_archetype(text))
+                    if quota and sum(c["proposed_format"] == fmt for c in picked) >= quota[fmt]:
+                        continue
+                    if is_narrow_direct_question(text):
+                        continue
+                    try:
+                        evidence_ok = self._qa_issue_verifier(candidate, fmt)
+                    except Exception:
+                        evidence_ok = False
+                    if not evidence_ok:
+                        continue
+                    anchor = qa_discovery_gate.canonical_topic(
+                        str(candidate.get("canonical_anchor") or candidate.get("subject") or "")
+                    )
+                    concept = qa_discovery_gate.canonical_topic(
+                        str(candidate.get("concept_key") or text)
+                    )
+                    if ((anchor and anchor in seen_anchors)
+                            or (concept and concept in seen_concepts)):
+                        continue
+                else:
+                    if micro_release_rejection_reason(
+                        candidate, publication_year=publication_year,
+                    ) is not None:
+                        continue
+                    if not all(str(candidate.get(key, "")).strip() for key in (
+                        "turning_point", "what_visibly_happens", "why_it_lands"
+                    )):
+                        continue
+                    urls = candidate.get("evidence_urls")
+                    if not isinstance(urls, list) or not any(str(url).strip() for url in urls):
+                        continue
+                seen.add(text.casefold())
+                labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
+                candidate_entry = {**candidate, field: text, "angle": labelled}
+                if mode is ScoutMode.QA:
+                    candidate_entry["proposed_format"] = fmt
+                    candidate_entry["viewer_hook"] = _normalize_viewer_hook(text, candidate)
+                    if anchor:
+                        seen_anchors.add(anchor)
+                    if concept:
+                        seen_concepts.add(concept)
+                picked.append(candidate_entry)
+                if mode is ScoutMode.QA and len(picked) >= count:
+                    break
+            if len(picked) >= count or not quota or attempt == 1 or _raw_call_error(raw):
+                break
+            missing_direct = quota["direct"] - sum(c["proposed_format"] == "direct" for c in picked)
+            missing_list = quota["list"] - sum(c["proposed_format"] == "list" for c in picked)
+            if not missing_direct and not missing_list:
+                break
+            topup_angles = (angles[:4] if missing_direct else []) + (angles[4:5] if missing_list else [])
+            try:
+                raw = self.client.research(
+                    _qa_discovery_topup_prompt(
+                        missing_direct=missing_direct, missing_list=missing_list,
+                        angles=topup_angles, excluded=excluded + offered,
+                        anchors=seen_anchors, concepts=seen_concepts,
+                    ),
+                    _schema({**props, "angle": {"type": "string"}}),
+                    source_profile,
+                    effort=config.YOUCOM_DISCOVER_EFFORT,
+                )
+            except Exception:
                 break
         if mode is ScoutMode.MICRO:
             picked.sort(
                 key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
                 reverse=True,
             )
+        elif quota and 0 < len(picked) < count:
+            for entry in picked:
+                entry["batch_incomplete"] = True
+                entry["batch_expected"] = count
+        if quota and offered and not picked:
+            fallback_item["verification_shortage"] = True
+            fallback_item["batch_expected"] = count
         return picked[:count] or fallback
 
     def next_angle(self, mode: ScoutMode) -> str:

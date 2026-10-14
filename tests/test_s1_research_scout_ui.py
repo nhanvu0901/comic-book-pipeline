@@ -930,6 +930,24 @@ def test_legacy_saved_qa_without_hook_still_shows_and_prefills_question(tmp_path
     assert page.tasks == []
 
 
+def test_incomplete_qa_discover_batch_is_labeled_before_selection(tmp_path, monkeypatch):
+    entry = {"question": "How does a hero's power work?", "batch_incomplete": True,
+             "batch_expected": 5, "proposed_format": "direct"}
+    page, controls, _calls = _discover_env(tmp_path, monkeypatch, batches=[[entry]])
+    _discover_twice(page, controls)
+    assert "Only 1 of 5" in _text_content(controls)
+
+
+def test_zero_verified_qa_discover_is_not_saved_or_offered(tmp_path, monkeypatch):
+    entry = {"question": "An unverified angle", "fallback": True,
+             "verification_shortage": True, "batch_expected": 5}
+    page, controls, _calls = _discover_env(tmp_path, monkeypatch, batches=[[entry]])
+    _discover_twice(page, controls)
+    assert SavedScoutStore(tmp_path / "research_sessions").list_entries("qa") == []
+    assert "An unverified angle" not in _text_content(controls)
+    assert "No issue-verified questions" in _text_content(controls)
+
+
 def test_reroll_defers_instead_of_rejecting_and_saves_the_new_batch(tmp_path, monkeypatch):
     page, controls, _calls = _discover_env(
         tmp_path, monkeypatch,

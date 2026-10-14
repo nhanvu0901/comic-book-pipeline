@@ -915,6 +915,12 @@ def build(
                 on_change=_discovered_pick_changed,
             ),
         ]
+        if discovered_holder[0] and discovered_holder[0][0].get("batch_incomplete"):
+            expected = int(discovered_holder[0][0].get("batch_expected") or _DISCOVER_BATCH)
+            lines.insert(1, ft.Text(
+                f"Only {len(discovered_holder[0])} of {expected} questions passed issue and diversity checks.",
+                size=11, color=WARN, selectable=True,
+            ))
         if discovered_note[0]:
             lines.append(ft.Text(discovered_note[0], size=11, color=WARN, selectable=True))
         reroll = secondary_button(
@@ -923,7 +929,8 @@ def build(
         reroll.key = "discovered-reroll"
         lines.append(ft.Row([
             reroll,
-            ft.Text("costs one research call", size=10, color=TEXT_MUTED, selectable=True),
+            ft.Text("uses Research; may top up missing QA lanes", size=10,
+                    color=TEXT_MUTED, selectable=True),
         ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         lines.append(ft.Text(
             "The one you pick lands in the box — edit it if you like, then press Send to research it.",
@@ -1109,6 +1116,13 @@ def build(
                 _render_full()
 
     def _show_discovered(result) -> None:
+        if result.get("verification_shortage"):
+            if discovered_holder[0]:
+                discovered_note[0] = "No issue-verified questions came back; keeping the saved batch above."
+                _render_full()
+            else:
+                _render_full(error="No issue-verified questions came back. Type your own question or try Discover again.")
+            return
         batch = result["entries"]
         entries = [entry for entry in (batch or []) if _discovered_text(entry)]
         already = {text.casefold() for text in discovered_offered}
@@ -1166,6 +1180,8 @@ def build(
             ) if mode == ScoutMode.MICRO.value else discover_questions(
                 mode, count=_DISCOVER_BATCH, exclude=excluded,
             )
+            if mode == ScoutMode.QA.value and batch and batch[0].get("verification_shortage"):
+                return {"entries": [], "batch_id": "", "verification_shortage": True}
             try:
                 saved = save_scout_batch(
                     mode, batch,

@@ -1,0 +1,199 @@
+{
+  "calls": 1,
+  "api_error": null,
+  "raw": [
+    {
+      "id": "candidate-1",
+      "question": "How does Scarlet Witch’s chaos magic actually work, and what limits or side effects show up when she warps reality?",
+      "viewer_hook": "How does Scarlet Witch’s chaos magic actually work, and what limits or side effects show up when she warps reality?",
+      "subject": "Scarlet Witch",
+      "angle": "direct: What is a signature power or defining concept tied to a widely recognized hero, how does it work, and what concrete curiosity about its limits or effects do sources support?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Because Wanda’s powers can look like anything from a lucky break to full reality rewrite, and fans want to know what the actual rules are.",
+      "sample_answer_items": [
+        "Chaos magic is described as a force that can shift probability and rewrite reality through hexes.",
+        "Wanda’s power is tied to her role as a nexus being and to Chthon/primordial chaos in the lore sources.",
+        "Modern stories show that reality-warping can come with instability, loss of control, or massive collateral effects.",
+        "A useful answer should separate her everyday hex-style effects from the truly reality-altering extremes."
+      ],
+      "evidence_urls": [
+        "https://www.marvel.fandom.com/wiki/Wanda_Maximoff_(Earth-616)",
+        "https://www.marvel.fandom.com/wiki/Glossary:Chaos_Magic",
+        "https://www.marvel.fandom.com/f/p/4400000000003410712",
+        "https://www.marvel.fandom.com/wiki/Wanda_Maximoff_(Earth-199999)"
+      ]
+    },
+    {
+      "id": "candidate-2",
+      "question": "Why did Captain America lose the Super-Soldier Serum’s benefits, and what changed in his life afterward?",
+      "viewer_hook": "Why did Captain America lose the Super-Soldier Serum’s benefits, and what changed in his life afterward?",
+      "subject": "Captain America",
+      "angle": "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story, with a source-supported consequence beyond one incident?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Because Cap’s serum is part of his core identity, and readers want to know how comics handle the day it stops working.",
+      "sample_answer_items": [
+        "The serum’s effects are neutralized in-story, leaving Steve to age rapidly and confront his own mortality.",
+        "That change forces him into a new status quo rather than a one-off setback.",
+        "Later stories show him dealing with a weakened body, a fallback identity, and continued hero work under very different conditions.",
+        "The answer should explain both the immediate loss and the longer-term consequences for Steve Rogers’ role as Captain America."
+      ],
+      "evidence_urls": [
+        "https://marvel.fandom.com/wiki/Steven_Rogers_(Earth-616)",
+        "https://marvel.fandom.com/wiki/Captain_America_Vol_1_443",
+        "https://marvel.fandom.com/wiki/Captain_America_Vol_6_6"
+      ]
+    },
+    {
+      "id": "candidate-3",
+      "question": "What is Superman: Red Son’s world like, and how does its Soviet Superman create tension for everyone else?",
+      "viewer_hook": "What is Superman: Red Son’s world like, and how does its Soviet Superman create tension for everyone else?",
+      "subject": "Superman",
+      "angle": "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, how does it work, and what surprising tension follows from its rules?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Because the premise takes a familiar hero and turns his origin into an entire political world with a very different moral pressure.",
+      "sample_answer_items": [
+        "Superman lands in the Soviet Union instead of Kansas and grows into a leader of that system.",
+        "The setting changes the whole political logic of the DC world, not just Superman’s costume or attitude.",
+        "The tension comes from a hero who still has Superman-level power but uses it to enforce order and reshape society.",
+        "A strong answer should explain the world’s rules and why that version of Superman is both recognizable and unsettling."
+      ],
+      "evidence_urls": [
+        "https://www.cbr.com/10-dc-stories-where-superman-lands-somewhere-other-than-kansas/",
+        "https://www.cbr.com/10-alternate-universe-versions-of-dc-superheroes-stronger-weaker/",
+        "https://www.cbr.com/dc-best-multiverse-comics/",
+        "https://community.cbr.com/threads/pitch-an-elseworlds-story.114875/"
+      ]
+    },
+    {
+      "id": "candidate-4",
+      "question": "Why does Superman keep refusing to kill, and what does modern comics say happens when that rule is tested?",
+      "viewer_hook": "Why does Superman keep refusing to kill, and what does modern comics say happens when that rule is tested?",
+      "subject": "Superman",
+      "angle": "direct: Why does a widely recognized hero follow a defining rule or make a recurring choice, and when do they break it; what source-supported tension makes that recurring choice interesting?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Because Superman’s restraint is one of his clearest moral signatures, and fans want to know how far that code really goes.",
+      "sample_answer_items": [
+        "Superman’s no-kill ethic is framed as a core principle about hope, restraint, and leaving room for redemption.",
+        "Modern stories show situations where allies or enemies push him toward crossing the line.",
+        "When the rule is tested, the consequence is usually moral strain, not just a tactical choice.",
+        "The answer should distinguish between Superman’s ideal, the story pressure against it, and the rare moments where he comes close to breaking it."
+      ],
+      "evidence_urls": [
+        "https://www.cbr.com/why-superman-authority-broke-no-killing-rule/",
+        "https://www.cbr.com/why-dc-comics-superheroes-superman-batman-wont-kill/",
+        "https://www.cbr.com/superman-didnt-kill-zod-in-dc-current-continuity/",
+        "https://www.cbr.com/10-comics-where-superman-acted-out-of-character/"
+      ]
+    },
+    {
+      "id": "candidate-5",
+      "question": "What are some of the most surprising things Spider-Man has done in modern comics, and which issues show them?",
+      "viewer_hook": "What are some of the most surprising things Spider-Man has done in modern comics, and which issues show them?",
+      "subject": "Spider-Man",
+      "angle": "list: times a widely recognized hero did something surprising, or the distinct abilities of that hero, with separate comic issues as answer evidence and a concrete source-supported curiosity across the examples",
+      "proposed_format": "list",
+      "why_fans_ask_it": "Because Spider-Man keeps getting pushed into wild choices and temporary power swings, and fans like comparing the most shocking examples.",
+      "sample_answer_items": [
+        "Making a deal with Mephisto to save Aunt May and erase his marriage",
+        "Swapping minds with Doctor Octopus and living as the Superior Spider-Man",
+        "Walking away from being Spider-Man or quitting a mission when the burden becomes too much",
+        "Using strange temporary powers that are not part of his usual spider set",
+        "The list should keep each example tied to a separate comic issue or storyline beat"
+      ],
+      "evidence_urls": [
+        "https://screenrant.com/15-things-you-wont-know-about-spider-man-if-you-havent-kept-up-with-the-comics/",
+        "https://screenrant.com/10-worst-things-that-have-ever-happened-to-spider-man-in-marvel-comics/",
+        "https://screenrant.com/10-underappreciated-spider-man-stories-marvel-comics/",
+        "https://screenrant.com/spider-man-officially-quits-as-peter-parker-finally-meets-his-match-im-sorry-i-quit/",
+        "https://screenrant.com/13-secret-spider-man-powers-that-he-didnt-get-to-keep/"
+      ]
+    }
+  ],
+  "accepted": [
+    {
+      "id": "candidate-1",
+      "question": "How does Scarlet Witch’s chaos magic actually work, and what limits or side effects show up when she warps reality?",
+      "viewer_hook": "How does Scarlet Witch’s chaos magic actually work, and what limits or side effects show up when she warps reality?",
+      "subject": "Scarlet Witch",
+      "angle": "direct: What is a signature power or defining concept tied to a widely recognized hero, how does it work, and what concrete curiosity about its limits or effects do sources support?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Because Wanda’s powers can look like anything from a lucky break to full reality rewrite, and fans want to know what the actual rules are.",
+      "sample_answer_items": [
+        "Chaos magic is described as a force that can shift probability and rewrite reality through hexes.",
+        "Wanda’s power is tied to her role as a nexus being and to Chthon/primordial chaos in the lore sources.",
+        "Modern stories show that reality-warping can come with instability, loss of control, or massive collateral effects.",
+        "A useful answer should separate her everyday hex-style effects from the truly reality-altering extremes."
+      ],
+      "evidence_urls": [
+        "https://www.marvel.fandom.com/wiki/Wanda_Maximoff_(Earth-616)",
+        "https://www.marvel.fandom.com/wiki/Glossary:Chaos_Magic",
+        "https://www.marvel.fandom.com/f/p/4400000000003410712",
+        "https://www.marvel.fandom.com/wiki/Wanda_Maximoff_(Earth-199999)"
+      ]
+    },
+    {
+      "id": "candidate-2",
+      "question": "Why did Captain America lose the Super-Soldier Serum’s benefits, and what changed in his life afterward?",
+      "viewer_hook": "Why did Captain America lose the Super-Soldier Serum’s benefits, and what changed in his life afterward?",
+      "subject": "Captain America",
+      "angle": "direct: Why or how did a widely recognized hero gain, lose, or change a defining power, identity, or belief within the story, with a source-supported consequence beyond one incident?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Because Cap’s serum is part of his core identity, and readers want to know how comics handle the day it stops working.",
+      "sample_answer_items": [
+        "The serum’s effects are neutralized in-story, leaving Steve to age rapidly and confront his own mortality.",
+        "That change forces him into a new status quo rather than a one-off setback.",
+        "Later stories show him dealing with a weakened body, a fallback identity, and continued hero work under very different conditions.",
+        "The answer should explain both the immediate loss and the longer-term consequences for Steve Rogers’ role as Captain America."
+      ],
+      "evidence_urls": [
+        "https://marvel.fandom.com/wiki/Steven_Rogers_(Earth-616)",
+        "https://marvel.fandom.com/wiki/Captain_America_Vol_1_443",
+        "https://marvel.fandom.com/wiki/Captain_America_Vol_6_6"
+      ]
+    },
+    {
+      "id": "candidate-3",
+      "question": "What is Superman: Red Son’s world like, and how does its Soviet Superman create tension for everyone else?",
+      "viewer_hook": "What is Superman: Red Son’s world like, and how does its Soviet Superman create tension for everyone else?",
+      "subject": "Superman",
+      "angle": "direct: What is a comic world or alternate universe anchored by a widely recognized hero or team, how does it work, and what surprising tension follows from its rules?",
+      "proposed_format": "direct",
+      "why_fans_ask_it": "Because the premise takes a familiar hero and turns his origin into an entire political world with a very different moral pressure.",
+      "sample_answer_items": [
+        "Superman lands in the Soviet Union instead of Kansas and grows into a leader of that system.",
+        "The setting changes the whole political logic of the DC world, not just Superman’s costume or attitude.",
+        "The tension comes from a hero who still has Superman-level power but uses it to enforce order and reshape society.",
+        "A strong answer should explain the world’s rules and why that version of Superman is both recognizable and unsettling."
+      ],
+      "evidence_urls": [
+        "https://www.cbr.com/10-dc-stories-where-superman-lands-somewhere-other-than-kansas/",
+        "https://www.cbr.com/10-alternate-universe-versions-of-dc-superheroes-stronger-weaker/",
+        "https://www.cbr.com/dc-best-multiverse-comics/",
+        "https://community.cbr.com/threads/pitch-an-elseworlds-story.114875/"
+      ]
+    },
+    {
+      "id": "candidate-5",
+      "question": "What are some of the most surprising things Spider-Man has done in modern comics, and which issues show them?",
+      "viewer_hook": "What are some of the most surprising things Spider-Man has done in modern comics, and which issues show them?",
+      "subject": "Spider-Man",
+      "angle": "list: times a widely recognized hero did something surprising, or the distinct abilities of that hero, with separate comic issues as answer evidence and a concrete source-supported curiosity across the examples",
+      "proposed_format": "list",
+      "why_fans_ask_it": "Because Spider-Man keeps getting pushed into wild choices and temporary power swings, and fans like comparing the most shocking examples.",
+      "sample_answer_items": [
+        "Making a deal with Mephisto to save Aunt May and erase his marriage",
+        "Swapping minds with Doctor Octopus and living as the Superior Spider-Man",
+        "Walking away from being Spider-Man or quitting a mission when the burden becomes too much",
+        "Using strange temporary powers that are not part of his usual spider set",
+        "The list should keep each example tied to a separate comic issue or storyline beat"
+      ],
+      "evidence_urls": [
+        "https://screenrant.com/15-things-you-wont-know-about-spider-man-if-you-havent-kept-up-with-the-comics/",
+        "https://screenrant.com/10-worst-things-that-have-ever-happened-to-spider-man-in-marvel-comics/",
+        "https://screenrant.com/10-underappreciated-spider-man-stories-marvel-comics/",
+        "https://screenrant.com/spider-man-officially-quits-as-peter-parker-finally-meets-his-match-im-sorry-i-quit/",
+        "https://screenrant.com/13-secret-spider-man-powers-that-he-didnt-get-to-keep/"
+      ]
+    }
+  ]
+}

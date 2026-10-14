@@ -6,7 +6,7 @@ That fed an ANGLE into research_prompts/general_qa.v2.md and general_micro.v1.md
 whose whole premise is ENUMERATING ANSWERS TO A QUESTION — an angle is not a
 question, so the run researched the wrong thing (Master 2026-08-28 bug find).
 
-Discovery fixes that by spending ONE research call to turn angles into real
+Discovery fixes that by using Research to turn angles into real
 questions/moments first, via research_prompts/discover_qa.v2.md and
 discover_micro.v2.md. It used to return exactly ONE question and throw the rest
 of the batch away; now it returns the whole is_burned-filtered batch so the UI
@@ -56,7 +56,14 @@ class _ScriptedYouCom:
 
 
 def _workflow(tmp_path, client):
-    return ScoutWorkflow(store=SessionStore(tmp_path), client=client)
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=client,
+        qa_issue_verifier=lambda candidate, fmt: True,
+    )
+    # Legacy tests exercise filtering, UI and prompt contracts independently of
+    # the new issue gate and default five-slot format quota.
+    workflow._qa_batch_quota = False
+    return workflow
 
 
 def _qa_angles():
@@ -572,6 +579,7 @@ def test_the_bridge_hands_the_whole_batch_through(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "stages.research_scout.workflow.YouComClient", lambda *a, **k: client
     )
+    monkeypatch.setattr(bridge, "_scout_workflow", lambda: _workflow(root, client))
 
     batch = bridge.discover_questions("qa", count=2, exclude=["Old question?"])
 
