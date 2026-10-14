@@ -9,6 +9,7 @@ from stages.research_scout.qa_discovery_gate import (
     verified_issue_evidence,
 )
 from stages.research_scout.models import ScoutMode
+from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.workflow import ScoutWorkflow
 from stages.youcom_scout import _DISCOVER_PROPS, _schema
@@ -241,3 +242,52 @@ def test_shortage_after_top_up_is_marked_instead_of_filling_with_weak_candidates
     assert len(batch) == 3
     assert all(entry["batch_incomplete"] is True for entry in batch)
     assert all(entry["batch_expected"] == 5 for entry in batch)
+
+
+def test_initial_and_topup_qa_prompts_choose_one_answer_target_after_reading_sources(tmp_path, monkeypatch):
+    monkeypatch.setattr("stages.youcom_scout.is_burned", lambda question, digest: False)
+    client = _BatchClient(_valid_five()[:3], [])
+    workflow = ScoutWorkflow(store=SessionStore(tmp_path), client=client,
+                             qa_issue_verifier=lambda candidate, fmt: True)
+    workflow.discover_questions(ScoutMode.QA)
+    assert len(client.prompts) == 2
+    for prompt in client.prompts:
+        lowered = " ".join(prompt.casefold().split())
+        assert "one answer target" in lowered
+        assert "read" in lowered and "issue" in lowered and "before" in lowered
+        assert "same answer scope" in lowered
+        assert "empty string" in lowered
+        assert "canonical_anchor" in lowered and "concept_key" in lowered
+        assert "family/mission" in lowered
+    first = client.prompts[0].casefold()
+    assert "how does it work, and what" not in first
+    assert "tension follows from its rules" not in first
+
+
+def test_qa_scope_instruction_does_not_enter_micro_discovery_prompt():
+    bundle = PolicyBundle.load(ScoutMode.MICRO)
+    prompt = bundle.render(
+        "discover", angles="\n".join(bundle.general_angles["micro"]),
+        count="5", exclude="- none", avoid="- none",
+    ).text.casefold()
+    assert "micro moments" in prompt
+    assert "one answer target" not in prompt
+    assert "family/mission" not in prompt
+
+
+def test_legacy_qa_cli_uses_same_narrow_source_first_scope(tmp_path, monkeypatch):
+    from stages import youcom_scout
+
+    prompts = []
+    monkeypatch.setattr(youcom_scout, "_scouted_context_text", lambda: "")
+    monkeypatch.setattr(youcom_scout, "_call_logged", lambda _key, prompt, *_args: (
+        prompts.append(prompt) or {"output": {"content": {"candidates": []}}}
+    ))
+    youcom_scout.run_discover("test-key", tmp_path, "standard")
+    assert len(prompts) == 5
+    assert all("one answer target" in prompt.casefold() for prompt in prompts)
+    assert all("read" in prompt.casefold() and "before" in prompt.casefold()
+               for prompt in prompts)
+    assert all("same answer scope" in prompt.casefold() for prompt in prompts)
+    assert all("curiosity, tension, or consequence" not in prompt.casefold()
+               for prompt in prompts)

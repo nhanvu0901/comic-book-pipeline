@@ -344,7 +344,10 @@ def test_qa_policy_favors_broad_direct_questions_and_keeps_list_lane():
     assert any("list" in a and "abilities" in a for a in angles)
     assert all("widely recognized" in a for a in angles)
     assert "recurring choice" in angles[3]
-    assert all("curiosity" in a or "consequence" in a or "tension" in a for a in angles)
+    assert all("one source-supported" in a.lower() for a in angles[:4])
+    assert "one named action or ability family" in angles[4]
+    assert all("and what" not in a.lower() and "and when" not in a.lower()
+               for a in angles[:4])
 
 
 def test_qa_discover_prompt_asks_for_grounded_hook_without_replacing_research_question(tmp_path):
@@ -512,8 +515,8 @@ def test_full_qa_batch_needs_no_reddit_leads(tmp_path):
     assert "different recognizable hero or team" in client.seen_prompt
     assert "single continuity difference" in client.seen_prompt
     assert "older self-contained Elseworld" in client.seen_prompt
-    assert "catchall list of surprising things" in client.seen_prompt
-    assert "source-documented curiosity" in " ".join(client.seen_prompt.split())
+    assert "catchall list of unrelated" in client.seen_prompt
+    assert "one answer target" in " ".join(client.seen_prompt.casefold().split())
 
 
 def test_duplicate_subject_is_skipped_without_losing_other_lanes(tmp_path):
