@@ -11,9 +11,9 @@ Expected verdicts are the testers' adjudication of each candidate, as a correct 
 
 * round-1 true passes stay passes; the round-1 false accepts (reprint, pull-quote, ungrounded
   "worthiness", hedged webbing payoff) stay rejected, the last two now by the SEMANTIC check;
-* the 13 round-2 false rejects pass; round-2 true rejects stay rejected;
+* source-backed round-2 passes stay passes; claims that overstate the issue remain rejected;
 * round 3: wrong labels the page corrects (Action Comics, Flash #35) and first names the page
-  links (Barry) pass; the three wrong-focus false accepts (Red Hulk, Thor "how Mjolnir decides",
+  links (Barry) can pass structural checks; wrong-focus false accepts (Red Hulk, Thor "how Mjolnir decides",
   keep/remove bracelets) are rejected; the two paraphrase false rejects (Superman "cost", the
   bracelets list "wear them") pass; anchor-rule rejects stay rejected;
 * every wrong-focus probe is rejected, including the 7 of 10 the lexical rule used to let through.
@@ -22,12 +22,13 @@ Expected verdicts are the testers' adjudication of each candidate, as a correct 
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 from stages.question_archetype import question_archetype
-from stages.research_scout import qa_semantic_check
+from stages.research_scout import cited_sources, qa_semantic_check
 from stages.research_scout.cited_sources import FetchedSource
 from stages.research_scout.qa_discovery_gate import evaluate_issue_evidence, normalize_candidate
 from stages.research_scout.workflow import _strip_scope_phrases
@@ -71,19 +72,19 @@ EXPECTED = {
     14: PASS,
     15: PASS, 16: PASS, 17: PASS,
     18: fail("no_synopsis"),
-    19: PASS,
+    19: fail("answer_not_supported"),  # #38 quote stitches separated sentences; #40 only shows effects
     20: fail(*SEMANTIC_NO),               # hedged payoff, webbing never a "tool"
     # ---- round 2, run A ----
     21: fail("reprint_source"),
-    22: PASS,
+    22: fail("answer_not_supported"),  # why Fury's words made Thor unworthy is not given
     23: fail("anchor_mismatch"),          # "Speed Force storm" names no hero: Master keeps the rule
     24: fail("quote_not_found"),
     25: fail("no_synopsis"),
     26: PASS,
-    27: fail(*SEMANTIC_NO),               # the source never says why he lets him live
+    27: PASS,                             # he lets Joker try to disarm his own bomb while saving Harley
     28: PASS,
     29: PASS,
-    30: PASS,
+    30: fail("answer_not_supported"),  # #1 fixture lacks a release date; #7 gives the lasso to others
     # ---- round 2, run B ----
     31: PASS,
     32: PASS,
@@ -114,7 +115,7 @@ EXPECTED = {
     54: fail("reprint_source"),
     55: PASS,                             # label said 2010, the page says 2012: self-corrected
     56: PASS,                             # true pass (the premise slip is not the gate's to catch)
-    57: PASS,                             # label said 2011, the page says 2014; "Barry" linked
+    57: fail("payoff_not_supported"),    # Barry's death is a plan; Wally actually closes the rupture
     58: fail(*SEMANTIC_NO),               # Thor: the quote does not say HOW the hammer decides
     59: PASS,                             # "Barry": linked on the page
     60: PASS,                             # true pass
@@ -210,13 +211,13 @@ def test_replay_totals():
     verdicts = {i: _judge(i)[1].passed for i in range(72)}
     passes = sorted(i for i, ok in verdicts.items() if ok)
     assert passes == sorted(i for i, (ok, _) in EXPECTED.items() if ok)
-    assert len([i for i in passes if i < 46]) == 10 + 14
-    assert len([i for i in passes if i >= 46]) == 9
+    assert len([i for i in passes if i < 46]) == 22
+    assert len([i for i in passes if i >= 46]) == 8
 
 
 def test_replay_earlier_true_passes_still_pass_and_false_accepts_stay_rejected():
     earlier_passes = [i for i in range(46) if EXPECTED[i][0]]
-    assert len(earlier_passes) == 24 and all(_judge(i)[1].passed for i in earlier_passes)
+    assert len(earlier_passes) == 22 and all(_judge(i)[1].passed for i in earlier_passes)
     round_1_false_accepts = [0, 10, 11, 20]            # reprint, pull-quote, "worthiness", webbing
     round_3_false_accepts = [49, 58, 68]               # Red Hulk, Thor "how Mjolnir decides", keep/remove
     assert not any(_judge(i)[1].passed for i in round_1_false_accepts + round_3_false_accepts)
@@ -262,5 +263,77 @@ def test_replay_the_year_a_page_corrects_is_recorded():
     _, action = _judge(55)                               # label (2010), the page says 2012
     assert action.passed and any("year_corrected" in line for line in action.details)
     assert "(2012)" in action.claims[0]["issue"]
-    _, flash = _judge(57)                                # label (2011), the page says 2014
-    assert flash.passed and "(2014)" in flash.claims[0]["issue"]
+    flash_candidate, _ = _judge(57)                       # semantic rejects the overstated payoff
+    flash_structural = evaluate_issue_evidence(
+        flash_candidate, "direct", fetcher=_fetcher, semantic=None)
+    assert flash_structural.passed and "(2014)" in flash_structural.claims[0]["issue"]
+
+
+def _semantic_yes(*sentences):
+    """Use deterministic answers tied to each cited quote, not another synopsis sentence."""
+    def check(request):
+        assert len(sentences) == len(request.examples)
+        for sentence, example in zip(sentences, request.examples):
+            assert cited_sources.comparable_text(sentence) in cited_sources.comparable_text(example.quote)
+        return qa_semantic_check.Verdict(
+            "yes", sentences[0], "yes", "the quoted sentences answer the narrower question",
+            tuple(qa_semantic_check.ExampleVerdict("yes", sentence) for sentence in sentences))
+    return check
+
+
+def test_corrected_solar_flare_claim_uses_one_contiguous_quote_from_issue_38():
+    candidate = deepcopy(CANDIDATES[19])
+    candidate["question"] = "How does Superman release his stored energy as a solar flare?"
+    candidate["viewer_payoff"] = "Superman releases the energy stored in every cell as a solar flare."
+    claim = candidate["issue_evidence"][1]
+    claim["quote"] = (
+        "He can, in fact, unleash the energy stored in every cell in his body - resulting in a "
+        "powerful solar flare.")
+    candidate["issue_evidence"] = [claim]
+    result = evaluate_issue_evidence(
+        candidate, "direct", fetcher=_fetcher, semantic=_semantic_yes(claim["quote"]))
+    assert result.passed and len(result.claims) == 1
+
+
+def test_corrected_thor_question_asks_for_the_worthiness_rule_the_quote_states():
+    candidate = deepcopy(CANDIDATES[22])
+    candidate["question"] = "What worthiness rule prevents Thor from lifting Mjolnir?"
+    candidate["viewer_payoff"] = "Mjolnir's enchantment decides who is worthy to lift it."
+    claim = candidate["issue_evidence"][0]
+    claim["quote"] = (
+        "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing "
+        "the power to decide who was worthy, Odin casts Thor aside and attempts to pick up his "
+        "creation but to his frustration, even he, the enchanter, cannot move it.")
+    result = evaluate_issue_evidence(
+        candidate, "direct", fetcher=_fetcher, semantic=_semantic_yes(claim["quote"]))
+    assert result.passed and len(result.claims) == 1
+
+
+def test_corrected_wonder_woman_list_uses_two_issues_where_diana_wields_the_lasso():
+    candidate = deepcopy(CANDIDATES[30])
+    candidate["viewer_payoff"] = (
+        "Diana uses the lasso to probe her deceptive memories and later to make Artemis face the truth.")
+    candidate["issue_evidence"] = [candidate["issue_evidence"][0], candidate["issue_evidence"][2]]
+    dated_page = (R4 / "pages" / "wonder_woman_rebirth_dated.txt").read_text("utf-8")
+    # Date checked against https://dc.fandom.com/wiki/Wonder_Woman%3A_Rebirth_Vol_1_1
+    first_url = candidate["issue_evidence"][0]["source_url"]
+
+    def fetcher(url):
+        return FetchedSource(url, text=dated_page) if url == first_url else _fetcher(url)
+
+    result = evaluate_issue_evidence(
+        candidate, "list", fetcher=fetcher,
+        semantic=_semantic_yes(*(claim["quote"] for claim in candidate["issue_evidence"])))
+    assert result.passed and len(result.claims) == 2
+
+
+def test_corrected_flash_question_and_payoff_describe_future_barrys_plan():
+    candidate = deepcopy(CANDIDATES[57])
+    candidate["question"] = "Why does the future Flash plan to sacrifice Barry to repair the Speed Force?"
+    candidate["viewer_payoff"] = (
+        "Future Flash plans to sacrifice present Barry so his Speed Force energy will fill the rupture.")
+    result = evaluate_issue_evidence(
+        candidate, "direct", fetcher=_fetcher,
+        semantic=_semantic_yes("His plan for repairing it, though, involves sacrificing the "
+                               "present day Barry Allen to fill the hole with his Speed Force energy."))
+    assert result.passed and len(result.claims) == 1
