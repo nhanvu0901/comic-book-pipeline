@@ -174,7 +174,7 @@ def test_fetch_source_does_not_retry_by_default_or_on_a_missing_page(monkeypatch
     "Superman Issue 38",
 ])
 def test_d2_issue_number_is_read_from_common_title_forms(title):
-    page = _page(title, _article(intro="Published: February 4, 2015"))
+    page = _page(title, _article(intro="\nPublished: February 4, 2015"))
     result = _check(_candidate(), page)
     assert result.passed, result.reason
 
@@ -186,7 +186,7 @@ def test_d2_issue_number_is_read_from_common_title_forms(title):
     ("Batman Vol 3 38", "series_title_mismatch"),
 ])
 def test_d2_wrong_issue_or_series_is_still_rejected(title, reason):
-    page = _page(title, _article(intro="Published: February 4, 2015"))
+    page = _page(title, _article(intro="\nPublished: February 4, 2015"))
     result = _check(_candidate(), page)
     assert (result.passed, result.reason) == (False, reason)
 
@@ -230,7 +230,7 @@ MARVEL_URL = "https://marvel.fandom.com/wiki/Ms._Marvel_Vol_3_1"
 
 
 def _marvel_env(monkeypatch, *, categories, page_has_date=False):
-    article = _article(intro="Published: February 2014" if page_has_date else "(no date)")
+    article = _article(intro="\nPublished: February 2014" if page_has_date else "(no date)")
     page = _page("Ms. Marvel Vol 3 1", article, url=MARVEL_URL)
     requested = []
 
@@ -347,7 +347,7 @@ def test_d5_death_in_the_question_matches_die_in_the_quote():
                       "so death is only temporary."),
     )
     page = _page("Immortal Hulk Vol 1 1", _article(
-        body=HULK_QUOTE, intro="Published: June 2018"),
+        body=HULK_QUOTE, intro="\nPublished: June 2018"),
         url=candidate["issue_evidence"][0]["source_url"])
     result = _check(candidate, page)
     assert result.passed, result.reason
@@ -358,7 +358,7 @@ def test_d5_single_letter_possessive_tokens_do_not_count_as_topic_overlap():
     candidate = _candidate(
         issue="Batman Vol 2 #1 (2011)", url="https://dc.fandom.com/wiki/Batman_Vol_2_1",
         question="What is Batman's greatest regret?", anchor="Batman", concept="regret",
-        quote="Gordon's office is on the roof of the building.")
+        quote="Batman's only regret is the night Gordon's daughter was hurt.")
     page = _page("Batman Vol 2 1", _article(
         body=candidate["issue_evidence"][0]["quote"],
         intro="It was published on September 21, 2011."),
@@ -387,12 +387,9 @@ def test_a_quote_that_is_not_on_the_page_is_rejected():
 
 def test_a_quote_stitched_from_two_places_is_rejected():
     page = _page("Superman Vol 3 38", _article(
-        body="He can, in fact, unleash the energy stored in every cell in his body.\n\n"
-             "Later, Batman visits Gotham."))
-    stitched = ("He can, in fact, unleash the energy stored in every cell in his body. "
-                "Later, Superman visits Gotham.")
-    result = _check(_candidate(quote=stitched, question="How does Superman's solar flare work?"),
-                    page)
+        body=f"{QUOTE}\n\nLater, Batman visits Gotham."))
+    stitched = f"{QUOTE} Later, Superman visits Gotham."
+    result = _check(_candidate(quote=stitched), page)
     assert (result.passed, result.reason) == (False, "quote_not_found")
 
 
@@ -422,7 +419,7 @@ def _no_fetch(url):
     (lambda c: c["issue_evidence"][0].update(issue="Superman #38"), "issue_year_unresolved"),
     (lambda c: c["issue_evidence"][0].update(issue="Superman (1986) #38 (1986)"),
      "year_out_of_range"),
-    (lambda c: c["issue_evidence"][0].update(issue="Superman #38 (2999)"), "year_out_of_range"),
+    (lambda c: c["issue_evidence"][0].update(issue="Superman #38 (2099)"), "year_out_of_range"),
     (lambda c: c["issue_evidence"][0].update(source_url="https://example.com/review"),
      "source_not_issue_page"),
     (lambda c: c["issue_evidence"][0].update(quote=""), "quote_missing"),

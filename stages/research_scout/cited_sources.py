@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import json
 import re
 import socket
+import time
 from typing import Any
 import urllib.error
 import urllib.request
@@ -37,6 +38,8 @@ _USER_AGENT = "comic-scout/1.0"
 MAX_CITED_URLS = 3
 FETCH_TIMEOUT = 10
 MAX_SOURCE_CHARS = 6000
+# A retry is only ever opted into (``retries=``): it doubles the worst-case wait.
+RETRY_DELAY = 1.0
 
 _CITATION_FIELDS = ("evidence_urls", "source_urls")
 _CITED_HEADING = "CITED SOURCES (fetched from the candidate's own citations)"
@@ -46,6 +49,7 @@ _FETCH_FAILED = "COULD NOT FETCH"
 _TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
 _INLINE_LINK = re.compile(r"\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)")
 _RAW_URL = re.compile(r"https?://\S+", re.IGNORECASE)
+_EMPHASIS = re.compile(r"[*_]+")
 
 # Kept here rather than duplicated in the two strict research schemas.  The
 # Research API requires every object property to be declared and required, so
@@ -283,7 +287,14 @@ def _visible_markdown_text(text: str) -> str:
             break
         visible = replaced
     visible = _RAW_URL.sub("", visible)
-    return visible.replace("**", "").replace("__", "").replace("~~", "").replace("`", "")
+    # Emphasis markers too: a wiki renders ``_every_`` where the claim says ``*every*``.
+    return _EMPHASIS.sub("", visible.replace("~~", "").replace("`", ""))
+
+
+def comparable_text(text: str) -> str:
+    """Visible, case/space/quote-normalised text — the form quotes are compared in."""
+
+    return normalize_quote(_visible_markdown_text(text))
 
 
 def citation_fingerprint(citation: ClaimCitation) -> tuple[str, str]:
@@ -297,8 +308,8 @@ def quote_matches_source(citation: ClaimCitation, source: FetchedSource) -> bool
 
     if not source.ok or canonical_url(citation.url) != canonical_url(source.url):
         return False
-    quote = normalize_quote(_visible_markdown_text(citation.quote))
-    return bool(quote) and quote in normalize_quote(_visible_markdown_text(source.text))
+    quote = comparable_text(citation.quote)
+    return bool(quote) and quote in comparable_text(source.text)
 
 
 def cited_urls(candidate: Any) -> list[str]:
@@ -335,10 +346,25 @@ def cited_urls(candidate: Any) -> list[str]:
 
 
 def fetch_source(
-    url: str, *, timeout: float = FETCH_TIMEOUT, max_chars: int = MAX_SOURCE_CHARS
+    url: str, *, timeout: float = FETCH_TIMEOUT, max_chars: int = MAX_SOURCE_CHARS,
+    retries: int = 0,
 ) -> FetchedSource:
-    """Read one cited URL through the reader proxy. Never raises."""
+    """Read one cited URL through the reader proxy. Never raises.
 
+    ``retries`` re-reads after a transient failure (timeout, dropped connection,
+    HTTP 429/5xx) — never after a page that answered "no" (4xx, empty body).
+    """
+
+    result = _fetch_once(url, timeout, max_chars)
+    for _ in range(max(0, retries)):
+        if result.ok or not _transient(result.error):
+            break
+        time.sleep(RETRY_DELAY)
+        result = _fetch_once(url, timeout, max_chars)
+    return result
+
+
+def _fetch_once(url: str, timeout: float, max_chars: int) -> FetchedSource:
     request = urllib.request.Request(
         f"{READER_PREFIX}{url}",
         headers={"User-Agent": _USER_AGENT, "Accept": "text/plain"},
@@ -356,6 +382,15 @@ def fetch_source(
     if not text:
         return FetchedSource(url=url, error="empty response")
     return FetchedSource(url=url, text=text[:max_chars])
+
+
+def _transient(error: str) -> bool:
+    if error == "empty response":
+        return False
+    if error.startswith("HTTP "):
+        code = error[5:]
+        return code == "429" or code.startswith("5")
+    return True
 
 
 def fetch_cited_sources(candidate: Any) -> list[FetchedSource]:
