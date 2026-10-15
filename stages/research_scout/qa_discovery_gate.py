@@ -10,6 +10,7 @@ check rejected a candidate, so a rejection can be told apart from a gate bug.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -17,9 +18,13 @@ from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import cited_sources, issue_pages
+from . import cited_sources, issue_pages, qa_semantic_check
 from .issue_pages import ISSUE_FETCH_RETRIES, ISSUE_FETCH_TIMEOUT, ISSUE_PAGE_MAX_CHARS  # noqa: F401
 from .micro_recency import issue_publication_year
+
+logger = logging.getLogger(__name__)
+_UNSET = object()
+_LEXICAL_REASONS = frozenset({"topic_overlap", "question_not_grounded"})
 
 MIN_PUBLICATION_YEAR = 2010
 _MAX_CLAIMS = 5
@@ -509,6 +514,7 @@ class _Ask:
 def evaluate_issue_evidence(
     candidate: Mapping[str, Any], fmt: str, *,
     fetcher: Callable[[str], cited_sources.FetchedSource] = _fetch_issue_source,
+    semantic: Any = _UNSET,
 ) -> GateResult:
     """Require fetched, verbatim issue evidence; lists need two separate issues.
 
@@ -518,6 +524,9 @@ def evaluate_issue_evidence(
     story (not a teaser, pull-quote or reprint) and be grounded in the question's words.
     On success ``claims`` holds exactly the claims that were verified.
     """
+    if semantic is _UNSET:
+        semantic = qa_semantic_check.default_checker()
+
     candidate = normalize_candidate(candidate)
     question = str(candidate.get("question") or "")
     raw_anchor = str(candidate.get("canonical_anchor") or "")
@@ -545,26 +554,103 @@ def evaluate_issue_evidence(
     if len({canonical_topic(str(c.get("issue") or "")) for c in claims}) < required:
         return GateResult(False, "list_needs_2_issues", ("fewer than 2 distinct issues cited",))
 
-    verified: dict[str, Mapping[str, Any]] = {}
+    allow_lexical = semantic is not None
+    sound_claims: list[tuple[Mapping[str, Any], str]] = []
+    lexically_verified: list[Mapping[str, Any]] = []
     failures: list[tuple[str, str]] = []
     pages: dict[str, cited_sources.FetchedSource] = {}
+
     for claim in claims:
         issue = str(claim.get("issue") or "").strip()
-        reasons, kept = _claim_failures(claim, issue, ask, fetcher, pages)
-        if not reasons:
-            verified.setdefault(canonical_topic(issue), kept)
-            if len(verified) >= required:
-                kept = tuple(verified.values())
-                return GateResult(True, details=_correction_notes(kept), claims=kept)
+        has_hard = any(r not in _LEXICAL_REASONS for _, r in failures)
+        reasons, kept, story = _claim_failures(
+            claim, issue, ask, fetcher, pages, allow_lexical=allow_lexical, has_hard_failure=has_hard)
+        hard_reasons = [r for r in reasons if r not in _LEXICAL_REASONS]
+        lexical_reasons = [r for r in reasons if r in _LEXICAL_REASONS]
+        if not hard_reasons:
+            if not lexical_reasons:
+                lexically_verified.append(kept)
+                sound_claims.append((kept, story))
+            elif allow_lexical:
+                sound_claims.append((kept, story))
+                failures.extend((issue, r) for r in lexical_reasons)
+            else:
+                failures.extend((issue, r) for r in lexical_reasons)
         else:
-            failures.extend((issue, reason) for reason in reasons)
+            failures.extend((issue, r) for r in reasons)
+
     details = tuple(f"{issue or '(no issue label)'}: {reason}" for issue, reason in failures)
-    if required > 1 and verified:
-        return GateResult(False, "list_needs_2_issues", details)
-    if not failures:
-        return GateResult(False, "no_issue_evidence")
-    worst = max(failures, key=lambda failure: _STAGE_RANK.get(failure[1], -1))[1]
-    return GateResult(False, worst, details)
+    distinct_verified = {canonical_topic(str(c.get("issue") or "")) for c in lexically_verified}
+    distinct_sound = {canonical_topic(str(c.get("issue") or "")) for c, _ in sound_claims}
+    hard_failures = [f for f in failures if f[1] not in _LEXICAL_REASONS]
+
+    if semantic is None:
+        if len(distinct_verified) >= required:
+            kept = tuple(lexically_verified)
+            return GateResult(True, details=_correction_notes(kept), claims=kept)
+        if required > 1 and lexically_verified:
+            return GateResult(False, "list_needs_2_issues", details)
+        if not failures:
+            return GateResult(False, "no_issue_evidence")
+        worst = max(failures, key=lambda failure: _STAGE_RANK.get(failure[1], -1))[1]
+        return GateResult(False, worst, details)
+
+    # When semantic check is enabled:
+    # 1. If not enough claims passed structural checks:
+    if len(distinct_sound) < required:
+        if required > 1 and sound_claims:
+            return GateResult(False, "list_needs_2_issues", details)
+        if not failures:
+            return GateResult(False, "no_issue_evidence")
+        worst = max(failures, key=lambda failure: _STAGE_RANK.get(failure[1], -1))[1]
+        return GateResult(False, worst, details)
+
+    # 2. Every structural check must pass before asking the model.
+    # If the candidate has any hard structural failure, and does not have enough lexically
+    # verified claims to pass on its own, it must not call the model.
+    if len(distinct_verified) < required and hard_failures:
+        if not failures:
+            return GateResult(False, "no_issue_evidence")
+        worst = max(failures, key=lambda failure: _STAGE_RANK.get(failure[1], -1))[1]
+        return GateResult(False, worst, details)
+
+    claims_to_check = sound_claims
+
+    examples = tuple(
+        qa_semantic_check.Example(
+            issue=str(c.get("issue") or ""),
+            url=str(c.get("source_url") or ""),
+            quote=str(c.get("quote") or ""),
+            synopsis=story,
+        )
+        for c, story in claims_to_check
+    )
+    request = qa_semantic_check.SemanticRequest(
+        question=question,
+        fmt=str(fmt),
+        payoff=str(candidate.get("viewer_payoff") or candidate.get("payoff") or "").strip(),
+        examples=examples,
+    )
+
+    try:
+        verdict = semantic(request)
+    except Exception as exc:
+        logger.warning("semantic answer check failed closed for %r: %s", question[:90], exc)
+        return GateResult(False, "semantic_check_error", (f"semantic check: {exc}",))
+
+    if not isinstance(verdict, qa_semantic_check.Verdict):
+        logger.warning("semantic answer check failed closed for %r: invalid verdict %r", question[:90], verdict)
+        return GateResult(False, "semantic_check_error", ("semantic check: invalid verdict",))
+
+    if verdict.error:
+        logger.warning("semantic answer check failed for %r: %s", question[:90], verdict.error)
+
+    judgement = qa_semantic_check.judge(request, verdict)
+    if judgement.reason:
+        return GateResult(False, judgement.reason, details + judgement.details)
+
+    kept_claims = tuple(claims_to_check[i][0] for i in judgement.kept)
+    return GateResult(True, details=_correction_notes(kept_claims) + judgement.details, claims=kept_claims)
 
 
 def _correction_notes(claims) -> tuple[str, ...]:
@@ -698,9 +784,11 @@ def _claim_failures(
     claim: Mapping[str, Any], issue: str, ask: _Ask,
     fetcher: Callable[[str], cited_sources.FetchedSource],
     pages: dict[str, cited_sources.FetchedSource],
-) -> tuple[list[str], Mapping[str, Any]]:
-    """([], claim) when this one claim is verified — the claim as verified, with the corrected
-    URL if its slug had to be fixed — else (every check it failed that could still be run, claim).
+    *, allow_lexical: bool = False,
+    has_hard_failure: bool = False,
+) -> tuple[list[str], Mapping[str, Any], str]:
+    """([], claim, story) when this one claim is verified — the claim as verified, with the corrected
+    URL if its slug had to be fixed — else (every check it failed that could still be run, claim, story).
 
     Checks that cannot go on without their input (a year, a page, the quote) stop the claim;
     the rest (the anchor, the year on the page) are recorded and the claim is judged on, so a
@@ -709,7 +797,7 @@ def _claim_failures(
     quote = str(claim.get("quote") or "").strip()
     label = _parse_label(issue)
     if label is None:
-        return ["issue_year_unresolved"], claim
+        return ["issue_year_unresolved"], claim, ""
     year = label.year
     # A year the label cannot stand on (none, or outside 2010..today) is not final: the page
     # may state the issue's own release year. Until it does, this reason is what the claim reports.
@@ -719,14 +807,15 @@ def _claim_failures(
     elif not MIN_PUBLICATION_YEAR <= year <= date.today().year:
         suspect = "year_out_of_range"
     if not url.startswith(("https://", "http://")) or not _issue_page_url(url):
-        return [suspect or "source_not_issue_page"], claim
+        return [suspect or "source_not_issue_page"], claim, ""
     if not quote:
-        return [suspect or "quote_missing"], claim
+        return [suspect or "quote_missing"], claim, ""
     quote_stems = _stemmed_terms(_content_terms(quote))
     not_topic = frozenset(_series_terms(_YEAR.sub("", label.series)))
     if not suspect and ask.named and not (
             ask.terms(not_topic)[0] | _stemmed_terms(ask.anchor)) & quote_stems:
-        return ["topic_overlap"], claim
+        if not allow_lexical or has_hard_failure:
+            return ["topic_overlap"], claim, ""
 
     source = _fetch_once(url, pages, fetcher)
     if not source.ok and source.error == "page_missing":
@@ -736,17 +825,17 @@ def _claim_failures(
                 url, source, claim = variant, retry, {**claim, "source_url": variant}
                 break
     if not source.ok:
-        return [suspect or _FETCH_REASON.get(source.error, "fetch_failed")], claim
+        return [suspect or _FETCH_REASON.get(source.error, "fetch_failed")], claim, ""
     page_reason = _page_issue_reason(source.text, issue)
     if page_reason:
-        return [suspect or page_reason], claim
+        return [suspect or page_reason], claim, ""
 
     page_years = _publication_years(source.text)
     if suspect or year not in page_years:
         corrected = _corrected_year(page_years)
         if corrected is None:
             if suspect:
-                return [suspect], claim
+                return [suspect], claim, ""
         else:
             claim = {**claim, "issue": _relabel(issue, year, corrected),
                      "year_corrected": {"from": year, "to": corrected}}
@@ -765,14 +854,14 @@ def _claim_failures(
         failed.append("year_not_found")
     same_page = cited_sources.canonical_url(url) == cited_sources.canonical_url(source.url)
     if not same_page or not _quote_in(cited_sources.comparable_text(source.text), quote):
-        return failed + ["quote_not_found"], claim
+        return failed + ["quote_not_found"], claim, ""
     synopsis_reason, story, structured = _synopsis_check(source.text, quote)
     if synopsis_reason:
-        return failed + [synopsis_reason], claim
+        return failed + [synopsis_reason], claim, ""
     lexical = _lexical_failure(
         ask, aliases, alias | not_topic, quote_stems, _stemmed_terms(_content_terms(story)),
         structured)
-    return failed + ([lexical] if lexical else []), claim
+    return failed + ([lexical] if lexical else []), claim, story
 
 
 def _lexical_failure(
