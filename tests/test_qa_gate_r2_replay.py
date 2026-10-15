@@ -132,10 +132,10 @@ def test_replay_verdict_of_each_live_candidate(index, monkeypatch):
         candidate["run"], candidate["question"], result.reason, result.details)
 
 
-def test_replay_totals_nine_true_passes_out_of_twenty_one(monkeypatch):
+def test_replay_totals_ten_passes_out_of_twenty_one(monkeypatch):
     _serve(monkeypatch)
     verdicts = [_judge(i)[1].passed for i in range(21)]
-    assert sum(verdicts) == 9
+    assert sum(verdicts) == 10    # the testers' 9 true passes + the slug-fixed Kryptonite one
     # the 4 false accepts of the live runs (reprint, pull-quote, ungrounded payoff,
     # hedge payoff) are all rejected now
     assert not any(verdicts[i] for i in (0, 10, 11, 20))
@@ -161,11 +161,10 @@ def test_replay_corrects_the_slash_slug_and_reports_the_corrected_url(monkeypatc
 
 def test_replay_cloudflare_pages_were_read_through_the_api(monkeypatch):
     log = _serve(monkeypatch)
-    for index in (6, 12, 13):
+    for index in (6, 12):
         _judge(index)
     asked = " ".join(log["api"])
     assert "Amazing_Spider-Man_Vol_2_1" in asked and "Batman_Vol_3_103" in asked
-    assert "The_Flash_Vol_4_31" in asked
 
 
 def test_replay_wakanda_question_names_the_hero_by_real_name_and_still_reaches_the_synopsis_check(

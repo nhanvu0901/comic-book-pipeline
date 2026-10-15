@@ -10,7 +10,6 @@ check rejected a candidate, so a rejection can be told apart from a gate bug.
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -18,15 +17,10 @@ from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import cited_sources
+from . import cited_sources, issue_pages
+from .issue_pages import ISSUE_FETCH_RETRIES, ISSUE_FETCH_TIMEOUT, ISSUE_PAGE_MAX_CHARS  # noqa: F401
 from .micro_recency import issue_publication_year
 
-
-# Wiki pages arrive with 13k+ chars of navigation before the article (and run to
-# ~120k with appearance lists), so the cap only bounds a runaway response.
-ISSUE_PAGE_MAX_CHARS = 250_000
-ISSUE_FETCH_TIMEOUT = 15
-ISSUE_FETCH_RETRIES = 1
 MIN_PUBLICATION_YEAR = 2010
 _MAX_CLAIMS = 5
 
@@ -72,7 +66,11 @@ _CLAIM_STAGES = (
     "year_not_found", "quote_not_found", "teaser_only_source",
 )
 _STAGE_RANK = {reason: rank for rank, reason in enumerate(_CLAIM_STAGES)}
-_STAGE_RANK["fetch_timeout"] = _STAGE_RANK["fetch_failed"]
+for _alias in ("fetch_timeout", "page_blocked", "page_missing"):
+    _STAGE_RANK[_alias] = _STAGE_RANK["fetch_failed"]
+# fetch error (FetchedSource.error) -> the reason a claim reports when its page is unusable
+_FETCH_REASON = {"timeout": "fetch_timeout", "challenge": "page_blocked",
+                 "page_missing": "page_missing"}
 
 
 @dataclass(frozen=True)
@@ -98,50 +96,7 @@ def as_gate_result(verdict: Any) -> GateResult:
 # --- fetching ----------------------------------------------------------------
 
 def _fetch_issue_source(url: str) -> cited_sources.FetchedSource:
-    source = cited_sources.fetch_source(
-        url, timeout=ISSUE_FETCH_TIMEOUT, max_chars=ISSUE_PAGE_MAX_CHARS,
-        retries=ISSUE_FETCH_RETRIES)
-    if source.ok and not _publication_years(source.text):
-        released = _wiki_release_dates(url)
-        if released:
-            return cited_sources.FetchedSource(url=source.url, text=f"{source.text}\n\n{released}")
-    return source
-
-
-def _wiki_release_dates(url: str) -> str:
-    """Release/cover dates from a wiki's category list, as labelled date lines.
-
-    Some issue wikis keep the date only in the infobox, which the reader drops, but
-    always file the page under "Comics Released in <Month>, <Year>" / "<Year>, <Month>
-    Cover Date". The MediaWiki API reads those for free; any failure is just "no date".
-    """
-    parts = urlsplit(url)
-    host = (parts.hostname or "").casefold()
-    if not host.endswith(".fandom.com") or "/wiki/" not in parts.path:
-        return ""
-    title = parts.path.split("/wiki/", 1)[1]
-    api = (f"https://{host}/api.php?action=query&prop=categories&titles={title}"
-           "&cllimit=max&format=json")
-    reply = cited_sources.fetch_source(
-        api, timeout=ISSUE_FETCH_TIMEOUT, max_chars=200_000, retries=ISSUE_FETCH_RETRIES)
-    match = re.search(r"\{.*\}", reply.text, re.DOTALL) if reply.ok else None
-    if match is None:
-        return ""
-    try:
-        pages = json.loads(match.group(0))["query"]["pages"].values()
-        names = [str(c["title"]).removeprefix("Category:")
-                 for page in pages for c in page.get("categories", [])]
-    except (ValueError, KeyError, TypeError, AttributeError):
-        return ""
-    lines = []
-    for name in names:
-        released = re.fullmatch(r"Comics Released in (.+)", name)
-        cover = re.fullmatch(r"((?:19|20)\d{2}), ([A-Za-z]+) Cover Date", name)
-        if released:
-            lines.append(f"Release Date: {released.group(1)}")
-        elif cover:
-            lines.append(f"Cover Date: {cover.group(2)}, {cover.group(1)}")
-    return "\n".join(lines)
+    return issue_pages.fetch_issue_page(url)
 
 
 def _issue_page_url(url: str) -> bool:
@@ -346,16 +301,16 @@ def evaluate_issue_evidence(
     support = core | _stemmed_terms(_context_terms(candidate) - anchor_terms)
     needed = min(2, len(topic_terms))
 
-    verified: set[str] = set()
+    verified: dict[str, Mapping[str, Any]] = {}
     failures: list[tuple[str, str]] = []
     pages: dict[str, cited_sources.FetchedSource] = {}
     for claim in claims:
         issue = str(claim.get("issue") or "").strip()
-        reason = _claim_reason(claim, issue, core, support, needed, fetcher, pages)
+        reason, kept = _claim_reason(claim, issue, core, support, needed, fetcher, pages)
         if reason is None:
-            verified.add(canonical_topic(issue))
+            verified.setdefault(canonical_topic(issue), kept)
             if len(verified) >= required:
-                return GateResult(True)
+                return GateResult(True, claims=tuple(verified.values()))
         else:
             failures.append((issue, reason))
     details = tuple(f"{issue or '(no issue label)'}: {reason}" for issue, reason in failures)
@@ -371,35 +326,49 @@ def _claim_reason(
     claim: Mapping[str, Any], issue: str, core: set[str], support: set[str], needed: int,
     fetcher: Callable[[str], cited_sources.FetchedSource],
     pages: dict[str, cited_sources.FetchedSource],
-) -> str | None:
-    """None when this one claim is verified, else the name of the check it failed."""
+) -> tuple[str | None, Mapping[str, Any]]:
+    """(None, claim) when this one claim is verified — the claim as verified, with the
+    corrected URL if its slug had to be fixed — else (the name of the check it failed, claim)."""
     url = str(claim.get("source_url") or "").strip()
     quote = str(claim.get("quote") or "").strip()
     year = issue_publication_year(issue, allow_series_year=True)
     if year is None:
-        return "issue_year_unresolved"
+        return "issue_year_unresolved", claim
     if not MIN_PUBLICATION_YEAR <= year <= date.today().year:
-        return "year_out_of_range"
+        return "year_out_of_range", claim
     if not url.startswith(("https://", "http://")) or not _issue_page_url(url):
-        return "source_not_issue_page"
+        return "source_not_issue_page", claim
     if not quote:
-        return "quote_missing"
+        return "quote_missing", claim
     quote_stems = _stemmed_terms(_topic_terms(quote))
     if not core & quote_stems or len(support & quote_stems) < needed:
-        return "topic_overlap"
+        return "topic_overlap", claim
 
-    if url not in pages:
-        pages[url] = fetcher(url)
-    source = pages[url]
+    source = _fetch_once(url, pages, fetcher)
+    if not source.ok and source.error == "page_missing":
+        for variant in issue_pages.slug_variants(url, issue):
+            retry = _fetch_once(variant, pages, fetcher)
+            if retry.ok:
+                url, source, claim = variant, retry, {**claim, "source_url": variant}
+                break
     if not source.ok:
-        return "fetch_timeout" if source.error == "timeout" else "fetch_failed"
+        return _FETCH_REASON.get(source.error, "fetch_failed"), claim
     page_reason = _page_issue_reason(source.text, issue)
     if page_reason:
-        return page_reason
+        return page_reason, claim
     if year not in _publication_years(source.text):
-        return "year_not_found"
+        return "year_not_found", claim
     if not cited_sources.quote_matches_source(cited_sources.ClaimCitation(url, quote), source):
-        return "quote_not_found"
+        return "quote_not_found", claim
     if _quote_only_in_teaser(source.text, quote):
-        return "teaser_only_source"
-    return None
+        return "teaser_only_source", claim
+    return None, claim
+
+
+def _fetch_once(
+    url: str, pages: dict[str, cited_sources.FetchedSource],
+    fetcher: Callable[[str], cited_sources.FetchedSource],
+) -> cited_sources.FetchedSource:
+    if url not in pages:
+        pages[url] = fetcher(url)
+    return pages[url]
