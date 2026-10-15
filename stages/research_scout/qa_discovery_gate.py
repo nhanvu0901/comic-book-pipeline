@@ -305,6 +305,35 @@ def _parse_label(issue: str) -> _Label | None:
     return None
 
 
+def _number_end(issue: str) -> int:
+    """Where the issue number of a label ends (the label's year, if any, follows it)."""
+    ends = []
+    for pattern, group in ((_ISSUE_NUMBER, 0), (_VOL_NUMBER, 1), (_ISSUE_WORD, 1)):
+        found = pattern.search(issue)
+        if found:
+            ends.append(found.end(group))
+    return min(ends) if ends else len(issue)
+
+
+def _relabel(issue: str, old: int | None, new: int) -> str:
+    """The label with the year the page states: the year after the issue number is replaced, a
+    label that has none (or only a series launch year before the number) gets it appended."""
+    end = _number_end(issue)
+    head, tail = issue[:end], issue[end:]
+    if old is not None and str(old) in tail:
+        return head + tail.replace(str(old), str(new), 1)
+    return f"{head} ({new}){tail}"
+
+
+def _corrected_year(page_years: set[int]) -> int | None:
+    """The release year a page states when it is unambiguous and in scope, else None: every year
+    it gives must be 2010 or later (a story first printed earlier is out of scope however it is
+    reprinted) and within a year of the others (cover date vs release date)."""
+    if not page_years or not all(MIN_PUBLICATION_YEAR <= y <= date.today().year for y in page_years):
+        return None
+    return min(page_years) if max(page_years) - min(page_years) <= 1 else None
+
+
 def _page_issue_reason(text: str, issue: str) -> str | None:
     label = _parse_label(issue)
     series = _series_terms(_YEAR.sub("", label.series)) if label else set()
@@ -525,7 +554,8 @@ def evaluate_issue_evidence(
         if not reasons:
             verified.setdefault(canonical_topic(issue), kept)
             if len(verified) >= required:
-                return GateResult(True, claims=tuple(verified.values()))
+                kept = tuple(verified.values())
+                return GateResult(True, details=_correction_notes(kept), claims=kept)
         else:
             failures.extend((issue, reason) for reason in reasons)
     details = tuple(f"{issue or '(no issue label)'}: {reason}" for issue, reason in failures)
@@ -535,6 +565,16 @@ def evaluate_issue_evidence(
         return GateResult(False, "no_issue_evidence")
     worst = max(failures, key=lambda failure: _STAGE_RANK.get(failure[1], -1))[1]
     return GateResult(False, worst, details)
+
+
+def _correction_notes(claims) -> tuple[str, ...]:
+    """One detail line per claim whose year label the page corrected (``year_corrected``)."""
+    notes = []
+    for claim in claims:
+        fixed = claim.get("year_corrected")
+        if isinstance(fixed, Mapping):
+            notes.append(f"{claim.get('issue')}: year_corrected {fixed.get('from') or 'none'}->{fixed.get('to')}")
+    return tuple(notes)
 
 
 def _names_someone(question: str) -> bool:
@@ -593,6 +633,14 @@ class _Aliases:
                     and _is_name(head) and not _topic_terms(display) & _topic_terms(head)):
                 pairs.append((display, head))
         self.pairs = pairs
+        # first word -> the distinct full names (two words or more) it starts, on this page
+        self._first_names: dict[str, set[tuple[str, ...]]] = {}
+        for pair in pairs:
+            for name in pair:
+                words = tuple(w for w in _WORD.findall(name.casefold())
+                              if w not in _GENERIC and w not in _DISAMBIGUATION)
+                if len(words) > 1:
+                    self._first_names.setdefault(words[0], set()).add(words)
         self._equivalent: dict[str, set[str]] = {}
         for left, right in pairs:
             left_stems = _stemmed_terms(_content_terms(left) - _DISAMBIGUATION)
@@ -621,6 +669,11 @@ class _Aliases:
                     found.append(words)
         return found[:12]
 
+    def first_name_is_unique(self, word: str) -> bool:
+        """Whether ``word`` starts exactly one full name on this page: a first name is an alias of
+        the hero only when the page's own links leave no doubt whose first name it is."""
+        return len(self._first_names.get(word, ())) == 1
+
     def echoes(self, wanted: set[str], haystack: set[str]) -> set[str]:
         """The wanted stems present in the haystack, directly or through an alias."""
         return {stem for stem in wanted
@@ -632,6 +685,11 @@ def _alias_in_question(aliases: _Aliases, ask: _Ask) -> frozenset[str] | None:
     for words in aliases.for_anchor(ask.groups):
         if set(words) <= ask.question_terms or (
                 len(words) > 1 and len(words[-1]) >= 4 and words[-1] in ask.question_terms):
+            return frozenset(words)
+        # a first name alone ("Barry" for "Barry Allen"): only when the page links the full name
+        # to the anchor and that first name starts no other name on the page
+        if (len(words) > 1 and len(words[0]) >= 3 and words[0].isalpha()
+                and words[0] in ask.question_terms and aliases.first_name_is_unique(words[0])):
             return frozenset(words)
     return None
 
@@ -650,18 +708,24 @@ def _claim_failures(
     url = str(claim.get("source_url") or "").strip()
     quote = str(claim.get("quote") or "").strip()
     label = _parse_label(issue)
-    year = label.year if label else None
-    if year is None:
+    if label is None:
         return ["issue_year_unresolved"], claim
-    if not MIN_PUBLICATION_YEAR <= year <= date.today().year:
-        return ["year_out_of_range"], claim
+    year = label.year
+    # A year the label cannot stand on (none, or outside 2010..today) is not final: the page
+    # may state the issue's own release year. Until it does, this reason is what the claim reports.
+    suspect = None
+    if year is None:
+        suspect = "issue_year_unresolved"
+    elif not MIN_PUBLICATION_YEAR <= year <= date.today().year:
+        suspect = "year_out_of_range"
     if not url.startswith(("https://", "http://")) or not _issue_page_url(url):
-        return ["source_not_issue_page"], claim
+        return [suspect or "source_not_issue_page"], claim
     if not quote:
-        return ["quote_missing"], claim
+        return [suspect or "quote_missing"], claim
     quote_stems = _stemmed_terms(_content_terms(quote))
     not_topic = frozenset(_series_terms(_YEAR.sub("", label.series)))
-    if ask.named and not (ask.terms(not_topic)[0] | _stemmed_terms(ask.anchor)) & quote_stems:
+    if not suspect and ask.named and not (
+            ask.terms(not_topic)[0] | _stemmed_terms(ask.anchor)) & quote_stems:
         return ["topic_overlap"], claim
 
     source = _fetch_once(url, pages, fetcher)
@@ -672,10 +736,21 @@ def _claim_failures(
                 url, source, claim = variant, retry, {**claim, "source_url": variant}
                 break
     if not source.ok:
-        return [_FETCH_REASON.get(source.error, "fetch_failed")], claim
+        return [suspect or _FETCH_REASON.get(source.error, "fetch_failed")], claim
     page_reason = _page_issue_reason(source.text, issue)
     if page_reason:
-        return [page_reason], claim
+        return [suspect or page_reason], claim
+
+    page_years = _publication_years(source.text)
+    if suspect or year not in page_years:
+        corrected = _corrected_year(page_years)
+        if corrected is None:
+            if suspect:
+                return [suspect], claim
+        else:
+            claim = {**claim, "issue": _relabel(issue, year, corrected),
+                     "year_corrected": {"from": year, "to": corrected}}
+            year = corrected
 
     failed: list[str] = []
     aliases = _Aliases(source.text)
@@ -686,7 +761,7 @@ def _claim_failures(
             failed.append("anchor_mismatch")
         else:
             alias = found
-    if year not in _publication_years(source.text):
+    if year not in page_years:
         failed.append("year_not_found")
     same_page = cited_sources.canonical_url(url) == cited_sources.canonical_url(source.url)
     if not same_page or not _quote_in(cited_sources.comparable_text(source.text), quote):

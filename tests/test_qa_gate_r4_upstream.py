@@ -205,7 +205,7 @@ LIVE_DROPPED = [
     ("What rule shapes Doctor Strange’s magic in this world?",
      "What happens when the magic bill finally comes due?", "question_type_changed"),
     ("How does Captain America push back against revenge when it reaches a breaking point?",
-     "Can Cap actually stop a vengeful killer without fighting him to the death?", "no_shared_term"),
+     "Can Cap actually stop a vengeful killer without fighting him to the death?", "new_stakes"),
     ("What are distinct examples of Wonder Woman using or changing her Bracelets of Submission?",
      "When does restraint become the wrong choice?", "question_type_changed"),
 ]

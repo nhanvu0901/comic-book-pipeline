@@ -208,9 +208,14 @@ def test_d3_cover_date_alone_is_accepted():
 
 
 def test_d3_published_on_year_must_match_the_claimed_year():
+    # a pre-2010 page year cannot be corrected into scope ...
+    old_page = _page("Superman #38 | DC", _article(intro="It was published on February 4, 2005."))
+    result = _check(_candidate(issue="Superman (2011) #38 (2016)"), old_page)
+    assert (result.passed, result.reason) == (False, "year_not_found")
+    # ... a 2010+ one corrects the label (round 4, A2)
     page = _page("Superman #38 | DC", _article(intro="It was published on February 4, 2015."))
     result = _check(_candidate(issue="Superman (2011) #38 (2016)"), page)
-    assert (result.passed, result.reason) == (False, "year_not_found")
+    assert result.passed and "(2015)" in result.claims[0]["issue"]
 
 
 def test_d3_reader_timestamp_is_not_a_publication_date():
@@ -224,7 +229,8 @@ def test_d3_an_unrelated_later_prose_date_cannot_vouch_for_the_issue_year():
         intro="It was published on February 4, 2015.",
         extra="Trivia: the sequel was published on March 3, 2019.\n\n"))
     result = _check(_candidate(issue="Superman (2011) #38 (2019)"), page)
-    assert (result.passed, result.reason) == (False, "year_not_found")
+    # the trivia date (2019) did not vouch for the label; the issue's own date (2015) corrected it
+    assert result.passed and "(2015)" in result.claims[0]["issue"] and "2019" not in result.claims[0]["issue"]
 
 
 MARVEL_URL = "https://marvel.fandom.com/wiki/Ms._Marvel_Vol_3_1"
@@ -264,7 +270,7 @@ def test_d3_marvel_pages_without_a_date_fall_back_to_wiki_release_categories(mon
 def test_d3_category_dates_still_enforce_the_claimed_year(monkeypatch):
     _marvel_env(monkeypatch, categories=["Comics Released in February, 2014"])
     result = evaluate_issue_evidence(_marvel_candidate(2015), "direct")
-    assert (result.passed, result.reason) == (False, "year_not_found")
+    assert result.passed and "(2014)" in result.claims[0]["issue"]     # the category date corrects it
 
 
 def test_d3_missing_category_data_is_year_not_found_not_a_crash(monkeypatch):
@@ -420,10 +426,6 @@ def _no_fetch(url):
     (lambda c: c.update(question=""), "missing_fields"),
     (lambda c: c.update(issue_evidence=None), "no_issue_evidence"),
     (lambda c: c.update(issue_evidence=[]), "no_issue_evidence"),
-    (lambda c: c["issue_evidence"][0].update(issue="Superman #38"), "issue_year_unresolved"),
-    (lambda c: c["issue_evidence"][0].update(issue="Superman (1986) #38 (1986)"),
-     "year_out_of_range"),
-    (lambda c: c["issue_evidence"][0].update(issue="Superman #38 (2099)"), "year_out_of_range"),
     (lambda c: c["issue_evidence"][0].update(source_url="https://example.com/review"),
      "source_not_issue_page"),
     (lambda c: c["issue_evidence"][0].update(quote=""), "quote_missing"),
@@ -434,6 +436,19 @@ def test_d7_prefetch_rejections_name_the_failed_check(mutate, reason):
     candidate = _candidate()
     mutate(candidate)
     result = evaluate_issue_evidence(candidate, "direct", fetcher=_no_fetch)
+    assert (result.passed, result.reason) == (False, reason)
+
+
+@pytest.mark.parametrize("issue,reason", [
+    ("Superman #38", "issue_year_unresolved"),
+    ("Superman (1986) #38 (1986)", "year_out_of_range"),
+    ("Superman #38 (2099)", "year_out_of_range"),
+])
+def test_d7_a_label_year_that_cannot_stand_is_judged_by_the_page_and_keeps_its_reason(issue, reason):
+    # round 4 (A2): the page may state the issue's own year, so the page is read first; when it
+    # cannot rescue the label (it says 1997) the claim reports the label's reason as before
+    page = _page("Superman #38 | DC", _article(intro="It was published on February 4, 1997."))
+    result = _check(_candidate(issue=issue), page)
     assert (result.passed, result.reason) == (False, reason)
 
 
@@ -529,9 +544,9 @@ LIVE = json.loads((PAGES / "live_candidates.json").read_text("utf-8"))
 
 # index -> (passes, reason).  Judged candidate by candidate against the REAL pages:
 EXPECTED = {
-    # Both claims carry the wrong year (2011 is the series launch; the issues ran 2015) and
-    # the #38 quote stitches two different issues together.
-    0: (False, "year_not_found"),
+    # Both claims carry the wrong year (2011 is the series launch; the issues ran 2015: round 4
+    # corrects it from the page) and the #38 quote stitches two different issues together.
+    0: (False, "quote_not_found"),
     # #611 has a real synopsis ("The Trial of Captain America (Part 1)") with the quote.
     1: (True, ""),
     # The classifier files "What rule ... does Wonder Woman expose" as a list; one issue only.

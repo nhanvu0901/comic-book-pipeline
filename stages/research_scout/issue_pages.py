@@ -36,7 +36,14 @@ ISSUE_FETCH_RETRIES = 1
 _USER_AGENT = "comic-scout/1.0"
 _CHALLENGE = re.compile(
     r"just a moment|performing security verification|enable javascript and cookies to continue"
-    r"|attention required|verify you are human", re.IGNORECASE)
+    r"|attention required|verify you are human"
+    # a CDN/firewall's 403 page: its own title or heading, the reader's "Target URL returned
+    # error 403" warning, or its stock sentence. A story that merely says "access restricted"
+    # mid-sentence is not one of these.
+    r"|^\s*(?:title:\s*|#+\s*)access\s+(?:restricted|denied)\b"
+    r"|target\s+url\s+returned\s+error\s+40[13]\b"
+    r"|security\s+tools\s+have\s+identified\s+your\s+connection",
+    re.IGNORECASE | re.MULTILINE)
 _HEADING = re.compile(r"(?m)^#{1,6}\s+(.*)$")
 _COOKIE_HEADINGS = re.compile(
     r"cookie|categories\s*&\s*purposes|consent|privacy|purposes list", re.IGNORECASE)
@@ -327,16 +334,22 @@ def _with_release_dates(url: str, source: FetchedSource) -> FetchedSource:
 def fetch_issue_page(url: str) -> FetchedSource:
     """The cited page as readable text, or a ``FetchedSource`` whose ``error`` says why not:
     ``timeout`` / ``HTTP nnn`` (reader), ``challenge`` (bot check, no API route),
-    ``page_missing`` (no such wiki title), ``api_unavailable``/``api_error``."""
+    ``page_missing`` (no such wiki title), ``api_unavailable``/``api_error``.
+
+    A wiki host is read through the MediaWiki API first: it is a plain GET that is not
+    bot-checked, while the reader met Cloudflare on most live fetches and spent most of the
+    gate's time before the API could rescue the page. The reader is the fallback, and the only
+    route for every other host."""
+    api_error = ""
+    if _is_wiki(url):
+        primary = _fetch_via_api(url)
+        if primary.ok or primary.error == "page_missing":
+            return primary
+        api_error = primary.error
     source = cited_sources.fetch_source(
         url, timeout=ISSUE_FETCH_TIMEOUT, max_chars=ISSUE_PAGE_MAX_CHARS,
         retries=ISSUE_FETCH_RETRIES)
     problem = page_problem(source.text) if source.ok else None
     if source.ok and problem is None:
         return _with_release_dates(url, source)
-    if not _is_wiki(url):
-        return FetchedSource(url=url, error=problem or source.error)
-    fallback = _fetch_via_api(url)
-    if fallback.ok or fallback.error == "page_missing":
-        return fallback
-    return FetchedSource(url=url, error=problem or source.error or fallback.error)
+    return FetchedSource(url=url, error=problem or source.error or api_error)

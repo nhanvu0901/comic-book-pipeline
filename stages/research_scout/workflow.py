@@ -32,9 +32,10 @@ from .errors import ScoutUserError
 from .models import EvidenceGate, FeedbackNote, ResearchSession, ScoutMode, SessionState
 from .planner import ResearchPlan
 from .policies import PolicyBundle
+from .prompt_rules import EXACT_QUOTE, HOOK_RULES, NAME_THE_HERO, REAL_RELEASE_YEAR
 from .storage import SessionStore
 from .youcom import RawCall, YouComClient
-from stages.question_archetype import is_narrow_direct_question, question_archetype
+from stages.question_archetype import has_list_lead, is_narrow_direct_question, question_archetype
 
 
 _HOOK_QUESTION_START = re.compile(
@@ -65,34 +66,44 @@ def _hook_tokens(value: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", value.casefold()))
 
 
-def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
-    """Keep only a distinct, conservative hook; empty means no safe hook.
+def _hook_changes_type(question: str, hook: str) -> bool:
+    """Whether the hook is a different kind of question than the research question. A direct
+    question's hook may open any way but a list's ("Can ...", "Does ..." are not lists, and
+    ``question_archetype`` calls everything that is not a Why/How lead a list); a list question's
+    hook must itself read like a list question."""
+    wanted = question_archetype(question)
+    if wanted == "direct":
+        return has_list_lead(hook)
+    return question_archetype(hook) != wanted
 
-    Source URLs alone cannot verify a new claim. The related answer notes returned
-    in the same call can support hook wording, but a doubtful hook stays empty.
-    """
+
+def _hook_rejection(question: str, candidate: Mapping[str, Any]) -> str:
+    """Why the candidate's viewer_hook is not safe to show ("" = it is): the name of the first check
+    it fails, so a dropped hook can be told apart from a missing one."""
     hook = re.sub(r"\s+", " ", str(candidate.get("viewer_hook") or "")).strip()
     if not hook or len(hook) > 180 or not hook.endswith("?"):
-        return ""
+        return "not_a_question"
     if re.findall(r"[a-z0-9]+", hook.casefold()) == re.findall(
         r"[a-z0-9]+", question.casefold()
     ):
-        return ""
+        return "copied_question"
     urls = candidate.get("evidence_urls")
     if not isinstance(urls, list) or not any(
         isinstance(url, str) and re.match(r"^https?://[^/\s]+", url)
         for url in urls
     ):
-        return ""
+        return "no_source_url"
     if not _HOOK_QUESTION_START.match(hook) or hook.casefold().startswith("what if "):
-        return ""
-    if _HOOK_ADAPTATION.search(hook) or question_archetype(hook) != question_archetype(question):
-        return ""
+        return "bad_start"
+    if _HOOK_ADAPTATION.search(hook):
+        return "adaptation"
+    if _hook_changes_type(question, hook):
+        return "question_type_changed"
 
     question_terms = _hook_tokens(question) - _HOOK_GENERIC_WORDS
     hook_terms = _hook_tokens(hook) - _HOOK_GENERIC_WORDS
     if question_terms and not question_terms.intersection(hook_terms):
-        return ""
+        return "no_shared_term"
 
     answer_items = candidate.get("sample_answer_items")
     if not isinstance(answer_items, list):
@@ -105,11 +116,27 @@ def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
     ])
     supported_terms = _hook_tokens(support)
     if (hook_terms & _HOOK_STAKES_WORDS) - supported_terms:
-        return ""
+        return "new_stakes"
     # A newly named person/world is an especially easy way to change the topic.
     for name in re.findall(r"\b[A-Z][a-z]+(?:[- ][A-Z][a-z]+)*\b", hook):
         if _hook_tokens(name) - _HOOK_GENERIC_WORDS - supported_terms:
-            return ""
+            return "new_name"
+    return ""
+
+
+def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
+    """Keep only a distinct, conservative hook; empty means no safe hook.
+
+    Source URLs alone cannot verify a new claim. The related answer notes returned
+    in the same call can support hook wording, but a doubtful hook stays empty (and the
+    log says which check dropped it).
+    """
+    hook = re.sub(r"\s+", " ", str(candidate.get("viewer_hook") or "")).strip()
+    reason = _hook_rejection(question, candidate)
+    if reason:
+        if hook:
+            logger.info("viewer_hook dropped (%s): %r for %r", reason, hook[:120], question[:90])
+        return ""
     return hook
 
 
@@ -174,9 +201,8 @@ def _qa_discovery_topup_prompt(
         "relevant to the question. Field formats: canonical_anchor is only the familiar hero or "
         "team name as written in the question (1-3 words, never a sentence); concept_key is a "
         "short lowercase noun phrase (2-4 words, no underscores) naming the power, world, rule or "
-        "choice; viewer_hook is a short curiosity question about the same answer that ends with ?, "
-        "or the empty string; each quote is ONE contiguous passage copied exactly from the page "
-        "(no ellipsis, no joining of separate sentences). The page must show a separate original "
+        "choice. " + NAME_THE_HERO + " " + REAL_RELEASE_YEAR + " " + EXACT_QUOTE + " " + HOOK_RULES + " "
+        "The page must show a separate original "
         "Published/release date; an article date does not count. A direct needs one verified issue; a list "
         "needs two different verified issues. Bare URLs and reprint years do not count. "
         "Make the viewer_hook a distinct, grounded question within the same answer scope "

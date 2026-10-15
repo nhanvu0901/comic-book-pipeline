@@ -274,9 +274,9 @@ def test_r3_3_labels_with_vol_n_m_and_a_trailing_year_are_read(label):
 
 def test_r3_3_the_page_still_confirms_the_number_and_year_of_such_a_label():
     assert _hulk("Immortal Hulk Vol 1 9 (2018)") == (False, "issue_number_not_found")
-    assert _hulk("Immortal Hulk Vol 1 8 (2019)") == (False, "year_not_found")
-    assert _hulk("Immortal Hulk Vol 1 8") == (False, "issue_year_unresolved")
-    assert _hulk("Immortal Hulk Vol 1 8 (2005)") == (False, "year_out_of_range")
+    # a year the label gets wrong, lacks, or puts out of scope is corrected from the page (round 4, A2)
+    for label in ("Immortal Hulk Vol 1 8 (2019)", "Immortal Hulk Vol 1 8", "Immortal Hulk Vol 1 8 (2005)"):
+        assert _hulk(label) == (True, ""), label
 
 
 # --- 4. lexical grounding ---------------------------------------------------------------------------------

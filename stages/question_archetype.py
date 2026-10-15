@@ -102,6 +102,11 @@ def question_archetype(question: str) -> QuestionArchetype:
     )
 
 
+def has_list_lead(question: str) -> bool:
+    """True when the text opens the way a list question does ("What are some ...", "How many ...")."""
+    return bool(_LIST_Q_RE.match(question or ""))
+
+
 def is_narrow_direct_question(question: str) -> bool:
     """A broad direct discovery question should not name an issue or year."""
     return str(question_archetype(question)) == QA_FORMAT_DIRECT and bool(

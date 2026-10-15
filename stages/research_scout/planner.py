@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 import config
 
 from . import cited_sources
+from .prompt_rules import NAME_THE_HERO, REAL_RELEASE_YEAR
 
 
 _TIMEOUT = 180.0
@@ -206,8 +207,8 @@ def compile_schema(
 _HARD_RULES = {
     "qa": (
         "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
-        '1. One candidate = ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid.\n'
-        '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later; it is a filter, never question wording.\n'
+        '1. One candidate = ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid. ' + REAL_RELEASE_YEAR + '\n'
+        '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later; it is a filter, never question wording. ' + NAME_THE_HERO + '\n'
         "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
         '4. Report what DID happen in a specific issue, never hypotheticals such as "who could".\n'
         "5. Return every supported qualifying issue, up to 15; prefer distinct series, but never pad with weak or unsupported entries."
@@ -224,8 +225,8 @@ _HARD_RULES = {
 
 _DIRECT_QA_HARD_RULES = (
     "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
-    '1. Every candidate must cite ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid.\n'
-    '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later; it is a filter, never question wording.\n'
+    '1. Every candidate must cite ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid. ' + REAL_RELEASE_YEAR + '\n'
+    '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later; it is a filter, never question wording. ' + NAME_THE_HERO + '\n'
     "3. One candidate per distinct supported story/evidence beat. Separate beats may cite the same issue; never repeat the same claim.\n"
     '4. Report what DID happen in a specific issue, never hypotheticals such as "who could".\n'
     "5. Return the beats needed to establish one grounded answer, up to 15; never pad with weak or unsupported entries."

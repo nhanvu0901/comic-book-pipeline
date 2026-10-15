@@ -5,6 +5,7 @@ from pathlib import Path
 
 from stages.research_scout.cited_sources import FetchedSource
 from stages.research_scout.qa_discovery_gate import (
+    evaluate_issue_evidence,
     canonical_topic,
     verified_issue_evidence,
 )
@@ -51,10 +52,12 @@ def test_issue_gate_rejects_unfetched_wrong_year_and_off_topic_urls():
     assert not verified_issue_evidence(
         old, "direct", fetcher=lambda url: FetchedSource(url, text=_page(old["issue_evidence"][0]["quote"], year=1995))
     )
+    # round 4 (A2): a label year the page contradicts is corrected when the page says 2010+ ...
     wrong_year = _candidate()
-    assert not verified_issue_evidence(
-        wrong_year, "direct", fetcher=lambda url: FetchedSource(url, text=_page(wrong_year["issue_evidence"][0]["quote"], year=2024))
-    )
+    corrected = evaluate_issue_evidence(
+        wrong_year, "direct", fetcher=lambda url: FetchedSource(url, text=_page(wrong_year["issue_evidence"][0]["quote"], year=2024)))
+    assert corrected.passed and "(2024)" in corrected.claims[0]["issue"]
+    assert any("year_corrected" in line for line in corrected.details)
     off_topic = _candidate(quote="Batman #161 (2025) has a new cover by its artist.")
     assert not verified_issue_evidence(
         off_topic, "direct", fetcher=lambda url: FetchedSource(url, text=_page(off_topic["issue_evidence"][0]["quote"]))
@@ -80,7 +83,10 @@ def test_issue_gate_ignores_reader_published_time_and_accepts_marvel_published_f
         "Title: Batman (2016) #161 | DC\nPublished Time: Wed, 14 Oct 2026 GMT\n"
         "On Sale Date: July 23, 2025\n" + quote
     ))
-    assert not verified_issue_evidence(candidate, "direct", fetcher=lambda url: stale)
+    # the reader's Published Time (2026) never vouches for the label; the page's own On Sale
+    # Date (2025) is what corrects it (round 4, A2)
+    result = evaluate_issue_evidence(candidate, "direct", fetcher=lambda url: stale)
+    assert result.passed and "(2025)" in result.claims[0]["issue"] and "2026" not in result.claims[0]["issue"]
 
     marvel = _candidate(year=2018, issue="Amazing Spider-Man Annual (2018) #1 (2018)",
                         url="https://www.marvel.com/comics/issue/71372/amazing_spider-man_annual_2018_1")
