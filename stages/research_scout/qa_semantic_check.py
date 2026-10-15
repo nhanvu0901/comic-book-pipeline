@@ -256,11 +256,48 @@ def _verbatim(sentence: str, synopsis: str) -> bool:
     return len(wanted.split()) >= _MIN_EVIDENCE_WORDS and wanted in haystack
 
 
+def _quote_supports_answer(quote: str, evidence: str, synopsis: str, question: str = "") -> bool:
+    """Whether the evidence sentence is anchored in the candidate's verified quote:
+    1. Direct text containment / overlap (one string contains the other);
+    2. Substantial fragment overlap (>= 4 consecutive words);
+    3. Proximity in the synopsis (<= 600 chars) with at least 2 shared content terms;
+    4. Independent quote support: the quote itself carries non-name core question terms."""
+    q_norm = _norm_evidence(quote).strip(" \t\n'\".,;:!?")
+    ev_norm = _norm_evidence(evidence).strip(" \t\n'\".,;:!?")
+    if not ev_norm:
+        return False
+    if ev_norm in q_norm or q_norm in ev_norm:
+        return True
+    q_words = q_norm.split()
+    for n in (6, 5, 4):
+        for i in range(len(q_words) - n + 1):
+            chunk = " ".join(q_words[i:i + n])
+            if chunk in ev_norm:
+                return True
+    syn_norm = _norm_evidence(synopsis)
+    pos_q = syn_norm.find(q_norm)
+    pos_ev = syn_norm.find(ev_norm)
+    from . import qa_discovery_gate
+    if pos_q >= 0 and pos_ev >= 0:
+        dist = abs(pos_q - pos_ev)
+        common = (qa_discovery_gate._stemmed_terms(qa_discovery_gate._content_terms(quote))
+                  & qa_discovery_gate._stemmed_terms(qa_discovery_gate._content_terms(evidence)))
+        if dist <= 600 and len(common) >= 2:
+            return True
+    if question:
+        lower_quest_words = {w.casefold() for w in re.findall(r"[a-z]+", question) if len(w) > 2}
+        lower_content = lower_quest_words & qa_discovery_gate._content_terms(question)
+        q_stems = qa_discovery_gate._stemmed_terms(qa_discovery_gate._content_terms(quote))
+        if qa_discovery_gate._stemmed_terms(lower_content) & q_stems:
+            return True
+    return False
+
+
 def judge(request: SemanticRequest, verdict: Verdict) -> Judgement:
     """The pass rule, in code: an example counts when the model says ``yes`` AND the sentence it cites is
-    verbatim in that example's synopsis; a direct question needs one such example and a list two from
-    different issues; the model must also say the question is answered as a whole, and (when the candidate
-    promises a payoff) that the synopsis supports it."""
+    verbatim in that example's synopsis AND anchored in the verified quote; a direct question needs one
+    such example and a list two from different issues; the model must also say the question is answered
+    as a whole, and (when the candidate promises a payoff) that the synopsis supports it."""
     if verdict.error:
         return Judgement((), "semantic_check_error", (f"semantic check: {verdict.error}",))
     if len(verdict.examples) != len(request.examples):
@@ -272,6 +309,8 @@ def judge(request: SemanticRequest, verdict: Verdict) -> Judgement:
             notes.append(f"{example.issue}: semantic {said.answers_question}")
         elif not _verbatim(said.evidence_sentence, example.synopsis):
             notes.append(f"{example.issue}: evidence sentence not verbatim in the synopsis")
+        elif not _quote_supports_answer(example.quote, said.evidence_sentence, example.synopsis, request.question):
+            notes.append(f"{example.issue}: evidence sentence not anchored in verified quote")
         else:
             kept.append(index)
     why = f"semantic: {verdict.reason}".strip()
