@@ -82,6 +82,7 @@ class GateResult:
     passed: bool
     reason: str = ""
     details: tuple[str, ...] = ()
+    claims: tuple[Mapping[str, Any], ...] = ()
 
     def __bool__(self) -> bool:
         return self.passed

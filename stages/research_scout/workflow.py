@@ -113,6 +113,10 @@ def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
     return hook
 
 
+def _strip_scope_phrases(question: str) -> str:
+    return question  # RED-phase shim
+
+
 def _qa_discovery_topup_prompt(
     *, missing_direct: int = 0, missing_list: int = 0, angles: list[str],
     excluded: list[str], anchors: set[str], concepts: set[str],
