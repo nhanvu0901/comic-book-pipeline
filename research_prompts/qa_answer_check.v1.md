@@ -12,7 +12,7 @@ For each example, `answers_question` is:
 - "yes": the synopsis STATES what the question asks for. A why-question needs the reason, a how-question
   the mechanism or the steps, a what-is / what-happens question the specific fact, a rule / limit / cost /
   price question that rule, limit, cost or price. A paraphrase is fine ("he loses his powers" answers
-  "what does it cost him"). The answer may be anywhere in the synopsis, not only in the quote.
+  "what does it cost him"). The answer must be anchored in the cited quote itself or its direct surrounding context in the synopsis; if the cited quote describes an unrelated event or does not support the answer, do not accept a distant sentence elsewhere in the synopsis.
 - "partial": the synopsis touches the topic but does not state what is asked: it only mentions the hero,
   the object or the topic; it answers only one half of a two-part question ("keep, then remove", "how it
   works and what it costs"); the reason is never said; it describes another character or another event.
