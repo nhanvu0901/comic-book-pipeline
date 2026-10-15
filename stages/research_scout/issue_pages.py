@@ -135,7 +135,9 @@ def release_date_lines(category_names) -> str:
 class _WikiHtml(HTMLParser):
     """Rendered MediaWiki HTML -> the reader's markdown-ish text."""
 
-    _SKIP = {"script", "style", "noscript", "sup", "img", "svg"}
+    _SKIP = {"script", "style", "noscript", "sup", "svg"}
+    # No end tag: they must never open a "skip until the end tag" region.
+    _VOID = {"img", "br", "hr", "input", "meta", "link", "wbr", "source", "area", "col", "embed"}
     _BLOCK = {"p", "div", "ul", "ol", "table", "tr", "section", "aside", "dl", "dt", "dd",
               "figure", "figcaption"}
 
@@ -167,6 +169,10 @@ class _WikiHtml(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
         css = attributes.get("class") or ""
+        if tag in self._VOID:
+            if tag == "br" and not self._skip and not self._infobox:
+                self._emit("\n")
+            return
         if tag in self._SKIP:
             self._skip += 1
             return
@@ -187,8 +193,6 @@ class _WikiHtml(HTMLParser):
             self._quote.append([])
         elif tag == "li":
             self._emit("\n*   ")
-        elif tag == "br":
-            self._emit("\n")
         elif tag in ("i", "em"):
             self._emit("_")
         elif tag in ("b", "strong"):
@@ -200,6 +204,8 @@ class _WikiHtml(HTMLParser):
             self._emit("\n\n")
 
     def handle_endtag(self, tag):
+        if tag in self._VOID:
+            return
         if tag in self._SKIP:
             self._skip = max(0, self._skip - 1)
             return
@@ -284,6 +290,15 @@ def slug_variants(url: str, issue: str) -> list[str]:
 
 # --- the entry point ------------------------------------------------------------------------------
 
+def _category_names(data) -> list[str] | None:
+    """Category titles from a ``prop=categories`` answer, or None if it is not one."""
+    try:
+        pages = data["query"]["pages"].values()
+        return [str(c["title"]) for page in pages for c in page.get("categories", [])]
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
 def _with_release_dates(url: str, source: FetchedSource) -> FetchedSource:
     from .qa_discovery_gate import _publication_years  # local: the gate owns date reading
 
@@ -294,15 +309,16 @@ def _with_release_dates(url: str, source: FetchedSource) -> FetchedSource:
         return source
     api = (f"https://{parts.hostname}/api.php?action=query&prop=categories"
            f"&titles={parts.path.split('/wiki/', 1)[1]}&cllimit=max&format=json")
-    reply = cited_sources.fetch_source(
-        api, timeout=ISSUE_FETCH_TIMEOUT, max_chars=200_000, retries=ISSUE_FETCH_RETRIES)
-    match = re.search(r"\{.*\}", reply.text, re.DOTALL) if reply.ok else None
-    if match is None:
-        return source
-    try:
-        pages = json.loads(match.group(0))["query"]["pages"].values()
-        names = [str(c["title"]) for page in pages for c in page.get("categories", [])]
-    except (ValueError, KeyError, TypeError, AttributeError):
+    names = _category_names(_api_get(api))
+    if names is None:                      # direct API unavailable: try through the reader
+        reply = cited_sources.fetch_source(
+            api, timeout=ISSUE_FETCH_TIMEOUT, max_chars=200_000, retries=ISSUE_FETCH_RETRIES)
+        match = re.search(r"\{.*\}", reply.text, re.DOTALL) if reply.ok else None
+        try:
+            names = _category_names(json.loads(match.group(0))) if match else None
+        except ValueError:
+            names = None
+    if names is None:
         return source
     dates = release_date_lines(names)
     return FetchedSource(url=source.url, text=f"{source.text}\n\n{dates}") if dates else source

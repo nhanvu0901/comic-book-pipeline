@@ -433,6 +433,51 @@ def test_p1_5_the_converter_keeps_headings_quotes_labels_and_links():
     assert '[Black Panther (T\'Challa)](/wiki/T%27Challa_(Earth-616) "T\'Challa (Earth-616)")' in text
 
 
+def test_p1_5_the_converter_survives_images_and_other_void_tags():
+    # Void elements have no end tag: counting one as "inside a skipped element" would swallow
+    # the rest of the page (it did, on every real page that has an image).
+    html = (
+        '<div class="mw-parser-output"><img src="a.png"><p>Before.<br>Line two.</p>'
+        '<figure><img src="b.png"><figcaption>cap</figcaption></figure>'
+        '<h2><span id="Synopsis_for_X">Synopsis for "X"</span></h2>'
+        '<p>He swings <img src="c.png"> across <a href="/wiki/Gotham" title="Gotham">Gotham</a>'
+        '<hr><input type="checkbox"> at night.</p></div>')
+    text = issue_pages.wiki_html_to_text(html)
+    assert "Before." in text and "Line two." in text
+    assert '## Synopsis for "X"' in text
+    assert 'He swings' in text and 'across [Gotham](/wiki/Gotham "Gotham") at night.' in text
+
+
+def test_p1_5_nested_and_non_infobox_asides_do_not_hide_the_article():
+    html = (
+        '<aside class="portable-infobox"><section><aside class="portable-infobox">'
+        '<div class="pi-data" data-source="ReleaseDate"><h3 class="pi-data-label">Release Date</h3>'
+        '<div class="pi-data-value">May 11, 2016</div></div></aside></section></aside>'
+        '<aside class="notice">Heads up</aside>'
+        '<h2>Synopsis for "X"</h2><p>The story is told here in full.</p>')
+    text = issue_pages.wiki_html_to_text(html)
+    assert "Release Date: May 11, 2016" in text
+    assert "Heads up" in text and "The story is told here in full." in text
+
+
+def test_p1_5_release_dates_come_from_the_direct_api_so_a_flaky_reader_cannot_lose_them(
+        monkeypatch):
+    url = "https://marvel.fandom.com/wiki/Ms._Marvel_Vol_3_1"
+    page = "Title: Ms. Marvel Vol 3 1\n\nURL Source: " + url + "\n\nMarkdown Content:\n## Notes\n\nx"
+
+    def reader(u, **_):
+        return FetchedSource(u, text=page) if u == url else FetchedSource(u, error="timeout")
+
+    def api(u):
+        assert "prop=categories" in u and "Ms._Marvel_Vol_3_1" in u
+        titles = [{"title": "Category:Comics Released in February, 2014"}]
+        return {"query": {"pages": {"1": {"categories": titles}}}}
+
+    monkeypatch.setattr(cited_sources, "fetch_source", reader)
+    monkeypatch.setattr(issue_pages, "_api_get", api)
+    assert 2014 in qa_discovery_gate._publication_years(issue_pages.fetch_issue_page(url).text)
+
+
 def test_p1_5_api_pages_get_dates_from_the_infobox_and_categories(monkeypatch):
     url = "https://marvel.fandom.com/wiki/Amazing_Spider-Man_Vol_2_1"
     _serve(monkeypatch, lambda u: FetchedSource(u, text=_fixture_page(url)),
