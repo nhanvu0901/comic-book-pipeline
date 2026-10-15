@@ -20,6 +20,16 @@ For each example, `answers_question` is:
 
 A sentence that merely MENTIONS the subject of the question does not answer it. If the question assumes
 something the synopsis contradicts (it asks about X and the synopsis says Y did it), answer "no".
+Likewise, if the question assumes a false premise or an outcome that the synopsis contradicts or clarifies
+later (e.g., asking why a hero chose to spare or let an enemy live, but the synopsis reveals the hero was
+ready to let them die and the enemy survived solely by saving themselves), answer "no". Do not extrapolate
+an intentional choice from an earlier ambiguous moment if later context contradicts it.
+
+Rule-level answers vs deeper unasked causes: when a question asks why an entity cannot do something or why
+a condition changed (e.g., why a hero cannot lift a weapon), a stated direct rule, enchantment or state
+change (e.g., the hero became unworthy under the weapon's enchantment) answers the question at the level
+asked. Do not demand an unstated deeper background mystery (such as the secret words that caused the change)
+unless the question explicitly asks for that deeper cause.
 
 `evidence_sentence`: copy ONE sentence of the synopsis that carries the answer, character for character
 (same words, same punctuation). Do not paraphrase, shorten, add "..." or join sentences. If the example's
