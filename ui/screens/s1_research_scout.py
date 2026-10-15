@@ -486,6 +486,14 @@ def _archived_bubble(detail: dict) -> ft.Control:
     return _system_bubble(f"Session archived — {reason}" if reason else "Session archived.")
 
 
+def _rejection_summary(reasons) -> str:
+    """" (year_not_found x2, fetch_timeout x1)" — which gate checks turned candidates away."""
+    if not isinstance(reasons, dict) or not reasons:
+        return ""
+    ranked = sorted(reasons.items(), key=lambda item: (-int(item[1]), str(item[0])))
+    return " (" + ", ".join(f"{name} x{count}" for name, count in ranked) + ")"
+
+
 def _discovered_text(entry: dict) -> str:
     """The one human-readable line of a Tier B entry, whichever mode produced
     it — QA discovers a `question`, Micro discovers a `moment`."""
@@ -1121,14 +1129,26 @@ def build(
 
     def _show_discovered(result) -> None:
         if result.get("verification_shortage"):
+            why = _rejection_summary(result.get("rejection_reasons"))
             if discovered_holder[0]:
-                discovered_note[0] = "No issue-verified questions came back; keeping the saved batch above."
+                discovered_note[0] = (
+                    "No issue-verified questions came back" + why
+                    + "; keeping the saved batch above."
+                )
                 _render_full()
             else:
-                _render_full(error="No issue-verified questions came back. Type your own question or try Discover again.")
+                _render_full(error=(
+                    "No issue-verified questions came back" + why
+                    + ". Type your own question or try Discover again."))
             return
         batch = result["entries"]
-        entries = [entry for entry in (batch or []) if _discovered_text(entry)]
+        # A QA fallback entry only carries the research angle (an instruction); it is
+        # never a question to offer, whatever text a stale or older entry put in it.
+        qa = mode_group.value == ScoutMode.QA.value
+        entries = [
+            entry for entry in (batch or [])
+            if _discovered_text(entry) and not (qa and entry.get("fallback"))
+        ]
         already = {text.casefold() for text in discovered_offered}
         fresh = [
             entry for entry in entries
@@ -1185,7 +1205,8 @@ def build(
                 mode, count=_DISCOVER_BATCH, exclude=excluded,
             )
             if mode == ScoutMode.QA.value and batch and batch[0].get("verification_shortage"):
-                return {"entries": [], "batch_id": "", "verification_shortage": True}
+                return {"entries": [], "batch_id": "", "verification_shortage": True,
+                        "rejection_reasons": batch[0].get("rejection_reasons") or {}}
             try:
                 saved = save_scout_batch(
                     mode, batch,

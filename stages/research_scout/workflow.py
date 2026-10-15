@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -299,7 +300,8 @@ class ScoutWorkflow:
         client: YouComClient | None = None,
         *,
         planner: Callable[[str, list[str], str], ResearchPlan | None] | None = None,
-        qa_issue_verifier: Callable[[Mapping[str, Any], str], bool] | None = None,
+        qa_issue_verifier: Callable[
+            [Mapping[str, Any], str], bool | qa_discovery_gate.GateResult] | None = None,
     ):
         self.store = store or SessionStore(config.RESEARCH_SESSIONS_ROOT)
         self.client = client or YouComClient()
@@ -308,7 +310,10 @@ class ScoutWorkflow:
         # key in this process, so nothing but run_general may reach it.
         self._uses_detailed_planner = planner is None
         self._planner = planner if planner is not None else planner_module.make_plan
-        self._qa_issue_verifier = qa_issue_verifier or qa_discovery_gate.verified_issue_evidence
+        self._qa_issue_verifier = qa_issue_verifier or qa_discovery_gate.evaluate_issue_evidence
+        # Why each QA candidate of the latest discover_questions() call was turned away
+        # ({question, reason, details}); a rejection is data, not a silent drop.
+        self.qa_rejections: list[dict[str, Any]] = []
         self._qa_batch_quota = True
         self._policies: dict[ScoutMode, PolicyBundle] = {}
 
@@ -973,8 +978,13 @@ class ScoutWorkflow:
         angles = [str(a) for a in bundle.general_angles.get(mode.value, [])] or [angle]
         fallback_item: dict[str, Any] = {field: angle, "angle": angle, "fallback": True}
         if mode is ScoutMode.QA:
+            # A QA angle is a research INSTRUCTION ("direct: How does ... Pick one ..."), never a
+            # question: keep it under "angle" for diagnostics and leave the question empty so no
+            # consumer (UI card, session intent, writer) can surface it as one.
+            fallback_item[field] = ""
             fallback_item["proposed_format"] = str(question_archetype(angle))
             fallback_item["viewer_hook"] = ""
+        self.qa_rejections = []
         fallback = [fallback_item]
 
         excluded = [str(item).strip() for item in exclude if str(item).strip()]
@@ -1036,10 +1046,18 @@ class ScoutWorkflow:
                     if is_narrow_direct_question(text):
                         continue
                     try:
-                        evidence_ok = self._qa_issue_verifier(candidate, fmt)
-                    except Exception:
-                        evidence_ok = False
-                    if not evidence_ok:
+                        verdict = qa_discovery_gate.as_gate_result(
+                            self._qa_issue_verifier(candidate, fmt))
+                    except Exception as exc:
+                        verdict = qa_discovery_gate.GateResult(
+                            False, "verifier_error", (type(exc).__name__,))
+                    if not verdict.passed:
+                        self.qa_rejections.append({
+                            "question": text, "reason": verdict.reason,
+                            "details": list(verdict.details),
+                        })
+                        logger.info("QA discovery rejected %r: %s %s",
+                                    text[:90], verdict.reason, "; ".join(verdict.details))
                         continue
                     anchor = qa_discovery_gate.canonical_topic(
                         str(candidate.get("canonical_anchor") or candidate.get("subject") or "")
@@ -1145,6 +1163,9 @@ class ScoutWorkflow:
             if offered and not picked:
                 fallback_item["verification_shortage"] = True
                 fallback_item["batch_expected"] = count
+                reasons = Counter(row["reason"] for row in self.qa_rejections)
+                if reasons:
+                    fallback_item["rejection_reasons"] = dict(reasons)
         return picked[:count] or fallback
 
     def next_angle(self, mode: ScoutMode) -> str:

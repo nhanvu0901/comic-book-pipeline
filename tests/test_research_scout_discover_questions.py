@@ -179,20 +179,23 @@ def test_the_same_question_twice_in_one_batch_is_only_offered_once(tmp_path):
 # ─── the never-raises guarantee ─────────────────────────────────────────────
 
 
-def test_a_client_exception_falls_back_to_the_angle_and_never_raises(tmp_path):
+def test_a_client_exception_falls_back_without_a_question_and_never_raises(tmp_path):
     client = _ScriptedYouCom(raises=True)
     workflow = _workflow(tmp_path, client)
     angle = workflow.next_angle(ScoutMode.QA)
 
     batch = workflow.discover_questions(ScoutMode.QA)  # must not propagate RuntimeError
 
-    assert [entry["question"] for entry in batch] == [angle]
+    # The QA angle is a research instruction, so it rides along as "angle" only —
+    # "question" stays empty and can never be shown or researched as one.
+    assert [entry["question"] for entry in batch] == [""]
+    assert batch[0]["angle"] == angle
     # Flagged so the chat can tell "here is a batch" from "we got nothing" and
     # keep the previous batch on screen instead of blanking it.
     assert batch[0]["fallback"] is True
 
 
-def test_an_all_burned_result_falls_back_to_the_angle(tmp_path):
+def test_an_all_burned_result_falls_back_without_a_question(tmp_path):
     burned_text = "Times Superman's invulnerability failed against kryptonite radiation"
     client = _ScriptedYouCom(candidates=[{"question": burned_text}])
     workflow = _workflow(tmp_path, client)
@@ -200,7 +203,8 @@ def test_an_all_burned_result_falls_back_to_the_angle(tmp_path):
 
     batch = workflow.discover_questions(ScoutMode.QA, exclude=[burned_text])
 
-    assert [entry["question"] for entry in batch] == [angle]
+    assert [entry["question"] for entry in batch] == [""]
+    assert batch[0]["angle"] == angle
     assert batch[0]["fallback"] is True
 
 

@@ -165,6 +165,14 @@ def start_scout_session(
                 scout_mode, publication_year=publication_year,
             )
             field = "question" if scout_mode is ScoutMode.QA else "moment"
+            if scout_mode is ScoutMode.QA and (not batch or batch[0].get("fallback")):
+                # The fallback entry only carries the research ANGLE, which is an instruction,
+                # not a question: starting a session on it would hand that text to the writer.
+                from stages.research_scout.errors import ScoutUserError
+
+                raise ScoutUserError(
+                    "No issue-verified question could be discovered. Type a question to research."
+                )
             intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
     return workflow.start(scout_mode, intent, publication_year=publication_year)
 
