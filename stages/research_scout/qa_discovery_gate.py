@@ -31,6 +31,26 @@ _GENERIC = frozenset(
     "when where which who why with world universe timeline story stories issue issues "
     "modern more much really exactly actually other ever".split()
 )
+# Words that carry no topic: English function words, the frame of a question ("how does X
+# work", "distinct examples of"), and scope wording the discovery prompt uses ("modern",
+# "print", "original issues"). Never counted as evidence that a quote answers a question.
+_FRAME = frozenset(
+    "i me my myself we our ours ourselves you your yours yourself he him his himself she her "
+    "hers herself it its itself they them their theirs themselves what which who whom this "
+    "that these those am is are was were be been being have has had having do does did doing "
+    "done a an the and but if or because as until while of at by for with about against "
+    "between into through during before after above below to from up down in out on off "
+    "over under again further then once here there when where why how all any both each few "
+    "more most other some such no nor not only own same so than too very can will just should "
+    "now would could might must shall may also even still yet ever never always often really "
+    "actually exactly much many across around along among toward towards upon per via whether "
+    "whose whenever "
+    "work works worked working change changes changed happen happens happened reveal reveals "
+    "revealed show shows showed explain explains example examples distinct different way ways "
+    "kind kinds type types thing things time times one ones make makes made get gets got let "
+    "lets say says said go goes went going come comes came use uses used using action actions "
+    "modern print original issue issues published later earlier comic comics".split()
+)
 _TOPIC_SUFFIX = frozenset({
     "world", "universe", "timeline", "reality", "continuity",
     "ability", "abilities", "power", "powers", "rule", "rules", "concept",
@@ -70,7 +90,7 @@ _CLAIM_STAGES = (
     "issue_year_unresolved", "year_out_of_range", "source_not_issue_page", "quote_missing",
     "topic_overlap", "fetch_failed", "series_title_mismatch", "issue_number_not_found",
     "year_not_found", "quote_not_found", "no_synopsis", "pull_quote_only",
-    "quote_not_in_synopsis", "teaser_only_source", "reprint_source",
+    "quote_not_in_synopsis", "teaser_only_source", "reprint_source", "question_not_grounded",
 )
 _STAGE_RANK = {reason: rank for rank, reason in enumerate(_CLAIM_STAGES)}
 for _alias in ("fetch_timeout", "page_blocked", "page_missing"):
@@ -187,16 +207,9 @@ def _anchor_groups(raw_anchor: str) -> list[set[str]]:
     return [group for group in groups if group]
 
 
-def _context_terms(candidate: Mapping[str, Any]) -> set[str]:
-    terms: set[str] = set()
-    for key in ("viewer_hook", "why_fans_ask_it", "core_premise", "viewer_payoff"):
-        value = candidate.get(key)
-        if isinstance(value, str):
-            terms |= _topic_terms(value)
-    for item in candidate.get("sample_answer_items") or []:
-        if isinstance(item, str):
-            terms |= _topic_terms(item)
-    return terms
+def _content_terms(value: str) -> set[str]:
+    """The topic-bearing words of a text: no function words, question frame or scope wording."""
+    return _topic_terms(value) - _FRAME
 
 
 # --- reading a fetched page --------------------------------------------------
@@ -263,8 +276,8 @@ def _blockquote_text(body: str) -> str:
     return "\n".join(line[1:] for line in body.splitlines() if line.lstrip().startswith(">"))
 
 
-def _synopsis_reason(text: str, quote: str) -> str | None:
-    """Why the quote is not backed by a real synopsis, or None.
+def _synopsis_check(text: str, quote: str) -> tuple[str | None, str]:
+    """(why the quote is not backed by a real synopsis or None, the synopsis text holding it).
 
     Wiki issue pages are structured: one "Synopsis for ..." section per story, plus a
     solicitation blurb, a pull-quote under the page title, notes and trivia. Only the
@@ -273,22 +286,22 @@ def _synopsis_reason(text: str, quote: str) -> str | None:
     Flat pages (no headings: catalog records) have no structure to judge."""
     sections = _sections(text)
     if not any(h and not _BOILERPLATE_HEADING.search(h) for h, _ in sections):
-        return None
+        return None, text
     real = [(h, b) for h, b in sections if _is_real_synopsis(h, b)]
     if not real:
-        return "no_synopsis"
+        return "no_synopsis", ""
     needle = cited_sources.comparable_text(quote)
     holders = [(h, b) for h, b in sections if needle in cited_sources.comparable_text(b)]
     inside = [(h, b) for h, b in holders if (h, b) in real]
     if not inside:
         if holders and all(_TEASER_HEADING.search(h) for h, _ in holders):
-            return "teaser_only_source"
+            return "teaser_only_source", ""
         if any(needle in cited_sources.comparable_text(_blockquote_text(b)) for _, b in holders):
-            return "pull_quote_only"
-        return "quote_not_in_synopsis"
+            return "pull_quote_only", ""
+        return "quote_not_in_synopsis", ""
     if all(_REPRINT_OPENING.match(b.lstrip(" \t\n*-•")) for _, b in inside):
-        return "reprint_source"
-    return None
+        return "reprint_source", ""
+    return None, "\n".join(b for _, b in inside)
 
 
 # --- the gate ----------------------------------------------------------------
@@ -323,7 +336,7 @@ def evaluate_issue_evidence(
     if not any(group <= question_terms for group in groups):
         return GateResult(False, "anchor_mismatch")
     anchor_terms = set().union(*groups)
-    topic_terms = question_terms - anchor_terms
+    topic_terms = _content_terms(question) - anchor_terms
     if not topic_terms:
         return GateResult(False, "topic_overlap", ("the question says nothing beyond its anchor",))
 
@@ -336,18 +349,21 @@ def evaluate_issue_evidence(
     if len({canonical_topic(str(c.get("issue") or "")) for c in claims}) < required:
         return GateResult(False, "list_needs_2_issues", ("fewer than 2 distinct issues cited",))
 
-    # What a quote must echo: the question's own topic words (and the concept's), with the
-    # candidate's premise/payoff words as extra support — never as the only support.
-    core = _stemmed_terms(topic_terms | (_topic_terms(concept) - anchor_terms))
-    support = core | _stemmed_terms(_context_terms(candidate) - anchor_terms)
-    needed = min(2, len(topic_terms))
+    # Evidence comes from the QUESTION's words only. The quote must echo them (two of them, or
+    # one when the synopsis around it echoes two of the words the question asks about), and
+    # at least one word the question asks about beyond the object the concept label already
+    # names must be in that synopsis. Nothing the candidate wrote about itself (concept,
+    # premise, payoff, hook, sample items) is ever counted as support for it.
+    core = _stemmed_terms(topic_terms)
+    specific = core - _stemmed_terms(_content_terms(concept) - anchor_terms)
+    needed = min(2, len(core))
 
     verified: dict[str, Mapping[str, Any]] = {}
     failures: list[tuple[str, str]] = []
     pages: dict[str, cited_sources.FetchedSource] = {}
     for claim in claims:
         issue = str(claim.get("issue") or "").strip()
-        reason, kept = _claim_reason(claim, issue, core, support, needed, fetcher, pages)
+        reason, kept = _claim_reason(claim, issue, core, specific, needed, fetcher, pages)
         if reason is None:
             verified.setdefault(canonical_topic(issue), kept)
             if len(verified) >= required:
@@ -364,7 +380,7 @@ def evaluate_issue_evidence(
 
 
 def _claim_reason(
-    claim: Mapping[str, Any], issue: str, core: set[str], support: set[str], needed: int,
+    claim: Mapping[str, Any], issue: str, core: set[str], specific: set[str], needed: int,
     fetcher: Callable[[str], cited_sources.FetchedSource],
     pages: dict[str, cited_sources.FetchedSource],
 ) -> tuple[str | None, Mapping[str, Any]]:
@@ -381,8 +397,8 @@ def _claim_reason(
         return "source_not_issue_page", claim
     if not quote:
         return "quote_missing", claim
-    quote_stems = _stemmed_terms(_topic_terms(quote))
-    if not core & quote_stems or len(support & quote_stems) < needed:
+    echoed = len(core & _stemmed_terms(_content_terms(quote)))
+    if echoed == 0:
         return "topic_overlap", claim
 
     source = _fetch_once(url, pages, fetcher)
@@ -401,9 +417,14 @@ def _claim_reason(
         return "year_not_found", claim
     if not cited_sources.quote_matches_source(cited_sources.ClaimCitation(url, quote), source):
         return "quote_not_found", claim
-    synopsis_reason = _synopsis_reason(source.text, quote)
+    synopsis_reason, story = _synopsis_check(source.text, quote)
     if synopsis_reason:
         return synopsis_reason, claim
+    asked = specific & _stemmed_terms(_content_terms(story))
+    if echoed < needed and not (echoed >= 1 and len(asked) >= 2):
+        return "topic_overlap", claim
+    if specific and not asked:
+        return "question_not_grounded", claim
     return None, claim
 
 

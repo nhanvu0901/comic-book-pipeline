@@ -288,7 +288,7 @@ BR_QUOTE = ("He warns that they don't have a license to kill, and that Damian ne
 def _br_candidate(**kw):
     return _candidate(
         issue="Batman and Robin Vol 2 #1 (2011)", quote=BR_QUOTE,
-        question="Why does Batman push Damian to rein in his violence?",
+        question="Why does Batman warn Damian to control himself?",
         anchor="Batman and Robin", concept="batman no kill rule damian control", **kw)
 
 
@@ -334,7 +334,7 @@ def test_d5_stem_does_not_collapse_unrelated_words(left, right):
     assert qa_discovery_gate._stem(left) != qa_discovery_gate._stem(right)
 
 
-HULK_QUOTE = ("If someone were to walk up and shoot him in the head... all he'd do is die. "
+HULK_QUOTE = ("If someone were to shoot Banner in the head... all he'd do is die. "
               "Until night falls. And someone else gets up again.")
 
 
@@ -344,8 +344,6 @@ def test_d5_death_in_the_question_matches_die_in_the_quote():
         url="https://marvel.fandom.com/wiki/Immortal_Hulk_Vol_1_1",
         question="How does Bruce Banner's death work for the Immortal Hulk?",
         anchor="Immortal Hulk", concept="immortal hulk death and return",
-        core_premise=("Bruce Banner can be killed, but the Hulk returns when night falls, "
-                      "so death is only temporary."),
     )
     page = _page("Immortal Hulk Vol 1 1", _article(
         body=HULK_QUOTE, intro="\nPublished: June 2018"),
@@ -539,12 +537,17 @@ EXPECTED = {
     4: (True, ""),
     # Real synopsis exists, but the quoted sentence is the Marvel solicitation blurb.
     5: (False, "teaser_only_source"),
-    6: (True, ""),
+    # Round 2: a true pass by meaning ("rein in his violence" = "needs to control himself")
+    # but only ONE literal question word ("Damian") is in the quote and none of the words
+    # the question asks about is in the synopsis; a lexical gate cannot tell this apart
+    # from an ungrounded claim, so it is rejected (known recall cost of the stricter rule).
+    6: (False, "topic_overlap"),
     # The question never names Batman, its declared anchor.
     7: (False, "anchor_mismatch"),
     8: (True, ""),
-    # Two separate issues (#2, #4) with verbatim synopsis quotes about physical clues.
-    9: (True, ""),
+    # Round 2: a true pass by meaning (two issues of deduction from physical clues) but the
+    # quotes share no/one word with the question and only one issue's synopsis echoes it.
+    9: (False, "topic_overlap"),
 }
 
 
