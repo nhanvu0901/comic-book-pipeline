@@ -1,0 +1,338 @@
+[
+ {
+  "id": "B1",
+  "group": "R3B",
+  "label": "Thor: 'Freyja then stares at Mjolnir.'",
+  "fmt": "direct",
+  "candidate": {
+   "question": "How does Mjolnir decide who can wield Thor’s power?",
+   "canonical_anchor": "Thor",
+   "concept_key": "worthiness",
+   "core_premise": "Thor is stripped of access to Mjolnir because he has become unworthy, and the issue frames the hammer as a chooser that can reject even Thor until someone else meets its condition.",
+   "viewer_payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
+   "viewer_hook": "Why can’t Thor lift Mjolnir anymore?",
+   "issue_evidence": [
+    {
+     "issue": "Thor Vol. 4 #1 (2014)",
+     "quote": "Freyja then stares at Mjolnir.",
+     "source_url": "https://marvel.fandom.com/wiki/Thor_Vol_4_1"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B2",
+  "group": "R3B",
+  "label": "Thor: Roxxon / sea-base sentence",
+  "fmt": "direct",
+  "candidate": {
+   "question": "How does Mjolnir decide who can wield Thor’s power?",
+   "canonical_anchor": "Thor",
+   "concept_key": "worthiness",
+   "core_premise": "Thor is stripped of access to Mjolnir because he has become unworthy, and the issue frames the hammer as a chooser that can reject even Thor until someone else meets its condition.",
+   "viewer_payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
+   "viewer_hook": "Why can’t Thor lift Mjolnir anymore?",
+   "issue_evidence": [
+    {
+     "issue": "Thor Vol. 4 #1 (2014)",
+     "quote": "Roxxon begins performing deep sea exploration in the Norwegian Sea, when suddenly, their sea base is attacked by Frost Giants.",
+     "source_url": "https://marvel.fandom.com/wiki/Thor_Vol_4_1"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B3",
+  "group": "R3B",
+  "label": "Thor: hero-only 'Thor then rises up...'",
+  "fmt": "direct",
+  "candidate": {
+   "question": "How does Mjolnir decide who can wield Thor’s power?",
+   "canonical_anchor": "Thor",
+   "concept_key": "worthiness",
+   "core_premise": "Thor is stripped of access to Mjolnir because he has become unworthy, and the issue frames the hammer as a chooser that can reject even Thor until someone else meets its condition.",
+   "viewer_payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
+   "viewer_hook": "Why can’t Thor lift Mjolnir anymore?",
+   "issue_evidence": [
+    {
+     "issue": "Thor Vol. 4 #1 (2014)",
+     "quote": "Thor then rises up, announcing his intent to get a weapon and head home.",
+     "source_url": "https://marvel.fandom.com/wiki/Thor_Vol_4_1"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B4",
+  "group": "R3B",
+  "label": "Thor: Warriors Three / hammer sentence",
+  "fmt": "direct",
+  "candidate": {
+   "question": "How does Mjolnir decide who can wield Thor’s power?",
+   "canonical_anchor": "Thor",
+   "concept_key": "worthiness",
+   "core_premise": "Thor is stripped of access to Mjolnir because he has become unworthy, and the issue frames the hammer as a chooser that can reject even Thor until someone else meets its condition.",
+   "viewer_payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
+   "viewer_hook": "Why can’t Thor lift Mjolnir anymore?",
+   "issue_evidence": [
+    {
+     "issue": "Thor Vol. 4 #1 (2014)",
+     "quote": "The Warriors Three interject that all of the Asgardians assembled could not budge Mjolnir, so maybe the fault lies with the hammer.",
+     "source_url": "https://marvel.fandom.com/wiki/Thor_Vol_4_1"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B5",
+  "group": "R3B",
+  "label": "Jeff Mace: Liberty Legion sentence",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why did Jeff Mace become Captain America after the original fell?",
+   "canonical_anchor": "Captain America",
+   "concept_key": "legacy",
+   "core_premise": "Captain America is not treated as a single man but as a mantle that can pass to someone who carries the symbol forward after the original dies.",
+   "viewer_payoff": "The viewer learns that Jeff steps in because the original Captain America dies, and he takes up the costume to avoid demoralizing the team and to keep the mission going.",
+   "viewer_hook": "Why did Jeff Mace keep wearing Captain America's costume?",
+   "issue_evidence": [
+    {
+     "issue": "Captain America: Patriot #1 (2010)",
+     "quote": "Jeff would go on to join the superhero team the Liberty Legion a group formed to prevent subterfuge on the homeland while the Invaders were off fighting across the ocean.",
+     "source_url": "https://marvel.fandom.com/wiki/Captain_America:_Patriot_Vol_1_1"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B6",
+  "group": "R3B",
+  "label": "Jeff Mace: 'Jeff declined afraid ...'",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why did Jeff Mace become Captain America after the original fell?",
+   "canonical_anchor": "Captain America",
+   "concept_key": "legacy",
+   "core_premise": "Captain America is not treated as a single man but as a mantle that can pass to someone who carries the symbol forward after the original dies.",
+   "viewer_payoff": "The viewer learns that Jeff steps in because the original Captain America dies, and he takes up the costume to avoid demoralizing the team and to keep the mission going.",
+   "viewer_hook": "Why did Jeff Mace keep wearing Captain America's costume?",
+   "issue_evidence": [
+    {
+     "issue": "Captain America: Patriot #1 (2010)",
+     "quote": "Jeff declined afraid that juggling the War, the Legion, and pretending to be a reporter was about all he could handle.",
+     "source_url": "https://marvel.fandom.com/wiki/Captain_America:_Patriot_Vol_1_1"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B7",
+  "group": "R3B",
+  "label": "Jeff Mace: reporter + Captain America",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why did Jeff Mace become Captain America after the original fell?",
+   "canonical_anchor": "Captain America",
+   "concept_key": "legacy",
+   "core_premise": "Captain America is not treated as a single man but as a mantle that can pass to someone who carries the symbol forward after the original dies.",
+   "viewer_payoff": "The viewer learns that Jeff steps in because the original Captain America dies, and he takes up the costume to avoid demoralizing the team and to keep the mission going.",
+   "viewer_hook": "Why did Jeff Mace keep wearing Captain America's costume?",
+   "issue_evidence": [
+    {
+     "issue": "Captain America: Patriot #1 (2010)",
+     "quote": "While Jeff Mace, reporter for the Daily Bugle is covering a story he assists Captain America in taking down a nazi spy.",
+     "source_url": "https://marvel.fandom.com/wiki/Captain_America:_Patriot_Vol_1_1"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B8",
+  "group": "R3B",
+  "label": "Batman: Vanishing Point sentence",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why did Bruce Wayne erase himself during the fight with the Hyper-Adapter?",
+   "canonical_anchor": "Batman",
+   "concept_key": "self erasure",
+   "core_premise": "Batman defeats the Hyper-Adapter by making himself unreadable to it, using deliberate self-erasure as the key move in a larger trap.",
+   "viewer_payoff": "Bruce’s self-erasure becomes the exact opening that lets him reverse the creature’s attack and send it away powerless.",
+   "viewer_hook": "How does forgetting himself beat the Hyper-Adapter?",
+   "issue_evidence": [
+    {
+     "issue": "Batman: The Return of Bruce Wayne #6 (2010)",
+     "quote": "Bruce Wayne finally reaches Vanishing Point, where the Archivists inform him of his voyage through time.",
+     "source_url": "https://dc.fandom.com/wiki/Batman:_The_Return_of_Bruce_Wayne_Vol_1_6"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B9",
+  "group": "R3B",
+  "label": "Batman: Hyper-Adapter infests Wayne",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why did Bruce Wayne erase himself during the fight with the Hyper-Adapter?",
+   "canonical_anchor": "Batman",
+   "concept_key": "self erasure",
+   "core_premise": "Batman defeats the Hyper-Adapter by making himself unreadable to it, using deliberate self-erasure as the key move in a larger trap.",
+   "viewer_payoff": "Bruce’s self-erasure becomes the exact opening that lets him reverse the creature’s attack and send it away powerless.",
+   "viewer_hook": "How does forgetting himself beat the Hyper-Adapter?",
+   "issue_evidence": [
+    {
+     "issue": "Batman: The Return of Bruce Wayne #6 (2010)",
+     "quote": "The Hyper-Adapter however infests Wayne and overtakes the Archivist symbiote, while easily overwhelming Diana.",
+     "source_url": "https://dc.fandom.com/wiki/Batman:_The_Return_of_Bruce_Wayne_Vol_1_6"
+    }
+   ]
+  }
+ },
+ {
+  "id": "B10",
+  "group": "R3B",
+  "label": "Batman: Hyper-Adapter separated / quarantined",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why did Bruce Wayne erase himself during the fight with the Hyper-Adapter?",
+   "canonical_anchor": "Batman",
+   "concept_key": "self erasure",
+   "core_premise": "Batman defeats the Hyper-Adapter by making himself unreadable to it, using deliberate self-erasure as the key move in a larger trap.",
+   "viewer_payoff": "Bruce’s self-erasure becomes the exact opening that lets him reverse the creature’s attack and send it away powerless.",
+   "viewer_hook": "How does forgetting himself beat the Hyper-Adapter?",
+   "issue_evidence": [
+    {
+     "issue": "Batman: The Return of Bruce Wayne #6 (2010)",
+     "quote": "They separate him from the entity known as the Hyper-Adapter and quarantine it, while giving him the absolute knowledge for a brief moment before the absolute destruction.",
+     "source_url": "https://dc.fandom.com/wiki/Batman:_The_Return_of_Bruce_Wayne_Vol_1_6"
+    }
+   ]
+  }
+ },
+ {
+  "id": "C1",
+  "group": "R3C",
+  "label": "Cap #10: 'Why does Captain America hate Hydra?' + some rioters are Hydra",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why does Captain America hate Hydra?",
+   "canonical_anchor": "Captain America",
+   "concept_key": "Hydra",
+   "core_premise": "",
+   "viewer_payoff": "",
+   "viewer_hook": "",
+   "issue_evidence": [
+    {
+     "issue": "Captain America Vol 6 #10 (2012)",
+     "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_6_10",
+     "quote": "As Hawkeye tries to hold the rioters off, he realizes some of the rioters are part of Hydra."
+    }
+   ]
+  }
+ },
+ {
+  "id": "C2",
+  "group": "R3C",
+  "label": "Superman #40: 'Why does Superman distrust Batman?' + Batplane ride",
+  "fmt": "direct",
+  "candidate": {
+   "question": "Why does Superman distrust Batman?",
+   "canonical_anchor": "Superman",
+   "concept_key": "Batman",
+   "core_premise": "",
+   "viewer_payoff": "",
+   "viewer_hook": "",
+   "issue_evidence": [
+    {
+     "issue": "Superman Vol 3 #40 (2015)",
+     "source_url": "https://dc.fandom.com/wiki/Superman_Vol_3_40",
+     "quote": "when Batman arrives in his Batplane offering a ride, he must board it naked - and powerless."
+    }
+   ]
+  }
+ },
+ {
+  "id": "C3",
+  "group": "R3C",
+  "label": "WW #10: 'How does Wonder Woman defeat Hades in battle?' + wedding / lasso",
+  "fmt": "direct",
+  "candidate": {
+   "question": "How does Wonder Woman defeat Hades in battle?",
+   "canonical_anchor": "Wonder Woman",
+   "concept_key": "Hades",
+   "core_premise": "",
+   "viewer_payoff": "",
+   "viewer_hook": "",
+   "issue_evidence": [
+    {
+     "issue": "Wonder Woman Vol 4 #10 (2012)",
+     "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_4_10",
+     "quote": "With her wedding to Hades soon to come, the ruler of Hell forces Wonder Woman to place her own Lasso of Truth around her neck to prove that she truly loves him."
+    }
+   ]
+  }
+ },
+ {
+  "id": "C4",
+  "group": "R3C",
+  "label": "Thor #11: 'How does Gorr feel about Thor's Mjolnir?' + grabs both Mjolnir",
+  "fmt": "direct",
+  "candidate": {
+   "question": "How does Gorr feel about Thor's Mjolnir?",
+   "canonical_anchor": "Thor",
+   "concept_key": "Mjolnir",
+   "core_premise": "",
+   "viewer_payoff": "",
+   "viewer_hook": "",
+   "issue_evidence": [
+    {
+     "issue": "Thor: God of Thunder Vol 1 #11 (2013)",
+     "source_url": "https://marvel.fandom.com/wiki/Thor:_God_of_Thunder_Vol_1_11",
+     "quote": "Thor the Avenger reaches out and grabs both his own Mjolnir and that of King Thor, striking them together and taking the Godbomb's blast into his body."
+    }
+   ]
+  }
+ },
+ {
+  "id": "C5",
+  "group": "R3C",
+  "label": "Doctor Strange #1 as direct: the model's own question and quote",
+  "fmt": "direct",
+  "candidate": {
+   "question": "What rule shapes Doctor Strange's magic in this world?",
+   "canonical_anchor": "Doctor Strange",
+   "concept_key": "magic cost",
+   "core_premise": "",
+   "viewer_payoff": "",
+   "viewer_hook": "",
+   "issue_evidence": [
+    {
+     "issue": "Doctor Strange (Vol. 5) #1 (2018)",
+     "source_url": "https://marvel.fandom.com/wiki/Doctor_Strange_Vol_5_1",
+     "quote": "Doctor Strange finds himself ensnared by the Elder God X'axal. X'axal begins to taunt Doctor Strange until he calls upon the Flames of the Faltine which hurts X'axal for a brief moment. Strange then uses the Eye of Agamotto to escape from X'axal's dimension through a portal that leads back to New York. Strange uses a spell to close the portal so X'axal, as well as his acolytes, are stuck in their dimension. With the threat adverted, we see Doctor Strange rejoice in his victory... and we are then greeted with a time jump. Seven years later, the narrator notes Doctor Strange's right eye suddenly becomes blind to the mystical world. Two days later, his left eye follows. Shortly thereafter, all of Doctor Strange's magical artifacts slowly die out until no magical life remains inside them; he has lost all access to his magic."
+    }
+   ]
+  }
+ },
+ {
+  "id": "C6",
+  "group": "R3C",
+  "label": "Doctor Strange #1: 'What price does Doctor Strange pay for his magic?' + eye blindness",
+  "fmt": "direct",
+  "candidate": {
+   "question": "What price does Doctor Strange pay for his magic?",
+   "canonical_anchor": "Doctor Strange",
+   "concept_key": "magic cost",
+   "core_premise": "",
+   "viewer_payoff": "",
+   "viewer_hook": "",
+   "issue_evidence": [
+    {
+     "issue": "Doctor Strange (Vol. 5) #1 (2018)",
+     "source_url": "https://marvel.fandom.com/wiki/Doctor_Strange_Vol_5_1",
+     "quote": "Seven years later, the narrator notes Doctor Strange's right eye suddenly becomes blind to the mystical world."
+    }
+   ]
+  }
+ }
+]

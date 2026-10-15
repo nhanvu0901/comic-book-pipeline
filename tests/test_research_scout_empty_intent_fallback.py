@@ -13,6 +13,7 @@ ever activates on a blank/whitespace-only box.
 import pytest
 
 import ui.bridge as bridge
+from stages.research_scout.errors import ScoutUserError
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
 
@@ -72,14 +73,18 @@ def test_empty_intent_uses_the_top_open_bank_question_for_qa(tmp_path, monkeypat
     assert session.user_intent == "A still-open bank question?"
 
 
-def test_empty_intent_falls_back_to_next_angle_when_bank_has_nothing_open(tmp_path, monkeypatch):
-    _use_tmp_store(tmp_path, monkeypatch)
-    # No qa_question_bank.md at all under this fake repo root -> Tier A finds nothing.
+def test_empty_qa_intent_with_nothing_discoverable_raises_instead_of_using_the_angle(
+    tmp_path, monkeypatch,
+):
+    root = _use_tmp_store(tmp_path, monkeypatch)
+    # No qa_question_bank.md at all under this fake repo root -> Tier A finds nothing, and
+    # the stubbed research client fails -> Tier B only has the angle. A QA angle is an
+    # instruction, not a question, so no session may start on it.
     monkeypatch.setattr("stages.research_scout.bank_fallback._REPO_ROOT", tmp_path)
-    angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
 
-    session = bridge.start_scout_session("qa", "")
-    assert session.user_intent == angles[0]
+    with pytest.raises(ScoutUserError):
+        bridge.start_scout_session("qa", "")
+    assert not root.exists() or not any(root.iterdir())
 
 
 def test_empty_intent_for_micro_skips_the_bank_entirely(tmp_path, monkeypatch):

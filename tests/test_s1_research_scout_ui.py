@@ -1501,12 +1501,12 @@ def test_an_empty_send_with_a_batch_on_screen_spends_nothing_and_says_what_to_do
     assert "Pick one of the questions above" in shown
 
 
-def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(
+def test_a_dead_youcom_tells_the_user_instead_of_offering_the_angle_instruction(
     tmp_path, monkeypatch,
 ):
     """End-to-end through the real bridge with the network cut: Tier B's
-    never-raises fallback (the rotated angle) still has to reach the chat, which
-    is the pre-batch behaviour this must not lose."""
+    never-raises fallback still reaches the chat, but as a plain "nothing came
+    back" — the rotated QA angle is a research instruction, never a question."""
     root = tmp_path / "research_sessions"
     s1_research_scout.RESEARCH_SESSIONS_ROOT = root
     bridge.RESEARCH_SESSIONS_ROOT = root
@@ -1516,7 +1516,7 @@ def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(
         # bridge._scout_workflow() builds an uninjected, real YouComClient(), and
         # config.load_dotenv() can put a LIVE key in this process — so without this
         # stub the assertion below would depend on a real network call. Raising
-        # forces discover_questions' mandatory fallback, which returns the angle.
+        # forces discover_questions' mandatory fallback entry.
         def research(self, *args, **kwargs):
             raise AssertionError("test tried to reach the real You.com client")
 
@@ -1533,8 +1533,10 @@ def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(
     page, controls = _build(tmp_path)
     _discover_twice(page, controls)
 
-    angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
-    assert angles[0] in _text_content(controls)
+    shown = _text_content(controls)
+    for angle in PolicyBundle.load(ScoutMode.QA).general_angles["qa"]:
+        assert angle[:40] not in shown
+    assert "No question came back" in shown
     assert not root.exists() or not any(root.iterdir())
 
 
@@ -2160,16 +2162,28 @@ def test_reroll_preserves_every_entry_even_the_one_already_picked(tmp_path, monk
     assert all(row["status"] != "rejected" for row in rows)
 
 
-def test_fallback_angle_is_not_saved_as_a_discovery(tmp_path, monkeypatch):
+def test_fallback_angle_is_neither_shown_nor_saved_as_a_discovery(tmp_path, monkeypatch):
+    instruction = "direct: How does a defining power of a hero work? Pick one source-supported cost."
     page, controls, _calls = _discover_env(
         tmp_path, monkeypatch,
-        batches=[[{"question": "an unfilled angle", "angle": "an unfilled angle",
-                  "fallback": True}]],
+        batches=[[{"question": instruction, "angle": instruction, "fallback": True}]],
     )
     _discover_twice(page, controls)
 
-    assert "an unfilled angle" in _text_content(controls)
+    assert instruction not in _text_content(controls)
+    assert "No question came back" in _text_content(controls)
     assert SavedScoutStore(tmp_path / "research_sessions").list_entries() == []
+
+
+def test_zero_verified_qa_discover_names_why_candidates_were_rejected(tmp_path, monkeypatch):
+    entry = {"question": "", "fallback": True, "verification_shortage": True,
+             "batch_expected": 5,
+             "rejection_reasons": {"year_not_found": 2, "fetch_timeout": 1}}
+    page, controls, _calls = _discover_env(tmp_path, monkeypatch, batches=[[entry]])
+    _discover_twice(page, controls)
+    shown = _text_content(controls)
+    assert "No issue-verified questions" in shown
+    assert "year_not_found" in shown and "fetch_timeout" in shown
 
 
 def test_save_failure_keeps_paid_batch_visible_and_blocks_reroll(tmp_path, monkeypatch):
