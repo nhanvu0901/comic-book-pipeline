@@ -12,18 +12,43 @@ the anchor by name even if the comic concept itself is new to them. Favor broad
 What/Why/How/When questions a newcomer can understand without knowing an issue
 number or event. Replace a niche team, supporting identity, or obscure power
 with a clearer familiar anchor when both are supported by real sources.
-Source-first: read the retrieved issue-specific page BEFORE wording each
-question. Identify one answer claim its excerpt actually states. Give each
-direct question ONE answer target: one mechanism, limit, rule, or explicitly
-stated motive. Keep the question evergreen and recognizable, with its full
-answer inside the cited evidence. Do not combine what a concept is, how it
-works, its limit or cost, and its tension or consequence into one question.
-Do not append family/mission/stakes/ongoing consequences from a short blurb
+
+Premise-first and source-first: read the retrieved issue-specific page BEFORE
+wording each question. Ground each candidate in a concrete, source-supported
+comic premise (an actual mechanism, counterintuitive condition, pivotal
+conflict, or defining rule). Identify why fans care or debate this: what makes
+it intriguing or counterintuitive? Identify the specific answer and viewer
+payoff: what concrete revelation, explanation, or narrative resolution does the
+viewer actually learn from the cited evidence? Finally, frame a faithful research
+`question` and provisional `viewer_hook` that directly reflect this premise and
+payoff.
+
+Give each direct question ONE answer target: a focused, coherent explanation
+centered on one mechanism, contrast, conflict, rule, or explicitly stated
+motive. A coherent answer target does not force an artificial single-clause
+wording: compound phrasing that connects a concept to its specific tension,
+counterintuitive condition, or tested limit is encouraged when the cited
+evidence answers both. Keep the question evergreen and recognizable, with its full
+answer inside the cited evidence. However, keep the scope focused: do not combine
+unrelated storylines, do not ask for a whole multi-issue scene recap, and do
+not append family/mission/stakes/ongoing consequences from a short blurb
 or guess a motive the source does not state. If the issue excerpt cannot
 support the whole question, choose a smaller question or another source.
 Do not put an issue number, year, or narrow scene in a direct question.
+
+In `why_fans_ask_it`, clearly state the core premise and why fans debate or care
+about it (the curiosity trigger, counterintuitive contrast, or moral tension).
+In `sample_answer_items` and `issue_evidence`, state the concrete viewer payoff:
+the specific factual mechanism, revelation, or resolution that answers the
+question, backed directly by the cited issue text. Never write mere promotional
+hype, generic teasers, or unsubstantiated claims. A publisher solicitation or
+catalog teaser is not evidence of a story event or payoff.
+
 Return a factual `question` for research and a separate provisional
-`viewer_hook` for display. Keep four direct questions and one list question.
+`viewer_hook` for display. The angle set provides four direct angles and one
+list angle to guide the {count} candidates across diverse lanes, but let each
+candidate's `proposed_format` follow the idea's natural scope: 'direct' for
+focused explanation or 'list' for distinct examples.
 If the cited excerpt gives a distinct concrete detail within that SAME answer,
 ask a short viewer_hook question that foregrounds it. The hook must have the
 same subject and same answer scope as the research question; it cannot add a
@@ -32,7 +57,11 @@ copy the research question into the hook. If the sources do not support a
 distinct hook within the same answer, return the empty string
 `""` for `viewer_hook` and keep the factual question. Never invent a new
 character, incident, power, causal claim, or stakes. No movie/TV/game framing,
-speculative "what if", generic "you won't believe" tease, or popularity claim.
+speculative "what if" fan fiction (invented hypothetical scenarios that never
+occurred in print), generic "you won't believe" tease, or popularity claim. A
+canon "what happens when..." grounded in an actual published comic scene or event
+is valid, but imaginary scenarios with no comic basis are forbidden.
+
 Support two formats:
 - 'direct': one grounded explanation built from comic story/evidence beats.
   Use this for What is/Why/How/When questions about a concept, character, or world.
@@ -67,7 +96,7 @@ for a direct question at least one. If no such source can be read, do not
 propose that candidate. A bare URL, a reprint date, and model memory are not
 issue evidence. Keep the ordinary `evidence_urls` for additional context.
 
-Use the four direct angles for four distinct What/Why/How/When questions. Do
+Use the angles for distinct What/Why/How/When questions and list lanes. Do
 not turn a changing status or relationship into a question about one named issue.
 Give each candidate a different recognizable hero or team anchor. Do not use
 the same hero twice even when the power, belief, or world differs.
