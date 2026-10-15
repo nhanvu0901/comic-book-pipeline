@@ -379,6 +379,45 @@ def test_r3_4_without_the_page_tying_the_names_the_words_are_not_matched():
     assert _punisher(links=False)[0] is False
 
 
+BAR = ("Batman walks into the bar and orders a drink while the Joker laughs in the corner. "
+       "Later, Batman leaves the bar and goes home to sleep.")
+
+
+def _bar(quote, concept="no kill rule"):
+    page = _wiki("Superman Vol 3 38", [_syn(BAR)])
+    candidate = _candidate(question="Why does Batman refuse to kill the Joker?", anchor="Batman",
+                           concept=concept, quote=quote)
+    return _verdict(candidate, page)
+
+
+def test_r3_4_merely_mentioning_the_hero_does_not_make_a_quote_relevant():
+    assert _bar("Later, Batman leaves the bar and goes home to sleep.") == (
+        False, "topic_overlap")
+
+
+def test_r3_4_a_concept_word_in_the_quote_is_a_second_way_in_but_the_asked_word_is_still_needed():
+    nano = ("Sharon explains that the reason Steve has been regressing is a nanovirus built to "
+            "mimic red blood cells. Tony cures the nanovirus and Steve recovers his superhuman "
+            "physique.")
+    page = _wiki("Captain America Vol 6 10", [_syn(nano)],
+                 url="https://marvel.fandom.com/wiki/Captain_America_Vol_6_10",
+                 intro="\nPublished: April 25, 2012")
+    candidate = _candidate(
+        question="Why does Steve Rogers keep losing access to his super-soldier physique?",
+        anchor="Captain America", concept="mechanism_strength_loss_nanovirus",
+        issue="Captain America Vol 6 #10 (2012)",
+        url="https://marvel.fandom.com/wiki/Captain_America_Vol_6_10",
+        quote="the reason Steve has been regressing is a nanovirus built to mimic red blood cells")
+    page_with_link = page.replace(
+        "## Synopsis",
+        '## Appearing in "X"\n\n**Featured Characters:**\n\n*   [Captain America (Steve Rogers)]'
+        '(https://x/Steven_Rogers "Steven Rogers (Earth-616)")\n\n## Synopsis', 1)
+    assert _verdict(candidate, page_with_link) == (True, "")
+    # the same quote, but the synopsis never says what the question asks about
+    bare = page_with_link.replace("physique", "strength").replace("superhuman", "great")
+    assert _verdict(candidate, bare)[0] is False
+
+
 def test_r3_4_flat_catalog_pages_keep_the_strict_two_word_rule():
     page = ("Title: Batman (2016) #161 | DC Comics\nPublished\nJuly 23, 2025\n"
             "Batman #161 (2025) has the Joker on its cover.")

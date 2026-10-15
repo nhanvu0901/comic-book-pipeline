@@ -712,7 +712,7 @@ def _lexical_failure(
     counts for either spelling.
 
     A quote inside a written synopsis (``structured``) must share a core word with the question or
-    be about the anchor, and the synopsis must carry what the question asks: when it asks about
+    a word of its concept label, and the synopsis must carry what the question asks: when it asks about
     something its concept label does not already name (``specific``), at least one such word
     ("worthiness", "physique") has to be there; when it only restates the concept, the synopsis
     must echo two of its words. A flat catalogue page (no synopsis to lean on) keeps the strict
@@ -724,8 +724,10 @@ def _lexical_failure(
         if len(echo_quote) < needed and not (echo_quote and len(asked) >= 2):
             return "topic_overlap"
         return "question_not_grounded" if specific and not asked else None
-    about_anchor = bool((_stemmed_terms(ask.anchor) | _stemmed_terms(remove)) & quote_stems)
-    if not echo_quote and not about_anchor:
+    # The quote is about the topic when it shares a question word or a word of the concept label
+    # (mere mention of the hero is not enough). The label is only ever a second way in: what the
+    # question asks must still be in the synopsis, below.
+    if not echo_quote and not (_stemmed_terms(ask.concept - remove) & quote_stems):
         return "topic_overlap"
     if specific:
         return None if aliases.echoes(specific, story_stems) else "question_not_grounded"
