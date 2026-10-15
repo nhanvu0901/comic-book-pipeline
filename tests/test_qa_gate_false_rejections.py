@@ -117,7 +117,8 @@ def test_d1_free_page_fetch_gets_a_longer_timeout_and_a_retry(monkeypatch):
 
     monkeypatch.setattr(cited_sources, "fetch_source", fake_fetch)
     qa_discovery_gate._fetch_issue_source(DC_URL)
-    assert seen["timeout"] >= 20 and seen["retries"] >= 1
+    # Cold wiki pages took 7-10s through the reader and 4 of 11 hit the old 10s limit.
+    assert seen["timeout"] >= 15 and seen["retries"] >= 1
 
 
 class _Response:
@@ -440,6 +441,14 @@ def test_d7_fetch_failures_are_told_apart_from_content_failures(error, reason):
     result = evaluate_issue_evidence(
         _candidate(), "direct", fetcher=lambda url: FetchedSource(url, error=error))
     assert (result.passed, result.reason) == (False, reason)
+
+
+@pytest.mark.parametrize("fmt", ["direct", "list"])
+def test_d7_evidence_with_no_usable_claim_is_no_issue_evidence(fmt):
+    candidate = _candidate()
+    candidate["issue_evidence"] = ["not a claim", 5]
+    result = evaluate_issue_evidence(candidate, fmt, fetcher=_no_fetch)
+    assert (result.passed, result.reason) == (False, "no_issue_evidence")
 
 
 def test_d7_a_list_with_one_issue_says_list_needs_2_issues_without_fetching():

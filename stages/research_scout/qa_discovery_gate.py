@@ -25,7 +25,7 @@ from .micro_recency import issue_publication_year
 # Wiki pages arrive with 13k+ chars of navigation before the article (and run to
 # ~120k with appearance lists), so the cap only bounds a runaway response.
 ISSUE_PAGE_MAX_CHARS = 250_000
-ISSUE_FETCH_TIMEOUT = 20
+ISSUE_FETCH_TIMEOUT = 15
 ISSUE_FETCH_RETRIES = 1
 MIN_PUBLICATION_YEAR = 2010
 _MAX_CLAIMS = 5
@@ -331,9 +331,10 @@ def evaluate_issue_evidence(
         return GateResult(False, "topic_overlap", ("the question says nothing beyond its anchor",))
 
     claims = candidate.get("issue_evidence")
-    if not isinstance(claims, list) or not claims:
+    claims = [c for c in claims[:_MAX_CLAIMS] if isinstance(c, Mapping)] \
+        if isinstance(claims, list) else []
+    if not claims:
         return GateResult(False, "no_issue_evidence")
-    claims = [c for c in claims[:_MAX_CLAIMS] if isinstance(c, Mapping)]
     required = 2 if str(fmt) == "list" else 1
     if len({canonical_topic(str(c.get("issue") or "")) for c in claims}) < required:
         return GateResult(False, "list_needs_2_issues", ("fewer than 2 distinct issues cited",))
