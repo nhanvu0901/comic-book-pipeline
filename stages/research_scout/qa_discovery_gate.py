@@ -207,7 +207,7 @@ def canonical_topic(value: str) -> str:
 
 
 def _topic_terms(value: str) -> set[str]:
-    # A lone letter is an apostrophe remnant ("Batman's" -> "batman", "s"), not a topic;
+    # A lone letter is an apostrophe remnant ("hero's" -> "hero", "s"), not a topic;
     # a lone digit is a volume/issue number and is kept.
     return {w for w in _WORD.findall(str(value).casefold())
             if w not in _GENERIC and (len(w) > 1 or w.isdigit())}
@@ -218,7 +218,7 @@ def _series_terms(value: str) -> set[str]:
 
 
 def _anchor_groups(raw_anchor: str) -> list[set[str]]:
-    """An anchor joined with "and"/"&"/"/" names alternatives ("Batman and Robin"):
+    """An anchor joined with "and"/"&"/"/" names alternatives ("Alpha and Beta"):
     the question must name one of them whole. A plain multi-word anchor is one group."""
     groups = [_topic_terms(canonical_topic(part)) for part in _ANCHOR_JOIN.split(raw_anchor)]
     return [group for group in groups if group]
