@@ -559,8 +559,9 @@ def test_p2_6_aliases_are_not_taken_from_the_candidate():
      "How does Spider-Man’s spider-sense work?"),
     ("What are distinct examples of Daredevil’s radar sense in action across original print issues?",
      "What are distinct examples of Daredevil’s radar sense in action?"),
+    # the name is the anchor: only the scope words are dropped, not the clause
     ("What is the real source of Wakanda’s power in Black Panther’s modern comics?",
-     "What is the real source of Wakanda’s power?"),
+     "What is the real source of Wakanda’s power in Black Panther’s comics?"),
     ("How does Superman’s solar flare ability change what he can do in modern comics?",
      "How does Superman’s solar flare ability change what he can do?"),
     ("How does Thor’s worthiness limitation on Mjolnir work in modern print comics?",

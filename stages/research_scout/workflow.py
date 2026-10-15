@@ -113,8 +113,29 @@ def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
     return hook
 
 
+# The discovery prompt scopes the search ("issues published in 2010 or later", "original
+# print issues"); models sometimes echo that scope into the question as a trailing clause
+# ("... work in modern print comics?"). It is search wording, not something to ask a viewer.
+_SCOPE_NOUN = r"(?:comics?|issues?|stories|story|runs?|continuity)"
+_SCOPE_WORDS = r"(?:(?:modern|recent|current|original)\s+)+(?:print\s+)?"
+_NOT_A_PREPOSITION = r"(?!(?:in|across|throughout|within|from|of|on|at|by|to|for|with)\b)"
+# "... in modern print comics?" / "... across original print issues?" at the end of the question
+_SCOPE_CLAUSE = re.compile(
+    rf"\s*,?\s+(?:in|across|throughout|within|from)\s+"
+    rf"(?:{_NOT_A_PREPOSITION}(?-i:[a-z’'-]+)\s+){{0,3}}?{_SCOPE_WORDS}{_SCOPE_NOUN}"
+    rf"\s*(?=[?.!]*$)", re.IGNORECASE)
+# "... in Black Panther’s modern comics?": the name is the anchor, so only the scope words go
+_SCOPE_AFTER_NAME = re.compile(
+    rf"(?<=[’']s\s){_SCOPE_WORDS}(?={_SCOPE_NOUN}\s*[?.!]*$)", re.IGNORECASE)
+_MIN_QUESTION_WORDS = 4
+
+
 def _strip_scope_phrases(question: str) -> str:
-    return question  # RED-phase shim
+    """Drop the scope wording the prompt leaked into a question, unless that would leave too
+    little question behind."""
+    stripped = _SCOPE_AFTER_NAME.sub("", _SCOPE_CLAUSE.sub("", question)).rstrip()
+    return stripped if stripped != question and len(stripped.split()) >= _MIN_QUESTION_WORDS \
+        else question
 
 
 def _qa_discovery_topup_prompt(
@@ -134,7 +155,9 @@ def _qa_discovery_topup_prompt(
         + " new candidates using these angles:\n"
         + "\n".join(f"- {angle}" for angle in angles)
         + "\nNo movie/TV/game evidence. Default answer scope is original print issues "
-        "published in 2010 or later. Read each cited issue page before wording "
+        "published in 2010 or later; that scope is a search filter, so never write scope "
+        "words (\"modern\", \"print\", \"original issues\", a year) into a question. "
+        "Read each cited issue page before wording "
         "the question; choose one answer claim its excerpt actually states. "
         "Rely on issue-specific full story synopses or issue records (fandom wikis, comic catalog records) "
         "with original publication metadata; never rely on marketing catalog teasers or solicitations "
@@ -1043,6 +1066,9 @@ class ScoutWorkflow:
             offered.extend(str(c.get(field, "")).strip() for c in candidates)
             for index, candidate in enumerate(candidates):
                 text = str(candidate.get(field, "")).strip()
+                if mode is ScoutMode.QA:
+                    text = _strip_scope_phrases(text)
+                    candidate = {**candidate, field: text}
                 if not text or text.casefold() in seen or is_burned(text, burn_digest):
                     continue
                 if mode is ScoutMode.QA:
@@ -1088,6 +1114,10 @@ class ScoutWorkflow:
                 labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
                 candidate_entry = {**candidate, field: text, "angle": labelled}
                 if mode is ScoutMode.QA:
+                    if verdict.claims:
+                        # Only what the gate verified goes on as evidence; a claim it never
+                        # fetched (or rejected) must not ride along as if it had been checked.
+                        candidate_entry["issue_evidence"] = [dict(c) for c in verdict.claims]
                     candidate_entry["proposed_format"] = fmt
                     candidate_entry["viewer_hook"] = _normalize_viewer_hook(text, candidate)
                     if anchor:

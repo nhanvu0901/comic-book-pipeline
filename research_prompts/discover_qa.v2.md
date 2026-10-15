@@ -1,6 +1,6 @@
 HARD RULES — non-negotiable:
 1. Discover real comic-book questions only; no movies, TV, or games as the answer source.
-2. Unless a question names another period, its answer scope is issues published in 2010 or later; "modern" means 2010 or later.
+2. Unless a question names another period, its answer scope is issues published in 2010 or later. That scope is a search filter, not question text: never write scope words ("modern", "print", "original issues", a year) into a question.
 3. Do not impose a minimum number of series or candidates in the answer.
 
 # Discover Q&A research scout
@@ -129,7 +129,7 @@ For the world angle, ask about one defining premise or rule supported by an
 issue source rather than a single continuity difference or one changed
 supporting character.
 Use original print stories published in 2010 or later for this default scope;
-an older self-contained Elseworld or its newer reprint is not a modern world.
+an older self-contained Elseworld or its newer reprint is outside this scope.
 For the list lane, prefer examples supported by issues published in 2010 or
 later unless the question explicitly asks about another period.
 The list must name a coherent action or ability family, and every example's
