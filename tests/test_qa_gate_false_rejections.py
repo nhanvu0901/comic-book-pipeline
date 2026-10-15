@@ -306,10 +306,12 @@ def test_d4_a_conjunction_anchor_is_satisfied_by_either_named_character():
     ("Batman and Robin", "Why does Damian refuse to kill?"),
 ])
 def test_d4_a_question_that_does_not_name_its_anchor_is_still_rejected(anchor, question):
+    # An unnamed anchor can only be saved by an alias the CITED PAGE gives it, so the page is
+    # read; this one names no alias for these anchors.
     candidate = _candidate(question=question, anchor=anchor, concept="owls")
+    page = _page("Superman Vol 3 38", _article())
     result = evaluate_issue_evidence(
-        candidate, "direct",
-        fetcher=lambda url: (_ for _ in ()).throw(AssertionError("fetched")))
+        candidate, "direct", fetcher=lambda url: FetchedSource(url, text=page))
     assert (result.passed, result.reason) == (False, "anchor_mismatch")
 
 

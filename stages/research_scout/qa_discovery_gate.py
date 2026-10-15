@@ -89,7 +89,7 @@ _COVER_DATE = re.compile(rf"(?i)\bcover\s+date(?:\s+of|\s*:)?\s*\[?\s*{_DATE_TEX
 _CLAIM_STAGES = (
     "issue_year_unresolved", "year_out_of_range", "source_not_issue_page", "quote_missing",
     "topic_overlap", "fetch_failed", "series_title_mismatch", "issue_number_not_found",
-    "year_not_found", "quote_not_found", "no_synopsis", "pull_quote_only",
+    "anchor_mismatch", "year_not_found", "quote_not_found", "no_synopsis", "pull_quote_only",
     "quote_not_in_synopsis", "teaser_only_source", "reprint_source", "question_not_grounded",
 )
 _STAGE_RANK = {reason: rank for rank, reason in enumerate(_CLAIM_STAGES)}
@@ -314,6 +314,24 @@ def verified_issue_evidence(
     return evaluate_issue_evidence(candidate, fmt, fetcher=fetcher).passed
 
 
+@dataclass(frozen=True)
+class _Ask:
+    """What the question asks, as evidence terms. Only the question's words ever count as
+    evidence; the concept label is used just to tell the object it names from the
+    properties the question asks about, and nothing else the candidate wrote counts at all."""
+
+    content: frozenset[str]        # the question's content words, anchor removed
+    concept: frozenset[str]        # the concept label's content words, anchor removed
+    groups: tuple[frozenset[str], ...]
+    question_terms: frozenset[str]
+    named: bool                    # the question names the anchor itself
+
+    def terms(self, alias: frozenset[str] = frozenset()) -> tuple[set[str], set[str], int]:
+        """(question stems, the ones the concept does not name, how many a quote must echo)."""
+        core = _stemmed_terms(self.content - alias)
+        return core, core - _stemmed_terms(self.concept - alias), min(2, len(core))
+
+
 def evaluate_issue_evidence(
     candidate: Mapping[str, Any], fmt: str, *,
     fetcher: Callable[[str], cited_sources.FetchedSource] = _fetch_issue_source,
@@ -322,8 +340,9 @@ def evaluate_issue_evidence(
 
     The claimed label carries its original year after #N or in series title.
     The fetched issue page must independently show the same issue number and
-    dated publication metadata, and the quote must come from its synopsis rather
-    than a publisher teaser.
+    dated publication metadata; the quote must sit in a written synopsis of an original
+    story (not a teaser, pull-quote or reprint) and be grounded in the question's words.
+    On success ``claims`` holds exactly the claims that were verified.
     """
     question = str(candidate.get("question") or "")
     raw_anchor = str(candidate.get("canonical_anchor") or "")
@@ -331,13 +350,17 @@ def evaluate_issue_evidence(
     concept = canonical_topic(str(candidate.get("concept_key") or ""))
     if not question or not anchor or not concept:
         return GateResult(False, "missing_fields")
-    groups = _anchor_groups(raw_anchor)
-    question_terms = _topic_terms(question)
-    if not any(group <= question_terms for group in groups):
+    groups = tuple(frozenset(group) for group in _anchor_groups(raw_anchor))
+    question_terms = frozenset(_topic_terms(question))
+    named = any(group <= question_terms for group in groups)
+    if not named and not _names_someone(question):
         return GateResult(False, "anchor_mismatch")
     anchor_terms = set().union(*groups)
-    topic_terms = _content_terms(question) - anchor_terms
-    if not topic_terms:
+    ask = _Ask(
+        content=frozenset(_content_terms(question) - anchor_terms),
+        concept=frozenset(_content_terms(concept) - anchor_terms),
+        groups=groups, question_terms=question_terms, named=named)
+    if named and not ask.content:
         return GateResult(False, "topic_overlap", ("the question says nothing beyond its anchor",))
 
     claims = candidate.get("issue_evidence")
@@ -349,21 +372,12 @@ def evaluate_issue_evidence(
     if len({canonical_topic(str(c.get("issue") or "")) for c in claims}) < required:
         return GateResult(False, "list_needs_2_issues", ("fewer than 2 distinct issues cited",))
 
-    # Evidence comes from the QUESTION's words only. The quote must echo them (two of them, or
-    # one when the synopsis around it echoes two of the words the question asks about), and
-    # at least one word the question asks about beyond the object the concept label already
-    # names must be in that synopsis. Nothing the candidate wrote about itself (concept,
-    # premise, payoff, hook, sample items) is ever counted as support for it.
-    core = _stemmed_terms(topic_terms)
-    specific = core - _stemmed_terms(_content_terms(concept) - anchor_terms)
-    needed = min(2, len(core))
-
     verified: dict[str, Mapping[str, Any]] = {}
     failures: list[tuple[str, str]] = []
     pages: dict[str, cited_sources.FetchedSource] = {}
     for claim in claims:
         issue = str(claim.get("issue") or "").strip()
-        reason, kept = _claim_reason(claim, issue, core, specific, needed, fetcher, pages)
+        reason, kept = _claim_reason(claim, issue, ask, fetcher, pages)
         if reason is None:
             verified.setdefault(canonical_topic(issue), kept)
             if len(verified) >= required:
@@ -379,8 +393,46 @@ def evaluate_issue_evidence(
     return GateResult(False, worst, details)
 
 
+def _names_someone(question: str) -> bool:
+    """An alias is a name: the question must have a capitalised word after its first."""
+    return any(word[:1].isupper() for word in re.findall(r"[^\W\d_][\w'’-]*", question)[1:])
+
+
+def _page_aliases(text: str, groups) -> list[list[str]]:
+    """Names the cited page itself gives the anchor: wiki character links read
+    ``[Hero (Real Name)](...)`` or ``[Real Name (Hero)](...)``. Returned as word lists."""
+    found: list[list[str]] = []
+    for match in cited_sources._INLINE_LINK.finditer(text):
+        shown = re.fullmatch(r"\s*(.+?)\s*\(([^()]+)\)\s*", match.group(1))
+        if shown is None:
+            continue
+        head, inner = shown.groups()
+        head_terms, inner_terms = _topic_terms(head), _topic_terms(inner)
+        for group in groups:
+            if group <= head_terms:
+                alias = inner
+            elif group <= inner_terms:
+                alias = head
+            else:
+                continue
+            words = [w for w in _WORD.findall(alias.casefold())
+                     if w not in _GENERIC and (len(w) > 1 or w.isdigit())]
+            if words and words not in found:
+                found.append(words)
+    return found[:8]
+
+
+def _alias_in_question(text: str, ask: _Ask) -> frozenset[str] | None:
+    """The alias words the question uses for its anchor, per the cited page, else None."""
+    for words in _page_aliases(text, ask.groups):
+        if set(words) <= ask.question_terms or (
+                len(words) > 1 and len(words[-1]) >= 4 and words[-1] in ask.question_terms):
+            return frozenset(words)
+    return None
+
+
 def _claim_reason(
-    claim: Mapping[str, Any], issue: str, core: set[str], specific: set[str], needed: int,
+    claim: Mapping[str, Any], issue: str, ask: _Ask,
     fetcher: Callable[[str], cited_sources.FetchedSource],
     pages: dict[str, cited_sources.FetchedSource],
 ) -> tuple[str | None, Mapping[str, Any]]:
@@ -397,8 +449,8 @@ def _claim_reason(
         return "source_not_issue_page", claim
     if not quote:
         return "quote_missing", claim
-    echoed = len(core & _stemmed_terms(_content_terms(quote)))
-    if echoed == 0:
+    quote_stems = _stemmed_terms(_content_terms(quote))
+    if ask.named and not ask.terms()[0] & quote_stems:
         return "topic_overlap", claim
 
     source = _fetch_once(url, pages, fetcher)
@@ -413,6 +465,12 @@ def _claim_reason(
     page_reason = _page_issue_reason(source.text, issue)
     if page_reason:
         return page_reason, claim
+    alias: frozenset[str] = frozenset()
+    if not ask.named:
+        found = _alias_in_question(source.text, ask)
+        if found is None:
+            return "anchor_mismatch", claim
+        alias = found
     if year not in _publication_years(source.text):
         return "year_not_found", claim
     if not cited_sources.quote_matches_source(cited_sources.ClaimCitation(url, quote), source):
@@ -420,8 +478,10 @@ def _claim_reason(
     synopsis_reason, story = _synopsis_check(source.text, quote)
     if synopsis_reason:
         return synopsis_reason, claim
+    core, specific, needed = ask.terms(alias)
+    echoed = len(core & quote_stems)
     asked = specific & _stemmed_terms(_content_terms(story))
-    if echoed < needed and not (echoed >= 1 and len(asked) >= 2):
+    if echoed == 0 or (echoed < needed and not (echoed >= 1 and len(asked) >= 2)):
         return "topic_overlap", claim
     if specific and not asked:
         return "question_not_grounded", claim
