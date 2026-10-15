@@ -40,10 +40,8 @@ _DIRECT_Q_RE = re.compile(
 )
 _LIST_Q_RE = re.compile(
     r"^\s*(?:how\s+many\b|what\s+are\s+some\b|"
-    r"what\s+are\s+(?:the\s+)?(?:distinct|different|multiple|notable)?\s*"
-    r"(?:(?:two|three|four|five|six|seven|eight|nine|ten|\d+)\s+)?"
-    r"(?:distinct|different|multiple|notable\s+)?"
-    r"(?:ways|examples|times|moments|instances|cases)\b|"
+    r"what\s+are\s+(?:the\s+)?(?:distinct|different|multiple|notable|two|three|four|five|six|seven|eight|nine|ten|\d+)\b[^?]{0,80}\bexamples\b|"
+    r"what\s+are\s+(?:the\s+)?(?:distinct|different|multiple)\s+(?:ways|times|moments|instances|cases)\b|"
     r"what\s+are\s+(?:(?:some|the|distinct|unique|hidden|forgotten)\s+)*"
     r"(?:[\w'-]+'s\s+)?(?:abilities|powers|weapons|suits|feats|transformations)\b|"
     r"what\s+are\s+some\s+of\b[^?]{0,100}\b"

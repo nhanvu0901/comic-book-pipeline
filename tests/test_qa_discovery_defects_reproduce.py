@@ -112,3 +112,157 @@ def test_fix_5_stemmed_quote_matching_handles_inflections():
     )
     result = verified_issue_evidence(candidate, "direct", fetcher=lambda url: mock_source)
     assert result is True, "Quote with inflectional variation ('hands' vs 'hand') must verify"
+
+
+def test_fix_6_initial_topup_legacy_prompts_consistency():
+    from stages.research_scout.policies import PolicyBundle
+    from stages.research_scout.models import ScoutMode
+    from stages.research_scout.workflow import _qa_discovery_topup_prompt
+    from stages import youcom_scout
+
+    # 1. Initial bundle prompt
+    bundle = PolicyBundle.load(ScoutMode.QA)
+    initial = bundle.render(
+        "discover", angles="- test angle", count="5",
+        exclude="- none", avoid="- none",
+    ).text.casefold()
+    assert "core_premise" in initial
+    assert "viewer_payoff" in initial
+
+    # 2. Top-up prompt
+    topup = _qa_discovery_topup_prompt(
+        missing_direct=1, missing_list=0, angles=["test angle"],
+        excluded=[], anchors=set(), concepts=set(),
+    ).casefold()
+    assert "core_premise" in topup
+    assert "viewer_payoff" in topup
+
+    # 3. Legacy prompt
+    from pathlib import Path
+    legacy_prompts = []
+    import unittest.mock as mock
+    with mock.patch("stages.youcom_scout._call_logged", lambda _k, p, *_a: legacy_prompts.append(p) or {"output": {"content": {"candidates": []}}}):
+        with mock.patch("stages.youcom_scout._scouted_context_text", lambda: ""):
+            youcom_scout.run_discover("test-key", Path("/tmp"), "standard")
+    assert len(legacy_prompts) > 0
+    assert all("core_premise" in p.casefold() for p in legacy_prompts)
+    assert all("viewer_payoff" in p.casefold() for p in legacy_prompts)
+
+
+def test_fix_7_qa_candidate_ranking_prioritizes_grounded_payoff(tmp_path):
+    from stages.research_scout.storage import SessionStore
+    from stages.research_scout.workflow import ScoutWorkflow
+    from stages.research_scout.models import ScoutMode
+
+    class _MockClient:
+        def research(self, *a, **k):
+            return type("Result", (), {
+                "payload": {
+                    "output": {
+                        "content": {
+                            "candidates": [
+                                {
+                                    "question": "What is the Speed Force in Flash?",
+                                    "canonical_anchor": "Flash",
+                                    "concept_key": "speed force",
+                                    "viewer_hook": "",
+                                    "evidence_urls": ["https://dc.com/flash"],
+                                    "issue_evidence": [],
+                                    "core_premise": "",
+                                    "viewer_payoff": "",
+                                },
+                                {
+                                    "question": "Why does Batman refuse to kill the Joker?",
+                                    "canonical_anchor": "Batman",
+                                    "concept_key": "no kill rule",
+                                    "viewer_hook": "Why does Bruce spare him?",
+                                    "evidence_urls": ["https://dc.com/batman"],
+                                    "issue_evidence": [{"issue": "Batman #1 (2020)", "source_url": "https://dc.com", "quote": "rule"}],
+                                    "core_premise": "A hero with a strict moral code faces a mass murderer.",
+                                    "viewer_payoff": "Batman reveals that crossing the line makes him no different.",
+                                },
+                            ]
+                        }
+                    }
+                },
+                "error": None,
+            })()
+
+    workflow = ScoutWorkflow(
+        store=SessionStore(tmp_path), client=_MockClient(),
+        qa_issue_verifier=lambda c, f: True,
+    )
+    workflow._qa_batch_quota = False
+    batch = workflow.discover_questions(ScoutMode.QA, count=2)
+    assert len(batch) == 2
+    # The Batman candidate has rich payoff + premise, so it must be ranked first!
+    assert "Batman" in batch[0]["question"]
+    assert "Flash" in batch[1]["question"]
+
+
+def test_fix_8_strong_candidates_selected_regardless_of_direct_list_ratio(tmp_path):
+    """Removing the rigid 4+1 quota means 3 direct + 2 list candidates are all accepted."""
+    from stages.research_scout.storage import SessionStore
+    from stages.research_scout.workflow import ScoutWorkflow
+    from stages.research_scout.models import ScoutMode
+
+    candidates = [
+        {"question": "Why does Batman refuse to kill?", "canonical_anchor": "Batman", "concept_key": "no kill rule"},
+        {"question": "How does Daredevil navigate without sight?", "canonical_anchor": "Daredevil", "concept_key": "radar sense"},
+        {"question": "What is Superman's Fortress of Solitude?", "canonical_anchor": "Superman", "concept_key": "fortress"},
+        {"question": "What are some distinct abilities of Magneto?", "canonical_anchor": "Magneto", "concept_key": "magneto powers"},
+        {"question": "What are distinct examples of super-speed in The Flash?", "canonical_anchor": "Flash", "concept_key": "speed feats"},
+    ]
+    for c in candidates:
+        c["viewer_hook"] = ""
+        c["evidence_urls"] = []
+        c["issue_evidence"] = []
+
+    class _Client:
+        def __init__(self):
+            self.calls = 0
+        def research(self, *a, **k):
+            self.calls += 1
+            return type("Result", (), {
+                "payload": {"output": {"content": {"candidates": candidates}}},
+                "error": None,
+            })()
+
+    client = _Client()
+    workflow = ScoutWorkflow(store=SessionStore(tmp_path), client=client, qa_issue_verifier=lambda c, f: True)
+    batch = workflow.discover_questions(ScoutMode.QA, count=5)
+
+    assert len(batch) == 5
+    formats = [c["proposed_format"] for c in batch]
+    # Under old 4+1 quota, the 2nd list was dropped and triggered a top-up.
+    # Now, both list candidates are kept and call count is 1!
+    assert formats.count("direct") == 3
+    assert formats.count("list") == 2
+    assert client.calls == 1
+
+
+def test_fix_9_shortage_notices_trigger_without_quota(tmp_path):
+    """Verification shortages and incomplete batches are flagged even without a rigid quota."""
+    from stages.research_scout.storage import SessionStore
+    from stages.research_scout.workflow import ScoutWorkflow
+    from stages.research_scout.models import ScoutMode
+
+    class _Client:
+        def research(self, *a, **k):
+            return type("Result", (), {
+                "payload": {"output": {"content": {"candidates": [
+                    {"question": "Why does Batman refuse to kill?", "canonical_anchor": "Batman",
+                     "concept_key": "no kill rule", "viewer_hook": "", "evidence_urls": [], "issue_evidence": []}
+                ]}}},
+                "error": None,
+            })()
+
+    workflow = ScoutWorkflow(store=SessionStore(tmp_path), client=_Client(), qa_issue_verifier=lambda c, f: True)
+    workflow._qa_batch_quota = False
+    batch = workflow.discover_questions(ScoutMode.QA, count=5)
+
+    assert len(batch) == 1
+    assert batch[0]["batch_incomplete"] is True
+    assert batch[0]["batch_expected"] == 5
+
+

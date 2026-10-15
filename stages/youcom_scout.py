@@ -309,6 +309,8 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             "detail is supported. "
             "Set canonical_anchor to the hero/team in both question and evidence, "
             "and concept_key to the named power/world/rule shared by both. "
+            "Set core_premise to the underlying comic contrast, conflict, or high-curiosity premise supported by the excerpt. "
+            "Set viewer_payoff to the concrete scene revelation, turning point, or consequence answering that premise. "
             "Supply issue_evidence for original "
             "print issues published 2010 or later: Series #N (YYYY), source_url, "
             "and a verbatim quote from that issue page about the question topic; "
@@ -339,6 +341,8 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     for c in kept:
         lines += [f"## {c.get('question')}",
                   f"- viewer hook (draft): {c.get('viewer_hook', '')}",
+                  f"- core premise: {c.get('core_premise', '')}",
+                  f"- viewer payoff: {c.get('viewer_payoff', '')}",
                   f"- subject: {c.get('subject')} | angle: {c.get('_angle')} | format: {c.get('proposed_format', 'list')}",
                   f"- why fans ask: {c.get('why_fans_ask_it','')[:300]}",
                   f"- sample items: {'; '.join(c.get('sample_answer_items') or [])[:400]}",

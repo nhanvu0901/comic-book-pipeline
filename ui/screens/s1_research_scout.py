@@ -885,6 +885,10 @@ def build(
                 meta_parts.append(f"Issue: {entry['series_issue_year']}")
             if meta_parts:
                 entry_details.append(ft.Text(" • ".join(meta_parts), size=11, weight=ft.FontWeight.W_500, color=ACCENT, selectable=True))
+            if entry.get("core_premise"):
+                entry_details.append(ft.Text(f"Premise: {entry['core_premise']}", size=11, color=ft.Colors.CYAN_300, selectable=True))
+            if entry.get("viewer_payoff"):
+                entry_details.append(ft.Text(f"Payoff: {entry['viewer_payoff']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
             if entry.get("source_evidence"):
                 entry_details.append(ft.Text(f"Evidence: {entry['source_evidence']}", size=11, color=TEXT_MUTED, selectable=True))
             if entry.get("turning_point"):

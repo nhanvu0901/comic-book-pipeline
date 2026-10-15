@@ -145,7 +145,8 @@ def _qa_discovery_topup_prompt(
         "needs two different verified issues. Bare URLs and reprint years do not count. "
         "Make the viewer_hook a distinct, grounded detail within the same answer scope "
         "or use the empty string; never add another answer target. "
-        "Provide core_premise and viewer_payoff reflecting source-backed contrasts or reveals. "
+        "Provide core_premise (the underlying contrast, conflict, or high-curiosity rule) "
+        "and viewer_payoff (the concrete comic turning point, consequence, or revelation answering it). "
         "Never repeat an anchor or concept already chosen.\n"
         + "Used anchors: " + ", ".join(sorted(anchors)) + "\n"
         + "Used concepts: " + ", ".join(sorted(concepts)) + "\n"
@@ -1028,8 +1029,6 @@ class ScoutWorkflow:
                     continue
                 if mode is ScoutMode.QA:
                     fmt = str(question_archetype(text))
-                    if quota and sum(c["proposed_format"] == fmt for c in picked) >= quota[fmt]:
-                        continue
                     if is_narrow_direct_question(text):
                         continue
                     try:
@@ -1074,10 +1073,12 @@ class ScoutWorkflow:
                     break
             if len(picked) >= count or not quota or attempt == 1 or _raw_call_error(raw):
                 break
-            missing_direct = quota["direct"] - sum(c["proposed_format"] == "direct" for c in picked)
-            missing_list = quota["list"] - sum(c["proposed_format"] == "list" for c in picked)
-            if not missing_direct and not missing_list:
+            missing_total = count - len(picked)
+            if missing_total <= 0:
                 break
+            has_list = any(c.get("proposed_format") == "list" for c in picked)
+            missing_list = 1 if not has_list else 0
+            missing_direct = max(0, missing_total - missing_list)
             topup_angles = (angles[:4] if missing_direct else []) + (angles[4:5] if missing_list else [])
             try:
                 raw = self.client.research(
@@ -1102,19 +1103,35 @@ class ScoutWorkflow:
                 score = 0.0
                 payoff = str(c.get("viewer_payoff") or "").strip()
                 premise = str(c.get("core_premise") or "").strip()
-                why_fans = str(c.get("why_fans_ask_it") or "").strip()
                 hook = str(c.get("viewer_hook") or "").strip()
-                if payoff:
-                    score += 2.0
+                
+                # 1. Grounded premise with conflict/contrast indicators
                 if premise:
-                    score += 1.5
-                if why_fans and len(why_fans) > 20:
-                    score += 1.0
+                    score += 2.0
+                    premise_lower = premise.casefold()
+                    if any(k in premise_lower for k in ("vs", "against", "clash", "dilemma", "cost", "limit", "refuse", "break", "struggle", "secret")):
+                        score += 1.0
+
+                # 2. Grounded viewer payoff resolving the curiosity
+                if payoff:
+                    score += 2.5
+                    payoff_lower = payoff.casefold()
+                    if any(k in payoff_lower for k in ("reveals", "discovers", "realizes", "turns", "sacrifices", "stops", "defeats", "forces")):
+                        score += 1.0
+                    # Grounding check with issue quote
+                    quote_text = " ".join(str(cl.get("quote", "")).casefold() for cl in c.get("issue_evidence") or [] if isinstance(cl, Mapping))
+                    if any(w in quote_text for w in payoff_lower.split() if len(w) > 4):
+                        score += 1.5
+
+                # 3. Viewer hook clarity
                 if hook:
                     score += 1.0
+
+                # 4. Evidence quality
                 claims = c.get("issue_evidence")
-                if isinstance(claims, list):
-                    score += min(len(claims), 3) * 1.0
+                if isinstance(claims, list) and len(claims) >= 1:
+                    score += min(len(claims), 2) * 1.0
+
                 return score
             picked.sort(key=_qa_rank_key, reverse=True)
             if 0 < len(picked) < count:
