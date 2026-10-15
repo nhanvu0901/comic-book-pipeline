@@ -176,3 +176,23 @@ def verified_issue_evidence(
         if len(verified) >= required:
             return True
     return False
+
+
+# TEMPORARY RED-phase shim: wraps the pre-fix gate so the new regression tests run and
+# fail on behaviour, not on a missing import. Replaced by the real implementation next.
+from dataclasses import dataclass  # noqa: E402
+
+
+@dataclass(frozen=True)
+class GateResult:
+    passed: bool
+    reason: str = ""
+    details: tuple = ()
+
+    def __bool__(self) -> bool:
+        return self.passed
+
+
+def evaluate_issue_evidence(candidate, fmt, *, fetcher=_fetch_issue_source) -> GateResult:
+    ok = verified_issue_evidence(candidate, fmt, fetcher=fetcher)
+    return GateResult(ok, "" if ok else "gate_criteria_unmet")
