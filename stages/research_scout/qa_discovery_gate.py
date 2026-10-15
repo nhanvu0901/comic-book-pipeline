@@ -42,6 +42,12 @@ _TITLE_ISSUE = re.compile(
     r"(\d+(?:\.\d+)?[a-z]?)(?!\w)", re.IGNORECASE)
 _HEADING = re.compile(r"(?m)^(#{1,6}\s.*)$")
 _TEASER_HEADING = re.compile(r"solicit|teaser", re.IGNORECASE)
+_SYNOPSIS_HEADING = re.compile(r"^#{1,6}\s+synopsis\b", re.IGNORECASE)
+_SYNOPSIS_PLACEHOLDER = re.compile(r"synopsis\s+not\s+yet\s+written", re.IGNORECASE)
+_REPRINT_OPENING = re.compile(
+    r"^[\W_]*(?:reprint(?:ed|s)?\s+(?:of|from|in)\b|this\s+(?:is\s+)?a\s+reprint)", re.IGNORECASE)
+_BOILERPLATE_HEADING = re.compile(r"cookie|categories\s*&\s*purposes|consent|privacy", re.IGNORECASE)
+_MIN_SYNOPSIS_CHARS = 20
 _ANCHOR_JOIN = re.compile(r"\s+(?:and|&|vs\.?|versus)\s+|\s*[/,+]\s*", re.IGNORECASE)
 
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
@@ -63,7 +69,8 @@ _COVER_DATE = re.compile(rf"(?i)\bcover\s+date(?:\s+of|\s*:)?\s*\[?\s*{_DATE_TEX
 _CLAIM_STAGES = (
     "issue_year_unresolved", "year_out_of_range", "source_not_issue_page", "quote_missing",
     "topic_overlap", "fetch_failed", "series_title_mismatch", "issue_number_not_found",
-    "year_not_found", "quote_not_found", "teaser_only_source",
+    "year_not_found", "quote_not_found", "no_synopsis", "pull_quote_only",
+    "quote_not_in_synopsis", "teaser_only_source", "reprint_source",
 )
 _STAGE_RANK = {reason: rank for rank, reason in enumerate(_CLAIM_STAGES)}
 for _alias in ("fetch_timeout", "page_blocked", "page_missing"):
@@ -238,16 +245,50 @@ def _page_issue_reason(text: str, issue: str) -> str | None:
     return "issue_number_not_found" if same_series else "series_title_mismatch"
 
 
-def _quote_only_in_teaser(text: str, quote: str) -> bool:
-    """True when every section holding the quote is a publisher solicitation/teaser."""
+def _sections(text: str) -> list[tuple[str, str]]:
+    """[(heading, body)] in page order; the first entry is the text before any heading."""
+    parts = _HEADING.split(text)
+    return [("", parts[0])] + [(parts[i].strip(), parts[i + 1]) for i in range(1, len(parts), 2)]
+
+
+def _is_real_synopsis(heading: str, body: str) -> bool:
+    """A "Synopsis for ..." section with story text, not the "not yet written" placeholder."""
+    if not _SYNOPSIS_HEADING.match(heading):
+        return False
+    story = re.sub(r"[\W_]+", " ", _SYNOPSIS_PLACEHOLDER.sub("", body)).strip()
+    return len(story) >= _MIN_SYNOPSIS_CHARS
+
+
+def _blockquote_text(body: str) -> str:
+    return "\n".join(line[1:] for line in body.splitlines() if line.lstrip().startswith(">"))
+
+
+def _synopsis_reason(text: str, quote: str) -> str | None:
+    """Why the quote is not backed by a real synopsis, or None.
+
+    Wiki issue pages are structured: one "Synopsis for ..." section per story, plus a
+    solicitation blurb, a pull-quote under the page title, notes and trivia. Only the
+    synopsis tells the story, so the quote must sit in one that is actually written, and
+    that story must not be a reprint (its cover date is the reprint's, not the story's).
+    Flat pages (no headings: catalog records) have no structure to judge."""
+    sections = _sections(text)
+    if not any(h and not _BOILERPLATE_HEADING.search(h) for h, _ in sections):
+        return None
+    real = [(h, b) for h, b in sections if _is_real_synopsis(h, b)]
+    if not real:
+        return "no_synopsis"
     needle = cited_sources.comparable_text(quote)
-    parts = _HEADING.split(text)  # [preamble, heading, body, heading, body, ...]
-    holders = [
-        parts[i - 1] if i else ""
-        for i in range(0, len(parts), 2)
-        if needle in cited_sources.comparable_text(parts[i])
-    ]
-    return bool(holders) and all(_TEASER_HEADING.search(heading) for heading in holders)
+    holders = [(h, b) for h, b in sections if needle in cited_sources.comparable_text(b)]
+    inside = [(h, b) for h, b in holders if (h, b) in real]
+    if not inside:
+        if holders and all(_TEASER_HEADING.search(h) for h, _ in holders):
+            return "teaser_only_source"
+        if any(needle in cited_sources.comparable_text(_blockquote_text(b)) for _, b in holders):
+            return "pull_quote_only"
+        return "quote_not_in_synopsis"
+    if all(_REPRINT_OPENING.match(b.lstrip(" \t\n*-•")) for _, b in inside):
+        return "reprint_source"
+    return None
 
 
 # --- the gate ----------------------------------------------------------------
@@ -360,8 +401,9 @@ def _claim_reason(
         return "year_not_found", claim
     if not cited_sources.quote_matches_source(cited_sources.ClaimCitation(url, quote), source):
         return "quote_not_found", claim
-    if _quote_only_in_teaser(source.text, quote):
-        return "teaser_only_source", claim
+    synopsis_reason = _synopsis_reason(source.text, quote)
+    if synopsis_reason:
+        return synopsis_reason, claim
     return None, claim
 
 
