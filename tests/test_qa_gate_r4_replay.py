@@ -177,6 +177,18 @@ def test_the_fixture_holds_all_72_live_candidates_and_16_probes():
     assert [p["group"] for p in PROBES].count("R3C") == 6
 
 
+def test_replay_has_the_recorded_semantic_answers_it_needs():
+    assert (R4 / "semantic_verdicts.json").is_file(), "R4 replay requires recorded model verdicts"
+    assert len(RECORDED) == 56
+    for key, entry in RECORDED.items():
+        assert len(key) == 40 and all(char in "0123456789abcdef" for char in key)
+        assert entry["question"] and entry["fmt"] in {"direct", "list"}
+        assert isinstance(entry["payoff"], str)
+        raw = entry["verdict"]
+        parsed = qa_semantic_check.parse_verdict(json.dumps(raw), len(raw["examples"]))
+        assert not parsed.error, (entry["question"], parsed.error)
+
+
 @pytest.mark.parametrize("index", sorted(EXPECTED))
 def test_replay_verdict_of_each_live_candidate(index):
     candidate, result = _judge(index)

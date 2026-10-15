@@ -161,6 +161,34 @@ def test_parse_verdict_answers_that_break_the_schema_are_errors_not_passes(text)
     assert verdict.error
 
 
+@pytest.mark.parametrize("mutate", [
+    lambda body: body["examples"][0].update(example=2),
+    lambda body: body["examples"][0].update(answers_question="maybe"),
+    lambda body: body["examples"][0].pop("evidence_sentence"),
+    lambda body: body.update(answers_question=True),
+    lambda body: body.pop("payoff_supported"),
+])
+def test_parse_verdict_rejects_wrong_example_identity_or_missing_required_fields(mutate):
+    body = json.loads(_raw(EVIDENCE))
+    mutate(body)
+    assert sc.parse_verdict(json.dumps(body), 1).error
+
+
+def test_judge_does_not_accept_a_global_evidence_sentence_from_another_example():
+    request = _request(
+        _example(),
+        _example(issue="WW #20 (2013)", url="https://dc.fandom.com/wiki/WW_Vol_4_20",
+                 quote="Wonder Woman refuses", synopsis=SYNOPSIS_2),
+        fmt="direct",
+    )
+    verdict = sc.Verdict(
+        "yes", EVIDENCE_2, "yes", "global sentence only appears in the second synopsis",
+        (sc.ExampleVerdict("yes", EVIDENCE_2), sc.ExampleVerdict("no", "")),
+    )
+    outcome = sc.judge(request, verdict)
+    assert outcome.reason == "answer_not_supported" and outcome.kept == ()
+
+
 # --- the request key ------------------------------------------------------------------------------------
 
 def test_request_key_follows_what_was_asked_not_the_page_text():

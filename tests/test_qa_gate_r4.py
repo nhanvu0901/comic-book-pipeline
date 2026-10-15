@@ -211,6 +211,34 @@ def test_a6_a_list_still_needs_two_distinct_verified_issues():
     assert (result.passed, result.reason) == (False, "list_needs_2_issues")
 
 
+def test_a6_a_direct_candidate_checks_past_a_success_and_a_failure():
+    candidate = _direct_with_two_claims()
+    candidate["issue_evidence"].append({
+        "issue": "Superman Vol 3 #40 (2015)",
+        "source_url": "https://dc.fandom.com/wiki/Superman_Vol_3_40",
+        "quote": "Superman unleashes a third burst of energy stored in his cells",
+    })
+    candidate["issue_evidence"][1]["quote"] = (
+        "Superman unleashes the energy stored in his cells while flying toward the moon")
+    third_url = candidate["issue_evidence"][2]["source_url"]
+    pages = {
+        DC_URL: _wiki("Superman Vol 3 38", [_syn()]),
+        DC_URL_2: _wiki("Superman Vol 3 39", [_syn("No burst occurs in this issue.")], url=DC_URL_2),
+        third_url: _wiki("Superman Vol 3 40", [_syn(
+            "Superman unleashes a third burst of energy stored in his cells and the crowd flees.")],
+            url=third_url),
+    }
+    fetched = []
+
+    def fetcher(url):
+        fetched.append(url)
+        return FetchedSource(url, text=pages[url])
+
+    result = evaluate_issue_evidence(candidate, "direct", fetcher=fetcher, semantic=None)
+    assert fetched == [DC_URL, DC_URL_2, third_url]
+    assert result.passed and [c["source_url"] for c in result.claims] == [DC_URL, third_url]
+
+
 # --- B. the semantic answer check, as the gate uses it ----------------------------------------------------
 
 def test_b_a_verified_claim_is_asked_about_once_with_the_question_the_synopsis_and_the_payoff():
@@ -350,3 +378,20 @@ def test_b_a_direct_candidate_keeps_only_the_claims_the_model_says_answer():
     model = Model(verdict("", "Superman unleashes a second burst of the energy stored in his cells and the crowd flees."))
     result = evaluate_issue_evidence(candidate, "direct", fetcher=_two_pages(), semantic=model)
     assert result.passed and [c["source_url"] for c in result.claims] == [DC_URL_2]
+
+
+def test_b_a_direct_candidate_sends_every_verified_claim_to_one_semantic_request():
+    candidate = _direct_with_two_claims()
+    model = Model(verdict(EVIDENCE, "Superman unleashes a second burst of the energy stored in his cells and the crowd flees."))
+    result = evaluate_issue_evidence(candidate, "direct", fetcher=_two_pages(), semantic=model)
+    assert result.passed and len(model.requests) == 1
+    assert [example.url for example in model.requests[0].examples] == [DC_URL, DC_URL_2]
+    assert [claim["source_url"] for claim in result.claims] == [DC_URL, DC_URL_2]
+
+
+def test_b_a_malformed_model_verdict_does_not_leave_structurally_verified_claims_accepted():
+    candidate = _direct_with_two_claims()
+    model = Model(Verdict("yes", EVIDENCE, "yes", "missing second example",
+                          (ExampleVerdict("yes", EVIDENCE),)))
+    result = evaluate_issue_evidence(candidate, "direct", fetcher=_two_pages(), semantic=model)
+    assert (result.passed, result.reason, result.claims) == (False, "semantic_check_error", ())
