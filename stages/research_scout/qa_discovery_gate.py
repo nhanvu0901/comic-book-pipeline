@@ -314,6 +314,50 @@ def verified_issue_evidence(
     return evaluate_issue_evidence(candidate, fmt, fetcher=fetcher).passed
 
 
+# --- the model's output, made well-formed before it is judged ---------------------------------
+
+_NAME_CONNECTORS = frozenset({"of", "the", "and", "de", "von", "van", "la", "le", "da", "del"})
+
+
+def _proper_name(anchor: str) -> str:
+    """A ``canonical_anchor`` the model wrote as a sentence ("Superman under red-sun
+    suppression", "Wonder Woman uses the Lasso of Truth") reduced to its leading proper name.
+
+    A real name has no lowercase word except a connector ("Batman and Robin", "Iron Man and the
+    Avengers"); only an anchor that does is treated as a sentence, and only when it opens with a
+    capitalised run: the run stops at the first other lowercase word or at a possessive."""
+    words = anchor.split()
+    if not any(w[:1].islower() and w.casefold() not in _NAME_CONNECTORS for w in words):
+        return anchor
+    run: list[str] = []
+    for word in words:
+        bare = re.sub(r"[’']s$", "", word)
+        if bare[:1].isupper() or bare[:1].isdigit() or (run and bare.casefold() in _NAME_CONNECTORS):
+            run.append(bare)
+            if bare != word:               # a possessive ends the name ("Hulk's strength")
+                break
+        else:
+            break
+    while run and run[-1].casefold() in _NAME_CONNECTORS:
+        run.pop()
+    if len(run) > 1 and run[0].casefold() == "the":
+        run = run[1:]
+    return " ".join(run) if run else anchor
+
+
+def normalize_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    """A copy of the candidate with the model's format slips fixed: a sentence anchor becomes
+    the hero/team name, a snake_case concept_key becomes words. Idempotent; never mutates."""
+    clean = dict(candidate)
+    anchor = clean.get("canonical_anchor")
+    if isinstance(anchor, str) and anchor.strip():
+        clean["canonical_anchor"] = _proper_name(anchor.strip())
+    concept = clean.get("concept_key")
+    if isinstance(concept, str):
+        clean["concept_key"] = " ".join(concept.replace("_", " ").split())
+    return clean
+
+
 @dataclass(frozen=True)
 class _Ask:
     """What the question asks, as evidence terms. Only the question's words ever count as
@@ -344,6 +388,7 @@ def evaluate_issue_evidence(
     story (not a teaser, pull-quote or reprint) and be grounded in the question's words.
     On success ``claims`` holds exactly the claims that were verified.
     """
+    candidate = normalize_candidate(candidate)
     question = str(candidate.get("question") or "")
     raw_anchor = str(candidate.get("canonical_anchor") or "")
     anchor = canonical_topic(raw_anchor)
@@ -496,6 +541,3 @@ def _fetch_once(
         pages[url] = fetcher(url)
     return pages[url]
 
-
-def normalize_candidate(candidate):  # RED-phase shim, replaced by the real implementation
-    return dict(candidate)

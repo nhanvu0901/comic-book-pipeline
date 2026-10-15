@@ -96,8 +96,8 @@ about an adjacent character or publisher is not evidence for the question.
 An adaptation profile or movie/TV article is not print-comic evidence. Favor
 sources that identify original comic issues in the 2010-or-later answer scope;
 do not treat a reprint date as the original publication date.
-For each candidate set `canonical_anchor` to the familiar hero/team named in
-both the question and its issue evidence. Set `concept_key` to the shortest
+For each candidate set `canonical_anchor` to ONLY the name of the familiar
+hero/team (1-3 words, never a sentence) named in both the question and its issue evidence. Set `concept_key` to the shortest
 named power, world, rule, or choice shared by that question and its cited
 text; never invent a key just to make two candidates appear different.
 Use the same key when two questions are about the same concept, even if one
@@ -108,7 +108,8 @@ Set `issue_evidence` to exact print-comic issue citations. Each item needs:
 `issue` as "Series #N (YYYY)" with the ORIGINAL issue's publication year after
 the number; `source_url` of an issue-specific comic page (synopsis or database)
 that shows the issue number and its original `Published`/release date; and
-`quote` copied verbatim from that same page containing the concrete factual
+`quote` copied verbatim from that same page as ONE contiguous passage (no
+ellipsis, no joining of separate sentences) containing the concrete factual
 detail or resolution relevant to the question. The date can be separate from the
 quote on the page. Do not use a review/article publication date as the issue's date.
 For a list provide at least two different issues; for a direct question at least one.

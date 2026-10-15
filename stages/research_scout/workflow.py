@@ -171,10 +171,15 @@ def _qa_discovery_topup_prompt(
         "Each candidate needs canonical_anchor and concept_key matching both "
         "the question and issue evidence, plus issue_evidence: exact Series #N (YYYY), source_url, "
         "and a verbatim quote from that same issue page containing a detail "
-        "relevant to the question. The page must show a separate original "
+        "relevant to the question. Field formats: canonical_anchor is only the familiar hero or "
+        "team name as written in the question (1-3 words, never a sentence); concept_key is a "
+        "short lowercase noun phrase (2-4 words, no underscores) naming the power, world, rule or "
+        "choice; viewer_hook is a short curiosity question about the same answer that ends with ?, "
+        "or the empty string; each quote is ONE contiguous passage copied exactly from the page "
+        "(no ellipsis, no joining of separate sentences). The page must show a separate original "
         "Published/release date; an article date does not count. A direct needs one verified issue; a list "
         "needs two different verified issues. Bare URLs and reprint years do not count. "
-        "Make the viewer_hook a distinct, grounded detail within the same answer scope "
+        "Make the viewer_hook a distinct, grounded question within the same answer scope "
         "or use the empty string; never add another answer target. "
         "Provide core_premise (the underlying contrast, conflict, or high-curiosity rule) "
         "and viewer_payoff (the concrete comic turning point, consequence, or resolution answering the question, "
@@ -1068,7 +1073,7 @@ class ScoutWorkflow:
                 text = str(candidate.get(field, "")).strip()
                 if mode is ScoutMode.QA:
                     text = _strip_scope_phrases(text)
-                    candidate = {**candidate, field: text}
+                    candidate = qa_discovery_gate.normalize_candidate({**candidate, field: text})
                 if not text or text.casefold() in seen or is_burned(text, burn_digest):
                     continue
                 if mode is ScoutMode.QA:

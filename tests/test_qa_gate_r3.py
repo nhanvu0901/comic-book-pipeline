@@ -104,9 +104,9 @@ def test_r3_1_the_gate_judges_the_normalised_candidate():
         question="What happens to Superman under red-sun fire?",
         anchor="Superman under red-sun suppression",
         concept="superman_red_sun_power_suppression_rule",
-        quote="Superman is bathed in red sun radiation and his powers fail completely")
+        quote="Superman is bathed in red sun fire and his powers fail completely")
     page = _wiki("Superman Vol 3 38", [_syn(
-        "Superman is bathed in red sun radiation and his powers fail completely, so he can "
+        "Superman is bathed in red sun fire and his powers fail completely, so he can "
         "do nothing to save his friend as the minutes pass.")])
     assert _verdict(candidate, page) == (True, "")
 
