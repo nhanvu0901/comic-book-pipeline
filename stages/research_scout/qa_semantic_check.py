@@ -293,6 +293,39 @@ def _quote_supports_answer(quote: str, evidence: str, synopsis: str, question: s
     return False
 
 
+def _contradicts_choice_to_spare(question: str, synopsis: str) -> bool:
+    """Catch an explicit opposite intent even when the model calls the eventual survival a choice.
+
+    This narrow guard applies to any actor in a ``why did X let Y live`` question. It looks for
+    the same actor being described as prepared to let someone die in the cited synopsis; it
+    does not infer intent merely from an escape or an earlier ambiguous opportunity.
+    """
+    match = re.search(r"\bwhy\s+(?:does|did|would)\s+(.+?)\s+let\s+.+?\s+live\b", question, re.I)
+    if not match:
+        return False
+    actor = match.group(1).strip().casefold()
+    if len(actor) < 3:
+        return False
+    visible = cited_sources._visible_markdown_text(synopsis).casefold()
+    for sentence in re.split(r"(?<=[.!?])\s+", visible):
+        if (re.search(rf"\b{re.escape(actor)}\b", sentence)
+                and re.search(r"\b(?:ready|prepared|willing)\s+to\s+let\b.{0,100}\bdie\b", sentence)):
+            return True
+    return False
+
+
+def _mechanism_evidence_only_repeats_topic(request: SemanticRequest, evidence: str) -> bool:
+    """A 'how does ... work' answer needs a payoff detail beyond naming the phenomenon."""
+    if not re.search(r"^\s*how\s+does\b.+\bwork\s*\?\s*$", request.question, re.I):
+        return False
+    if not request.payoff.strip():
+        return False
+    from . import qa_discovery_gate
+    terms = lambda value: qa_discovery_gate._stemmed_terms(qa_discovery_gate._content_terms(value))
+    mechanism_terms = terms(request.payoff) - terms(request.question)
+    return bool(mechanism_terms) and not bool(terms(evidence) & mechanism_terms)
+
+
 def judge(request: SemanticRequest, verdict: Verdict) -> Judgement:
     """The pass rule, in code: an example counts when the model says ``yes`` AND the sentence it cites is
     verbatim in that example's synopsis AND anchored in the verified quote; a direct question needs one
@@ -303,6 +336,13 @@ def judge(request: SemanticRequest, verdict: Verdict) -> Judgement:
     if len(verdict.examples) != len(request.examples):
         return Judgement((), "semantic_check_error", (
             f"semantic check: {len(verdict.examples)} answers for {len(request.examples)} examples",))
+    if any(_contradicts_choice_to_spare(request.question, example.synopsis)
+           for example in request.examples):
+        return Judgement((), "answer_not_supported", ("synopsis contradicts the question's choice premise",))
+    if (request.fmt == "direct" and len(request.examples) > 1
+            and re.search(r"\bthen\b", request.question, re.I)
+            and any(example.answers_question == "partial" for example in verdict.examples)):
+        return Judgement((), "answer_not_supported", ("a step of the sequential question is only partial",))
     kept, notes = [], []
     for index, (example, said) in enumerate(zip(request.examples, verdict.examples)):
         if said.answers_question != "yes":
@@ -311,6 +351,8 @@ def judge(request: SemanticRequest, verdict: Verdict) -> Judgement:
             notes.append(f"{example.issue}: evidence sentence not verbatim in the synopsis")
         elif not _quote_supports_answer(example.quote, said.evidence_sentence, example.synopsis, request.question):
             notes.append(f"{example.issue}: evidence sentence not anchored in verified quote")
+        elif _mechanism_evidence_only_repeats_topic(request, said.evidence_sentence):
+            notes.append(f"{example.issue}: evidence names the topic without a payoff mechanism")
         else:
             kept.append(index)
     why = f"semantic: {verdict.reason}".strip()

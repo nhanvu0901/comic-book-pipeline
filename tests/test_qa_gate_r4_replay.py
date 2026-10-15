@@ -22,6 +22,7 @@ Expected verdicts are the testers' adjudication of each candidate, as a correct 
 from __future__ import annotations
 
 import json
+import hashlib
 from copy import deepcopy
 from pathlib import Path
 
@@ -76,12 +77,12 @@ EXPECTED = {
     20: fail(*SEMANTIC_NO),               # hedged payoff, webbing never a "tool"
     # ---- round 2, run A ----
     21: fail("reprint_source"),
-    22: fail("answer_not_supported"),  # why Fury's words made Thor unworthy is not given
+    22: PASS,                             # unworthy + worthy-only enchantment answers the question's level
     23: fail("anchor_mismatch"),          # "Speed Force storm" names no hero: Master keeps the rule
     24: fail("quote_not_found"),
     25: fail("no_synopsis"),
     26: PASS,
-    27: PASS,                             # he lets Joker try to disarm his own bomb while saving Harley
+    27: fail(*SEMANTIC_NO),               # Joker survives by self-disarming; Batman was ready to let him die
     28: PASS,
     29: PASS,
     30: fail("answer_not_supported"),  # #1 fixture lacks a release date; #7 gives the lasso to others
@@ -115,7 +116,7 @@ EXPECTED = {
     54: fail("reprint_source"),
     55: PASS,                             # label said 2010, the page says 2012: self-corrected
     56: PASS,                             # true pass (the premise slip is not the gate's to catch)
-    57: fail("payoff_not_supported"),    # Barry's death is a plan; Wally actually closes the rupture
+    57: fail(*SEMANTIC_NO),               # Barry's death is a plan; Wally actually closes the rupture
     58: fail(*SEMANTIC_NO),               # Thor: the quote does not say HOW the hammer decides
     59: PASS,                             # "Barry": linked on the page
     60: PASS,                             # true pass
@@ -188,6 +189,16 @@ def test_replay_has_the_recorded_semantic_answers_it_needs():
         raw = entry["verdict"]
         parsed = qa_semantic_check.parse_verdict(json.dumps(raw), len(raw["examples"]))
         assert not parsed.error, (entry["question"], parsed.error)
+    for index in (22, 27):
+        candidate, _ = _judge(index)
+        matching = [entry for entry in RECORDED.values() if entry["question"] == candidate["question"]]
+        assert len(matching) == 1
+        provenance = matching[0]["provenance"]
+        assert provenance["model"] and provenance["temperature"] == 0
+        assert provenance["prompt_sha256"] == hashlib.sha256(
+            (Path(__file__).parents[1] / "research_prompts/qa_answer_check.v1.md").read_bytes()
+        ).hexdigest()
+        assert provenance["recorded_at_utc"]
 
 
 @pytest.mark.parametrize("index", sorted(EXPECTED))
@@ -213,6 +224,13 @@ def test_replay_totals():
     assert passes == sorted(i for i, (ok, _) in EXPECTED.items() if ok)
     assert len([i for i in passes if i < 46]) == 22
     assert len([i for i in passes if i >= 46]) == 8
+
+
+def test_adjudicated_thor_and_joker_labels_are_preserved():
+    assert EXPECTED[22] == PASS
+    assert EXPECTED[27] == fail(*SEMANTIC_NO)
+    assert _judge(22)[1].passed
+    assert _judge(27)[1].reason in SEMANTIC_NO
 
 
 def test_replay_earlier_true_passes_still_pass_and_false_accepts_stay_rejected():
@@ -306,6 +324,16 @@ def test_corrected_thor_question_asks_for_the_worthiness_rule_the_quote_states()
         "creation but to his frustration, even he, the enchanter, cannot move it.")
     result = evaluate_issue_evidence(
         candidate, "direct", fetcher=_fetcher, semantic=_semantic_yes(claim["quote"]))
+    assert result.passed and len(result.claims) == 1
+
+
+def test_corrected_joker_question_describes_the_choice_the_synopsis_supports():
+    candidate = deepcopy(CANDIDATES[27])
+    candidate["question"] = "Why does Batman save Harley while leaving Joker to disarm his own bomb?"
+    candidate["viewer_payoff"] = "Batman prioritizes Harley; Joker survives by deactivating his own bomb."
+    sentence = "Batman tells him that if he is quick, he can deactivate the bombs with the gadgets in the suit."
+    result = evaluate_issue_evidence(candidate, "direct", fetcher=_fetcher,
+                                     semantic=_semantic_yes(sentence))
     assert result.passed and len(result.claims) == 1
 
 

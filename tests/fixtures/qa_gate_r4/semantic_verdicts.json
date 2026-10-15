@@ -6,6 +6,8 @@
     "verdict": {
       "answers_question": "yes",
       "evidence_sentence": "Superman uses his powers to land safely with Glenmorgan in hand, for whom the experience convinces him to confess to having sabotaged the train system.",
+      "payoff_supported": "yes",
+      "reason": "Both examples from the synopsis show that Superman threatened Glenmorgan, threw him from a balcony, and landed safely, which scared Glenmorgan into confessing his sabotage. This matches the viewer payoff.",
       "examples": [
         {
           "example": 1,
@@ -17,9 +19,15 @@
           "answers_question": "yes",
           "evidence_sentence": "Superman uses his powers to land safely with Glenmorgan in hand, for whom the experience convinces him to confess to having sabotaged the train system."
         }
-      ],
-      "payoff_supported": "yes",
-      "reason": "Both synopses state that Superman threatened to throw Glenmorgan from a balcony, then actually threw both of them off and landed safely, and the experience convinced Glenmorgan to confess, which directly answers 'how' he forced the confession, matching the payoff exactly."
+      ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "6d2f3688272fb31979fa6bb34adb2a124e0b6d9f": {
@@ -30,7 +38,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Even as she confirms that she does truly love him, she breaks free of her bonds and escapes, as she will not marry him, regardless of whether she loves him or not.",
       "payoff_supported": "yes",
-      "reason": "Example 1 directly states why Hades cannot marry Wonder Woman: she refuses to marry him regardless of her love. Example 2 does not address the question. The viewer payoff matches the synopsis.",
+      "reason": "The first example's synopsis clearly states that Wonder Woman refuses to marry Hades even though she loves him, directly answering why he cannot make her marry him. The second example's quote about a threat does not address the question.",
       "examples": [
         {
           "example": 1,
@@ -43,6 +51,14 @@
           "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "6c0b3520b8dc76a56d57f86d6859bd8e2b412be9": {
@@ -53,7 +69,7 @@
       "answers_question": "yes",
       "evidence_sentence": "And that they now have a new idea: with problems escalating since Cyclops' turn to the dark side, they need to grow bigger.",
       "payoff_supported": "yes",
-      "reason": "Both synopses state that the Avengers decide to grow bigger because of escalating problems since Cyclops' turn to the dark side, which directly answers the 'why' question. The viewer payoff about crises jumping to Mars and beyond is consistent with the synopsis mentioning terraforming Mars and an intergalactic war.",
+      "reason": "Both synopses explicitly state that the Avengers need to grow bigger because of escalating problems since Cyclops' turn to the dark side, directly answering the question. The viewer payoff correctly summarizes this as crises scaling up to Mars and beyond, which aligns with the synopsis content.",
       "examples": [
         {
           "example": 1,
@@ -66,6 +82,14 @@
           "evidence_sentence": "And that they now have a new idea: with problems escalating since Cyclops' turn to the dark side, they need to grow bigger."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "6a6972f2ff416bbc3709087835c54dc2e9f5ea9b": {
@@ -76,7 +100,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Daredevil uses his radar sense to find the exact weakest point in Bruiser’s knee, then unleashes a strike that completely shatters the bone.",
       "payoff_supported": "yes",
-      "reason": "Both synopses provide concrete instances of Daredevil's radar sense in action: in example 1 it detects an incoming object despite chaff, and in example 2 it identifies a weak point in an opponent's knee.",
+      "reason": "Both examples show Daredevil's radar sense in action: the first demonstrates it providing a vague impression despite being hindered, and the second shows it being used to identify a weak point. The payoff accurately describes these two distinct demonstrations.",
       "examples": [
         {
           "example": 1,
@@ -89,6 +113,14 @@
           "evidence_sentence": "Daredevil uses his radar sense to find the exact weakest point in Bruiser’s knee, then unleashes a strike that completely shatters the bone."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "d6e4825ea173d104bc539cae17a9069f9503f2c2": {
@@ -99,7 +131,7 @@
       "answers_question": "yes",
       "evidence_sentence": "His ability to release a flare of solar energy had destroyed the old one and depleted his strength.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that the solar flare ability destroyed his suit and depleted his strength, directly answering how it changes what he can do (temporary loss of powers, suit destroyed).",
+      "reason": "The synopsis explicitly states that Superman's solar flare ability destroyed his suit and depleted his strength, directly answering how it changes what he can do by imposing these costs.",
       "examples": [
         {
           "example": 1,
@@ -107,6 +139,14 @@
           "evidence_sentence": "His ability to release a flare of solar energy had destroyed the old one and depleted his strength."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "7a8ccd161c1dddfe7a526a237b8aaf448e5547c1": {
@@ -117,7 +157,7 @@
       "answers_question": "no",
       "evidence_sentence": "",
       "payoff_supported": "no",
-      "reason": "The synopsis only states that Thor attempts to lift Mjolnir but is unable to do so, without explaining the mechanism or criteria of the worthiness limitation. The question asks how it works, but the synopsis does not describe any rules, conditions, or reasons for the limitation.",
+      "reason": "The synopsis only describes Thor's unsuccessful attempt to lift Mjolnir but does not explain how the worthiness limitation works, nor does it state that the limitation is based on worthiness. The payoff claims the issue states that access depends on worthiness, which is not present in the synopsis.",
       "examples": [
         {
           "example": 1,
@@ -125,6 +165,14 @@
           "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "bada9b5a4bf012200a92c1e39b3ed5e28ebae7f9": {
@@ -135,7 +183,7 @@
       "answers_question": "yes",
       "evidence_sentence": "He destroys the comet, but trace amounts of Green Kryptonite are present and temporarily weakens Superman's powers.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that trace amounts of Green Kryptonite are present and temporarily weaken Superman's powers after he destroys the comet, causing him to crash land. This directly explains how Kryptonite weakens him even after the immediate threat is stopped.",
+      "reason": "The synopsis explicitly states that after destroying the comet, trace amounts of Green Kryptonite temporarily weaken Superman's powers, causing a crash landing. This directly answers how Kryptonite weakens him even after the immediate threat is stopped.",
       "examples": [
         {
           "example": 1,
@@ -143,6 +191,14 @@
           "evidence_sentence": "He destroys the comet, but trace amounts of Green Kryptonite are present and temporarily weakens Superman's powers."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "23bf85928c3ca5d86ba99175c41ab4fe06f260b3": {
@@ -153,7 +209,7 @@
       "answers_question": "yes",
       "evidence_sentence": "So, he decides to put on his costume and swing around Hell's Kitchen to remind anyone that intends to do bad deeds that the Devil is back and watching.",
       "payoff_supported": "yes",
-      "reason": "The synopsis states that Matt puts on his costume to remind anyone intending bad deeds that the Devil is back and watching, directly answering why he returns.",
+      "reason": "The synopsis directly states that Daredevil puts on his costume to remind criminals he is back and watching, which answers the question of why he returns after everything he has been through.",
       "examples": [
         {
           "example": 1,
@@ -161,6 +217,14 @@
           "evidence_sentence": "So, he decides to put on his costume and swing around Hell's Kitchen to remind anyone that intends to do bad deeds that the Devil is back and watching."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "036247ab8cf1355cbcf370a160c42683cbd8b89d": {
@@ -171,7 +235,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Even as she confirms that she does truly love him, she breaks free of her bonds and escapes, as she will not marry him, regardless of whether she loves him or not.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that the Lasso of Truth confirms Diana's love for Hades (truth) but she still refuses to marry him (consent not forced). It also states that Hades cannot make anyone love him without self-love, and later he gains self-love. This directly answers the question about what the showdown reveals regarding love and the Lasso.",
+      "reason": "The synopsis shows that the Lasso of Truth confirms Diana's love for Hades, but she refuses to marry him despite this, demonstrating that truth cannot force consent. Later, Diana explains that Hades cannot make anyone love him if he does not love himself, directly supporting the payoff about self-love being the missing piece.",
       "examples": [
         {
           "example": 1,
@@ -179,6 +243,14 @@
           "evidence_sentence": "Even as she confirms that she does truly love him, she breaks free of her bonds and escapes, as she will not marry him, regardless of whether she loves him or not."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "095f3934cfb987f43bdc5fd5ea899b542bd9da4d": {
@@ -187,9 +259,9 @@
     "payoff": "You learn that the Negative Speed Force is not just a boost; it makes Barry’s speed unstable, damaging, and physically punishing to use.",
     "verdict": {
       "answers_question": "yes",
-      "evidence_sentence": "Now Barry nurses his bruises and aches, which his super-speed metabolism would ordinarily have healed by now.",
+      "evidence_sentence": "Following his acquisition of the dangerous Negative Speed Force while fighting Eobard Thawne, Flash struggles to use his powers.",
       "payoff_supported": "yes",
-      "reason": "The synopses show that the Negative Speed Force makes Barry's powers unstable (struggling to control them, causing accidental damage) and physically punishing (injuries that do not heal quickly), directly supporting the viewer payoff.",
+      "reason": "Example 1 directly states the Negative Speed Force makes Flash struggle to use his powers and causes accidental damage, showing instability and harm. Example 2 shows that using the Negative Speed Force leaves Barry with unhealed bruises and aches, indicating his powers become physically punishing and his healing is impaired. Both examples confirm the viewer payoff.",
       "examples": [
         {
           "example": 1,
@@ -202,6 +274,14 @@
           "evidence_sentence": "Now Barry nurses his bruises and aches, which his super-speed metabolism would ordinarily have healed by now."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "baab6d057abc57bc5469cee2f8729f7a0e8b3d3f": {
@@ -209,17 +289,25 @@
     "fmt": "direct",
     "payoff": "The flare is a last-resort burst that converts all stored solar energy into one explosive attack, but the cost is total power loss until he recharges.",
     "verdict": {
-      "answers_question": "partial",
-      "evidence_sentence": "",
+      "answers_question": "yes",
+      "evidence_sentence": "Eventually succeeds in causing such a significant solar flare that it shorts out many of the electronics.",
       "payoff_supported": "yes",
-      "reason": "The synopsis for Example 1 describes the effects of the solar flare (powerlessness, recharging) and how Superman triggers it with heat-vision, but does not explain the mechanism by which the flare converts stored solar energy into an explosive attack. Therefore it only partially answers the question.",
+      "reason": "The synopsis describes Superman testing his solar flare ability, causing a significant explosive burst of energy (a powerful solar flare) and then becoming powerless, which indicates that all stored solar energy is released in a single attack. This matches the viewer payoff's description of converting stored solar energy into an explosive attack with temporary power loss.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "partial",
-          "evidence_sentence": ""
+          "answers_question": "yes",
+          "evidence_sentence": "Eventually succeeds in causing such a significant solar flare that it shorts out many of the electronics."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "85b3d0c1c244cad832e765a3e923ffad0f890aa4": {
@@ -228,9 +316,9 @@
     "payoff": "The examples show that webbing is not one trick but a versatile combat and cleanup tool with very different on-page uses.",
     "verdict": {
       "answers_question": "no",
-      "evidence_sentence": "After quickly and quietly restraining him with webbing, one of the bankers as well as Copperhead notice that he was in a hurry.",
+      "evidence_sentence": "",
       "payoff_supported": "no",
-      "reason": "Example 1 does not show Spider-Man using his webbing; the only webbing action is by Anti-Venom, and the quote about acetone is about removing webbing, not using it as a tool. Example 2 shows webbing used to restrain a villain, but since not all examples answer, the list requirement is not met.",
+      "reason": "Example 1 does not depict Spider-Man using his webbing as a tool; it shows him melting Anti-Venom's webbing. Since the format is list, all examples must be distinct instances of Spider-Man's webbing as a tool. Example 2 is valid, but Example 1 fails, so the overall answer is no. The payoff claims versatility across different on-page uses, but the first example is not about Spider-Man's webbing, so it is not supported.",
       "examples": [
         {
           "example": 1,
@@ -243,6 +331,14 @@
           "evidence_sentence": "After quickly and quietly restraining him with webbing, one of the bankers as well as Copperhead notice that he was in a hurry."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "f2d8214efe1abeb6f5be0293b27cad480508c4a4": {
@@ -250,17 +346,24 @@
     "fmt": "direct",
     "payoff": "The payoff is the concrete rule: the hammer’s worthiness enchantment has shut Thor out, and Odin himself fails to override it.",
     "verdict": {
-      "answers_question": "no",
-      "evidence_sentence": "",
+      "answers_question": "yes",
+      "evidence_sentence": "After another failed attempt to pick up his hammer, Thor laments that it all it took was a whisper from Fury to make him unworthy of Mjolnir.",
       "payoff_supported": "yes",
-      "reason": "The synopsis only states that Fury's whisper made Thor unworthy but does not explain the reason or content of the whisper, so it does not answer the 'why' question.",
+      "reason": "The synopsis explicitly states that a whisper from Fury made Thor unworthy of Mjolnir, explaining why he cannot lift it. Additionally, Odin's inability to lift the hammer confirms the enchantment's rule, supporting the payoff.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "no",
-          "evidence_sentence": ""
+          "answers_question": "yes",
+          "evidence_sentence": "After another failed attempt to pick up his hammer, Thor laments that it all it took was a whisper from Fury to make him unworthy of Mjolnir."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:24:57.307755+00:00"
     }
   },
   "e9a01b71f5349e549dd2a8779191d5aba11f7d34": {
@@ -293,15 +396,23 @@
     "verdict": {
       "answers_question": "yes",
       "evidence_sentence": "All of the Hulk's organs and body parts land on the floor and begin to pull themselves together around Clive.",
+      "payoff_supported": "yes",
+      "reason": "The synopsis demonstrates that when the Hulk's body is cut apart, his severed parts (e.g., heart halves) do not die or duplicate but instead pull themselves together, reforming his body. This matches the viewer payoff and answers the question of how his healing works.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
           "evidence_sentence": "All of the Hulk's organs and body parts land on the floor and begin to pull themselves together around Clive."
         }
-      ],
-      "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that when the Hulk's body parts are separated, they pull themselves together and reform into one body, matching the question and viewer payoff."
+      ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "18867438bc1855f2aff5bfc7e63857fb0ebe8363": {
@@ -310,16 +421,24 @@
     "payoff": "Batman chooses rescue over vengeance, and that choice resets how he wants to operate going forward.",
     "verdict": {
       "answers_question": "yes",
-      "evidence_sentence": "Batman tells him that if he is quick, he can deactivate the bombs with the gadgets in the suit.",
+      "evidence_sentence": "But now the clown knows that, for the first time, Batman did not care, and was ready to let him die if it meant saving the life of someone different.",
       "payoff_supported": "yes",
-      "reason": "The synopsis shows Batman giving Joker the option to deactivate his own bomb while Batman saves Harley, indicating he chose rescue over vengeance, which directly answers why he let Joker live.",
+      "reason": "The synopsis states that Batman gave Joker a chance to deactivate his bomb and then left him to save Harley, and later explains that Batman was ready to let Joker die if it meant saving someone else. This directly answers why Batman let Joker live: he prioritized saving Harley over stopping Joker.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
-          "evidence_sentence": "Batman tells him that if he is quick, he can deactivate the bombs with the gadgets in the suit."
+          "evidence_sentence": "But now the clown knows that, for the first time, Batman did not care, and was ready to let him die if it meant saving the life of someone different."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:25:40.026582+00:00",
+      "note": "Fresh model reply retained verbatim despite its contradicted positive verdict; the judge rejects the explicit opposite intent."
     }
   },
   "97bdf317e6c9bec4b7bbd6e742204841dcb06136": {
@@ -330,7 +449,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Superman feels helpless, since his powers are still down, and he cannot do anything to save Tam-Or's life.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Superman's powers are down after being bathed in red-sun radiation and that he cannot act until they return (twenty minutes later), directly answering what happens.",
+      "reason": "The synopsis explicitly states that after being bathed in red-sun radiation, Superman's powers are down and he cannot intervene, directly answering the question.",
       "examples": [
         {
           "example": 1,
@@ -338,6 +457,14 @@
           "evidence_sentence": "Superman feels helpless, since his powers are still down, and he cannot do anything to save Tam-Or's life."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "9318477e2501fc0dcb1a096c04a47474dfc5d79e": {
@@ -346,16 +473,24 @@
     "payoff": "Daredevil doubles down on mercy and the possibility of change instead of adopting Frank’s lethal approach.",
     "verdict": {
       "answers_question": "yes",
-      "evidence_sentence": "Frank thinks it's just a matter of math: killing one saves many others; Matt refuses, believing there is always hope for change.",
+      "evidence_sentence": "Matt refuses, believing there is always hope for change.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Matt refuses Punisher's lethal logic, believing there is always hope for change, which directly answers how he responds. The viewer payoff accurately captures this refusal and emphasis on mercy.",
+      "reason": "The synopsis states that when Punisher argues killing one saves many, Daredevil refuses and believes there is always hope for change, directly answering how he responds to being pushed toward killing.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
-          "evidence_sentence": "Frank thinks it's just a matter of math: killing one saves many others; Matt refuses, believing there is always hope for change."
+          "evidence_sentence": "Matt refuses, believing there is always hope for change."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "a6d9fe61c32b85bed850cd66cf7e186530ed5a7e": {
@@ -364,9 +499,9 @@
     "payoff": "The examples show the lasso functioning as an investigative tool, a magical breaker, and a truth-forcing weapon.",
     "verdict": {
       "answers_question": "no",
-      "evidence_sentence": "Diana manages to wrap her in the Lasso of Truth, making her reason: she understands that Faruka manipulated Rustam and her sisters to start a conflict that would consolidate her power while eliminating the nomad nature of her people.",
+      "evidence_sentence": "Fighting against her sister Artemis, Diana manages to wrap her in the Lasso of Truth, making her reason: she understands that Faruka manipulated Rustam and her sisters to start a conflict that would consolidate her power while eliminating the nomad nature of her people.",
       "payoff_supported": "no",
-      "reason": "Example 1 does not show Wonder Woman using the Lasso of Truth; she gives it away, so it is not a distinct example. Since the format is list, all examples must be valid, and one is not, so the overall answer is no. The viewer payoff is not supported because the first example does not show the lasso functioning as claimed.",
+      "reason": "Example 1 describes Wonder Woman giving the Lasso of Truth to others, not her using it directly; thus it is not a valid instance. Example 2 shows her using it to compel truth. Since the format is list and not all examples are valid, the overall answer is no.",
       "examples": [
         {
           "example": 1,
@@ -376,9 +511,17 @@
         {
           "example": 2,
           "answers_question": "yes",
-          "evidence_sentence": "Diana manages to wrap her in the Lasso of Truth, making her reason: she understands that Faruka manipulated Rustam and her sisters to start a conflict that would consolidate her power while eliminating the nomad nature of her people."
+          "evidence_sentence": "Fighting against her sister Artemis, Diana manages to wrap her in the Lasso of Truth, making her reason: she understands that Faruka manipulated Rustam and her sisters to start a conflict that would consolidate her power while eliminating the nomad nature of her people."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "dd9541e6ad2a296ee2cf7b51df3ccf2a8f978d52": {
@@ -387,16 +530,24 @@
     "payoff": "You learn that Galactus believes Thor is the prophesied destroyer, so he empowers and recruits him rather than simply defeating him.",
     "verdict": {
       "answers_question": "yes",
-      "evidence_sentence": "Galactus declares that the one prophesied by the Black Winter to destroy him is none other than Thor Odinson, blasting the King of Asgard with a torrent of the Power Cosmic.",
+      "evidence_sentence": "Imbued with and transformed by the Power Cosmic - burning off his beard, causing his hair to turn platinum blond and grow in length, and restoring his missing arm and eye - Thor rises as the Herald of Thunder.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Galactus believes Thor is the prophesied destroyer and blasts him with the Power Cosmic, transforming him into the Herald of Thunder, which directly answers how Thor becomes Galactus's herald.",
+      "reason": "The synopsis directly states that Galactus deliberately gives Thor the Power Cosmic and transforms him into the Herald of Thunder because he believes Thor is prophesied to destroy him, which answers the 'how' of Thor becoming the Herald.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
-          "evidence_sentence": "Galactus declares that the one prophesied by the Black Winter to destroy him is none other than Thor Odinson, blasting the King of Asgard with a torrent of the Power Cosmic."
+          "evidence_sentence": "Imbued with and transformed by the Power Cosmic - burning off his beard, causing his hair to turn platinum blond and grow in length, and restoring his missing arm and eye - Thor rises as the Herald of Thunder."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "818b04ad27b7a30a7cfb3fa2da9e93205190e4e8": {
@@ -407,7 +558,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Without Superman's physiology, Clark cannot make the journey to save Alice, and without Clark's humanity, Superman lacks compassion and humility.",
       "payoff_supported": "yes",
-      "reason": "The synopsis for example 1 explicitly describes that after the split, Clark has no powers and Superman lacks compassion, and they need each other to continue, which directly answers the question.",
+      "reason": "The synopsis explicitly describes the effects of the split: Clark loses his Kryptonian powers and Superman loses his humanity/compassion, and they must reunite to continue. This aligns with both the question and the viewer payoff.",
       "examples": [
         {
           "example": 1,
@@ -415,6 +566,14 @@
           "evidence_sentence": "Without Superman's physiology, Clark cannot make the journey to save Alice, and without Clark's humanity, Superman lacks compassion and humility."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "b32574dae888d6b307991a66d4bab6b0577ec753": {
@@ -425,7 +584,7 @@
       "answers_question": "yes",
       "evidence_sentence": "However, as he increases the power of the weapon to match the Hulk's growing strength, the Thinker is horrified to discover that the Hulk's upper strength level is incalculable.",
       "payoff_supported": "yes",
-      "reason": "The synopsis describes the Mad Thinker attempting to match the Hulk's strength with escalating weapon power and discovering that the Hulk's upper strength is incalculable, which directly answers what happens when someone tries to measure the Hulk's strength head-on: it cannot be calculated, leading to the destruction of the machine.",
+      "reason": "The synopsis explicitly states that when the Mad Thinker tries to match the Hulk's growing strength by increasing weapon power, he discovers the Hulk's upper strength level is incalculable, leading to the Hulk destroying the robot. This directly answers the question about what happens when someone tries to measure the Hulk's strength head-on.",
       "examples": [
         {
           "example": 1,
@@ -433,6 +592,14 @@
           "evidence_sentence": "However, as he increases the power of the weapon to match the Hulk's growing strength, the Thinker is horrified to discover that the Hulk's upper strength level is incalculable."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "f81bf70b0071186ca8e98b85045d2c8a83128a88": {
@@ -441,16 +608,24 @@
     "payoff": "She answers that threat by activating Binary and burning the symbiote away, proving she can overpower the infection before it takes full hold.",
     "verdict": {
       "answers_question": "yes",
-      "evidence_sentence": "Captain Marvel activates her Binary powers and immolates it, retorting that she is stronger than his darkness.",
+      "evidence_sentence": "As the symbiote fully covers her and Dark Carnage revels in having her cosmic powers at his command, Captain Marvel activates her Binary powers and immolates it, retorting that she is stronger than his darkness.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Captain Marvel activates her Binary powers to immolate the symbiote, directly answering how she stops it from taking over her.",
+      "reason": "The synopsis explicitly states that Captain Marvel activates her Binary powers to burn off the symbiote, directly answering how she stops it from taking over.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
-          "evidence_sentence": "Captain Marvel activates her Binary powers and immolates it, retorting that she is stronger than his darkness."
+          "evidence_sentence": "As the symbiote fully covers her and Dark Carnage revels in having her cosmic powers at his command, Captain Marvel activates her Binary powers and immolates it, retorting that she is stronger than his darkness."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "967448956f2a04ec1f99b5972c985942268b9c9e": {
@@ -461,7 +636,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Batman reveals that he put a film containing Bruce Wayne's DNA over his own skin in order to trick Clayface, (though, of course, he is Bruce Wayne).",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly describes Batman using a film containing his own DNA to fool Clayface's DNA-reading scheme, and then trapping him with a containment field, which directly matches the viewer payoff of feeding false evidence and locking him down.",
+      "reason": "The synopsis directly states that Batman placed a film with Bruce Wayne's DNA on his skin to deceive Clayface, which prevents Clayface's DNA-reading from being believed. Additionally, Batman traps Clayface with a containment field, matching the payoff's description of feeding false evidence and locking him down.",
       "examples": [
         {
           "example": 1,
@@ -469,6 +644,14 @@
           "evidence_sentence": "Batman reveals that he put a film containing Bruce Wayne's DNA over his own skin in order to trick Clayface, (though, of course, he is Bruce Wayne)."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "831aa765abbbbe79163a0868326d3fdff59097fe": {
@@ -479,7 +662,7 @@
       "answers_question": "yes",
       "evidence_sentence": "giving to Barbara Ann and the remaining prisoners the Lasso of Truth, the group of women prove Diana's theory right, banishing Urzkartaga from the place.",
       "payoff_supported": "yes",
-      "reason": "Both examples show the Lasso of Truth being used in distinct ways: Example 1 uses it to banish a god by revealing truth to a group, Example 2 uses it on Artemis to expose manipulation and change her allegiance. Each synopsis clearly states the Lasso's action and its outcome.",
+      "reason": "Both examples show distinct instances of the Lasso of Truth being used in action: in Example 1, it is given to prisoners to reveal truth and banish a god; in Example 2, it is used to make Artemis reason and later to get Rustam's admission. Both demonstrate the Lasso changing outcomes by revealing truth and restoring judgment, supporting the viewer payoff.",
       "examples": [
         {
           "example": 1,
@@ -492,6 +675,14 @@
           "evidence_sentence": "Fighting against her sister Artemis, Diana manages to wrap her in the Lasso of Truth, making her reason: she understands that Faruka manipulated Rustam and her sisters to start a conflict that would consolidate her power while eliminating the nomad nature of her people."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "bf1e2d11ff4a4e8f2ecfdd59cfb118c838ad3a18": {
@@ -502,7 +693,7 @@
       "answers_question": "yes",
       "evidence_sentence": "And so, the Man of Steel continued the race and, against all odds, he won.",
       "payoff_supported": "yes",
-      "reason": "The synopsis directly describes how Superman won by pushing himself harder, stopping briefly due to fatigue, and then continuing to win, which matches the viewer payoff.",
+      "reason": "The synopsis states that Superman continued the race despite fatigue and won, directly answering how he managed to win: by persevering through exhaustion.",
       "examples": [
         {
           "example": 1,
@@ -510,6 +701,14 @@
           "evidence_sentence": "And so, the Man of Steel continued the race and, against all odds, he won."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "db2cb270cfb72a58a1e7e17ebec7397b2955f4bb": {
@@ -520,7 +719,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Just as Tony prepares to cure Steve, Sharon tells him that the reason Steve has been regressing to his skinny self is because of a nanovirus created by Machinesmith.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that the regression is due to a nanovirus, which is then removed, matching the viewer payoff.",
+      "reason": "The synopsis explicitly states that Steve loses access to his super-soldier physique due to a nanovirus that creates a wall between him and his strength, and later shows the nanotech is successfully removed, restoring his physique.",
       "examples": [
         {
           "example": 1,
@@ -528,6 +727,14 @@
           "evidence_sentence": "Just as Tony prepares to cure Steve, Sharon tells him that the reason Steve has been regressing to his skinny self is because of a nanovirus created by Machinesmith."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "1ae360b24b4dbb36d47a777b12d8b06599bf1160": {
@@ -536,16 +743,24 @@
     "payoff": "Thor can only stop the catastrophe by taking the blast into himself and ending Gorr’s assault.",
     "verdict": {
       "answers_question": "yes",
-      "evidence_sentence": "the Godbomb runs through time and will kill any and all gods that have ever existed - hopefully in a swift and painless manner.",
+      "evidence_sentence": "the Lord Librarian and Shadrak race through Omnipotence City, the latter explaining that the Godbomb runs through time and will kill any and all gods that have ever existed - hopefully in a swift and painless manner.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that the Godbomb runs through time and will kill any and all gods that have ever existed, which is the terrifying threat. The viewer payoff about Thor taking the blast into himself is supported by the synopsis.",
+      "reason": "The synopsis directly states that the Godbomb runs through time and will kill any and all gods that have ever existed, which is the terrifying threat described in the question. The viewer payoff about Thor taking the blast into himself is supported by later events in the synopsis.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
-          "evidence_sentence": "the Godbomb runs through time and will kill any and all gods that have ever existed - hopefully in a swift and painless manner."
+          "evidence_sentence": "the Lord Librarian and Shadrak race through Omnipotence City, the latter explaining that the Godbomb runs through time and will kill any and all gods that have ever existed - hopefully in a swift and painless manner."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "0f1631cc20380cf294ca86ab04519ecff5f5c945": {
@@ -556,7 +771,7 @@
       "answers_question": "yes",
       "evidence_sentence": "The Flash is effectively the Speed Force's release valve.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that the Flash acts as a release valve for the Speed Force's built-up energy, explaining how his running keeps the system under control.",
+      "reason": "The synopsis states that the Flash's running taps into built-up energy and acts as a release valve, directly answering how the Speed Force stays under control.",
       "examples": [
         {
           "example": 1,
@@ -564,6 +779,14 @@
           "evidence_sentence": "The Flash is effectively the Speed Force's release valve."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "3c6ff2ce7425bc5a2656b68b7346dff83220ba48": {
@@ -574,7 +797,7 @@
       "answers_question": "no",
       "evidence_sentence": "",
       "payoff_supported": "no",
-      "reason": "The synopsis does not mention cosmic energy changing what Red Hulk can do. It only states that his own energies activate the Hulk robot, which then absorbs cosmic energy to attack him. No transformation or power change for Red Hulk is described.",
+      "reason": "The synopsis does not state that Red Hulk absorbs cosmic energy or that cosmic energy changes his abilities. It only says his energies activate the Hulk robot, which then absorbs cosmic energy. No transformation or power change for Red Hulk is described.",
       "examples": [
         {
           "example": 1,
@@ -582,6 +805,14 @@
           "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "1fb1c411bf98dea3b582d6e46998c94549756acb": {
@@ -590,16 +821,24 @@
     "payoff": "The viewer learns the organization has a hard no-guns rule, and Batman treats the violation as disqualifying rather than a small mistake.",
     "verdict": {
       "answers_question": "yes",
-      "evidence_sentence": "Jiro tries to take the offer, but Batman refuses, saying that Jiro used a gun and a rule in Batman Incorporated is 'no guns.'",
+      "evidence_sentence": "Jiro tries to take the offer, but Batman refuses, saying that Jiro used a gun and a rule in Batman Incorporated is \"no guns.\"",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Batman refuses Jiro because Jiro used a gun and there is a no-guns rule, directly answering why.",
+      "reason": "The synopsis explicitly states that Batman refuses because Jiro used a gun and the rule is no guns.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
-          "evidence_sentence": "Jiro tries to take the offer, but Batman refuses, saying that Jiro used a gun and a rule in Batman Incorporated is 'no guns.'"
+          "evidence_sentence": "Jiro tries to take the offer, but Batman refuses, saying that Jiro used a gun and a rule in Batman Incorporated is \"no guns.\""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "fe2a3e1d9cdb2acab5d2eaed15c500b941b1e8ae": {
@@ -610,7 +849,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Together, they had decided to use the device to imagine a messiah, powered by thought, and capable of saving the world.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explains that Superman was created using a thought-powered device to be a messiah, and that corporate interference by Overcorp turned him into a violent anti-hero, directly answering both parts of the question.",
+      "reason": "The synopsis explicitly states that Superman was created using a thought-powered device (a messiah), and later explains that corporate interference by Overcorp transformed him into a violent, troubled anti-hero, which directly answers both parts of the question.",
       "examples": [
         {
           "example": 1,
@@ -618,6 +857,14 @@
           "evidence_sentence": "Together, they had decided to use the device to imagine a messiah, powered by thought, and capable of saving the world."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "7bb1186fd5057805144e7ab68282b66291f0e698": {
@@ -628,7 +875,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America.",
       "payoff_supported": "yes",
-      "reason": "The synopsis directly states that Jeff became Captain America because he did not want to demoralize the team after the original Captain America died, which matches the question's 'why'.",
+      "reason": "The synopsis states that Jeff took up the costume to avoid demoralizing the team after Captain America died, directly answering why he became Captain America.",
       "examples": [
         {
           "example": 1,
@@ -636,6 +883,14 @@
           "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "a604f87c899b4bd9dc304934b26c9a2404b8c6be": {
@@ -643,17 +898,25 @@
     "fmt": "direct",
     "payoff": "The viewer learns that the repair works only if Barry dies and releases his Speed Force energy into the rupture, making sacrifice the actual mechanism of the fix.",
     "verdict": {
-      "answers_question": "yes",
-      "evidence_sentence": "The Speed Force rupture cannot simply be undone, it has to be closed, which is why Barry has to die.",
+      "answers_question": "no",
+      "evidence_sentence": "",
       "payoff_supported": "no",
-      "reason": "The synopsis explains that Barry must die to close the Speed Force rupture by releasing his energy, directly answering the question. However, the viewer payoff claims that the repair works only if Barry dies, but in the synopsis the repair is actually accomplished by Wally West's death, contradicting the payoff.",
+      "reason": "The synopsis presents a plan to sacrifice Barry to repair the Speed Force, but the actual event shows that Barry does not die; instead, Wally West's death releases the energy and closes the rupture. Thus, the synopsis contradicts the question's premise that Barry has to die.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "yes",
-          "evidence_sentence": "The Speed Force rupture cannot simply be undone, it has to be closed, which is why Barry has to die."
+          "answers_question": "no",
+          "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "486a64e61b622d9c4f2bec12049c1bcca9af1906": {
@@ -661,17 +924,25 @@
     "fmt": "direct",
     "payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
     "verdict": {
-      "answers_question": "partial",
-      "evidence_sentence": "",
+      "answers_question": "yes",
+      "evidence_sentence": "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy",
       "payoff_supported": "yes",
-      "reason": "The synopsis mentions that Mjolnir decides who is worthy, but does not explain the mechanism or criteria for that decision. It shows that a whisper can make Thor unworthy, but does not describe how the hammer judges worthiness.",
+      "reason": "The synopsis states that the enchantment gives Mjolnir the power to decide who is worthy, answering the 'how' by attributing it to an enchantment-based moral judgment. This is supported by Thor becoming unworthy due to a whisper from Fury and Odin himself being unable to lift it, indicating it is not a strength test. The final scene shows a female figure lifting the hammer, consistent with the payoff that the power passes to a new worthy wielder.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "partial",
-          "evidence_sentence": ""
+          "answers_question": "yes",
+          "evidence_sentence": "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy"
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "04e19492c51e07707dcffed1f88bc0807f66150c": {
@@ -682,7 +953,7 @@
       "answers_question": "yes",
       "evidence_sentence": "They continue to explain that he is under arrest for a crime that he will commit in the future, killing one of them, the Mirror Monarch.",
       "payoff_supported": "yes",
-      "reason": "The synopsis directly states the reason for Barry's arrest: he is under arrest for a future crime (killing the Mirror Monarch), which answers the question 'Why is Barry being arrested before the crime happens?'",
+      "reason": "The synopsis explicitly states the reason for Barry's arrest: he is under arrest for a crime he will commit in the future (killing the Mirror Monarch). This directly answers the 'why' question.",
       "examples": [
         {
           "example": 1,
@@ -690,6 +961,14 @@
           "evidence_sentence": "They continue to explain that he is under arrest for a crime that he will commit in the future, killing one of them, the Mirror Monarch."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "953963488927603da54b01d90bd5bd9132b88e18": {
@@ -700,7 +979,7 @@
       "answers_question": "yes",
       "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present.",
       "payoff_supported": "yes",
-      "reason": "The synopsis clearly states that Bruce forgot his existence so the Hyper-Adapter couldn't come after him, which answers why he erased himself. The payoff correctly describes that this erasure allowed him to reverse the attack and send the creature away.",
+      "reason": "Both examples contain the same synopsis text, which directly states that Bruce erased his own memory to prevent the Hyper-Adapter from tracking him and to trick it into the present. This explains why he erased himself during the fight. The viewer payoff aligns with this outcome, as the self-erasure leads to the creature being sent back powerless.",
       "examples": [
         {
           "example": 1,
@@ -713,6 +992,14 @@
           "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "9fa9e57ee6efddc7764998abecfc4c55e46995f3": {
@@ -723,7 +1010,7 @@
       "answers_question": "yes",
       "evidence_sentence": "The heat burns away his uniform, and when Batman arrives in his Batplane offering a ride, he must board it naked - and powerless.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly shows that using the solar flare leaves Superman immediately powerless (rendered human for hours) and that it burns off his uniform (physical loss), supporting the claim that the power comes with immediate physical loss and a temporary powerless state.",
+      "reason": "The synopsis describes the solar flare as a powerful ability that generates intense heat and immediately leaves Superman powerless, which answers both how the flare works (by releasing heat as a solar flare) and the cost (temporary loss of powers).",
       "examples": [
         {
           "example": 1,
@@ -731,6 +1018,14 @@
           "evidence_sentence": "The heat burns away his uniform, and when Batman arrives in his Batplane offering a ride, he must board it naked - and powerless."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "0f8a045e6bba3dd26089d50a59b60a28546d49e0": {
@@ -738,10 +1033,10 @@
     "fmt": "direct",
     "payoff": "The comic shows that Diana’s default code is restraint, but the crisis pushes her to break that limit and unleash her power against the First Born.",
     "verdict": {
-      "answers_question": "partial",
-      "evidence_sentence": "the Amazon refuses, explaining that she must wear them in order to contain her power, for the sake of the innocent mortals.",
+      "answers_question": "yes",
+      "evidence_sentence": "Eyes glowing with power, Diana removes her Bracelets of Submission, which keep her power limited, and leaps at the First Born, launching him into the sky.",
       "payoff_supported": "yes",
-      "reason": "Example 1 explains why she keeps the bracelets (to contain her power for innocents) but does not show her removing them. Example 2 shows her removing them to unleash power against the First Born but does not give an explicit reason for keeping them (only describes their function). No single synopsis fully answers both parts of the 'keep, then remove' question.",
+      "reason": "Example 1 only explains why she keeps the bracelets, not why she removes them. Example 2 fully answers both parts: it shows that the bracelets keep her power limited (reason to keep) and that she removes them to attack the First Born (reason to remove).",
       "examples": [
         {
           "example": 1,
@@ -750,10 +1045,18 @@
         },
         {
           "example": 2,
-          "answers_question": "partial",
+          "answers_question": "yes",
           "evidence_sentence": "Eyes glowing with power, Diana removes her Bracelets of Submission, which keep her power limited, and leaps at the First Born, launching him into the sky."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "f1aaabe37993c28ee6ae5c8635cc859bf0392293": {
@@ -764,12 +1067,12 @@
       "answers_question": "yes",
       "evidence_sentence": "Eyes glowing with power, Diana removes her Bracelets of Submission, which keep her power limited, and leaps at the First Born, launching him into the sky.",
       "payoff_supported": "yes",
-      "reason": "Both examples clearly depict Wonder Woman using or changing her Bracelets of Submission: in issue #20 she refuses to remove them to contain her power (use), and in issue #23 she removes them to unleash her power (change). Therefore each example answers the question.",
+      "reason": "Example 1 shows Diana retaining her bracelets to contain her power, which is an active use of them for control. Example 2 shows her removing them to unleash her full power, a direct change. Both are distinct actions involving the Bracelets of Submission, fulfilling the list format requirement that every example answers the question.",
       "examples": [
         {
           "example": 1,
           "answers_question": "yes",
-          "evidence_sentence": "Artemis challenges Diana to remove her Bracelets of Submission, but the Amazon refuses, explaining that she must wear them in order to contain her power."
+          "evidence_sentence": "the Amazon refuses, explaining that she must wear them in order to contain her power, for the sake of the innocent mortals."
         },
         {
           "example": 2,
@@ -777,6 +1080,14 @@
           "evidence_sentence": "Eyes glowing with power, Diana removes her Bracelets of Submission, which keep her power limited, and leaps at the First Born, launching him into the sky."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "d1496e529da2839d1268bf54105fb4c6ac13b69c": {
@@ -784,17 +1095,25 @@
     "fmt": "direct",
     "payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
     "verdict": {
-      "answers_question": "partial",
+      "answers_question": "no",
       "evidence_sentence": "",
-      "payoff_supported": "yes",
-      "reason": "The synopsis implies the hammer decides based on worthiness, but does not detail the decision process or criteria, so it only partially answers how.",
+      "payoff_supported": "no",
+      "reason": "The synopsis only states that Odin placed an enchantment giving Mjolnir the power to decide worthiness, but it does not explain how that decision is made (e.g., criteria of moral character). The question asks for the mechanism, which is not addressed.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "partial",
-          "evidence_sentence": "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy"
+          "answers_question": "no",
+          "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "c0c14561ec5319c0b472abd8ee2235408d4a1820": {
@@ -802,17 +1121,25 @@
     "fmt": "direct",
     "payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
     "verdict": {
-      "answers_question": "no",
-      "evidence_sentence": "",
-      "payoff_supported": "no",
-      "reason": "The synopsis describes Thor becoming unworthy and Odin's enchantment that allows the hammer to decide worthiness, but it does not explain how the decision is made—whether it is a moral gate or any specific criteria. Only a statement that the hammer decides is given, not the mechanism or decision process.",
+      "answers_question": "yes",
+      "evidence_sentence": "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy",
+      "payoff_supported": "yes",
+      "reason": "The synopsis explicitly states that Odin placed an enchantment on Mjolnir that gives it the power to decide who is worthy, which directly answers how the hammer decides who can wield Thor's power. The payoff's claim that it is a hard moral gate, not a size-or-strength test, is supported by Odin's own inability to lift the hammer and the new worthy wielder lifting it.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "no",
-          "evidence_sentence": ""
+          "answers_question": "yes",
+          "evidence_sentence": "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy"
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "925d3d0936c8e9b5d523a1c21d7d070d3ba82ea3": {
@@ -820,17 +1147,25 @@
     "fmt": "direct",
     "payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
     "verdict": {
-      "answers_question": "no",
-      "evidence_sentence": "",
-      "payoff_supported": "no",
-      "reason": "The synopsis states that Odin placed an enchantment giving Mjolnir the power to decide who is worthy, but it does not explain how it decides (the criteria or mechanism). The payoff claims the enchantment is a 'hard moral gate,' which is not shown or stated in the synopsis.",
+      "answers_question": "yes",
+      "evidence_sentence": "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy,",
+      "payoff_supported": "yes",
+      "reason": "The synopsis states that Odin's enchantment gave Mjolnir the power to decide who is worthy, and shows Odin himself unable to lift it, and a new wielder lifting it, indicating the decision is based on worthiness rather than physical strength.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "no",
-          "evidence_sentence": ""
+          "answers_question": "yes",
+          "evidence_sentence": "As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy,"
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "6f8115fbaa4623b37e15f0c2514bde8776725e12": {
@@ -838,17 +1173,25 @@
     "fmt": "direct",
     "payoff": "The hammer’s enchantment is shown to be a hard moral gate, not a size-or-strength test, and the power passes to a new worthy wielder.",
     "verdict": {
-      "answers_question": "partial",
-      "evidence_sentence": "",
+      "answers_question": "yes",
+      "evidence_sentence": "Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy",
+      "payoff_supported": "yes",
+      "reason": "The synopsis explicitly states that Odin placed an enchantment on Mjolnir that gives it the power to decide who is worthy, and later shows a new wielder lifting it upon proving worthy, confirming the mechanism.",
       "examples": [
         {
-          "answers_question": "partial",
-          "evidence_sentence": "",
-          "example": 1
+          "example": 1,
+          "answers_question": "yes",
+          "evidence_sentence": "Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy"
         }
-      ],
-      "payoff_supported": "yes",
-      "reason": "The synopsis indicates that Mjolnir decides worthiness but does not explain the mechanism or criteria of that decision, so it only partially answers the 'how' question."
+      ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "715df4b58005f99684a5d19cfe87214c73c7185d": {
@@ -859,7 +1202,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America.",
       "payoff_supported": "yes",
-      "reason": "The synopsis directly states Jeff Mace became Captain America because he did not want to demoralize the team after the original died, matching the viewer payoff.",
+      "reason": "The synopsis explicitly states that Jeff Mace became Captain America because he did not want to demoralize the team after the original died, and to continue the mission. This matches both the question and the viewer payoff.",
       "examples": [
         {
           "example": 1,
@@ -867,6 +1210,14 @@
           "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "d40d0fac02e8b61766ce36e009c070654667410b": {
@@ -876,8 +1227,8 @@
     "verdict": {
       "answers_question": "yes",
       "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America.",
-      "payoff_supported": "yes",
-      "reason": "The synopsis states that Jeff Mace became Captain America because the original died and he wanted to avoid demoralizing the team and keep the mission going.",
+      "payoff_supported": "no",
+      "reason": "The synopsis states that Jeff Mace became Captain America because he did not want to demoralize the team after the previous Captain America (William Naslund) died, which matches the question's request for the reason. However, the viewer payoff claims 'the original Captain America dies,' but the synopsis specifies that the deceased was William Naslund, not the original Steve Rogers, making the payoff factually inaccurate.",
       "examples": [
         {
           "example": 1,
@@ -885,6 +1236,14 @@
           "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "df181dcef85d1541c0132bd43ac0b84445865bc5": {
@@ -895,7 +1254,7 @@
       "answers_question": "yes",
       "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Jeff Mace became Captain America because the original Captain America died and he did not want to demoralize the team, which matches the question and viewer payoff.",
+      "reason": "The synopsis explicitly states that Jeff became Captain America because he did not want to demoralize the team after the original died, and he continued the mission.",
       "examples": [
         {
           "example": 1,
@@ -903,6 +1262,14 @@
           "evidence_sentence": "Not wanting to demoralize the team, Jeff put on the costume and continued the mission as Captain America."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "efd2bbeec5edb9bcf5c6dd67d6da34c3e13b6a5a": {
@@ -913,7 +1280,7 @@
       "answers_question": "yes",
       "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Bruce erased himself to prevent the Hyper-Adapter from following him and to trick it into coming to the present, which directly answers why he erased himself during the fight.",
+      "reason": "The synopsis explicitly states that Bruce's solution was to erase his own memory to trick the Hyper-Adapter, which directly explains why he did it and leads to the reversal of the attack.",
       "examples": [
         {
           "example": 1,
@@ -921,6 +1288,14 @@
           "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "e22a29197c30cfca7f2d09ec1a93f76055077060": {
@@ -931,7 +1306,7 @@
       "answers_question": "yes",
       "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present.",
       "payoff_supported": "yes",
-      "reason": "The synopsis directly states the reason for Bruce erasing himself: to prevent the Hyper-Adapter from following him and to trick it into the present, which matches the question asking why he did it.",
+      "reason": "The synopsis directly states that Bruce Wayne's self-erasure (forgetting his existence) was his solution to prevent the Hyper-Adapter from tracking him and to trick it into coming to the present, which then allowed him to reverse the attack and send it away powerless as described in the payoff.",
       "examples": [
         {
           "example": 1,
@@ -939,6 +1314,14 @@
           "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "f06a9b4ad6bb565d9d896157f172ae86ad9fc46e": {
@@ -949,7 +1332,7 @@
       "answers_question": "yes",
       "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present.",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Bruce forgot his existence to prevent the Hyper-Adapter from coming after him and to trick it into the present, which directly answers 'why'. The payoff matches the outcome described.",
+      "reason": "The synopsis explicitly states that Bruce's solution was to forget his existence to prevent the Hyper-Adapter from coming after him and to trick it into the present, which answers the question of why he erased himself during the fight.",
       "examples": [
         {
           "example": 1,
@@ -957,6 +1340,14 @@
           "evidence_sentence": "He explains that he knew of Darkseid's plan to use the Omega Sanction to send him slowly forward through time, and that his solution was to simply forget his existence so that the Hyper-Adapter couldn't come after him and he had tricked him into coming to the present."
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "07c715bdc8524ef985a47e2a6311988519f47cc8": {
@@ -967,7 +1358,7 @@
       "answers_question": "no",
       "evidence_sentence": "",
       "payoff_supported": "yes",
-      "reason": "The synopsis does not provide any explanation for Captain America's hatred of Hydra; it only depicts Hydra as adversaries in a fight.",
+      "reason": "The synopsis does not address why Captain America hates Hydra. It describes a mission involving Hydra rioters but provides no statement or implication of Cap's feelings or reasons for hatred.",
       "examples": [
         {
           "example": 1,
@@ -975,6 +1366,14 @@
           "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "dfc74f98826258db8b472389f8ddc47a23166eae": {
@@ -985,7 +1384,7 @@
       "answers_question": "no",
       "evidence_sentence": "",
       "payoff_supported": "yes",
-      "reason": "The synopsis shows Superman cooperating with Batman, accepting his help, and even having dinner together; there is no mention of distrust.",
+      "reason": "The synopsis does not mention Superman distrusting Batman at any point; the interaction between them is cooperative and friendly. Therefore, the question is not answered.",
       "examples": [
         {
           "example": 1,
@@ -993,6 +1392,14 @@
           "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "2a5743abf5ba05036e7c557eddc2c6139da5b4cc": {
@@ -1003,7 +1410,7 @@
       "answers_question": "no",
       "evidence_sentence": "",
       "payoff_supported": "yes",
-      "reason": "The synopsis does not describe Wonder Woman defeating Hades in battle; instead, she uses psychological manipulation and a trick with Eros' pistol and a mirror, but the outcome is that Hades sends them away, not a defeat.",
+      "reason": "The synopsis describes a wedding confrontation and a resolution through love and trickery, not a battle where Wonder Woman defeats Hades. There is no depiction of combat victory; the outcome is Hades gaining self-love, not being defeated in battle.",
       "examples": [
         {
           "example": 1,
@@ -1011,6 +1418,14 @@
           "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "f2300338478c0c182d588a0cac1446588baceb54": {
@@ -1021,7 +1436,7 @@
       "answers_question": "no",
       "evidence_sentence": "",
       "payoff_supported": "yes",
-      "reason": "The synopsis does not describe Gorr's feelings about Thor's Mjolnir; it focuses on the Godbomb, All-Black, and Thor's sacrifice. There is no mention of Gorr's attitude toward Mjolnir.",
+      "reason": "The synopsis does not describe Gorr's feelings about Thor's Mjolnir; it only shows his concern for his own weapon, All-Black.",
       "examples": [
         {
           "example": 1,
@@ -1029,6 +1444,14 @@
           "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "ebd398c7419240a81838852fed843b1f35c34c2b": {
@@ -1038,15 +1461,23 @@
     "verdict": {
       "answers_question": "no",
       "evidence_sentence": "",
+      "payoff_supported": "yes",
+      "reason": "The synopsis describes Doctor Strange losing his magic over time but does not state any rule that shapes how his magic works; it only narrates events without explaining underlying principles.",
       "examples": [
         {
           "example": 1,
           "answers_question": "no",
           "evidence_sentence": ""
         }
-      ],
-      "payoff_supported": "yes",
-      "reason": "The synopsis describes events such as Doctor Strange losing his magic and magical artifacts dying out, but it does not state any rule that shapes his magic in this world. No rule or governing principle is mentioned."
+      ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   },
   "1682ae1f98b96b256d28fb4fbd83f1eb60a4b448": {
@@ -1054,17 +1485,25 @@
     "fmt": "direct",
     "payoff": "",
     "verdict": {
-      "answers_question": "yes",
-      "evidence_sentence": "he has lost all access to his magic.",
+      "answers_question": "no",
+      "evidence_sentence": "",
       "payoff_supported": "yes",
-      "reason": "The synopsis explicitly states that Doctor Strange loses all access to his magic as a consequence, which directly answers the question of what price he pays.",
+      "reason": "The synopsis describes Doctor Strange losing his magical abilities seven years later, but does not state that this loss is a price he pays for his magic. It does not establish a causal relationship between his use of magic and the consequences described.",
       "examples": [
         {
           "example": 1,
-          "answers_question": "yes",
-          "evidence_sentence": "he has lost all access to his magic."
+          "answers_question": "no",
+          "evidence_sentence": ""
         }
       ]
+    },
+    "provenance": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "qa_answer_check.v1",
+      "prompt_sha256": "71479c525c7e866c649c87d0b5b3016123478a902c949c02925f1d92d42e961e",
+      "recorded_at_utc": "2026-10-15T18:31:16.544586+00:00",
+      "attempts": 1
     }
   }
 }

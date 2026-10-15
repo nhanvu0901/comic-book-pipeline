@@ -21,9 +21,13 @@ For each example, `answers_question` is:
 A sentence that merely MENTIONS the subject of the question does not answer it. If the question assumes
 something the synopsis contradicts (it asks about X and the synopsis says Y did it), answer "no".
 Likewise, if the question assumes a false premise or an outcome that the synopsis contradicts or clarifies
-later (e.g., asking why a hero chose to spare or let an enemy live, but the synopsis reveals the hero was
-ready to let them die and the enemy survived solely by saving themselves), answer "no". Do not extrapolate
-an intentional choice from an earlier ambiguous moment if later context contradicts it.
+later, answer "no". Read the ENTIRE supplied synopsis, including any later explanation of how the outcome
+occurred, before deciding. For a question about why someone *let another person live*, distinguish the
+actor's intent from the survivor's action: leaving someone a chance to save themselves while being willing
+to let them die does not establish that the actor let them live. If later text says the actor was prepared
+for death and the survivor escaped through their own action, mark the example and overall answer "no" even
+if an earlier sentence says the actor left them or offered an escape. Do not infer an intentional rescue
+from an earlier ambiguous moment when the synopsis later gives the opposite explanation.
 
 Rule-level answers vs deeper unasked causes: when a question asks why an entity cannot do something or why
 a condition changed (e.g., why a hero cannot lift a weapon), a stated direct rule, enchantment or state

@@ -135,6 +135,51 @@ def test_judge_an_error_verdict_is_semantic_check_error_with_its_message():
     assert any("429" in line for line in outcome.details)
 
 
+def test_judge_rejects_explicit_opposite_intent_even_when_model_says_yes():
+    synopsis = ("Captain Vale gave Mara a key and went to rescue the crew. "
+                "Later, Captain Vale said he was ready to let her die; Mara escaped by opening the hatch herself.")
+    evidence = "Captain Vale gave Mara a key and went to rescue the crew."
+    request = _request(_example(quote=evidence, synopsis=synopsis),
+                       question="Why does Captain Vale let Mara live?", payoff="He saves Mara.")
+    outcome = sc.judge(request, _verdict(evidence))
+    assert outcome.reason == "answer_not_supported" and outcome.kept == ()
+
+
+def test_judge_does_not_assign_another_actors_intent_to_the_questioned_actor():
+    synopsis = ("Captain Vale lets Mara live because she has the access code. "
+                "Later, Commander Rook said he was ready to let her die.")
+    evidence = "Captain Vale lets Mara live because she has the access code."
+    request = _request(_example(quote=evidence, synopsis=synopsis),
+                       question="Why does Captain Vale let Mara live?", payoff="Mara has the access code.")
+    assert sc.judge(request, _verdict(evidence)).kept == (0,)
+
+
+def test_judge_how_it_works_needs_a_mechanism_detail_in_the_cited_sentence():
+    synopsis = ("The device makes a bright flash. "
+                "The device converts stored heat into light, then must recharge.")
+    topic_only = "The device makes a bright flash."
+    mechanism = "The device converts stored heat into light, then must recharge."
+    request = _request(_example(quote=topic_only, synopsis=synopsis),
+                       question="How does the device work?",
+                       payoff="It converts stored heat into light and must recharge.")
+    assert sc.judge(request, _verdict(topic_only)).reason == "answer_not_supported"
+    detailed = _request(_example(quote=mechanism, synopsis=synopsis),
+                        question=request.question, payoff=request.payoff)
+    assert sc.judge(detailed, _verdict(mechanism)).kept == (0,)
+
+
+def test_judge_sequential_question_rejects_a_partial_step():
+    first = _example(issue="A #1", quote="Mira keeps the shield to protect the crew.",
+                     synopsis="Mira keeps the shield to protect the crew.")
+    second = _example(issue="A #2", quote="Mira drops the shield and attacks the invader.",
+                      synopsis="Mira drops the shield and attacks the invader.")
+    request = _request(first, second, question="Why does Mira keep, then drop, the shield?",
+                       payoff="She keeps it for protection, then drops it to attack.")
+    verdict = sc.Verdict("yes", second.quote, "yes", "the two steps occur",
+                         (sc.ExampleVerdict("partial", first.quote), sc.ExampleVerdict("yes", second.quote)))
+    assert sc.judge(request, verdict).reason == "answer_not_supported"
+
+
 # --- parse_verdict: the model's JSON -------------------------------------------------------------------
 
 def test_parse_verdict_reads_the_strict_json():
