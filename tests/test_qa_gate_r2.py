@@ -416,11 +416,11 @@ def test_p1_5_non_wiki_hosts_never_use_the_api(monkeypatch):
     assert not source.ok and seen["api"] == []
 
 
-def test_p1_5_a_good_reader_page_does_not_touch_the_api(monkeypatch):
+def test_p1_5_a_good_reader_page_is_used_when_the_api_has_nothing(monkeypatch):
+    # round 4 (A3) reads wiki hosts through the API first; the reader is the fallback
     url = "https://dc.fandom.com/wiki/Action_Comics_Vol_2_1"
-    seen = _serve(monkeypatch, lambda u: FetchedSource(u, text=_fixture_page(url)),
-                  lambda u: pytest.fail("API must not be used"))
-    assert issue_pages.fetch_issue_page(url).ok and seen["api"] == []
+    seen = _serve(monkeypatch, lambda u: FetchedSource(u, text=_fixture_page(url)))
+    assert issue_pages.fetch_issue_page(url).ok and seen["reader"] == [url]
 
 
 def test_p1_5_challenge_and_missing_pages_get_their_own_reasons():
@@ -476,6 +476,8 @@ def test_p1_5_release_dates_come_from_the_direct_api_so_a_flaky_reader_cannot_lo
         return FetchedSource(u, text=page) if u == url else FetchedSource(u, error="timeout")
 
     def api(u):
+        if "action=parse" in u:
+            return None                    # round 4: the parse route is tried first and is down here
         assert "prop=categories" in u and "Ms._Marvel_Vol_3_1" in u
         titles = [{"title": "Category:Comics Released in February, 2014"}]
         return {"query": {"pages": {"1": {"categories": titles}}}}
