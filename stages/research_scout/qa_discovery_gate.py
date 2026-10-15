@@ -495,3 +495,7 @@ def _fetch_once(
     if url not in pages:
         pages[url] = fetcher(url)
     return pages[url]
+
+
+def normalize_candidate(candidate):  # RED-phase shim, replaced by the real implementation
+    return dict(candidate)

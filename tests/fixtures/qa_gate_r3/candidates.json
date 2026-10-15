@@ -1,0 +1,1265 @@
+[
+ {
+  "round": "R1",
+  "run": "A",
+  "question": "Why does Spider-Man keep worrying about his web-shooters running dry?",
+  "canonical_anchor": "Spider-Man",
+  "concept_key": "web-fluid",
+  "core_premise": "Spider-Man runs out of web-fluid in the middle of patrol and starts thinking about redesigning his web-shooters so he won’t be caught helpless again.",
+  "viewer_payoff": "He realizes the shooters need a warning system, because going dry leaves him stranded and walking home in the rain.",
+  "viewer_hook": "What does Spider-Man decide to change after his webs run out on patrol?",
+  "why_fans_ask_it": "Fans like the contrast between Spider-Man’s flashy swinging and the mundane, relatable problem that his signature power depends on a finite supply of web-fluid.",
+  "sample_answer_items": [
+   "He literally runs out of web-fluid during patrol and has to walk home in a storm.",
+   "The story shows Peter thinking about adding a warning indicator to the shooters.",
+   "The payoff is the practical fix: he wants a way to avoid being stranded when the webs run out."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Astonishing Spider-Man #16 (2010)",
+    "quote": "Having run out of web-fluid while on patrol, Spider-Man is reduced to walking home in the middle of a summer storm. As he bounds his way home on the rooftops, Spider-Man considers the idea of upgrading his web-shooters so they have a warning indicator to tell him when he is running out of web-fluid so this situation doesn't happen again.",
+    "source_url": "https://marvel.fandom.com/wiki/Astonishing_Spider-Man_Vol_3_16"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "A",
+  "question": "How does Superman force Glenmorgan to confess his sabotage?",
+  "canonical_anchor": "Superman",
+  "concept_key": "confession",
+  "core_premise": "Superman uses a blunt, physically risky stunt to force a businessman to confess to sabotaging the train system.",
+  "viewer_payoff": "He makes the businessman believe he’s in mortal danger, then lands safely and gets the crime admitted.",
+  "viewer_hook": "How does Superman turn a balcony stunt into a confession?",
+  "why_fans_ask_it": "It’s a striking Superman move: he wins by combining intimidation, perfect control, and a very specific moral outcome instead of a simple punch-up.",
+  "sample_answer_items": [
+   "He threatens to throw Glenmorgan off a tall balcony unless he confesses.",
+   "Superman then throws both of them off the balcony and lands safely.",
+   "The payoff is the confession: Glenmorgan admits he sabotaged the train system."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Action Comics #1 (2011)",
+    "quote": "Superman takes a businessman named Glen Glenmorgan hostage and threatens to throw him down from the balcony of a tall building unless the businessman confesses to his crimes.",
+    "source_url": "https://dc.fandom.com/wiki/Action_Comics_Vol_2_1"
+   },
+   {
+    "issue": "Action Comics #1 (2011)",
+    "quote": "Superman uses his powers to land safely with Glenmorgan in hand, for whom the experience convinces him to confess to having sabotaged the train system.",
+    "source_url": "https://dc.fandom.com/wiki/Action_Comics_Vol_2_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "A",
+  "question": "Why is Captain America willing to be the one who pays the price against Galactus?",
+  "canonical_anchor": "Captain America",
+  "concept_key": "sacrifice",
+  "core_premise": "Captain America accepts that the Ultimate Nullifier requires a fatal bearer and volunteers himself for the sacrifice if needed to stop Galactus.",
+  "viewer_payoff": "He’s willing to die if that’s what it takes to activate the world-saving plan.",
+  "viewer_hook": "Why does Captain America step forward for the weapon no one survives?",
+  "why_fans_ask_it": "Fans care because it distills Captain America’s ethos into a hard choice: someone has to die to stop Galactus, and Cap is the first to volunteer.",
+  "sample_answer_items": [
+   "The Ultimate Nullifier needs a wielder who will almost certainly die.",
+   "Captain America immediately offers himself up when that sacrifice is required.",
+   "The payoff is that the heroes actually use the weapon setup to stop Galactus, and Cap survives only with his shield left behind."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Captain America #12 (2010)",
+    "quote": "Back at the mansion, Reed Richards is explaining that their Ultimate Nullifier is complete however it needs someone to wield it and they will surely die. Captain America enters the room with the wounded Bucky and offers himself up, Iron Man and Thor offer themselves in sacrifice as well.",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_2_12"
+   },
+   {
+    "issue": "Captain America #12 (2010)",
+    "quote": "With an energy boost from the heroes below the Silver Surfer succeeds in absorbing energy and channeling it back into Galactus causing him to overload, destroying them both in the process. The only thing that survives the blast is Cap's shield which he reclaims.",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_2_12"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "A",
+  "question": "Why can’t Hades make Wonder Woman marry him even after she says she loves him?",
+  "canonical_anchor": "Wonder Woman",
+  "concept_key": "truth",
+  "core_premise": "Wonder Woman refuses Hades’ attempt to bind her with her own Lasso of Truth, but uses truth about love as the key to breaking his control.",
+  "viewer_payoff": "She admits the feeling is real, but proves love is not the same as surrender or marriage.",
+  "viewer_hook": "How does Wonder Woman tell the truth and still refuse Hades?",
+  "why_fans_ask_it": "The tension is classic Wonder Woman: truth is mandatory, but the emotional outcome is more complicated than a simple yes-or-no answer.",
+  "sample_answer_items": [
+   "Hades forces Diana to wrap the Lasso of Truth around her own neck as proof.",
+   "Diana confirms the truth of her feelings but still breaks free and refuses the wedding.",
+   "The payoff is that love and truth don’t equal obedience; she can love him and still reject him.",
+   ""
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman #10 (2012)",
+    "quote": "With her wedding to Hades soon to come, the ruler of Hell forces Wonder Woman to place her own Lasso of Truth around her neck to prove that she truly loves him. Even as she confirms that she does truly love him, she breaks free of her bonds and escapes, as she will not marry him, regardless of whether she loves him or not.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_4_10"
+   },
+   {
+    "issue": "Wonder Woman #10 (2012)",
+    "quote": "He threatens to kill her, and though she admits that one day, he might - it will not be without a fight.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_4_10"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "A",
+  "question": "Why do the Avengers decide they need to grow bigger?",
+  "canonical_anchor": "Avengers",
+  "concept_key": "Avengers World",
+  "core_premise": "The Avengers are reframed as a bigger, global-and-interplanetary response to a world that has become too large for the old team size.",
+  "viewer_payoff": "The scale of the crises jumps from Earth-level problems to Mars and beyond, forcing a larger team response.",
+  "viewer_hook": "What makes the Avengers realize they have to get bigger?",
+  "why_fans_ask_it": "Fans ask it because it explains the core pivot from a traditional team book to the expansive ‘Avengers World’ era.",
+  "sample_answer_items": [
+   "The book shows Ex Nihilo terraforming Mars and sparking an interplanetary crisis.",
+   "Tony Stark says the world has changed and the team’s old scale is no longer enough.",
+   "The payoff is the new Avengers World idea: the team expands to meet bigger threats.",
+   ""
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Avengers #1 (2013)",
+    "quote": "On Mars, Ex Nihilo begins to terraform Mars. He wants to make it have life. So he creates green plants on the red planet. And an intergalactic war is brewing because of him.",
+    "source_url": "https://marvel.fandom.com/wiki/Avengers_Vol_5_1"
+   },
+   {
+    "issue": "Avengers #1 (2013)",
+    "quote": "Stark says the world changed when Cap was found. He also says that the best ideas are the simplest ones. And that they now have a new idea: with problems escalating since Cyclops' turn to the dark side, they need to grow bigger.",
+    "source_url": "https://marvel.fandom.com/wiki/Avengers_Vol_5_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "A",
+  "question": "What are distinct examples of Daredevil’s radar sense in action across original print issues?",
+  "canonical_anchor": "daredevil",
+  "concept_key": "radar_sense",
+  "core_premise": "Daredevil’s radar sense is shown in different combat contexts: in one issue it is disrupted by chaff and still gives only a vague read on an incoming object, while in another it is used tactically to identify an opponent’s exact weak point and defeat him.",
+  "viewer_payoff": "The question is answered with two concrete, issue-grounded demonstrations of the same ability family: one where the sense is hindered but still gives partial warning, and one where it is used to identify a vulnerable joint and break the opponent’s defense.",
+  "viewer_hook": "One issue shows his radar sense getting jammed; the other turns it into a pinpoint finishing move.",
+  "why_fans_ask_it": "Fans want to see how Daredevil’s signature nonvisual sense works in practice, especially the contrast between its limits under interference and its offensive precision in combat.",
+  "sample_answer_items": [
+   "A threat-detection example where chaff disrupts Daredevil’s radar sense and leaves him with only a vague read on an incoming attack",
+   "A combat example where Daredevil uses radar sense to locate an opponent’s exact weak point and land a decisive strike"
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Daredevil Vol 3 #1 (2011)",
+    "quote": "His pursuer shoots projectiles into the air that explode, raining down “chaff” that counteracts Daredevil’s radar sense. Fully blinded from his surroundings, Daredevil picks up the vague impression of an object coming towards him, but is unable to pinpoint Captain America’s shield as it flies at his head from behind.",
+    "source_url": "https://marvel.fandom.com/wiki/Daredevil_Vol_3_1"
+   },
+   {
+    "issue": "Daredevil Vol 3 #6 (2011)",
+    "quote": "Daredevil uses his radar sense to find the exact weakest point in Bruiser’s knee, then unleashes a strike that completely shatters the bone.",
+    "source_url": "https://marvel.fandom.com/wiki/Daredevil_Vol_3_6"
+   }
+  ],
+  "proposed_format": "List",
+  "angle": "list"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "How does Spider-Man’s spider-sense work in modern print comics?",
+  "canonical_anchor": "Spider-Man",
+  "concept_key": "spider-sense",
+  "core_premise": "Spider-Man’s own power guide spells out that his spider-sense is a distinct danger-warning ability, and the issue also explains the rest of his powers in concrete terms.",
+  "viewer_payoff": "The issue states that his spider-sense warns him of danger, giving a direct description of the power’s function.",
+  "viewer_hook": "What exact warning does Spider-Man’s spider-sense give him?",
+  "why_fans_ask_it": "Fans care because spider-sense is one of Spider-Man’s most famous abilities, but comics often use it in vague ways. A source that plainly defines the power answers the recurring how-does-it-work question.",
+  "sample_answer_items": [
+   "It is described as a danger-warning sense.",
+   "The issue pairs it with his proportionate strength and webbing notes as part of the same power breakdown.",
+   "The payoff is a plain explanation of what the sense does, not just that he has it."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Amazing Spider-Man #1 (2018)",
+    "quote": "Peter also finds graphs that show the levels of his strength. With the proportionate strength of a spider Peter is able to lift hundreds of times his body weight. He also gained a “spider sense” that warned him of danger.",
+    "source_url": "https://marvel.fandom.com/wiki/Amazing_Spider-Man_Vol_2_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "How does Superman’s solar flare ability change what he can do in modern comics?",
+  "canonical_anchor": "Superman",
+  "concept_key": "solar flare",
+  "core_premise": "Superman’s modern status quo includes a dangerous new energy-release limit: he can fly again, but the solar flare that restored him also depleted him and made the power feel risky.",
+  "viewer_payoff": "The issue explains that the flare destroyed his suit, drained his strength, and is considered dangerous, so the cost is built into the power itself.",
+  "viewer_hook": "Why is Superman worried about using his solar flare again?",
+  "why_fans_ask_it": "Fans ask because this is a major change to Superman’s classic power set. The curiosity is not just that he has a new attack, but what the catch is and why it feels risky.",
+  "sample_answer_items": [
+   "It is described as a new ability that releases solar energy.",
+   "Using it destroyed his old suit and depleted his strength.",
+   "The payoff is the concrete cost: the power works, but it leaves him vulnerable and worried about using it again."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Superman #39 (2015)",
+    "quote": "only he’s lost his powers for the time being, and he’s had to get a new suit. His ability to release a flare of solar energy had destroyed the old one and depleted his strength. and though he expects to recharge soon, he worries that the new ability is dangerous.",
+    "source_url": "https://dc.fandom.com/wiki/Superman_Vol_3_39"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "What are the secrets of Captain America’s shield in modern comics?",
+  "canonical_anchor": "Captain America",
+  "concept_key": "shield",
+  "core_premise": "Captain America’s shield is treated as more than a symbol: a later issue explicitly calls the story about revealing its secrets while Steve races around the globe after something he cannot even see.",
+  "viewer_payoff": "The issue says the story is about revealing the shield’s secrets, and Steve’s globe-spanning pursuit is the mechanism that delivers that mystery.",
+  "viewer_hook": "Why is Captain America chasing something he can’t even see?",
+  "why_fans_ask_it": "Fans care because the shield is Captain America’s defining object, yet comics occasionally turn it into a mystery with hidden rules or properties. That makes a ‘what is the shield really?’ question evergreen.",
+  "sample_answer_items": [
+   "The issue frames the shield as having secrets worth revealing.",
+   "Steve is racing around the globe after something he cannot even see, implying the shield’s mystery drives the plot.",
+   "The payoff is the promise of an actual answer about the shield, not just another fight scene."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Captain America #20 (2011)",
+    "quote": "Revealed: The secrets of CAPTAIN AMERICA’s shield! In this first installment of a two-part tale, the answers will be laid bare, as the super soldier must race around the globe in pursuit of something he can’t even see!",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_3_20"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "Why does Wonder Woman break Amazon law to save a mortal?",
+  "canonical_anchor": "Wonder Woman",
+  "concept_key": "sacrifice",
+  "core_premise": "Wonder Woman’s defining moral tension is that she will break her own rules to save someone, even when Amazon law makes the choice personally costly.",
+  "viewer_payoff": "She risks exile from Amazon society after breaking Amazon law to save the person in danger.",
+  "viewer_hook": "What does Wonder Woman risk when she saves the mortal?",
+  "why_fans_ask_it": "Fans ask because Wonder Woman is often defined by the clash between duty, law, and compassion. The interesting part is the cost of her mercy, not just that she is heroic.",
+  "sample_answer_items": [
+   "She gives up glory and risks exile.",
+   "The source makes the motive clear: saving a mere mortal matters more than personal advancement.",
+   "The payoff is the exact cost of the choice, not a generic lesson about heroism."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman: Warbringer (2019)",
+    "quote": "Diana longs to prove herself to her legendary warrior sisters. But when the opportunity finally comes, she throws away her chance at glory and breaks Amazon law, risking exile, to save a mere mortal.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman:_Warbringer_(graphic_novel)"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "What is the real source of Wakanda’s power in Black Panther’s modern comics?",
+  "canonical_anchor": "Black Panther",
+  "concept_key": "people",
+  "core_premise": "Black Panther’s modern Wakanda stories hinge on the idea that the nation’s real power is not only royal technology or the throne, but the people themselves.",
+  "viewer_payoff": "He comes to see that the people themselves have their own secrets, mysteries, and power apart from the monarchy.",
+  "viewer_hook": "What power does T’Challa realize Wakanda’s people have?",
+  "why_fans_ask_it": "Fans care because this is a core Wakanda idea: is the country defined by its king or by its people? The story makes that tension explicit and answerable.",
+  "sample_answer_items": [
+   "The monarchy has long reflected Wakanda’s will, but the story stresses that the people themselves possess power.",
+   "T’Challa realizes he underestimated the citizens’ secrets and influence.",
+   "The payoff is a concrete shift in where Wakanda’s strength comes from: not just the throne, but the populace."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Black Panther #1 (2016)",
+    "quote": "The indomitable will of Wakanda—the famed African nation known for its vast wealth, advanced technology, and warrior traditions—has long been reflected in the will of its monarchs, the Black Panthers.",
+    "source_url": "https://marvel.fandom.com/wiki/Black_Panther_Vol_6_1"
+   },
+   {
+    "issue": "Black Panther #2 (2016)",
+    "quote": "I wish he’d warned me that they, too, have secrets. They, too, hold mysteries. They, too, possess a power all their own.",
+    "source_url": "https://marvel.fandom.com/wiki/Black_Panther_Vol_6_2"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "How does Thor’s worthiness limitation on Mjolnir work in modern print comics?",
+  "canonical_anchor": "thor",
+  "concept_key": "mjolnir_lift_limit",
+  "core_premise": "Thor is one of the few heroes whose defining weapon is also a strict test of worthiness, and modern print stories keep using that as a concrete limitation rather than a guarantee of access.",
+  "viewer_payoff": "The issue states that Thor tries and fails to lift Mjolnir, proving that access depends on worthiness, not raw power.",
+  "viewer_hook": "The hammer’s rule is stricter than Thor’s strength.",
+  "why_fans_ask_it": "Fans want the exact rule behind Thor’s most iconic weapon and the surprising fact that strength alone is not enough.",
+  "sample_answer_items": [
+   "He can be physically strong and still fail to lift it if he is not worthy.",
+   "The issue shows the limitation as absolute in the scene, not symbolic.",
+   "The concrete outcome is that he has to rely on another weapon instead."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Thor: God of Thunder #2 (2012)",
+    "quote": "In the year 893 AD, inside the great weapons hall of Asgard, Thor attempts to lift Mjolnir but is unable to do so.",
+    "source_url": "https://marvel.fandom.com/wiki/Thor:_God_of_Thunder_Vol_1_2"
+   }
+  ],
+  "proposed_format": "Direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "Why does Batman refuse to let a young enemy be killed when the conflict turns brutal?",
+  "canonical_anchor": "batman",
+  "concept_key": "batman_no_kill_code_turning_point",
+  "core_premise": "Batman’s no-kill code is most revealing when a story pushes him toward executing or abandoning it and he instead chooses mercy or restraint with a specific consequence.",
+  "viewer_payoff": "Batman states that Bao is only a traumatized seventeen-year-old and insists he needs help, not death, firmly rejecting the kill-or-discard logic of the conflict.",
+  "viewer_hook": "Batman’s answer is about saving a damaged kid, not winning the fight.",
+  "why_fans_ask_it": "Fans ask this because Batman’s code is one of his defining traits, and stories often test whether he will still apply it under extreme pressure.",
+  "sample_answer_items": [
+   "He judges the kid as someone shaped by trauma rather than someone beyond saving.",
+   "He explicitly rejects Ghost-Maker’s harsher solution.",
+   "The concrete resolution is that the boy should be helped instead of killed."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Batman #103 (2020)",
+    "quote": "Bruce tells him that Bao's just a seventeen-years-old kid who five years before saw his parents killed by the Joker. He does not need to be killed, but to be helped.",
+    "source_url": "https://dc.fandom.com/wiki/Batman_Vol_3_103"
+   }
+  ],
+  "proposed_format": "Direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "B",
+  "question": "What are distinct examples of the Speed Force being used to move through time, repair damage, or pay a cost in modern Flash comics?",
+  "canonical_anchor": "flash",
+  "concept_key": "speed_force_time_travel_and_time_loss",
+  "core_premise": "The Flash’s Speed Force stories often show time travel as a costly, destabilizing action: each attempt to fix the past can deepen the rupture and force a sacrifice.",
+  "viewer_payoff": "One issue shows Barry trying to undo time-loss by running backward to fix his mistakes, and another shows the repair plan demanding a literal sacrifice to seal the rupture.",
+  "viewer_hook": "Both examples turn Speed Force power into a repair job with a dangerous price.",
+  "why_fans_ask_it": "Fans ask this because Speed Force abilities are central to the Flash, but the exact tradeoff between speed, time, and consequence changes from story to story.",
+  "sample_answer_items": [
+   "In The Flash #31 (2014), Barry runs back in time because the more he runs, the more he loses, and he is trying to fix mistakes caused by being too late.",
+   "In The Flash #35 (2014), future Barry says the Speed Force rupture must be closed by sacrificing the present-day Barry’s life to fill the hole with his energy."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "The Flash #31 (2014)",
+    "quote": "The more he runs, the more he loses. So I'm running back. I'm running back to fix it all.",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_4_31"
+   },
+   {
+    "issue": "The Flash #35 (2014)",
+    "quote": "His plan for repairing it, though, involves sacrificing the present day Barry Allen to fill the hole with his Speed Force energy.",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_4_35"
+   }
+  ],
+  "proposed_format": "List",
+  "angle": "list"
+ },
+ {
+  "round": "R1",
+  "run": "C",
+  "question": "How does Kryptonite weaken Superman even after he stops the immediate threat?",
+  "canonical_anchor": "Superman",
+  "concept_key": "kryptonite",
+  "core_premise": "A trace amount of Green Kryptonite can temporarily strip Superman down enough to crash his mission and leave him vulnerable, even after he destroys the threat he was chasing.",
+  "viewer_payoff": "You learn that even a small amount of Kryptonite can briefly drain Superman’s power after victory, forcing a crash landing before he can get back to Earth.",
+  "viewer_hook": "Why does stopping the comet still leave Superman powerless for a moment?",
+  "why_fans_ask_it": "Fans care because Superman is famous for near-invulnerability, so a tiny Kryptonite exposure that still swings the fight is a classic, counterintuitive limit.",
+  "sample_answer_items": [
+   "Trace Green Kryptonite from the destroyed comet temporarily weakens Superman.",
+   "The weakening is enough to make him crash on an alien planet.",
+   "He then has to recover and fly back toward Earth after the interruption."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Superman/Batman #72 (2010)",
+    "quote": "Superman flies through space to take care of a dangerous comet on a collision course towards Earth. He destroys the comet, but trace amounts of Green Kryptonite are present and temporarily weakens Superman's powers. He crash lands on an alien planet and levels a civilian construct.",
+    "source_url": "https://dc.fandom.com/wiki/Superman_Batman_Vol_1_72"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "C",
+  "question": "Why does Daredevil put the costume back on after everything he has been through?",
+  "canonical_anchor": "Daredevil",
+  "concept_key": "return",
+  "core_premise": "Matt Murdock comes back to vigilantism because he decides the Devil has to be visible again after his recent trauma, even though he is badly out of shape and not fully recovered.",
+  "viewer_payoff": "You learn that Daredevil returns because he wants criminals to know he is back, despite his fear and physical weakness.",
+  "viewer_hook": "What makes Matt suit up again when he is still hurting?",
+  "why_fans_ask_it": "Fans ask it because Daredevil’s toughest battles are often moral and psychological, not just physical: why keep fighting when the pain and guilt are still fresh?",
+  "sample_answer_items": [
+   "Matt feels his radar sense has become another cage after the truck accident and his recent trauma.",
+   "He decides Hell's Kitchen needs to know the Devil is back and watching.",
+   "He goes out even though he is not fully in fighting shape."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Daredevil #1 (2019)",
+    "quote": "Back in his apartment, now alone, Matt can't sleep. He thinks about how his radar sense now feels like another cage, just like the one that kept him from being Daredevil after the truck hit him. So, he decides to put on his costume and swing around Hell's Kitchen to remind anyone that intends to do bad deeds that the Devil is back and watching.",
+    "source_url": "https://marvel.fandom.com/wiki/Daredevil_Vol_6_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "C",
+  "question": "What does Wonder Woman’s showdown with Hades reveal about love and the Lasso of Truth?",
+  "canonical_anchor": "Wonder Woman",
+  "concept_key": "love",
+  "core_premise": "Hades tries to force Diana to prove love with the Lasso of Truth, but the real rule is that love cannot be coerced and Hades must first be able to love himself.",
+  "viewer_payoff": "You learn that the lasso can confirm Diana’s feelings, but it cannot turn truth into consent, and Hades’ own self-love is the missing piece.",
+  "viewer_hook": "Why does telling the truth still not let Hades control Diana?",
+  "why_fans_ask_it": "Fans care because this turns a famous magical truth device into a debate about consent, genuine emotion, and whether love can ever be compelled.",
+  "sample_answer_items": [
+   "Hades tries to make Diana prove her love by using the Lasso of Truth against her.",
+   "Diana says she truly does love him, but still refuses to marry him and escapes.",
+   "The story makes clear that Hades cannot force love without loving himself first."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman #10 (2012)",
+    "quote": "With her wedding to Hades soon to come, the ruler of Hell forces Wonder Woman to place her own Lasso of Truth around her neck to prove that she truly loves him. Even as she confirms that she does truly love him, she breaks free of her bonds and escapes, as she will not marry him, regardless of whether she loves him or not.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_4_10"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "C",
+  "question": "How does the Negative Speed Force change the way Flash’s powers work?",
+  "canonical_anchor": "The Flash",
+  "concept_key": "Negative Speed Force",
+  "core_premise": "Barry Allen’s Negative Speed Force makes his powers volatile and harmful; instead of simply being faster, he risks causing collateral damage and has to fight his own anger to use it safely.",
+  "viewer_payoff": "You learn that the Negative Speed Force is not just a boost; it makes Barry’s speed unstable, damaging, and physically punishing to use.",
+  "viewer_hook": "Why does Barry’s speed start hurting the city instead of helping it?",
+  "why_fans_ask_it": "Fans ask because the Flash’s core fantasy is effortless speed, and this storyline flips that into a dangerous power with a real cost.",
+  "sample_answer_items": [
+   "Barry gains the Negative Speed Force after fighting Eobard Thawne.",
+   "Using it can cause real collateral damage, like tearing up a city street.",
+   "Even after a win, Barry is left bruised and in pain instead of instantly healed."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "The Flash #28 (2017)",
+    "quote": "Following his acquisition of the dangerous Negative Speed Force while fighting Eobard Thawne, Flash struggles to use his powers. He accidentally causes vast damage to a city street and lets the Reapers escape, leaving him to wonder if his powers are causing more harm than good.",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_5_28"
+   },
+   {
+    "issue": "The Flash #29 (2017)",
+    "quote": "Earlier in the day Barry narrowly won a fight with Shrapnel by using a new aspect of his Negative Speed Force powers. Now Barry nurses his bruises and aches, which his super-speed metabolism would ordinarily have healed by now.",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_5_29"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "C",
+  "question": "What is the Intergalactic Empire of Wakanda, and why does it change T’Challa’s world?",
+  "canonical_anchor": "Black Panther",
+  "concept_key": "Empire of Wakanda",
+  "core_premise": "T’Challa discovers that Wakanda is not just a nation but the center of an intergalactic empire bearing his name, which reframes his entire sense of home and rule.",
+  "viewer_payoff": "You learn that Wakanda’s identity expands into a multiverse-spanning empire, completely changing the scale of T’Challa’s world.",
+  "viewer_hook": "How can Wakanda be bigger than the kingdom T’Challa knows?",
+  "why_fans_ask_it": "Fans care because it takes a familiar, grounded kingdom and turns it into a cosmic mystery with a bigger political and personal meaning.",
+  "sample_answer_items": [
+   "Wakanda turns out to be part of a much larger intergalactic empire.",
+   "That empire exists across the multiverse and is founded in T’Challa’s name.",
+   "The revelation forces T’Challa to rethink what Wakanda actually is."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Black Panther #1 (2018)",
+    "quote": "Now, he will discover that Wakanda is much bigger than he ever dreamed… Across the vast Multiverse lies an empire founded in T’Challa’s name. Readers caught a glimpse of it in MARVEL LEGACY #1. Now find out the truth behind the Intergalactic Empire of Wakanda!",
+    "source_url": "https://marvel.fandom.com/wiki/Black_Panther_Vol_7_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "C",
+  "question": "How does Superman’s solar flare work?",
+  "canonical_anchor": "superman",
+  "concept_key": "solar_flare_power",
+  "core_premise": "Superman’s hidden solar-flare ability is not just a burst of power; it also drains his stored solar energy completely, leaving him powerless until he recharges.",
+  "viewer_payoff": "The flare is a last-resort burst that converts all stored solar energy into one explosive attack, but the cost is total power loss until he recharges.",
+  "viewer_hook": "The move strips him down to nothing and wipes out his powers in one shot.",
+  "why_fans_ask_it": "It explains a dramatic late-era Superman power that looks overwhelming but has a surprising built-in downside.",
+  "sample_answer_items": [
+   "It releases the energy stored in every cell at once",
+   "It burns off his uniform/armor and leaves him powerless",
+   "He has to recharge before flight and other powers return"
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Superman Vol 3 #40 (2015)",
+    "quote": "In the safety of the Khentii Mountains in Outer Mongolia, Superman tests his new ability, a powerful solar flare. The heat burns away his uniform, and when Batman arrives in his Batplane offering a ride, he must board it naked - and powerless.",
+    "source_url": "https://dc.fandom.com/wiki/Superman_Vol_3_40"
+   },
+   {
+    "issue": "Superman Vol 3 #38 (2015)",
+    "quote": "He can, in fact, unleash the energy stored in every cell in his body - resulting in a powerful solar flare. The blast burnt off his Kryptonian armour, and depleted all of his solar energy. His power of flight will be gone until he recharges.",
+    "source_url": "https://dc.fandom.com/wiki/Superman_Vol_3_38"
+   }
+  ],
+  "proposed_format": "Direct question",
+  "angle": "direct"
+ },
+ {
+  "round": "R1",
+  "run": "C",
+  "question": "What are distinct examples of Spider-Man’s webbing as a combat and problem-solving tool?",
+  "canonical_anchor": "spider-man",
+  "concept_key": "webbing_applications",
+  "core_premise": "Spider-Man’s webbing is a flexible toolset, and different issues show it being used for very different combat outcomes, from restraint to escape and anti-theft tactics.",
+  "viewer_payoff": "The examples show that webbing is not one trick but a versatile combat and cleanup tool with very different on-page uses.",
+  "viewer_hook": "One issue shows webbing as a quick arrest tool; another shows him having to melt it off when it sticks too well.",
+  "why_fans_ask_it": "Readers like seeing how Spider-Man’s signature power changes from scene to scene and solves problems in unexpected ways.",
+  "sample_answer_items": [
+   "He restrains Copperhead quickly and quietly with webbing",
+   "He uses acetone to melt webbing when it sticks in a fight",
+   "He can use webbing to control the pace and outcome of a confrontation"
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Amazing Spider-Man Vol 2 #664 (2011)",
+    "quote": "As Anti-Venom leaves, Spidey snatches a bottle of acetone to melt the webbing.",
+    "source_url": "https://marvel.fandom.com/wiki/Amazing_Spider-Man_Vol_2_664"
+   },
+   {
+    "issue": "Avenging Spider-Man Vol 1 #11 (2012)",
+    "quote": "After quickly and quietly restraining him with webbing, one of the bankers as well as Copperhead notice that he was in a hurry.",
+    "source_url": "https://marvel.fandom.com/wiki/Avenging_Spider-Man_Vol_1_11"
+   }
+  ],
+  "proposed_format": "List question",
+  "angle": "list"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "How do Spider-Man’s web-shooters run into a practical limit that makes him rethink their design?",
+  "canonical_anchor": "Spider-Man",
+  "concept_key": "web-fluid",
+  "core_premise": "Spider-Man runs out of web-fluid mid-patrol, then realizes he needs to redesign the web-shooters so he gets a warning before it happens again.",
+  "viewer_payoff": "The issue shows that the failure is not about strength, but about running out of web-fluid at the worst time, which sends Peter into practical redesign mode.",
+  "viewer_hook": "Why does Spider-Man start redesigning his web-shooters after patrol?",
+  "why_fans_ask_it": "Fans like the contrast between Spider-Man’s flashy swinging and the mundane logistics behind it. The question is interesting because his biggest nuisance isn’t a villain—it’s a simple resource limit that can strand him mid-patrol.",
+  "sample_answer_items": [
+   "He runs out of web-fluid while patrolling and has to walk home.",
+   "The problem pushes Peter to think about redesigning the shooters.",
+   "One fix he considers is adding a warning indicator so it won’t happen again."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Astonishing Spider-Man #16 (2010)",
+    "quote": "Having run out of web-fluid while on patrol, Spider-Man is reduced to walking home in the middle of a summer storm. ... One concern is traveling by plane because of metal detectors. As he thinks over possible designs, he falls asleep from exhaustion.",
+    "source_url": "https://marvel.fandom.com/wiki/Astonishing_Spider-Man_Vol_3_16"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "Why can’t Thor lift Mjolnir anymore after Fury’s whisper?",
+  "canonical_anchor": "Thor",
+  "concept_key": "worthiness",
+  "core_premise": "Thor becomes unworthy of lifting Mjolnir, and the story explains that even Odin cannot move the hammer once its enchantment has judged Thor unworthy.",
+  "viewer_payoff": "The payoff is the concrete rule: the hammer’s worthiness enchantment has shut Thor out, and Odin himself fails to override it.",
+  "viewer_hook": "What makes Mjolnir refuse Thor in this story?",
+  "why_fans_ask_it": "This is one of Thor’s defining comic-book tensions, and readers care because it turns a simple power into a moral test. The surprise is that the hammer’s judgment is stronger than Odin’s authority.",
+  "sample_answer_items": [
+   "Thor has become unworthy after Fury’s whisper.",
+   "The hammer’s enchantment is shown to judge worthiness on its own.",
+   "Even Odin cannot lift it, proving the rule applies to everyone."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Thor #1 (2014)",
+    "quote": "Odin demands to know what Fury whispered but gets no response from his son. ... As Freyja reminds Odin that it was he who placed the enchantment that gave that thing the power to decide who was worthy, Odin casts Thor aside and attempts to pick up his creation but to his frustration, even he, the enchanter, cannot move it.",
+    "source_url": "https://marvel.fandom.com/wiki/Thor_Vol_4_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "What happens when the Speed Force storm turns ordinary people into speedsters?",
+  "canonical_anchor": "Flash",
+  "concept_key": "Speed Force",
+  "core_premise": "A Speed Force storm turns ordinary people into speedsters, creating a city where the new powers immediately split between heroic use and criminal abuse.",
+  "viewer_payoff": "The concrete answer is that the storm creates a wave of accidental speedsters, which immediately forces the city into a split between rescue and criminal chaos.",
+  "viewer_hook": "How does the Speed Force storm change Central City?",
+  "why_fans_ask_it": "The Speed Force is usually tied to a few heroes, so fans are intrigued when it spills over onto ordinary people. The debate is about how much control speed powers give—and how quickly they can destabilize a whole city.",
+  "sample_answer_items": [
+   "The storm gives random Central City residents speedster powers.",
+   "Some use the powers heroically, while others turn to crime.",
+   "Barry and August respond by trying to manage the fallout through rescue and capture."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "The Flash #3 (2016)",
+    "quote": "As a result of the Speed Force Storm, several Central City-ers have been transformed into unwitting Speedsters. Naturally, some decide to use their powers for good, others for evil.",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_5_3"
+   },
+   {
+    "issue": "The Flash #1 (2016)",
+    "quote": "Barry is struck by lightning, tapping him into the speed force.",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_5_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "What is the Dark Gods problem in Wonder Woman’s world?",
+  "canonical_anchor": "Wonder Woman",
+  "concept_key": "Dark Gods",
+  "core_premise": "Wonder Woman’s world is invaded by Dark Gods who warp regions, turn people into armies or prisoners, and force Diana into a struggle over whether compassion or force can stop them.",
+  "viewer_payoff": "The issue evidence shows a concrete invasion pattern: the gods are not just threats in the abstract, but active conquerors using temples, portals, and corruption to reshape Earth.",
+  "viewer_hook": "Why do the Dark Gods make Diana’s world so dangerous?",
+  "why_fans_ask_it": "Readers care because it turns Diana’s mythic world into a rule-driven invasion story. The fascination is that a sincere wish for gods to return unleashes beings whose very presence remakes the world.",
+  "sample_answer_items": [
+   "Diana’s wish brings five Dark Gods onto Earth.",
+   "They build systems and temples to open portals and spread their influence.",
+   "Their attacks warp regions, armies, and people as part of a conquest plan."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman #36 (2018)",
+    "quote": "Five Dark Gods were awakened by Diana when she desired for the return of Gods on Earth, without realizing how dangerous her dream could be. She inadvertently took five of the twelve Dark Gods of the Dark Multiverse out of their dimension, manifesting them on Earth.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_36"
+   },
+   {
+    "issue": "Wonder Woman #41 (2018)",
+    "quote": "He needs to build a mysterious system inside the temple of the Amazon Jungle, a place that the New Gods built when they first walked on Earth.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_41"
+   },
+   {
+    "issue": "Wonder Woman #52 (2018)",
+    "quote": "Breaching the temple, the three warriors find Atalanta who tell them the armies of Tezcatlipoca, the Naguals, are trying to get into Earth to conquer it, and Atalanta alone fought them to keep them away until now.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_52"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "Why does Captain America have to become a fugitive, and what is he trying to fix?",
+  "canonical_anchor": "Captain America",
+  "concept_key": "fugitive mission",
+  "core_premise": "Steve Rogers becomes a fugitive and has to decide whether to hide, chase the crime that ruined his reputation, and rebuild what Captain America means.",
+  "viewer_payoff": "The concrete payoff is that Steve is not just running—he is actively trying to restore his reputation and the meaning of Captain America after the scandal that put him on the run.",
+  "viewer_hook": "What is Steve Rogers trying to get back as a fugitive?",
+  "why_fans_ask_it": "Fans care because Captain America stories often hinge on the gap between the symbol and the man. The tension here is whether Steve can defend the ideal when the world has already treated him like a criminal.",
+  "sample_answer_items": [
+   "The story explicitly launches Steve into fugitive status.",
+   "His mission is to clear his name and restore the Captain America ideal.",
+   "He responds by choosing a new path instead of simply repeating old tactics."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Captain America #7 (2019)",
+    "quote": "\"FUGITIVE\" BEGINS HERE!",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_10_7"
+   },
+   {
+    "issue": "Captain America #15 (2019)",
+    "quote": "Steve Rogers’ mission to clear his reputation and to re-establish the good name of Captain America continues",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_10_15"
+   },
+   {
+    "issue": "Captain America #1 (2025)",
+    "quote": "Rogers realizes that he had been fighting the wrong war, and decides to re-join the Armed Forces to fight a very different kind of war.",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_14_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "How does the Hulk’s healing work when his body is cut apart?",
+  "canonical_anchor": "Hulk regeneration and reassembly",
+  "concept_key": "hulk_regeneration_reassembly_limit",
+  "core_premise": "The Hulk can survive extreme dismemberment because his body parts keep functioning and then reassemble, but they do not become separate Hulks or grow into new bodies on their own.",
+  "viewer_payoff": "The Hulk’s parts do not die or duplicate; they re-form into one body and he walks out of the lab.",
+  "viewer_hook": "Scientists cut his heart in half and it still keeps going.",
+  "why_fans_ask_it": "Fans want the exact limit of his regeneration, especially when the body is physically broken apart.",
+  "sample_answer_items": [
+   "His body parts stay active after separation.",
+   "The split heart halves both keep beating, then pull back together.",
+   "When the organs are scattered, they reassemble into the Hulk instead of growing into separate bodies."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Immortal Hulk Vol 1 8 (2018)",
+    "quote": "With the use of an adamantium scalpel mounted on a 7 million dollar hydraulic arm, they manage to cut the heart in half. After a few minutes, both halves begin to beat.",
+    "source_url": "https://marvel.fandom.com/wiki/Immortal_Hulk_Vol_1_8"
+   }
+  ],
+  "proposed_format": "Question/answer",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "Why does Batman let the Joker live in this showdown?",
+  "canonical_anchor": "Batman spares the Joker to save Harley Quinn",
+  "concept_key": "batman_spares_joker_to_save_harley",
+  "core_premise": "Batman abandons the expected finishing blow because he decides saving Harley matters more than letting the Joker die, showing a concrete choice about what kind of Batman he will be.",
+  "viewer_payoff": "Batman chooses rescue over vengeance, and that choice resets how he wants to operate going forward.",
+  "viewer_hook": "He gets the chance to let the Joker die and doesn’t take it.",
+  "why_fans_ask_it": "Fans ask because it marks a major moral turning point in Batman’s code under pressure.",
+  "sample_answer_items": [
+   "He chooses Harley’s life over revenge.",
+   "He deactivates the bombs and walks away from the Joker.",
+   "The decision becomes part of his resolve to become a better Batman and a better man."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Batman (2016) #100 (2020)",
+    "quote": "Batman tells him that if he is quick, he can deactivate the bombs with the gadgets in the suit. Then, with the Joker astonished by his choice, Batman leaves him be and saves Harley's life, with Alfred zombified corpse laughing during the whole scene.",
+    "source_url": "https://dc.fandom.com/wiki/Batman_Vol_3_100"
+   }
+  ],
+  "proposed_format": "Question/answer",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "What happens to Superman under red-sun fire?",
+  "canonical_anchor": "Superman under red-sun suppression",
+  "concept_key": "superman_red_sun_power_suppression_rule",
+  "core_premise": "Superman’s power can be stripped away by red-sun exposure, creating a hard rule in which he is temporarily human and vulnerable until his power returns.",
+  "viewer_payoff": "The issue makes the red-sun rule concrete: Superman loses his powers and cannot intervene until they return.",
+  "viewer_hook": "A familiar invulnerable hero is suddenly helpless in the middle of a lethal attack.",
+  "why_fans_ask_it": "Fans ask because it is one of Superman’s clearest hard limits and changes the stakes instantly.",
+  "sample_answer_items": [
+   "His powers are suppressed.",
+   "He becomes helpless against the attack.",
+   "The rule makes him unable to save people until the radiation effect ends."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Superman: World of New Krypton (2009) #12 (2010)",
+    "quote": "They have just been bathed in red sun radiation from the Archer rifles of Gor and his men, as Gor gives the command to \"FIRE\". Death seems imminent... Superman feels helpless, since his powers are still down, and he cannot do anything to save Tam-Or's life.",
+    "source_url": "https://dc.fandom.com/wiki/Superman:_World_of_New_Krypton_Vol_1_12"
+   }
+  ],
+  "proposed_format": "Question/answer",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "How does Daredevil respond when Punisher pushes him toward killing?",
+  "canonical_anchor": "Daredevil refuses lethal logic",
+  "concept_key": "daredevil_refuses_killing_under_pressure",
+  "core_premise": "When pushed into a brutal confrontation, Daredevil rejects Frank Castle’s kill-or-save math and holds to the belief that people can still change.",
+  "viewer_payoff": "Daredevil doubles down on mercy and the possibility of change instead of adopting Frank’s lethal approach.",
+  "viewer_hook": "He is forced to argue his code while both men are armed.",
+  "why_fans_ask_it": "Fans ask because Daredevil’s nonlethal code is tested most sharply when Punisher is in the room.",
+  "sample_answer_items": [
+   "He rejects Frank’s kill-one-to-save-many logic.",
+   "He insists there is always hope for change.",
+   "He subdues Castle without embracing the Punisher’s code."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Daredevil Vol 6 4 (2019)",
+    "quote": "Furious, Daredevil breaks the his bed railings and attacks Castle. Both with guns in their hands, the two vigilantes exchange lines on the principles behind their conduct. Frank thinks it’s just a matter of math: killing one saves many others; Matt refuses, believing there is always hope for change.",
+    "source_url": "https://marvel.fandom.com/wiki/Daredevil_Vol_6_4"
+   }
+  ],
+  "proposed_format": "Question/answer",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2A",
+  "question": "What are distinct examples of Wonder Woman using the Lasso of Truth?",
+  "canonical_anchor": "Wonder Woman uses the Lasso of Truth",
+  "concept_key": "wonder_woman_lasso_of_truth_applications",
+  "core_premise": "The Lasso of Truth is not just a restraint; Wonder Woman uses it to uncover lies, force clarity, and end magical conflicts in different ways across separate issues.",
+  "viewer_payoff": "The examples show the lasso functioning as an investigative tool, a magical breaker, and a truth-forcing weapon.",
+  "viewer_hook": "One rope repeatedly exposes lies, breaks curses, and changes battles.",
+  "why_fans_ask_it": "Fans ask because the Lasso of Truth has multiple iconic uses beyond simple binding, and each one reveals a different aspect of Diana’s power.",
+  "sample_answer_items": [
+   "She uses it to probe a memory and uncover deception.",
+   "She uses it with other women to help banish Urzkartaga.",
+   "She wraps Artemis in it to force reason and reveal the real manipulation behind the war."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman: Rebirth (2016) #1 (2016)",
+    "quote": "She then uses her lasso to probe deeper and finds out she had been deceived.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman:_Rebirth_Vol_1_1"
+   },
+   {
+    "issue": "Wonder Woman (2016) #7 (2016)",
+    "quote": "They are their custodians, the only creatures able to bound him and restrain him: giving to Barbara Ann and the remaining prisoners the Lasso of Truth, the group of women prove Diana's theory right, banishing Urzkartaga from the place.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_7"
+   },
+   {
+    "issue": "Wonder Woman (2016) #55 (2018)",
+    "quote": "Diana manages to wrap her in the Lasso of Truth, making her reason: she understands that Faruka manipulated Rustam and her sisters to start a conflict that would consolidate her power while eliminating the nomad nature of her people.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_55"
+   }
+  ],
+  "proposed_format": "List",
+  "angle": "list"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "How does Thor end up becoming Galactus’s Herald of Thunder?",
+  "canonical_anchor": "Thor",
+  "concept_key": "Herald of Thunder",
+  "core_premise": "Thor is forced into a cosmic bargain and transformed into Galactus’s new Herald of Thunder when Galactus identifies him as the prophecy-linked force destined to bring about Galactus’s death.",
+  "viewer_payoff": "You learn that Galactus believes Thor is the prophesied destroyer, so he empowers and recruits him rather than simply defeating him.",
+  "viewer_hook": "Why does Galactus make Thor his herald instead of killing him?",
+  "why_fans_ask_it": "Fans care because it flips Thor from rival to cosmic pawn in one move, and the surprise is that the enemy crowns him instead of finishing him off.",
+  "sample_answer_items": [
+   "Galactus identifies Thor as the being fated to be his death.",
+   "Galactus blasts Thor with the Power Cosmic and transforms him.",
+   "Thor rises with restored features as the new Herald of Thunder."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Thor #1 (2020)",
+    "quote": "Galactus declares that the one prophesied by the Black Winter to destroy him is none other than Thor Odinson, blasting the King of Asgard with a torrent of the Power Cosmic. ... Imbued with and transformed by the Power Cosmic - burning off his beard, causing his hair to turn platinum blond and grow in length, and restoring his missing arm and eye - Thor rises as the Herald of Thunder.",
+    "source_url": "https://marvel.fandom.com/wiki/Thor_Vol_6_1"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "What happens when Superman is split into his human and Kryptonian selves?",
+  "canonical_anchor": "Superman",
+  "concept_key": "human-Kryptonian split",
+  "core_premise": "A spatial anomaly separates Superman into two halves, exposing the practical weakness of raw power without humanity and the weakness of humanity without Kryptonian physiology.",
+  "viewer_payoff": "The answer is that Clark has the humanity but not the powers, while Superman has the powers but loses compassion; only together can they continue the mission.",
+  "viewer_hook": "Why can’t either half save Alice on his own?",
+  "why_fans_ask_it": "Fans are drawn to the built-in contradiction: Superman is supposed to be one person, but the story proves his greatest strength depends on two very different halves.",
+  "sample_answer_items": [
+   "Clark Kent nearly suffocates once stripped of Kryptonian powers.",
+   "Superman becomes coldly logical and refuses to prioritize one girl’s life over others.",
+   "The two realize they need each other’s strengths to become whole again."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Superman: Up in the Sky #4 (2019)",
+    "quote": "On his journey to find Alice, Superman gets hit by a mysterious spatial anomaly that separates him into two beings: a completely Kryptonian Superman and a completely human Clark Kent. Without any Kryptonian powers to rely on, Clark begins to suffocate in the dark vacuum of space, but Superman saves him and takes him to the nearest planet he can find. ... As time passes, the differences between Clark and Superman become clearer. Without Superman’s physiology, Clark cannot make the journey to save Alice, and without Clark’s humanity, Superman lacks compassion and humility.",
+    "source_url": "https://dc.fandom.com/wiki/Superman:_Up_in_the_Sky_Vol_1_4"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "Why was Captain America secretly working for Hydra?",
+  "canonical_anchor": "Captain America",
+  "concept_key": "Hydra replacement",
+  "core_premise": "Captain America is revealed to have been secretly replaced by a Hydra sleeper agent, turning his own identity into the central betrayal of Secret Empire until the real Steve Rogers is restored.",
+  "viewer_payoff": "You learn the betrayal was not a normal turn to evil; it was the result of Kobik rewriting reality and replacing Steve with a Hydra version of himself.",
+  "viewer_hook": "What actually caused Steve Rogers to become Hydra’s man?",
+  "why_fans_ask_it": "Fans ask this because it is one of the biggest identity reversals in Captain America history, and the real curiosity is how the story explains the betrayal without erasing the real Steve.",
+  "sample_answer_items": [
+   "A sentient Cosmic Cube reshaped Steve Rogers into a Hydra sleeper agent.",
+   "That false Steve carried out the conquest plan while the real Steve was hidden away.",
+   "Kobik ultimately undid the reality change and restored the real Captain America."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Secret Empire (2017)",
+    "quote": "As a consequence of the Red Skull's manipulations with a sentient Cosmic Cube named Kobik, Captain America was secretly replaced by a twisted version of himself who was a Hydra sleeper agent.",
+    "source_url": "https://marvel.fandom.com/wiki/Secret_Empire_(Event)"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "What happens when someone tries to measure the Hulk's strength head-on?",
+  "canonical_anchor": "Hulk's strength is effectively beyond measurement",
+  "concept_key": "hulk_strength_incalculable",
+  "core_premise": "A scientist tries to size up the Hulk's raw power, only to learn that the strength scale breaks down because the Hulk keeps outpacing the machine or opponent trying to measure him.",
+  "viewer_payoff": "The answer is that the Hulk's strength cannot be comfortably capped or calculated in the fight, forcing the attacker into a losing escalation until the Hulk destroys the machine.",
+  "viewer_hook": "The Hulk doesn't just overpower the weapon — he breaks the measurement itself.",
+  "why_fans_ask_it": "Fans want a concrete explanation for why the Hulk can't be safely quantified or contained once the fight escalates.",
+  "sample_answer_items": [
+   "The target's power keeps climbing past the machine's limit.",
+   "The opponent learns the Hulk's upper strength is effectively incalculable.",
+   "The attempt ends with the Hulk ripping the robot in half."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Indestructible Hulk #1 (2012)",
+    "quote": "However, as he increases the power of the weapon to match the Hulk's growing strength, the Thinker is horrified to discover that the Hulk's upper strength level is incalculable.",
+    "source_url": "https://marvel.fandom.com/wiki/Indestructible_Hulk_Vol_1_1"
+   }
+  ],
+  "proposed_format": "Direct question",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "How does Captain Marvel stop a symbiote from taking over her?",
+  "canonical_anchor": "Captain Marvel's Binary power is the decisive counter to symbiote possession",
+  "concept_key": "captain_marvel_binary_vs_symbiote",
+  "core_premise": "Carol is trapped in a fight where the symbiote can either kill her from the inside out or puppet her body, so she uses Binary as the one power that can burn the infection out.",
+  "viewer_payoff": "She answers that threat by activating Binary and burning the symbiote away, proving she can overpower the infection before it takes full hold.",
+  "viewer_hook": "Carol is in a fight where the enemy can either wear her body or kill her from within.",
+  "why_fans_ask_it": "Fans are drawn to the exact moment a cosmic power becomes the hard counter to a horrifying body-control threat.",
+  "sample_answer_items": [
+   "The symbiote can either kill her from the inside out or control her body.",
+   "Carol triggers Binary power instead of surrendering.",
+   "She burns the symbiote off with an immolating burst and wins the exchange."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Absolute Carnage: Captain Marvel #1 (2019)",
+    "quote": "As the symbiote bonds to her, Carol notes that the red-and-black symbiote has the potential to kill her from the inside-out or puppeteer her body like Venom did. As the symbiote fully covers her and Dark Carnage revels in having her cosmic powers at his command, Captain Marvel activates her Binary powers and immolates it, retorting that she is stronger than his darkness.",
+    "source_url": "https://marvel.fandom.com/wiki/Absolute_Carnage:_Captain_Marvel_Vol_1_1"
+   }
+  ],
+  "proposed_format": "Direct question",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "What is the real rule behind Urzkartaga's hold over women?",
+  "canonical_anchor": "Wonder Woman's truth-based rule about Urzkartaga and the Lasso",
+  "concept_key": "wonder_woman_urzkartaga_fear_rule",
+  "core_premise": "The story reveals that Urzkartaga's control over women is not romantic or lust-driven but rooted in fear, and the Lasso exposes that the captives are the ones who can restrain him.",
+  "viewer_payoff": "The issue reveals that fear, not lust, is the real engine of Urzkartaga's prison, and the Lasso helps the women expose and defeat him.",
+  "viewer_hook": "The truth turns the monster's supposed power dynamic completely inside out.",
+  "why_fans_ask_it": "Fans want the hidden rule behind the world-building twist, especially when Wonder Woman's truth power exposes it.",
+  "sample_answer_items": [
+   "He does not imprison them for lust.",
+   "He keeps them as custodians who can bind and restrain him.",
+   "The Lasso of Truth proves the rule and banishes him."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman #7 (2016)",
+    "quote": "Diana tells her to resist his proposal: she understood that Urzkartaga does not imprison women for lust, but for fear. They are their custodians, the only creatures able to bound him and restrain him: giving to Barbara Ann and the remaining prisoners the Lasso of Truth, the group of women prove Diana's theory right, banishing Urzkartaga from the place.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_7"
+   }
+  ],
+  "proposed_format": "Direct question",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "How does Batman stop Clayface from exposing him?",
+  "canonical_anchor": "Batman tricks Clayface by using DNA against DNA",
+  "concept_key": "batman_clayface_dna_trick",
+  "core_premise": "Batman is cornered by an enemy who can copy DNA, so he survives by turning that same rule back on Clayface with a deliberate disguise and containment setup.",
+  "viewer_payoff": "He beats Clayface's DNA-reading scheme by feeding it false evidence and then locking him down with a containment field.",
+  "viewer_hook": "Batman wins by making his own biology part of the trap.",
+  "why_fans_ask_it": "Fans like seeing Batman beat a shapeshifter by outthinking the specific power rather than just punching harder.",
+  "sample_answer_items": [
+   "Clayface can read and mimic DNA, so brute force won't solve it.",
+   "Batman covers himself with a Bruce Wayne DNA film to mislead Clayface.",
+   "He then traps Clayface with a containment field built around that weakness."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Batman #20 (2013)",
+    "quote": "Batman reveals that he put a film containing Bruce Wayne's DNA over his own skin in order to trick Clayface, (though, of course, he is Bruce Wayne).",
+    "source_url": "https://dc.fandom.com/wiki/Batman_Vol_2_20"
+   }
+  ],
+  "proposed_format": "Direct question",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2B",
+  "question": "What are distinct examples of the Lasso of Truth in action for Wonder Woman?",
+  "canonical_anchor": "The Lasso of Truth as a truth-exposure and restraint ability family",
+  "concept_key": "lasso_of_truth_applications",
+  "core_premise": "Across separate Wonder Woman issues, the Lasso of Truth is shown as more than a symbolic weapon: it compels truth, exposes deception, and can be used to bind or redirect a conflict.",
+  "viewer_payoff": "The list shows that the Lasso of Truth is not just for interrogation; it repeatedly changes the outcome by revealing truth and restoring judgment.",
+  "viewer_hook": "The same weapon keeps solving very different problems: exposing lies, breaking curses, and forcing reason.",
+  "why_fans_ask_it": "Fans ask because the lasso has iconic but varied uses, and the best examples show how flexible its truth-based effect can be.",
+  "sample_answer_items": [
+   "Wonder Woman: Rebirth #1 — Diana uses the lasso to probe deeper and learns she has been deceived.",
+   "Wonder Woman #7 — Diana gives the Lasso of Truth to the prisoners, and the women use it to banish Urzkartaga.",
+   "Wonder Woman #55 — Diana wraps Artemis in the lasso and makes her reason, exposing Faruka's manipulation."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman: Rebirth #1 (2016)",
+    "quote": "She then uses her lasso to probe deeper and finds out she had been deceived.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman:_Rebirth_Vol_1_1"
+   },
+   {
+    "issue": "Wonder Woman #7 (2016)",
+    "quote": "giving to Barbara Ann and the remaining prisoners the Lasso of Truth, the group of women prove Diana's theory right, banishing Urzkartaga from the place.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_7"
+   },
+   {
+    "issue": "Wonder Woman #55 (2018)",
+    "quote": "Fighting against her sister Artemis, Diana manages to wrap her in the Lasso of Truth, making her reason: she understands that Faruka manipulated Rustam and her sisters to start a conflict that would consolidate her power while eliminating the nomad nature of her people.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_55"
+   }
+  ],
+  "proposed_format": "List",
+  "angle": "list"
+ },
+ {
+  "round": "R2",
+  "run": "R2C",
+  "question": "How did Superman manage to win the charity race against the Flash?",
+  "canonical_anchor": "Superman",
+  "concept_key": "race endurance",
+  "core_premise": "Superman can defeat the Flash in a charity race by pushing beyond exhaustion and refusing to stop, even though everyone expects the Speed Force user to win.",
+  "viewer_payoff": "The issue shows that Superman wins by forcing himself through fatigue and refusing to quit, turning Lex Luthor’s spite play into a charity victory that funds a children’s shelter.",
+  "viewer_hook": "How could Superman possibly beat the Flash at a race?",
+  "why_fans_ask_it": "The premise is surprising because the Flash is supposed to be the speedster, yet Superman wins a world race by endurance and determination. Fans care because it reframes Superman’s limits, reveals how much willpower matters, and pays off with a concrete charitable consequence.",
+  "sample_answer_items": [
+   "Lex Luthor’s condition was that Superman had to win the race.",
+   "Superman pushed himself harder than ever, even after getting tired on the seventh lap.",
+   "He kept going instead of quitting, and ultimately beat the Flash to the finish.",
+   "Because Superman won, the charity money was used to build the Lex Luthor Center for Displaced Children."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Superman: Up in the Sky #4 (2019)",
+    "quote": "On the seventh lap, however, Superman began to feel tired and he stopped for a few moments to catch his breath. Still, he knew that he couldn’t take too much time to rest, lest the Flash would leave him behind. And so, the Man of Steel continued the race and, against all odds, he won. Victory belonged to Superman",
+    "source_url": "https://dc.fandom.com/wiki/Superman:_Up_in_the_Sky_Vol_1_4"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct: How does a defining power, mechanism, or physiological limit of a widely recognized hero work? Pick one source-supported contrast, counterintuitive condition, or unexpected cost with a concrete, complete explanation."
+ },
+ {
+  "round": "R2",
+  "run": "R2C",
+  "question": "What happens when Barry Allen uses the Speed Force to finish the fight with Eobard Thawne?",
+  "canonical_anchor": "Flash",
+  "concept_key": "Speed Force",
+  "core_premise": "Barry Allen’s battle with Eobard Thawne ends by erasing Thawne from existence and resetting the paradox, with the consequences rippling backward through Flash history.",
+  "viewer_payoff": "Barry’s Speed Force doesn’t just beat Thawne; it erases him from existence and resets the paradox, changing the timeline around Flash history.",
+  "viewer_hook": "What does Barry’s Speed Force do to Thawne at the end of the fight?",
+  "why_fans_ask_it": "Fans care because this is a rare case where the Flash’s power doesn’t just outrun a villain—it rewrites the villain’s existence. The hook is whether Speed Force energy can truly end a paradoxical enemy, and the answer is an actual erasure with timeline fallout.",
+  "sample_answer_items": [
+   "Barry’s Speed Force energy erases Thawne from existence.",
+   "That erasure resets Thawne’s paradox.",
+   "The issue notes that this changes earlier history tied to the Reverse-Flash.",
+   "Barry’s story then continues into Dark Nights: Death Metal."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "The Flash #762 (2020)",
+    "quote": "Eobard Thawne is erased from existence by Barry Allen's Speed Force energy which resets his paradox.",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_1_762"
+   },
+   {
+    "issue": "The Flash #759 (2020)",
+    "quote": "Featured Characters: The Flash (Barry Allen) (Body Possessed) (Also in a vision) (Also as spirit)",
+    "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_1_759"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct: What is one defining rule, premise, or reality tension of a comic world tied to a widely recognized hero or team? Pick one source-supported premise or condition stating the specific consequence or rule."
+ },
+ {
+  "round": "R2",
+  "run": "R2C",
+  "question": "Why does Wally West give up his own identity in the dark world he made?",
+  "canonical_anchor": "Flash",
+  "concept_key": "self-sacrifice",
+  "core_premise": "Wally West chooses to destroy the dark-matter world he created, giving up his own identity so reality can survive and his children can go home.",
+  "viewer_payoff": "The comic shows Wally accepting absolute self-erasure as the price of undoing the dark world he created and protecting reality, while also securing a promise that his children will be returned home.",
+  "viewer_hook": "Why would Wally West erase himself to save the Multiverse?",
+  "why_fans_ask_it": "The tension is extreme: Wally has the family life he wanted, but keeping it would doom everything else. Fans care because it turns a hero’s happy ending into a sacrifice question, and the payoff is the literal abandonment of his own selfhood.",
+  "sample_answer_items": [
+   "He realizes staying would let Dark Matter swallow all reality.",
+   "He sits on the Mobius Chair and destroys the world he built.",
+   "The cost is total loss of memories, past, and identity.",
+   "He makes Tempus Fuginaut promise to bring his children home."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Flash Forward #6 (2020)",
+    "quote": "Wally is a hero, and knows what he has to do: sit on the Mobius Chair, destroying this world and becoming a new creature, with no memories, no past, no identity of himself.",
+    "source_url": "https://dc.fandom.com/wiki/Flash_Forward_Vol_1_6"
+   }
+  ],
+  "proposed_format": "direct",
+  "angle": "direct: How does a widely recognized hero apply or test one defining rule or recurring choice when pushed to the limit? Pick one source-supported condition, sacrifice, or emotional payoff stating the specific resolution."
+ },
+ {
+  "round": "R2",
+  "run": "R2C",
+  "question": "Why does Steve Rogers keep losing access to his super-soldier physique?",
+  "canonical_anchor": "Captain America",
+  "concept_key": "mechanism_strength_loss_nanovirus",
+  "core_premise": "Steve Rogers’ apparent reversion to his skinny state is caused by a nanovirus that hides on bloodwork and shuts off his strength when his adrenaline rises.",
+  "viewer_payoff": "The infection is successfully removed and Steve recovers his superhuman physique.",
+  "viewer_hook": "Tony has to use a machine to disintegrate the nanotech instead of treating it like a normal injury.",
+  "why_fans_ask_it": "It turns a familiar hero’s strength loss into a specific sci-tech sabotage with a clear on-page fix.",
+  "sample_answer_items": [
+   "A nanovirus is mimicking red blood cells so routine tests miss it.",
+   "It activates when Steve’s adrenaline rises.",
+   "That activation blocks him from reaching his strength until the tech is removed."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Captain America Vol 6 #10 (2012)",
+    "quote": "The nanovirus is designed to mimic red blood cells, making them invisible whenever Tony would run a test on Steve. The nanovirus is also designed to activate whenever Steve's adrenaline levels increase, effectively creating a wall between him and his strength.",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_6_10"
+   }
+  ],
+  "proposed_format": "Why/How question with a concrete mechanism answer.",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2C",
+  "question": "Why does Wonder Woman refuse to remove her bracelets in battle?",
+  "canonical_anchor": "Wonder Woman",
+  "concept_key": "code_containment_bracelets",
+  "core_premise": "Diana keeps her Bracelets of Submission on because she believes they are necessary to contain her power around innocent mortals.",
+  "viewer_payoff": "Diana answers by redirecting Artemis’s momentum with the lasso instead of abandoning her restraint.",
+  "viewer_hook": "Artemis directly challenges her to drop the bracelets and fight at full force.",
+  "why_fans_ask_it": "Fans want the in-story reason one of Diana’s most iconic pieces of gear is treated as a necessary restraint, not just costume flavor.",
+  "sample_answer_items": [
+   "She says the bracelets contain her power.",
+   "She keeps that restraint in place for innocent mortals.",
+   "The fight stays under control because she will not unleash everything at once."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Wonder Woman Vol 4 #20 (2013)",
+    "quote": "Diana refuses, explaining that she must wear them in order to contain her power, for the sake of the innocent mortals.",
+    "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_4_20"
+   }
+  ],
+  "proposed_format": "Why/How question with a code-and-consequence answer.",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2C",
+  "question": "What makes the Godbomb such a terrifying threat in Thor’s world?",
+  "canonical_anchor": "Thor",
+  "concept_key": "world_rule_godbomb",
+  "core_premise": "The Godbomb is a timeline-spanning weapon whose rule is simple and terrifying: it will kill every god that has ever existed.",
+  "viewer_payoff": "Thor can only stop the catastrophe by taking the blast into himself and ending Gorr’s assault.",
+  "viewer_hook": "The story shows gods across eras collapsing at once as the weapon activates.",
+  "why_fans_ask_it": "It captures the scale of Thor stories where the danger is not just a fight, but a rule that can erase divinity itself.",
+  "sample_answer_items": [
+   "It reaches through time, not just one battlefield.",
+   "Its effect is universal across every god who has ever lived.",
+   "The blast consumes gods from the inside out and threatens the entire divine timeline."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Thor: God of Thunder #11 (2013)",
+    "quote": "the Godbomb runs through time and will kill any and all gods that have ever existed - hopefully in a swift and painless manner.",
+    "source_url": "https://marvel.fandom.com/wiki/Thor:_God_of_Thunder_Vol_1_11"
+   }
+  ],
+  "proposed_format": "What-is-the-rule question with an existential consequence answer.",
+  "angle": "direct"
+ },
+ {
+  "round": "R2",
+  "run": "R2C",
+  "question": "What are some different ways Captain America uses his shield under pressure?",
+  "canonical_anchor": "Captain America",
+  "concept_key": "shield_throw_applications",
+  "core_premise": "Captain America’s shield is used as a multi-purpose weapon and defense tool across different stories, from stopping a live threat to powering a last-ditch survival move.",
+  "viewer_payoff": "The examples show the shield as more than a boomerang—it becomes a battlefield tool, a defensive anchor, and a last-resort save.",
+  "viewer_hook": "Each example pairs the shield with a different kind of crisis: riot control, supervillain combat, and a larger rescue.",
+  "why_fans_ask_it": "It lets readers compare how one signature item solves very different problems across multiple stories.",
+  "sample_answer_items": [
+   "He throws it to stop the Madbomb before King Cobra can trigger it.",
+   "He relies on the shield as an indestructible symbol and combat tool while facing cosmic-scale hate and chaos.",
+   "He uses it in a decisive endgame maneuver that helps save the day when direct force alone is not enough."
+  ],
+  "issue_evidence": [
+   {
+    "issue": "Captain America Vol 3 #48 (2004)",
+    "quote": "Cap's indestructible shield",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_3_48"
+   },
+   {
+    "issue": "Captain America Vol 6 #7 (2012)",
+    "quote": "Cap uses his shield to throw the Madbomb out King Cobra's hands.",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_6_7"
+   },
+   {
+    "issue": "Captain America Vol 3 #48 (2004)",
+    "quote": "he grabs the Skull by the neck. After a failed attack against the Hate-Monger, Namor succumbs to the hate and attacks Captain America as an enemy. After exchanging blows, Cap is able to talk him down",
+    "source_url": "https://marvel.fandom.com/wiki/Captain_America_Vol_3_48"
+   }
+  ],
+  "proposed_format": "List of distinct examples of one ability family across separate issues.",
+  "angle": "list"
+ }
+]
