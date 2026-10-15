@@ -54,6 +54,8 @@ named power, world, rule, or choice shared by that question and its cited
 excerpt; never invent a key just to make two candidates appear different.
 Use the same key when two questions are about the same concept, even if one
 names a different character.
+Set `core_premise` to the underlying comic contrast, conflict, or premise supported by the excerpt.
+Set `viewer_payoff` to the concrete comic revelation, choice, or consequence in that scene delivering on the premise.
 Set `issue_evidence` to exact print-comic issue citations. Each item needs:
 `issue` as "Series #N (YYYY)" with the ORIGINAL issue's publication year after
 the number; `source_url` of an issue-specific publisher or comic catalog page

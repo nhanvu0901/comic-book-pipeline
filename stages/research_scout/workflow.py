@@ -113,7 +113,7 @@ def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
 
 
 def _qa_discovery_topup_prompt(
-    *, missing_direct: int, missing_list: int, angles: list[str],
+    *, missing_direct: int = 0, missing_list: int = 0, angles: list[str],
     excluded: list[str], anchors: set[str], concepts: set[str],
 ) -> str:
     """Ask only for the formats lost to verification or diversity filtering."""
@@ -122,6 +122,8 @@ def _qa_discovery_topup_prompt(
         requested.append(f"{missing_direct} direct")
     if missing_list:
         requested.append(f"{missing_list} list")
+    if not requested:
+        requested.append("1 candidate")
     return (
         "QA PRINT-COMIC DISCOVER TOP-UP. Return exactly " + " and ".join(requested)
         + " new candidates using these angles:\n"
@@ -143,6 +145,7 @@ def _qa_discovery_topup_prompt(
         "needs two different verified issues. Bare URLs and reprint years do not count. "
         "Make the viewer_hook a distinct, grounded detail within the same answer scope "
         "or use the empty string; never add another answer target. "
+        "Provide core_premise and viewer_payoff reflecting source-backed contrasts or reveals. "
         "Never repeat an anchor or concept already chosen.\n"
         + "Used anchors: " + ", ".join(sorted(anchors)) + "\n"
         + "Used concepts: " + ", ".join(sorted(concepts)) + "\n"
@@ -1094,13 +1097,33 @@ class ScoutWorkflow:
                 key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
                 reverse=True,
             )
-        elif quota and 0 < len(picked) < count:
-            for entry in picked:
-                entry["batch_incomplete"] = True
-                entry["batch_expected"] = count
-        if quota and offered and not picked:
-            fallback_item["verification_shortage"] = True
-            fallback_item["batch_expected"] = count
+        elif mode is ScoutMode.QA:
+            def _qa_rank_key(c: Mapping[str, Any]) -> float:
+                score = 0.0
+                payoff = str(c.get("viewer_payoff") or "").strip()
+                premise = str(c.get("core_premise") or "").strip()
+                why_fans = str(c.get("why_fans_ask_it") or "").strip()
+                hook = str(c.get("viewer_hook") or "").strip()
+                if payoff:
+                    score += 2.0
+                if premise:
+                    score += 1.5
+                if why_fans and len(why_fans) > 20:
+                    score += 1.0
+                if hook:
+                    score += 1.0
+                claims = c.get("issue_evidence")
+                if isinstance(claims, list):
+                    score += min(len(claims), 3) * 1.0
+                return score
+            picked.sort(key=_qa_rank_key, reverse=True)
+            if 0 < len(picked) < count:
+                for entry in picked:
+                    entry["batch_incomplete"] = True
+                    entry["batch_expected"] = count
+            if offered and not picked:
+                fallback_item["verification_shortage"] = True
+                fallback_item["batch_expected"] = count
         return picked[:count] or fallback
 
     def next_angle(self, mode: ScoutMode) -> str:

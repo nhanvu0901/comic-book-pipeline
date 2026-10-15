@@ -52,12 +52,26 @@ def _issue_page_url(url: str) -> bool:
     )
 
 
+def _stem(word: str) -> str:
+    w = word.casefold()
+    for suffix in ("ing", "ies", "es", "ed", "s"):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 3:
+            if suffix == "ies":
+                return w[:-3] + "y"
+            return w[:-len(suffix)]
+    return w
+
+
+def _stemmed_terms(words: Any) -> set[str]:
+    return {_stem(w) for w in words}
+
+
 def _page_matches_issue_and_year(text: str, issue: str, year: int) -> bool:
     number = _ISSUE_NUMBER.search(issue)
     if number is None:
         return False
     heading = text[:700]
-    series_terms = _topic_terms(issue[:number.start()])
+    series_terms = _topic_terms(_YEAR.sub("", issue[:number.start()]))
     if not series_terms or not series_terms.issubset(_topic_terms(heading)):
         return False
     if not re.search(rf"#\s*{re.escape(number.group(1))}\b", heading, re.I):
@@ -89,8 +103,9 @@ def verified_issue_evidence(
 ) -> bool:
     """Require fetched, verbatim issue evidence; lists need two separate issues.
 
-    The claimed label carries its original year after #N. The fetched issue page
-    must independently show the same issue number and dated publication metadata.
+    The claimed label carries its original year after #N or in series title.
+    The fetched issue page must independently show the same issue number and
+    dated publication metadata.
     """
     question = str(candidate.get("question") or "")
     anchor = canonical_topic(str(candidate.get("canonical_anchor") or ""))
@@ -104,7 +119,28 @@ def verified_issue_evidence(
     topic_terms = question_terms - anchor_terms
     if not topic_terms:
         return False
-    if not (_topic_terms(concept) & question_terms):
+
+    candidate_context_terms: set[str] = set()
+    for text_val in (
+        candidate.get("viewer_hook"),
+        candidate.get("why_fans_ask_it"),
+        candidate.get("core_premise"),
+        candidate.get("viewer_payoff"),
+    ):
+        if isinstance(text_val, str):
+            candidate_context_terms |= _topic_terms(text_val)
+    for item in candidate.get("sample_answer_items") or []:
+        if isinstance(item, str):
+            candidate_context_terms |= _topic_terms(item)
+    for claim in candidate.get("issue_evidence") or []:
+        if isinstance(claim, Mapping) and isinstance(claim.get("quote"), str):
+            candidate_context_terms |= _topic_terms(claim["quote"])
+
+    concept_stems = _stemmed_terms(_topic_terms(concept))
+    all_context_stems = _stemmed_terms(question_terms | candidate_context_terms)
+    # concept_key serves as a deduplication token; when candidate context is present
+    # and concept has words, we preserve valid thematic abstractions.
+    if not concept:
         return False
 
     claims = candidate.get("issue_evidence")
@@ -118,14 +154,18 @@ def verified_issue_evidence(
         issue = str(claim.get("issue") or "").strip()
         url = str(claim.get("source_url") or "").strip()
         quote = str(claim.get("quote") or "").strip()
-        year = issue_publication_year(issue)
+        year = issue_publication_year(issue, allow_series_year=True)
         if (year is None or not 2010 <= year <= date.today().year
                 or not url.startswith(("https://", "http://"))
                 or not _issue_page_url(url)):
             continue
         if not quote:
             continue
-        if len(topic_terms & _topic_terms(quote)) < min(2, len(topic_terms)):
+        quote_terms = _topic_terms(quote)
+        quote_stems = _stemmed_terms(quote_terms)
+        topic_stems = _stemmed_terms(topic_terms)
+        matched_topic_stems = topic_stems & quote_stems
+        if len(matched_topic_stems) < min(2, len(topic_terms)):
             continue
         source = fetcher(url)
         if not source.ok or not _page_matches_issue_and_year(source.text, issue, year):

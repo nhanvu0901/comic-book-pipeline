@@ -250,6 +250,8 @@ _DISCOVER_PROPS = {
         "required": ["issue", "source_url", "quote"],
     }},
     "proposed_format": {"type": "string"},
+    "core_premise": {"type": "string"},
+    "viewer_payoff": {"type": "string"},
     "why_fans_ask_it": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
     "sample_answer_items": {"type": "array", "items": {"type": "string"}},
@@ -324,7 +326,7 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             c["_angle"] = angle
             rows.append(c)
     for c in rows:
-        c["proposed_format"] = str(question_archetype(str(c.get("question", ""))))
+        c["proposed_format"] = str(question_archetype(str(c.get("question", "")), c.get("proposed_format")))
         if is_narrow_direct_question(str(c.get("question", ""))):
             continue
         hit = is_burned(c.get("question", ""), digest)

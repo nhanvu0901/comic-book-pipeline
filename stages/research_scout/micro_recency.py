@@ -21,13 +21,19 @@ _HISTORICAL_ERA = re.compile(
 )
 
 
-def issue_publication_year(label: str) -> int | None:
-    """Read the single issue-year after #N; ignore a series launch year before it."""
+def issue_publication_year(label: str, *, allow_series_year: bool = False) -> int | None:
+    """Read the single issue-year after #N; ignore a series launch year before it unless allowed."""
     issues = list(_ISSUE.finditer(str(label)))
     if len(issues) != 1:
         return None
     years = _YEAR.findall(str(label)[issues[0].end():])
-    return int(years[0]) if len(years) == 1 else None
+    if len(years) == 1:
+        return int(years[0])
+    if allow_series_year and not years:
+        before_years = _YEAR.findall(str(label)[:issues[0].start()])
+        if len(before_years) == 1:
+            return int(before_years[0])
+    return None
 
 
 def explicit_historical_scope(user_intent: str, today: date | None = None) -> bool:
