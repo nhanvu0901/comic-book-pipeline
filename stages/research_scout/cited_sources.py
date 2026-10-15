@@ -50,6 +50,7 @@ _TRACKING_QUERY_KEYS = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
 _INLINE_LINK = re.compile(r"\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)")
 _RAW_URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _EMPHASIS = re.compile(r"[*_]+")
+_FOOTNOTE = re.compile(r"\[\[[^\[\]]{1,60}\]\]\([^)]*\)|\[\d{1,3}\]")
 
 # Kept here rather than duplicated in the two strict research schemas.  The
 # Research API requires every object property to be declared and required, so
@@ -278,7 +279,8 @@ def normalize_quote(text: str) -> str:
 def _visible_markdown_text(text: str) -> str:
     """Drop Markdown transport syntax before comparing human-visible quotes."""
 
-    visible = str(text)
+    # Wiki footnote markers ("[[Continuity 2]](...#cite_note-2)", "[7]") sit inside sentences.
+    visible = _FOOTNOTE.sub("", str(text))
     # One nesting level covers normal Jina URLs containing a parenthesised year.
     # Iterate in case a page wraps a link label in another link-like construct.
     while True:

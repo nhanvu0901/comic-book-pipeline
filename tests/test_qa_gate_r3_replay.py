@@ -86,7 +86,7 @@ EXPECTED = {
     42: PASS,                             # FALSE REJECT: 'keep losing access', nanovirus answers it
     43: fail("quote_not_found"),          # the model changed "the Amazon" to "Diana"
     44: PASS,                             # FALSE REJECT: "terrifying threat"
-    45: fail("year_not_found", "list_needs_2_issues", "topic_overlap"),   # #48 is 2001, not 2004
+    45: fail("year_out_of_range", "year_not_found", "list_needs_2_issues", "topic_overlap"),   # #48: label 2004
 }
 
 

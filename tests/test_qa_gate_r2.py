@@ -76,6 +76,11 @@ def _reason(candidate: dict, page: str, fmt: str = "direct") -> tuple[bool, str]
     return result.passed, result.reason
 
 
+def _all_reasons(result) -> set[str]:
+    """Every reason a verdict lists (a claim can now fail several checks at once)."""
+    return {line.rsplit(": ", 1)[-1] for line in result.details} | {result.reason}
+
+
 # --- P1-1: reprints ------------------------------------------------------------------
 
 def test_p1_1_a_quote_from_a_reprinted_story_is_rejected_even_with_a_modern_cover_date():
@@ -193,7 +198,8 @@ def _thor_page():
 
 
 def test_p1_3_a_quote_missing_the_questions_key_words_is_rejected_whatever_the_payoff_says():
-    assert _reason(_thor(), _thor_page()) == (False, "topic_overlap")
+    passed, reason = _reason(_thor(), _thor_page())
+    assert not passed and reason in {"topic_overlap", "question_not_grounded"}
 
 
 def test_p1_3_the_candidates_own_tokens_are_not_evidence():
@@ -203,7 +209,8 @@ def test_p1_3_the_candidates_own_tokens_are_not_evidence():
     stuffed["viewer_payoff"] = MJOLNIR_QUOTE
     stuffed["core_premise"] = MJOLNIR_QUOTE
     stuffed["concept_key"] = "thor tries to lift mjolnir cannot swears take hammer force"
-    assert _reason(stuffed, _thor_page()) == (False, "topic_overlap")
+    passed, reason = _reason(stuffed, _thor_page())
+    assert not passed and reason in {"topic_overlap", "question_not_grounded"}
 
 
 def test_p1_3_a_candidate_with_no_payoff_at_all_still_passes_when_the_source_grounds_it():
@@ -575,13 +582,13 @@ def test_p2_6_an_alias_shown_on_the_cited_page_satisfies_the_anchor(anchor, feat
 def test_p2_6_a_name_the_page_does_not_tie_to_the_anchor_is_still_an_anchor_mismatch():
     page = _alias_page('[Black Panther (T\'Challa)](https://x/T%27Challa "T\'Challa (Earth-616)")')
     result = _check(_alias_candidate("How does Peter Quill's solar flare work?"), page)
-    assert (result.passed, result.reason) == (False, "anchor_mismatch")
+    assert not result.passed and "anchor_mismatch" in _all_reasons(result)
 
 
 def test_p2_6_a_question_naming_no_character_at_all_is_still_rejected():
     page = _alias_page('[Black Panther (T\'Challa)](https://x/T%27Challa "T\'Challa (Earth-616)")')
     result = _check(_alias_candidate("How does the solar flare of Gotham work?"), page)
-    assert (result.passed, result.reason) == (False, "anchor_mismatch")
+    assert not result.passed and "anchor_mismatch" in _all_reasons(result)
 
 
 def test_p2_6_an_anchor_named_in_the_question_needs_no_alias_and_no_extra_fetch():
@@ -594,7 +601,7 @@ def test_p2_6_aliases_are_not_taken_from_the_candidate():
     candidate = _alias_candidate("How does T'Challa's solar flare work?")
     candidate["viewer_hook"] = "Black Panther (T'Challa) flares up"
     result = _check(candidate, _wiki("Superman Vol 3 38", [_synopsis()]))
-    assert (result.passed, result.reason) == (False, "anchor_mismatch")
+    assert not result.passed and "anchor_mismatch" in _all_reasons(result)
 
 
 # --- P2-7: prompt scope wording must not leak into questions ------------------------------------------

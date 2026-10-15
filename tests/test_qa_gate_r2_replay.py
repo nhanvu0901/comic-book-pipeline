@@ -58,7 +58,7 @@ EXPECTED = {
     8: (False, "year_not_found"),          # issue ran 1999, label 2011
     9: (False, "issue_year_unresolved"),   # graphic novel without #N
     10: (False, "no_synopsis"),            # synopsis "not yet written": blurb + pull-quote only
-    11: (False, "topic_overlap"),          # the quote never mentions worthiness
+    11: (False, "question_not_grounded"),  # "worthiness" is nowhere in the synopsis (R3: was topic_overlap)
     12: (False, "quote_not_found"),        # reader gave Cloudflare; the quote was edited
     13: (False, "list_needs_2_issues"),    # reader gave Cloudflare for #31; its quote is edited
     # run C (5/5 passed, 4 true + 1 hedge payoff + 1 stitched claim)
@@ -68,7 +68,7 @@ EXPECTED = {
     17: (True, ""),
     18: (False, "no_synopsis"),            # asks about T'Challa: alias ok; page has only a blurb
     19: (True, ""),                        # only the verified claim (#40) may be returned
-    20: (False, "topic_overlap"),          # webbing as a "tool": the synopses never say so
+    20: (False, "question_not_grounded"),  # webbing as a "tool": the synopses never say so
 }
 
 

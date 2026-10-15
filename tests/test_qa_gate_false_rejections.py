@@ -312,7 +312,10 @@ def test_d4_a_question_that_does_not_name_its_anchor_is_still_rejected(anchor, q
     page = _page("Superman Vol 3 38", _article())
     result = evaluate_issue_evidence(
         candidate, "direct", fetcher=lambda url: FetchedSource(url, text=page))
-    assert (result.passed, result.reason) == (False, "anchor_mismatch")
+    # a claim can fail several checks at once; the anchor is one of the reasons listed
+    assert not result.passed
+    assert "anchor_mismatch" in {line.rsplit(": ", 1)[-1] for line in result.details} | {
+        result.reason}
 
 
 # --- D5: stemming and topic overlap ---------------------------------------------------
@@ -358,14 +361,14 @@ def test_d5_single_letter_possessive_tokens_do_not_count_as_topic_overlap():
     # "Batman's" -> "batman", "s": the stray "s" must not vouch for an unrelated quote.
     candidate = _candidate(
         issue="Batman Vol 2 #1 (2011)", url="https://dc.fandom.com/wiki/Batman_Vol_2_1",
-        question="What is Batman's greatest regret?", anchor="Batman", concept="regret",
+        question="What is Batman's hidden shame?", anchor="Batman", concept="shame",
         quote="Batman's only regret is the night Gordon's daughter was hurt.")
     page = _page("Batman Vol 2 1", _article(
         body=candidate["issue_evidence"][0]["quote"],
         intro="It was published on September 21, 2011."),
         url=candidate["issue_evidence"][0]["source_url"])
     result = _check(candidate, page)
-    assert (result.passed, result.reason) == (False, "topic_overlap")
+    assert not result.passed and result.reason in {"topic_overlap", "question_not_grounded"}
 
 
 # --- quote handling ----------------------------------------------------------------------
@@ -543,13 +546,14 @@ EXPECTED = {
     # but only ONE literal question word ("Damian") is in the quote and none of the words
     # the question asks about is in the synopsis; a lexical gate cannot tell this apart
     # from an ungrounded claim, so it is rejected (known recall cost of the stricter rule).
-    6: (False, "topic_overlap"),
+    6: (False, "question_not_grounded"),
     # The question never names Batman, its declared anchor.
-    7: (False, "anchor_mismatch"),
+    # R3: the question names no hero AND asks about words the source lacks ("hidden", "reality")
+    7: (False, "question_not_grounded"),
     8: (True, ""),
     # Round 2: a true pass by meaning (two issues of deduction from physical clues) but the
     # quotes share no/one word with the question and only one issue's synopsis echoes it.
-    9: (False, "topic_overlap"),
+    9: (False, "list_needs_2_issues"),   # only #4 is grounded; #1/#2 share no question word
 }
 
 

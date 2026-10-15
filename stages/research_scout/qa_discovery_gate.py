@@ -49,7 +49,30 @@ _FRAME = frozenset(
     "revealed show shows showed explain explains example examples distinct different way ways "
     "kind kinds type types thing things time times one ones make makes made get gets got let "
     "lets say says said go goes went going come comes came use uses used using action actions "
-    "modern print original issue issues published later earlier comic comics".split()
+    "modern print original issue issues published later earlier comic comics "
+    # evaluative words: opinions about the thing, not part of what it is
+    "terrifying scary frightening horrifying terrible horrible awful dangerous deadly powerful "
+    "strongest strong weak weakest real true actual main key major minor big huge small tiny "
+    "great greatest best worst ultimate famous special unique important practical ordinary "
+    "familiar effective decisive amazing incredible shocking surprising strange weird brutal "
+    "epic insane crazy simple complex hard easy possible impossible exact particular specific "
+    "certain several various whole entire complete total full "
+    "secretly effectively truly finally suddenly quickly directly completely totally simply "
+    "barely nearly mostly mainly usually basically literally immediately eventually "
+    # generic nouns a question asks "about" rather than names
+    "threat danger problem reason reasons cause causes effect effects result results "
+    "consequence consequences price method means rule rules secret secrets mystery limit "
+    "limits limitation limitations access "
+    # light verbs of a question frame
+    "stop stops stopped stopping prevent prevents avoid allow allows allowed help helps caused "
+    "try tries tried trying want wants need needs decide decides decided manage manages "
+    "managed begin begins began keep keeps kept become becomes became becoming take takes "
+    "took taken taking give gives gave given expose exposes exposed exposing uncover "
+    "discover discovers learn learns know knows realize respond responds responded react "
+    "reacts end ends ended "
+    # reflexive and indefinite words
+    "selves self oneself someone somebody something anyone anybody anything everyone "
+    "everybody everything nothing nobody anymore".split()
 )
 _TOPIC_SUFFIX = frozenset({
     "world", "universe", "timeline", "reality", "continuity",
@@ -60,6 +83,13 @@ _ISSUE_NUMBER = re.compile(r"#\s*(\d+(?:\.\d+)?[a-z]?)\b", re.IGNORECASE)
 _TITLE_ISSUE = re.compile(
     r"(?:\bvol(?:ume)?\.?\s*\d+\)?\s*#?\s*|#\s*|\bissue\s*(?:no\.?\s*)?#?\s*)"
     r"(\d+(?:\.\d+)?[a-z]?)(?!\w)", re.IGNORECASE)
+_VOL_NUMBER = re.compile(r"\bvol(?:ume)?\.?\s*\d+\s+(?:#\s*)?(\d+(?:\.\d+)?[a-z]?)(?![\w])",
+                         re.IGNORECASE)
+_ISSUE_WORD = re.compile(r"\bissue\s*(?:no\.?\s*)?#?\s*(\d+(?:\.\d+)?[a-z]?)(?![\w])",
+                         re.IGNORECASE)
+# "A. ... B", "A… B", "A [...] B", "A (...) B": a quote the model joined from separate passages
+_ELLIPSIS = re.compile(r"\s*(?:\[\s*(?:\.{3}|…)\s*\]|\(\s*(?:\.{3}|…)\s*\)|\.{3,}|…)\s*")
+_MIN_FRAGMENT_WORDS = 3
 _HEADING = re.compile(r"(?m)^(#{1,6}\s.*)$")
 _TEASER_HEADING = re.compile(r"solicit|teaser", re.IGNORECASE)
 _SYNOPSIS_HEADING = re.compile(r"^#{1,6}\s+synopsis\b", re.IGNORECASE)
@@ -67,6 +97,12 @@ _SYNOPSIS_PLACEHOLDER = re.compile(r"synopsis\s+not\s+yet\s+written", re.IGNOREC
 _REPRINT_OPENING = re.compile(
     r"^[\W_]*(?:reprint(?:ed|s)?\s+(?:of|from|in)\b|this\s+(?:is\s+)?a\s+reprint)", re.IGNORECASE)
 _BOILERPLATE_HEADING = re.compile(r"cookie|categories\s*&\s*purposes|consent|privacy", re.IGNORECASE)
+# A wiki's "this is a stub, help by expanding it" boilerplate is no more a synopsis than the
+# "not yet written" placeholder.
+_STUB_NOTICE = re.compile(
+    r"(?i)this\s+(?:article|synopsis|section|page|issue)\s+(?:is\s+)?(?:a\s+)?(?:stub|incomplete)\b[^\n]*"
+    r"|(?:you\s+can\s+)?help\s+[\w ]{0,40}?by\s+(?:expanding|adding)[^\n]*"
+    r"|needs?\s+to\s+be\s+(?:written|expanded)[^\n]*")
 _MIN_SYNOPSIS_CHARS = 20
 _ANCHOR_JOIN = re.compile(r"\s+(?:and|&|vs\.?|versus)\s+|\s*[/,+]\s*", re.IGNORECASE)
 
@@ -84,17 +120,18 @@ _PROSE_DATE = re.compile(
     rf"(?i)\b(?:published|released|on\s+sale)(?:\s+on)?\s+(?:the\s+)?{_DATE_TEXT}")
 _COVER_DATE = re.compile(rf"(?i)\bcover\s+date(?:\s+of|\s*:)?\s*\[?\s*{_DATE_TEXT}")
 
-# Why a claim failed, in the order a claim is checked; a candidate with several
-# failing claims reports the one that got furthest.
-_CLAIM_STAGES = (
-    "issue_year_unresolved", "year_out_of_range", "source_not_issue_page", "quote_missing",
-    "topic_overlap", "fetch_failed", "series_title_mismatch", "issue_number_not_found",
-    "anchor_mismatch", "year_not_found", "quote_not_found", "no_synopsis", "pull_quote_only",
-    "quote_not_in_synopsis", "teaser_only_source", "reprint_source", "question_not_grounded",
+# How much a reason says about the source, least first. A claim can now fail several checks at
+# once; the candidate reports the one that matters most (details lists them all): a model-format
+# slip (the anchor) or a lexical miss must never hide a wrong issue, a reprint or a quote that
+# is not on the page.
+_IMPORTANCE = (
+    "anchor_mismatch", "topic_overlap", "question_not_grounded", "quote_not_in_synopsis",
+    "teaser_only_source", "pull_quote_only", "no_synopsis", "quote_not_found",
+    "reprint_source", "year_not_found", "issue_number_not_found", "series_title_mismatch",
+    "fetch_failed", "fetch_timeout", "page_blocked", "page_missing", "quote_missing",
+    "source_not_issue_page", "year_out_of_range", "issue_year_unresolved",
 )
-_STAGE_RANK = {reason: rank for rank, reason in enumerate(_CLAIM_STAGES)}
-for _alias in ("fetch_timeout", "page_blocked", "page_missing"):
-    _STAGE_RANK[_alias] = _STAGE_RANK["fetch_failed"]
+_STAGE_RANK = {reason: rank for rank, reason in enumerate(_IMPORTANCE)}
 # fetch error (FetchedSource.error) -> the reason a claim reports when its page is unusable
 _FETCH_REASON = {"timeout": "fetch_timeout", "challenge": "page_blocked",
                  "page_missing": "page_missing"}
@@ -242,12 +279,38 @@ def _identity_lines(text: str) -> list[str]:
     return named + headings[:80]
 
 
+@dataclass(frozen=True)
+class _Label:
+    series: str            # the series part of the label, up to the issue number
+    number: str
+    year: int | None
+
+
+def _parse_label(issue: str) -> _Label | None:
+    """The series, issue number and original year of a citation label: "Series #N (YYYY)",
+    "Series Vol V N (YYYY)", "Series (YYYY) Vol V N", "Series Issue N (YYYY)". The page then
+    confirms the number and year, so a looser label costs nothing."""
+    hashed = _ISSUE_NUMBER.search(issue)
+    if hashed:
+        return _Label(issue[:hashed.start()], hashed.group(1),
+                      issue_publication_year(issue, allow_series_year=True))
+    for pattern in (_VOL_NUMBER, _ISSUE_WORD):
+        found = pattern.search(issue)
+        if found:
+            after = _YEAR.findall(issue[found.end():])
+            before = _YEAR.findall(issue[:found.start(1)])
+            year = int(after[0]) if len(after) == 1 else (
+                int(before[0]) if not after and len(before) == 1 else None)
+            return _Label(issue[:found.start(1)], found.group(1), year)
+    return None
+
+
 def _page_issue_reason(text: str, issue: str) -> str | None:
-    number = _ISSUE_NUMBER.search(issue)
-    series = _series_terms(_YEAR.sub("", issue[:number.start()])) if number else set()
-    if number is None or not series:
+    label = _parse_label(issue)
+    series = _series_terms(_YEAR.sub("", label.series)) if label else set()
+    if label is None or not series:
         return "series_title_mismatch"
-    wanted = number.group(1).casefold()
+    wanted = label.number.casefold()
     same_series = False
     for line in _identity_lines(text):
         if not series <= _series_terms(line):
@@ -256,6 +319,34 @@ def _page_issue_reason(text: str, issue: str) -> str | None:
         if wanted in {found.casefold() for found in _TITLE_ISSUE.findall(line)}:
             return None
     return "issue_number_not_found" if same_series else "series_title_mismatch"
+
+
+# --- quotes, possibly joined with an ellipsis ----------------------------------------------------
+
+def _quote_fragments(quote: str) -> list[str]:
+    """The passages of a quote the model joined with an ellipsis; passages too short to prove
+    anything are dropped."""
+    # A passage cut short mid-sentence often gets a full stop of its own: ignore end punctuation.
+    parts = (part.strip(" \t\n\"'“”‘’.,;:!?") for part in _ELLIPSIS.split(quote))
+    return [part for part in parts if len(part.split()) >= _MIN_FRAGMENT_WORDS]
+
+
+def _quote_in(haystack: str, quote: str) -> bool:
+    """Whether the quote is in ``haystack`` (already ``comparable_text``): verbatim, or — when
+    the model joined passages with an ellipsis — every passage verbatim and in the same order."""
+    whole = cited_sources.comparable_text(quote)
+    if whole and whole in haystack:
+        return True
+    if not _ELLIPSIS.search(quote):
+        return False
+    fragments = [cited_sources.comparable_text(f) for f in _quote_fragments(quote)]
+    position = 0
+    for fragment in fragments:
+        found = haystack.find(fragment, position)
+        if found < 0:
+            return False
+        position = found + len(fragment)
+    return bool(fragments)
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -268,7 +359,8 @@ def _is_real_synopsis(heading: str, body: str) -> bool:
     """A "Synopsis for ..." section with story text, not the "not yet written" placeholder."""
     if not _SYNOPSIS_HEADING.match(heading):
         return False
-    story = re.sub(r"[\W_]+", " ", _SYNOPSIS_PLACEHOLDER.sub("", body)).strip()
+    plain = _STUB_NOTICE.sub("", _SYNOPSIS_PLACEHOLDER.sub("", cited_sources._visible_markdown_text(body)))
+    story = re.sub(r"[\W_]+", " ", plain).strip()
     return len(story) >= _MIN_SYNOPSIS_CHARS
 
 
@@ -276,8 +368,9 @@ def _blockquote_text(body: str) -> str:
     return "\n".join(line[1:] for line in body.splitlines() if line.lstrip().startswith(">"))
 
 
-def _synopsis_check(text: str, quote: str) -> tuple[str | None, str]:
-    """(why the quote is not backed by a real synopsis or None, the synopsis text holding it).
+def _synopsis_check(text: str, quote: str) -> tuple[str | None, str, bool]:
+    """(why the quote is not backed by a real synopsis or None, the synopsis text holding it,
+    whether the page has a synopsis structure at all).
 
     Wiki issue pages are structured: one "Synopsis for ..." section per story, plus a
     solicitation blurb, a pull-quote under the page title, notes and trivia. Only the
@@ -286,22 +379,24 @@ def _synopsis_check(text: str, quote: str) -> tuple[str | None, str]:
     Flat pages (no headings: catalog records) have no structure to judge."""
     sections = _sections(text)
     if not any(h and not _BOILERPLATE_HEADING.search(h) for h, _ in sections):
-        return None, text
+        return None, text, False
     real = [(h, b) for h, b in sections if _is_real_synopsis(h, b)]
     if not real:
-        return "no_synopsis", ""
-    needle = cited_sources.comparable_text(quote)
-    holders = [(h, b) for h, b in sections if needle in cited_sources.comparable_text(b)]
+        return "no_synopsis", "", True
+    holders = [(h, b) for h, b in sections if _quote_in(cited_sources.comparable_text(b), quote)]
     inside = [(h, b) for h, b in holders if (h, b) in real]
+    if not holders and _ELLIPSIS.search(quote):
+        return "quote_not_found", "", True    # passages from different sections: stitched
     if not inside:
         if holders and all(_TEASER_HEADING.search(h) for h, _ in holders):
-            return "teaser_only_source", ""
-        if any(needle in cited_sources.comparable_text(_blockquote_text(b)) for _, b in holders):
-            return "pull_quote_only", ""
-        return "quote_not_in_synopsis", ""
+            return "teaser_only_source", "", True
+        if any(_quote_in(cited_sources.comparable_text(_blockquote_text(b)), quote)
+               for _, b in holders):
+            return "pull_quote_only", "", True
+        return "quote_not_in_synopsis", "", True
     if all(_REPRINT_OPENING.match(b.lstrip(" \t\n*-•")) for _, b in inside):
-        return "reprint_source", ""
-    return None, "\n".join(b for _, b in inside)
+        return "reprint_source", "", True
+    return None, "\n".join(b for _, b in inside), True
 
 
 # --- the gate ----------------------------------------------------------------
@@ -366,14 +461,20 @@ class _Ask:
 
     content: frozenset[str]        # the question's content words, anchor removed
     concept: frozenset[str]        # the concept label's content words, anchor removed
+    anchor: frozenset[str]         # the anchor's words
     groups: tuple[frozenset[str], ...]
     question_terms: frozenset[str]
     named: bool                    # the question names the anchor itself
 
-    def terms(self, alias: frozenset[str] = frozenset()) -> tuple[set[str], set[str], int]:
-        """(question stems, the ones the concept does not name, how many a quote must echo)."""
-        core = _stemmed_terms(self.content - alias)
-        return core, core - _stemmed_terms(self.concept - alias), min(2, len(core))
+    def terms(self, remove: frozenset[str] = frozenset()) -> tuple[set[str], set[str], int]:
+        """(stems the question is about, those the concept label does not already name, how
+        many of the first a synopsis must echo). ``remove`` is what is not topic here: the anchor's
+        alias and the cited series' own title. A question about nothing but the anchor is about
+        the anchor."""
+        core = _stemmed_terms(self.content - remove)
+        if not core:
+            return _stemmed_terms(self.anchor), set(), min(2, len(self.anchor))
+        return core, core - _stemmed_terms(self.concept - remove), min(2, len(core))
 
 
 def evaluate_issue_evidence(
@@ -404,9 +505,7 @@ def evaluate_issue_evidence(
     ask = _Ask(
         content=frozenset(_content_terms(question) - anchor_terms),
         concept=frozenset(_content_terms(concept) - anchor_terms),
-        groups=groups, question_terms=question_terms, named=named)
-    if named and not ask.content:
-        return GateResult(False, "topic_overlap", ("the question says nothing beyond its anchor",))
+        anchor=frozenset(anchor_terms), groups=groups, question_terms=question_terms, named=named)
 
     claims = candidate.get("issue_evidence")
     claims = [c for c in claims[:_MAX_CLAIMS] if isinstance(c, Mapping)] \
@@ -422,13 +521,13 @@ def evaluate_issue_evidence(
     pages: dict[str, cited_sources.FetchedSource] = {}
     for claim in claims:
         issue = str(claim.get("issue") or "").strip()
-        reason, kept = _claim_reason(claim, issue, ask, fetcher, pages)
-        if reason is None:
+        reasons, kept = _claim_failures(claim, issue, ask, fetcher, pages)
+        if not reasons:
             verified.setdefault(canonical_topic(issue), kept)
             if len(verified) >= required:
                 return GateResult(True, claims=tuple(verified.values()))
         else:
-            failures.append((issue, reason))
+            failures.extend((issue, reason) for reason in reasons)
     details = tuple(f"{issue or '(no issue label)'}: {reason}" for issue, reason in failures)
     if required > 1 and verified:
         return GateResult(False, "list_needs_2_issues", details)
@@ -443,60 +542,127 @@ def _names_someone(question: str) -> bool:
     return any(word[:1].isupper() for word in re.findall(r"[^\W\d_][\w'’-]*", question)[1:])
 
 
-def _page_aliases(text: str, groups) -> list[list[str]]:
-    """Names the cited page itself gives the anchor: wiki character links read
-    ``[Hero (Real Name)](...)`` or ``[Real Name (Hero)](...)``. Returned as word lists."""
-    found: list[list[str]] = []
-    for match in cited_sources._INLINE_LINK.finditer(text):
-        shown = re.fullmatch(r"\s*(.+?)\s*\(([^()]+)\)\s*", match.group(1))
-        if shown is None:
-            continue
-        head, inner = shown.groups()
-        head_terms, inner_terms = _topic_terms(head), _topic_terms(inner)
-        for group in groups:
-            if group <= head_terms:
-                alias = inner
-            elif group <= inner_terms:
-                alias = head
-            else:
-                continue
-            words = [w for w in _WORD.findall(alias.casefold())
-                     if w not in _GENERIC and (len(w) > 1 or w.isdigit())]
-            if words and words not in found:
-                found.append(words)
-    return found[:8]
+# Words a wiki puts in parentheses to tell pages apart ("(Earth-616)", "(Volume 1)", "(Symbiote)").
+_DISAMBIGUATION = frozenset(
+    "earth prime universe multiverse volume vol new post pre crisis rebirth flashpoint item event "
+    "organization team location symbiote group race species object weapon vehicle story comic "
+    "film movie tv series".split())
+_LINK = re.compile(r'\[([^\[\]]{1,120})\]\((?:[^()\s"]|\([^()]*\))*(?:\s+"([^"]*)")?\)')
+_TRAILING_PAREN = re.compile(r"(.+?)\s*\(([^()]+)\)\s*")
+_MAX_LINKS = 3000
 
 
-def _alias_in_question(text: str, ask: _Ask) -> frozenset[str] | None:
+def _is_name(text: str) -> bool:
+    return any(not w.isdigit() for w in _content_terms(text) - _DISAMBIGUATION)
+
+
+def _split_names(label: str) -> list[tuple[str, str]]:
+    """Name pairs a wiki link label states: "Hero (Real Name)", "Real Name (Hero)",
+    "Hero/Real Name (Earth 0)"; disambiguation tags are not names."""
+    pairs: list[tuple[str, str]] = []
+    base = label.strip()
+    while True:
+        parenthesised = _TRAILING_PAREN.fullmatch(base)
+        if parenthesised is None:
+            break
+        head, inner = parenthesised.groups()
+        if _is_name(inner) and _is_name(head):
+            pairs.append((head.strip(), inner.strip()))
+        base = head.strip()
+    parts = [part.strip() for part in base.split("/") if _is_name(part)]
+    pairs.extend((parts[i], parts[j]) for i in range(len(parts)) for j in range(i + 1, len(parts)))
+    return pairs
+
+
+class _Aliases:
+    """The names the cited page itself equates: wiki character links read
+    ``[Hero (Real Name)](...)``, ``[Hero/Real Name](...)`` or ``[Hero](... "Real Name (Earth-616)")``.
+    Used for the anchor (the question may name the person, not the hero) and for the content
+    words of the question (the question says "Punisher", the synopsis says "Castle")."""
+
+    def __init__(self, text: str) -> None:
+        pairs: list[tuple[str, str]] = []
+        for index, link in enumerate(_LINK.finditer(text)):
+            if index >= _MAX_LINKS:
+                break
+            display, title = link.group(1).strip(), (link.group(2) or "").strip()
+            pairs.extend(_split_names(display))
+            pairs.extend(_split_names(title))
+            head = _TRAILING_PAREN.sub(lambda m: m.group(1), title).strip()
+            if (display[:1].isupper() and head[:1].isupper() and _is_name(display)
+                    and _is_name(head) and not _topic_terms(display) & _topic_terms(head)):
+                pairs.append((display, head))
+        self.pairs = pairs
+        self._equivalent: dict[str, set[str]] = {}
+        for left, right in pairs:
+            left_stems = _stemmed_terms(_content_terms(left) - _DISAMBIGUATION)
+            right_stems = _stemmed_terms(_content_terms(right) - _DISAMBIGUATION)
+            for stem in left_stems:
+                self._equivalent.setdefault(stem, set()).update(right_stems)
+            for stem in right_stems:
+                self._equivalent.setdefault(stem, set()).update(left_stems)
+
+    def for_anchor(self, groups) -> list[list[str]]:
+        """Alias word lists for the anchor: the other side of every pair that names it."""
+        found: list[list[str]] = []
+        for left, right in self.pairs:
+            left_terms, right_terms = _topic_terms(left), _topic_terms(right)
+            for group in groups:
+                if group <= left_terms:
+                    alias = right
+                elif group <= right_terms:
+                    alias = left
+                else:
+                    continue
+                words = [w for w in _WORD.findall(alias.casefold())
+                         if w not in _GENERIC and w not in _DISAMBIGUATION
+                         and (len(w) > 1 or w.isdigit())]
+                if words and words not in found:
+                    found.append(words)
+        return found[:12]
+
+    def echoes(self, wanted: set[str], haystack: set[str]) -> set[str]:
+        """The wanted stems present in the haystack, directly or through an alias."""
+        return {stem for stem in wanted
+                if stem in haystack or self._equivalent.get(stem, set()) & haystack}
+
+
+def _alias_in_question(aliases: _Aliases, ask: _Ask) -> frozenset[str] | None:
     """The alias words the question uses for its anchor, per the cited page, else None."""
-    for words in _page_aliases(text, ask.groups):
+    for words in aliases.for_anchor(ask.groups):
         if set(words) <= ask.question_terms or (
                 len(words) > 1 and len(words[-1]) >= 4 and words[-1] in ask.question_terms):
             return frozenset(words)
     return None
 
 
-def _claim_reason(
+def _claim_failures(
     claim: Mapping[str, Any], issue: str, ask: _Ask,
     fetcher: Callable[[str], cited_sources.FetchedSource],
     pages: dict[str, cited_sources.FetchedSource],
-) -> tuple[str | None, Mapping[str, Any]]:
-    """(None, claim) when this one claim is verified — the claim as verified, with the
-    corrected URL if its slug had to be fixed — else (the name of the check it failed, claim)."""
+) -> tuple[list[str], Mapping[str, Any]]:
+    """([], claim) when this one claim is verified — the claim as verified, with the corrected
+    URL if its slug had to be fixed — else (every check it failed that could still be run, claim).
+
+    Checks that cannot go on without their input (a year, a page, the quote) stop the claim;
+    the rest (the anchor, the year on the page) are recorded and the claim is judged on, so a
+    model-format slip never hides a real defect of the source."""
     url = str(claim.get("source_url") or "").strip()
     quote = str(claim.get("quote") or "").strip()
-    year = issue_publication_year(issue, allow_series_year=True)
+    label = _parse_label(issue)
+    year = label.year if label else None
     if year is None:
-        return "issue_year_unresolved", claim
+        return ["issue_year_unresolved"], claim
     if not MIN_PUBLICATION_YEAR <= year <= date.today().year:
-        return "year_out_of_range", claim
+        return ["year_out_of_range"], claim
     if not url.startswith(("https://", "http://")) or not _issue_page_url(url):
-        return "source_not_issue_page", claim
+        return ["source_not_issue_page"], claim
     if not quote:
-        return "quote_missing", claim
+        return ["quote_missing"], claim
     quote_stems = _stemmed_terms(_content_terms(quote))
-    if ask.named and not ask.terms()[0] & quote_stems:
-        return "topic_overlap", claim
+    not_topic = frozenset(_series_terms(_YEAR.sub("", label.series)))
+    if ask.named and not (ask.terms(not_topic)[0] | _stemmed_terms(ask.anchor)) & quote_stems:
+        return ["topic_overlap"], claim
 
     source = _fetch_once(url, pages, fetcher)
     if not source.ok and source.error == "page_missing":
@@ -506,31 +672,64 @@ def _claim_reason(
                 url, source, claim = variant, retry, {**claim, "source_url": variant}
                 break
     if not source.ok:
-        return _FETCH_REASON.get(source.error, "fetch_failed"), claim
+        return [_FETCH_REASON.get(source.error, "fetch_failed")], claim
     page_reason = _page_issue_reason(source.text, issue)
     if page_reason:
-        return page_reason, claim
+        return [page_reason], claim
+
+    failed: list[str] = []
+    aliases = _Aliases(source.text)
     alias: frozenset[str] = frozenset()
     if not ask.named:
-        found = _alias_in_question(source.text, ask)
+        found = _alias_in_question(aliases, ask)
         if found is None:
-            return "anchor_mismatch", claim
-        alias = found
+            failed.append("anchor_mismatch")
+        else:
+            alias = found
     if year not in _publication_years(source.text):
-        return "year_not_found", claim
-    if not cited_sources.quote_matches_source(cited_sources.ClaimCitation(url, quote), source):
-        return "quote_not_found", claim
-    synopsis_reason, story = _synopsis_check(source.text, quote)
+        failed.append("year_not_found")
+    same_page = cited_sources.canonical_url(url) == cited_sources.canonical_url(source.url)
+    if not same_page or not _quote_in(cited_sources.comparable_text(source.text), quote):
+        return failed + ["quote_not_found"], claim
+    synopsis_reason, story, structured = _synopsis_check(source.text, quote)
     if synopsis_reason:
-        return synopsis_reason, claim
-    core, specific, needed = ask.terms(alias)
-    echoed = len(core & quote_stems)
-    asked = specific & _stemmed_terms(_content_terms(story))
-    if echoed == 0 or (echoed < needed and not (echoed >= 1 and len(asked) >= 2)):
-        return "topic_overlap", claim
-    if specific and not asked:
-        return "question_not_grounded", claim
-    return None, claim
+        return failed + [synopsis_reason], claim
+    lexical = _lexical_failure(
+        ask, aliases, alias | not_topic, quote_stems, _stemmed_terms(_content_terms(story)),
+        structured)
+    return failed + ([lexical] if lexical else []), claim
+
+
+def _lexical_failure(
+    ask: _Ask, aliases: _Aliases, remove: frozenset[str], quote_stems: set[str],
+    story_stems: set[str], structured: bool,
+) -> str | None:
+    """Whether the question's own words are in the source: a ``topic_overlap`` /
+    ``question_not_grounded`` reason, or None.
+
+    ``core`` is what the question is about; subjective and frame words, the anchor, its alias and
+    the cited series' title are not in it. A name the page equates ("Punisher" = "Frank Castle")
+    counts for either spelling.
+
+    A quote inside a written synopsis (``structured``) must share a core word with the question or
+    be about the anchor, and the synopsis must carry what the question asks: when it asks about
+    something its concept label does not already name (``specific``), at least one such word
+    ("worthiness", "physique") has to be there; when it only restates the concept, the synopsis
+    must echo two of its words. A flat catalogue page (no synopsis to lean on) keeps the strict
+    rule: the quote itself echoes two."""
+    core, specific, needed = ask.terms(remove)
+    echo_quote = aliases.echoes(core, quote_stems)
+    if not structured:
+        asked = aliases.echoes(specific, story_stems)
+        if len(echo_quote) < needed and not (echo_quote and len(asked) >= 2):
+            return "topic_overlap"
+        return "question_not_grounded" if specific and not asked else None
+    about_anchor = bool((_stemmed_terms(ask.anchor) | _stemmed_terms(remove)) & quote_stems)
+    if not echo_quote and not about_anchor:
+        return "topic_overlap"
+    if specific:
+        return None if aliases.echoes(specific, story_stems) else "question_not_grounded"
+    return None if len(aliases.echoes(core, story_stems)) >= needed else "topic_overlap"
 
 
 def _fetch_once(

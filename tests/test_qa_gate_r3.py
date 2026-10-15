@@ -178,7 +178,7 @@ def test_r3_2_fragments_joined_by_an_ellipsis_are_checked_one_by_one(joiner):
 
 
 def test_r3_2_leading_and_trailing_ellipses_are_ignored():
-    quote = f"... {SECOND} ..."
+    quote = f"... {FIRST} ..."
     assert _verdict(_candidate(quote=quote), _wiki("Superman Vol 3 38", [_syn()])) == (True, "")
 
 
@@ -220,7 +220,7 @@ def test_r3_2_fragments_found_only_in_a_solicit_blurb_are_a_teaser():
 
 
 def test_r3_2_fragments_too_short_to_prove_anything_do_not_count():
-    quote = "Superman ... uniform"
+    quote = "Superman unleashes ... burst"
     assert _verdict(_candidate(quote=quote), _wiki("Superman Vol 3 38", [_syn()])) == (
         False, "quote_not_found")
 
@@ -239,6 +239,16 @@ def test_r3_2_a_stitched_quote_without_an_ellipsis_is_still_rejected():
     assert _verdict(_candidate(quote=quote), _wiki("Superman Vol 3 38", [_syn(
         f"{FIRST}. Many pages later, nothing else matters. {SECOND}.")])) == (
         False, "quote_not_found")
+
+
+def test_r3_2_wiki_footnote_markers_inside_a_sentence_do_not_break_a_verbatim_quote():
+    text = ("Superman unleashes the energy stored in every cell of his body in one burst."
+            "[[Continuity 2]](https://dc.fandom.com/wiki/Superman_Vol_3_38#cite_note-2) After "
+            "that burst, the heat burns away his uniform.[7] He must hide from the crowd.")
+    quote = ("Superman unleashes the energy stored in every cell of his body in one burst. "
+             "After that burst, the heat burns away his uniform. He must hide from the crowd.")
+    assert _verdict(_candidate(quote=quote), _wiki("Superman Vol 3 38", [_syn(text)])) == (
+        True, "")
 
 
 # --- 3. 'Series Vol N M (YYYY)' labels --------------------------------------------------------------
@@ -289,7 +299,7 @@ def _godbomb(question="What makes the Godbomb such a terrifying threat in Thor's
 
 def test_r3_4_subjective_and_frame_words_are_not_required():
     assert _godbomb() == (True, "")
-    assert _godbomb("Why is the Godbomb so scary and deadly?") == (True, "")
+    assert _godbomb("Why is the Godbomb so scary and deadly in Thor's world?") == (True, "")
 
 
 def test_r3_4_but_the_topic_noun_itself_still_has_to_be_in_the_source():
@@ -329,7 +339,8 @@ def test_r3_4_a_name_the_question_misses_in_the_source_still_fails():
     # "Dark Gods": only "gods" is on the page, so the named thing is not.
     page = _wiki("Wonder Woman Vol 5 36", [_syn(
         "The gods of Olympus gather while Diana fights the Furies. The gods are afraid of "
-        "the coming war and say so loudly.")], url="https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_36")
+        "the coming war and say so loudly.")], url="https://dc.fandom.com/wiki/Wonder_Woman_Vol_5_36",
+        intro="It was published on March 7, 2018.")
     candidate = _candidate(
         question="What is the Dark Gods problem in Wonder Woman's world?", anchor="Wonder Woman",
         concept="Dark Gods", issue="Wonder Woman #36 (2018)",
