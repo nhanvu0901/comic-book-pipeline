@@ -36,6 +36,7 @@ from stages.research_scout.workflow import _strip_scope_phrases
 
 FIXTURES = Path(__file__).parent / "fixtures"
 R3, R4 = FIXTURES / "qa_gate_r3", FIXTURES / "qa_gate_r4"
+PROMPT = Path(__file__).parents[1] / "research_prompts/qa_answer_check.v1.md"
 CANDIDATES = (json.loads((R3 / "candidates.json").read_text("utf-8"))
               + json.loads((R4 / "candidates.json").read_text("utf-8")))
 PROBES = json.loads((R4 / "probes.json").read_text("utf-8"))
@@ -48,6 +49,11 @@ for folder in (R3, R4):
 
 PASS = (True, frozenset())
 SEMANTIC_NO = frozenset({"answer_not_supported", "payoff_not_supported"})
+
+
+def _prompt_content_sha256(path: Path) -> str:
+    """Hash the prompt text passed to the checker, independent of checkout line endings."""
+    return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
 def fail(*reasons):
@@ -195,10 +201,18 @@ def test_replay_has_the_recorded_semantic_answers_it_needs():
         assert len(matching) == 1
         provenance = matching[0]["provenance"]
         assert provenance["model"] and provenance["temperature"] == 0
-        assert provenance["prompt_sha256"] == hashlib.sha256(
-            (Path(__file__).parents[1] / "research_prompts/qa_answer_check.v1.md").read_bytes()
-        ).hexdigest()
+        assert provenance["prompt_sha256"] == _prompt_content_sha256(PROMPT)
         assert provenance["recorded_at_utc"]
+
+
+def test_prompt_integrity_hash_ignores_checkout_line_endings_but_detects_edits(tmp_path):
+    prompt = PROMPT.read_text(encoding="utf-8").encode("utf-8")
+    copy = tmp_path / "prompt.md"
+    copy.write_bytes(prompt.replace(b"\n", b"\r\n"))
+    expected = _prompt_content_sha256(PROMPT)
+    assert _prompt_content_sha256(copy) == expected
+    copy.write_bytes(prompt.replace(b"\n", b"\r\n") + b"changed\r\n")
+    assert _prompt_content_sha256(copy) != expected
 
 
 @pytest.mark.parametrize("index", sorted(EXPECTED))
