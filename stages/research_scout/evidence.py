@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import date
 from enum import Enum
 import re
 from typing import Any
 
+from .micro_recency import (
+    MIN_PUBLICATION_YEAR,
+    _FACSIMILE_REPRINT,
+    issue_publication_year,
+    original_publication_year,
+)
 from .models import ScoutMode
 from .youcom import RawCall
 
@@ -71,8 +78,18 @@ def _candidate_mapping(candidate: Any) -> Mapping[str, Any] | None:
 def _has_exact_issue_and_year(candidate: Mapping[str, Any]) -> bool:
     value = str(candidate.get("series_issue_year", "")).strip()
     has_issue = bool(re.search(r"(?:#|\bissue\s*)\s*\d+", value, re.IGNORECASE))
-    has_year = bool(re.search(r"\b(?:19|20)\d{2}\b", value))
-    return has_issue and has_year
+    if not has_issue:
+        return False
+    year = issue_publication_year(value)
+    if year is None or year < MIN_PUBLICATION_YEAR or year > date.today().year:
+        return False
+    orig_year = original_publication_year(candidate)
+    if orig_year is not None and orig_year < MIN_PUBLICATION_YEAR:
+        return False
+    if _FACSIMILE_REPRINT.search(value) or candidate.get("is_reprint"):
+        if orig_year is None or orig_year < MIN_PUBLICATION_YEAR:
+            return False
+    return True
 
 
 def _has_visual_event(candidate: Mapping[str, Any]) -> bool:

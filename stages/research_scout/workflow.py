@@ -1760,9 +1760,6 @@ def _validate_new_general_candidates(
     rejected: list[dict[str, str]] = []
     seen = set(protected_fingerprints)
     seen_issue_keys: set[tuple[str, str, str]] = set(protected_keys or ())
-    explicit_period = bool(_NAMED_HISTORICAL_ERA_RE.search(user_intent)) or any(
-        int(year) < 2010 for year in _YEAR_RE.findall(user_intent)
-    )
     for candidate in candidates:
         candidate_id = str(candidate.get("id", ""))
         citation = cited_sources.claim_citation(candidate)
@@ -1810,7 +1807,7 @@ def _validate_new_general_candidates(
             if _NON_COMIC_RE.search(label) or _NON_COMIC_RE.search(str(candidate.get("title", ""))):
                 rejected.append({"candidate_id": candidate_id, "reason": "qa_not_comic"})
                 continue
-            if identity.year and int(identity.year) < 2010 and not explicit_period:
+            if identity.year and int(identity.year) < 2010:
                 rejected.append({"candidate_id": candidate_id, "reason": "qa_pre_2010"})
                 continue
         issue_key = _issue_key(str(candidate.get("series_issue_year", "")))

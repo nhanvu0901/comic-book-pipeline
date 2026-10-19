@@ -12,6 +12,7 @@ from typing import Any
 import config
 from config import get_project_dirs
 
+from datetime import date
 from stages.stage_1 import answer_research
 from stages.stage_1.storage import save_comic_context
 from utils.atomic_json import write_json_atomic
@@ -19,6 +20,12 @@ from utils.atomic_json import write_json_atomic
 from .evidence import GateFlag
 from .errors import ScoutUserError
 from .issue_identity import micro_issue_rejection_reason
+from .micro_recency import (
+    MIN_PUBLICATION_YEAR,
+    _FACSIMILE_REPRINT,
+    issue_publication_year,
+    original_publication_year,
+)
 from .models import ResearchSession, ScoutMode, SessionState
 from .storage import SessionStore
 from .workflow import _selected_series_detail, specific_search_artifact, verification_summary
@@ -420,9 +427,19 @@ def _unique_flags(flags: list[GateFlag]) -> list[GateFlag]:
 
 def _has_exact_issue_and_year(candidate: Mapping[str, Any]) -> bool:
     value = str(candidate.get("series_issue_year", "")).strip()
-    return bool(re.search(r"(?:#|\bissue\s*)\s*\d+", value, re.IGNORECASE)) and bool(
-        re.search(r"\b(?:19|20)\d{2}\b", value)
-    )
+    has_issue = bool(re.search(r"(?:#|\bissue\s*)\s*\d+", value, re.IGNORECASE))
+    if not has_issue:
+        return False
+    year = issue_publication_year(value)
+    if year is None or year < MIN_PUBLICATION_YEAR or year > date.today().year:
+        return False
+    orig_year = original_publication_year(candidate)
+    if orig_year is not None and orig_year < MIN_PUBLICATION_YEAR:
+        return False
+    if _FACSIMILE_REPRINT.search(value) or candidate.get("is_reprint"):
+        if orig_year is None or orig_year < MIN_PUBLICATION_YEAR:
+            return False
+    return True
 
 
 def _has_visual_event(candidate: Mapping[str, Any]) -> bool:

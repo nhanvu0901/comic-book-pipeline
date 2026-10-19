@@ -48,15 +48,18 @@ def test_qa_filter_rejects_old_range_adaptation_and_duplicate_issue_key():
     ]
 
 
-def test_qa_pre_2010_is_allowed_when_request_names_an_older_period():
-    candidate = _candidate(1, "Batman #57 (1988)")
+def test_qa_pre_2010_is_rejected_even_when_request_names_an_older_period():
+    old_cand = _candidate(1, "Batman #57 (1988)")
+    modern_cand = _candidate(2, "Batman #57 (2018)")
     accepted, validation = _validate_new_general_candidates(
-        [candidate], {canonical_url("https://sources.test/1")}, mode=ScoutMode.QA,
-        user_intent="In 1988, which Batman issue did this?", sources=[{"url": "https://sources.test/1"}],
+        [old_cand, modern_cand], {canonical_url("https://sources.test/1"), canonical_url("https://sources.test/2")},
+        mode=ScoutMode.QA,
+        user_intent="In 1988, which Batman issue did this?",
+        sources=[{"url": "https://sources.test/1"}, {"url": "https://sources.test/2"}],
         protected_fingerprints=set(),
     )
-    assert len(accepted) == 1
-    assert validation["rejected"] == []
+    assert [item["id"] for item in accepted] == ["c2"]
+    assert validation["rejected"] == [{"candidate_id": "c1", "reason": "qa_pre_2010"}]
 
 
 def test_qa_current_year_does_not_exempt_a_pre_2010_issue():
