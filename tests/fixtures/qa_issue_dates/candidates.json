@@ -1,0 +1,62 @@
+[
+  {
+    "angle": "direct",
+    "canonical_anchor": "Captain America",
+    "concept_key": "mantle",
+    "core_premise": "Steve Rogers recognizes that the Captain America mantle carries a cost, and he argues Bucky should keep it because giving it up could destroy him.",
+    "evidence_urls": [
+      "https://marvel.fandom.com/wiki/Captain_America:_Who_Will_Wield_the_Shield%3F_Vol_1_1"
+    ],
+    "issue_evidence": [
+      {
+        "issue": "Captain America: Who Will Wield the Shield? #1 (2010)",
+        "quote": "Rogers sees that the shield and the mask mean something to his friend, asking Bucky to remain Captain America. Returning to the sleeping Sharon, Rogers confesses that he suspects Bucky may die if he abandons the mantle.",
+        "source_url": "https://marvel.fandom.com/wiki/Captain_America:_Who_Will_Wield_the_Shield%3F_Vol_1_1"
+      }
+    ],
+    "proposed_format": "direct",
+    "question": "Why does Captain America want Bucky to keep wearing the shield?",
+    "sample_answer_items": [
+      "Steve sees that the shield and mask genuinely matter to Bucky.",
+      "He thinks Bucky may die if he gives up the mantle.",
+      "He chooses not to take the role back immediately."
+    ],
+    "subject": "Captain America",
+    "viewer_hook": "Why does Captain America think Bucky should stay Captain America?",
+    "viewer_payoff": "Steve’s answer is personal and dire: the mantle means something to Bucky, and Steve believes losing it could kill him.",
+    "why_fans_ask_it": "Fans debate this because the story makes the Captain America identity feel like more than a title; it becomes a life-or-death burden that changes who is fit to wear it.",
+    "id": "candidate-2",
+    "batch_incomplete": true,
+    "batch_expected": 5
+  },
+  {
+    "angle": "direct",
+    "canonical_anchor": "Wonder Woman",
+    "concept_key": "bracelets",
+    "core_premise": "Wonder Woman’s bracelets are not just defensive gear; they hide a built-in power that Zeus can unlock when Diana needs a decisive end to the fight.",
+    "evidence_urls": [
+      "https://dc.fandom.com/wiki/Wonder_Woman_Vol_3_39"
+    ],
+    "issue_evidence": [
+      {
+        "issue": "Wonder Woman #39 (2010)",
+        "quote": "Diana dives into the ocean and retrieves her bracelets from the body of Alkyone before smashing them together and summoning the lightning of Zeus. Instantly lightning forks from the skies and incinerates the Cottus.",
+        "source_url": "https://dc.fandom.com/wiki/Wonder_Woman_Vol_3_39"
+      }
+    ],
+    "proposed_format": "direct",
+    "question": "How do Wonder Woman's bracelets become a lightning weapon against Cottus?",
+    "sample_answer_items": [
+      "Diana recovers the bracelets and slams them together.",
+      "That action summons Zeus’s lightning.",
+      "The lightning instantly incinerates Cottus."
+    ],
+    "subject": "Wonder Woman",
+    "viewer_hook": "How do Wonder Woman's bracelets turn into Zeus's lightning?",
+    "viewer_payoff": "The story reveals that the bracelets contain an unlocked code from Zeus, letting Diana trigger a lightning strike that destroys Cottus.",
+    "why_fans_ask_it": "Fans ask because it flips an iconic accessory into a hidden power source, and the reveal changes how people understand what Diana’s bracelets really are.",
+    "id": "candidate-3",
+    "batch_incomplete": true,
+    "batch_expected": 5
+  }
+]

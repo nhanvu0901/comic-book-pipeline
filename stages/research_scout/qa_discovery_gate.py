@@ -118,9 +118,9 @@ _MONTH = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|
 # "published 2019 reviews" or a bare year is never mistaken for a release date.
 _DATE_TEXT = (rf"(?:{_MONTH},?\s+(?:\d{{1,2}}(?:st|nd|rd|th)?,?\s+)?"
               rf"|\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH},?\s+)((?:19|20)\d{{2}})\b")
-_DATE_LABEL = re.compile(
-    r"(?im)^\s*\*?\s*(?:Published(?!\s+Time\b)|Publication Date|Release Date|On Sale Date|"
-    r"Cover Date)\s*:?")
+_RELEASE_DATE_LABEL = re.compile(
+    r"(?im)^\s*\*?\s*(?:Published(?!\s+Time\b)|Publication Date|Release Date|On Sale Date)\s*:?")
+_COVER_DATE_LABEL = re.compile(r"(?im)^\s*\*?\s*Cover Date\s*:?")
 _PROSE_DATE = re.compile(
     rf"(?i)\b(?:published|released|on\s+sale)(?:\s+on)?\s+(?:the\s+)?{_DATE_TEXT}")
 _COVER_DATE = re.compile(rf"(?i)\bcover\s+date(?:\s+of|\s*:)?\s*\[?\s*{_DATE_TEXT}")
@@ -257,18 +257,31 @@ def _content_terms(value: str) -> set[str]:
 # --- reading a fetched page --------------------------------------------------
 
 def _publication_years(text: str) -> set[int]:
-    """Years the page itself states for the issue: labelled fields, the first
-    "published on <date>" sentence and the first "cover date" mention. The reader's own
-    ``Published Time:`` stamp is the article's, not the issue's, and is ignored."""
+    """The issue's release years, falling back to cover years only when no release is stated.
+
+    The reader's ``Published Time:`` stamp belongs to the article and is ignored.
+    """
+    release_years = _labelled_years(text, _RELEASE_DATE_LABEL)
+    found = _PROSE_DATE.search(text)
+    if found:
+        release_years.add(int(found.group(1)))
+    return release_years or _cover_publication_years(text)
+
+
+def _labelled_years(text: str, label: re.Pattern[str]) -> set[int]:
     years: set[int] = set()
-    for marker in _DATE_LABEL.finditer(text):
+    for marker in label.finditer(text):
         nearby = _YEAR.search(text[marker.end():marker.end() + 90])
         if nearby:
             years.add(int(nearby.group()))
-    for pattern in (_PROSE_DATE, _COVER_DATE):
-        found = pattern.search(text)
-        if found:
-            years.add(int(found.group(1)))
+    return years
+
+
+def _cover_publication_years(text: str) -> set[int]:
+    years = _labelled_years(text, _COVER_DATE_LABEL)
+    found = _COVER_DATE.search(text)
+    if found:
+        years.add(int(found.group(1)))
     return years
 
 
@@ -831,6 +844,12 @@ def _claim_failures(
         return [suspect or page_reason], claim, ""
 
     page_years = _publication_years(source.text)
+    # A later cover date cannot make a pre-2010 release eligible. Keep the
+    # usual year_not_found result for an unrelated wrong label on a page that
+    # supplies no conflicting cover year (the R4 contract).
+    if (any(y < MIN_PUBLICATION_YEAR for y in page_years)
+            and any(y >= MIN_PUBLICATION_YEAR for y in _cover_publication_years(source.text))):
+        return ["year_out_of_range"], claim, ""
     if suspect or year not in page_years:
         corrected = _corrected_year(page_years)
         if corrected is None:
@@ -905,4 +924,3 @@ def _fetch_once(
     if url not in pages:
         pages[url] = fetcher(url)
     return pages[url]
-
