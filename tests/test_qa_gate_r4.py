@@ -395,3 +395,45 @@ def test_b_a_malformed_model_verdict_does_not_leave_structurally_verified_claims
                           (ExampleVerdict("yes", EVIDENCE),)))
     result = evaluate_issue_evidence(candidate, "direct", fetcher=_two_pages(), semantic=model)
     assert (result.passed, result.reason, result.claims) == (False, "semantic_check_error", ())
+
+
+def test_live_qa_positive_passes_and_wrong_focus_negative_is_rejected():
+    """Meaningful regression test for Live QA:
+    - Positive: genuinely grounded candidate with matching evidence passes semantic gate.
+    - Negative: wrong-focus probe (off-topic or ungrounded claim) is strictly rejected.
+    """
+    page = _wiki("Superman Vol 3 38", [_syn()])
+
+    # Positive: Superman solar flare question correctly answered by synopsis
+    pos = _candidate(
+        question="How does Superman unleash the energy stored in his cells?",
+        concept="energy burst",
+        quote=FIRST,
+    )
+    pos_model = Model(verdict(EVIDENCE, answers="yes", payoff="yes"))
+    pos_result = _judge(pos, page, semantic=pos_model)
+    assert pos_result.passed is True
+    assert len(pos_result.claims) == 1
+    assert pos_result.claims[0]["issue"] == "Superman (2011) #38 (2015)"
+    assert pos_result.claims[0]["quote"] == FIRST
+
+    # Negative 1: Wrong focus where the model determines the text does NOT answer the question
+    neg_wrong_focus = _candidate(
+        question="How does Superman permanently defeat Brainiac with kryptonite?",
+        concept="Brainiac kryptonite",
+        quote=FIRST,
+    )
+    neg_model = Model(verdict("", answers="no", payoff="no"))
+    neg_result = _judge(neg_wrong_focus, page, semantic=neg_model)
+    assert neg_result.passed is False
+    assert neg_result.reason == "answer_not_supported"
+
+    # Negative 2: Pre-2010 comic issue (e.g. 1997) is strictly rejected before reaching model
+    old_issue = _candidate(
+        issue="Superman Vol 2 #123 (1997)",
+    )
+    old_page = _wiki("Superman Vol 2 123", [_syn()], intro="It was published on May 5, 1997.")
+    old_result = _judge(old_issue, old_page, semantic=pos_model)
+    assert old_result.passed is False
+    assert old_result.reason == "year_out_of_range"
+

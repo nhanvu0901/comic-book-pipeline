@@ -1252,3 +1252,17 @@ def test_verification_summary_reads_the_verdict_and_notes(payload, expected):
     from stages.research_scout.workflow import verification_summary
 
     assert verification_summary(payload) == expected
+
+
+def test_publisher_filter_reaches_general_and_discover_prompts(mock_workflow):
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions", publisher="Marvel")
+    assert session.publisher == "Marvel"
+    mock_workflow.run_general(session.id)
+    assert "PUBLISHER FILTER: Search and return Marvel comic-book issues only." in mock_workflow.client.seen_prompt
+
+    mock_workflow.discover_questions(ScoutMode.MICRO, publisher="Dark Horse")
+    assert (
+        "PUBLISHER FILTER: Propose questions/moments for Dark Horse comics only."
+        in mock_workflow.client.seen_prompt
+    )
+

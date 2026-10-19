@@ -132,6 +132,7 @@ def _scout_workflow(root: Path | None = None):
 
 def start_scout_session(
     mode: str, user_intent: str, *, publication_year: int | None = None,
+    publisher: str | None = None,
 ):
     from stages.research_scout.bank_fallback import bank_suggestions_for_mode
     from stages.research_scout.models import ScoutMode
@@ -162,7 +163,7 @@ def start_scout_session(
             # either way, and asking for one question while handing the prompt
             # all five angles just makes the prompt contradict itself.
             batch = workflow.discover_questions(
-                scout_mode, publication_year=publication_year,
+                scout_mode, publication_year=publication_year, publisher=publisher,
             )
             field = "question" if scout_mode is ScoutMode.QA else "moment"
             if scout_mode is ScoutMode.QA and (not batch or batch[0].get("fallback")):
@@ -174,7 +175,9 @@ def start_scout_session(
                     "No issue-verified question could be discovered. Type a question to research."
                 )
             intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
-    return workflow.start(scout_mode, intent, publication_year=publication_year)
+    return workflow.start(
+        scout_mode, intent, publication_year=publication_year, publisher=publisher,
+    )
 
 
 def record_rejected_questions(
@@ -239,6 +242,7 @@ def discard_saved_scout_entry(entry_id: str, *, root: Path | None = None):
 def discover_questions(
     mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = (),
     publication_year: int | None = None,
+    publisher: str | None = None,
 ) -> list[dict]:
     """Tier B on its own, WITHOUT starting a session — the human-review step
     that stages/youcom_scout.py::is_burned's docstring deliberately relies on.
@@ -263,6 +267,7 @@ def discover_questions(
     return _scout_workflow().discover_questions(
         ScoutMode(mode), count=count, exclude=tuple(exclude),
         publication_year=publication_year,
+        publisher=publisher,
     )
 
 

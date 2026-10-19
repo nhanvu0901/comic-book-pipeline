@@ -37,13 +37,19 @@ class SessionStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def create(
-        self, mode: ScoutMode, user_intent: str, publication_year: int | None = None,
+        self,
+        mode: ScoutMode,
+        user_intent: str,
+        publication_year: int | None = None,
+        publisher: str | None = None,
     ) -> ResearchSession:
+        clean_pub = str(publisher or "").strip() or None
         session = ResearchSession(
             id=uuid4().hex,
             mode=mode,
             user_intent=user_intent,
             publication_year=publication_year if mode is ScoutMode.MICRO else None,
+            publisher=clean_pub,
         )
         self.save(session, event="session_created")
         return session

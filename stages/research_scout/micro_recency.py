@@ -21,7 +21,16 @@ _HISTORICAL_ERA = re.compile(
 )
 
 
-def issue_publication_year(label: str, *, allow_series_year: bool = False) -> int | None:
+_RECENT_REQUEST = re.compile(
+    r"\b(?:recent(?:ly)?|latest|newest|new\b|new(?:er)? (?:issues?|comics?|releases?|moments?)?|"
+    r"this year|current year|just (?:released|came out)|modern)\b",
+    re.IGNORECASE,
+)
+
+MIN_PUBLICATION_YEAR = 2010
+
+
+def issue_publication_year(label: str, allow_series_year: bool = False) -> int | None:
     """Read the single issue-year after #N; ignore a series launch year before it unless allowed."""
     issues = list(_ISSUE.finditer(str(label)))
     if len(issues) != 1:
@@ -53,22 +62,50 @@ def _intent_year(user_intent: str) -> int | None:
     return next(iter(years)) if len(years) == 1 else None
 
 
+def asks_for_recent(user_intent: str) -> bool:
+    """The request itself asks for recent issues ("latest Batman moment")."""
+    return bool(_RECENT_REQUEST.search(user_intent or ""))
+
+
+def requested_year(
+    user_intent: str = "", publication_year: int | None = None, today: date | None = None,
+) -> int | None:
+    """The one publication year this scout is limited to, or None for any modern year (>= 2010).
+    Selected Year field > single year named in the request > current year only when the
+    request asks for recent issues > None (all modern years)."""
+    if publication_year is not None:
+        return publication_year
+    named = _intent_year(user_intent)
+    if named is not None:
+        return named
+    if asks_for_recent(user_intent) and not _HISTORICAL_ERA.search(user_intent):
+        return (today or date.today()).year
+    return None
+
+
 def micro_release_rejection_reason(
     candidate: Mapping[str, Any], user_intent: str = "", today: date | None = None,
     publication_year: int | None = None,
 ) -> str | None:
-    """Keep the selected issue year, defaulting broad searches to this year."""
+    """Reject an un-dated or future issue; reject <= 2009; reject another year when one is requested.
+    Broad modern searches accept any published issue from MIN_PUBLICATION_YEAR to today."""
     today = today or date.today()
     year = issue_publication_year(str(candidate.get("series_issue_year", "")))
     if year is not None and year > today.year:
         return "future_issue_year"
-    requested = publication_year if publication_year is not None else _intent_year(user_intent)
-    if requested is None and (_ISSUE.search(user_intent) or _HISTORICAL_ERA.search(user_intent)):
-        return None
-    if year is None:
-        return "issue_publication_year_unresolved"
-    if year != (requested if requested is not None else today.year):
+    if year is not None and year < MIN_PUBLICATION_YEAR:
         return "outside_recent_micro_window"
+    requested = requested_year(user_intent, publication_year, today)
+    if requested is not None:
+        if requested < MIN_PUBLICATION_YEAR:
+            return "outside_recent_micro_window"
+        if year is None:
+            return "issue_publication_year_unresolved"
+        if year != requested:
+            return "outside_recent_micro_window"
+    else:
+        if year is None:
+            return "issue_publication_year_unresolved"
     return None
 
 
@@ -76,30 +113,32 @@ def recent_micro_instruction(
     today: date | None = None, publication_year: int | None = None,
     user_intent: str = "",
 ) -> str:
-    """A dynamic, exact issue-year scope shared by planner and template paths."""
+    """The issue-year scope shared by planner and template paths."""
     today = today or date.today()
-    named_year = _intent_year(user_intent)
-    if (publication_year is None and named_year is None and
-            (_ISSUE.search(user_intent) or _HISTORICAL_ERA.search(user_intent))):
+    year = requested_year(user_intent, publication_year, today)
+    if year is None:
         year_rule = (
-            "RECENT MICRO DEFAULT: The request names an issue or historical era. "
-            "Search that explicit scope; the current-year default does not apply. "
+            f"MICRO YEAR SCOPE: Search published issues from {MIN_PUBLICATION_YEAR} to {today.year} only. "
+            f"The channel baseline policy strictly requires comics published in {MIN_PUBLICATION_YEAR} or later. "
+            f"Comics published before {MIN_PUBLICATION_YEAR} are invalid and must never be proposed. "
+            f"Never use an unpublished issue (after {today.year}). "
+            f"Rank qualifying moments by the strength of the scene. "
         )
     else:
-        year = publication_year if publication_year is not None else (named_year or today.year)
-        year_rule = f"RECENT MICRO DEFAULT: Search published issues from {year} only. "
+        year_rule = f"MICRO YEAR SCOPE: Search published issues from {year} only (must be {MIN_PUBLICATION_YEAR} or later). "
         if publication_year is not None or _SELECTED_YEAR_LINE.search(user_intent):
             year_rule += (
                 "The selected year is the exact filter. If a named issue has a "
                 "different publication year, report the conflict. "
             )
-        elif named_year is None:
-            year_rule += f"No year was given, so use the current year ({today.year}). "
+        elif asks_for_recent(user_intent):
+            year_rule += f"The request asks for recent issues, so use the current year ({today.year}). "
     return (
         year_rule +
         "Verify the publication year of the exact issue, not the series launch "
-        "year or article date. "
+        "year, a reprint date, or an article date. "
         "Each pick needs a source-supported setup, a concrete action or reveal, "
         "and its direct consequence in the same scene; skip thin leads instead "
         "of filling gaps with invented story details."
     )
+

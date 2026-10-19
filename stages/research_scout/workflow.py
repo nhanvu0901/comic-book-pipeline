@@ -376,8 +376,16 @@ class ScoutWorkflow:
         self._policies: dict[ScoutMode, PolicyBundle] = {}
 
     def start(
-        self, mode: ScoutMode, user_intent: str, publication_year: int | None = None,
+        self,
+        mode: ScoutMode,
+        user_intent: str,
+        publication_year: int | None = None,
+        publisher: str | None = None,
     ) -> ResearchSession:
+        if publisher is not None:
+            return self.store.create(
+                ScoutMode(mode), user_intent, publication_year, publisher=publisher,
+            )
         return self.store.create(ScoutMode(mode), user_intent, publication_year)
 
     def run_general(self, session_id: str) -> ResearchSession:
@@ -400,7 +408,12 @@ class ScoutWorkflow:
             if session.mode is ScoutMode.MICRO and session.publication_year is not None
             else ""
         )
-        scoped_intent = session.user_intent + selected_year_line
+        selected_publisher_line = (
+            f"\nPublisher: {session.publisher} comics only."
+            if session.publisher
+            else ""
+        )
+        scoped_intent = session.user_intent + selected_year_line + selected_publisher_line
         confirmed_format = "list"
         if session.mode is ScoutMode.QA:
             preliminary_format = str(question_archetype(session.user_intent))
@@ -452,7 +465,7 @@ class ScoutWorkflow:
             # in here because the planner never saw it on this path.
             prompt = bundle.render(
                 "general",
-                user_intent=_intent_with_feedback(session) + selected_year_line,
+                user_intent=_intent_with_feedback(session) + selected_year_line + selected_publisher_line,
                 angle=self._angle(bundle, session.mode),
                 count=str(planner_module.DISTINCT_SOURCE_TARGET),
                 avoid="\n".join(avoid_lines),
@@ -484,6 +497,12 @@ class ScoutWorkflow:
         if session.mode is ScoutMode.MICRO:
             prompt_text += "\n\n" + recent_micro_instruction(
                 publication_year=session.publication_year, user_intent=session.user_intent,
+            )
+            prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
+        if session.publisher:
+            prompt_text += (
+                f"\n\nPUBLISHER FILTER: Search and return {session.publisher} "
+                "comic-book issues only. Exclude candidates from any other publisher."
             )
             prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
         try:
@@ -1000,6 +1019,7 @@ class ScoutWorkflow:
     def discover_questions(
         self, mode: ScoutMode, *, count: int = 5, exclude: Sequence[str] = (),
         publication_year: int | None = None,
+        publisher: str | None = None,
     ) -> list[dict[str, Any]]:
         """Tier B of the Stage 1 empty-intent fallback (ui/bridge.py): use
         Research to turn angles into REAL questions/moments before handing
@@ -1068,6 +1088,13 @@ class ScoutWorkflow:
             prompt_text += "\n\n" + recent_micro_instruction(
                 publication_year=publication_year,
             )
+        clean_publisher = str(publisher or "").strip()
+        publisher_filter_line = (
+            f"\n\nPUBLISHER FILTER: Propose questions/moments for {clean_publisher} "
+            f"comics only. Every candidate must come from {clean_publisher}."
+            if clean_publisher else ""
+        )
+        prompt_text += publisher_filter_line
         try:
             raw = self.client.research(
                 prompt_text,
@@ -1173,7 +1200,7 @@ class ScoutWorkflow:
                         missing_direct=missing_direct, missing_list=missing_list,
                         angles=topup_angles, excluded=excluded + offered,
                         anchors=seen_anchors, concepts=seen_concepts,
-                    ),
+                    ) + publisher_filter_line,
                     _schema({**props, "angle": {"type": "string"}}),
                     source_profile,
                     effort=config.YOUCOM_DISCOVER_EFFORT,

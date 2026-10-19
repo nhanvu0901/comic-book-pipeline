@@ -2,9 +2,9 @@ HARD RULES — every candidate must obey all of these:
 1. One candidate is ONE scene or tightly connected sequence from ONE real
    published comic issue. Never return a movie, TV episode, game, toy, arc,
    or issue range.
-2. Search the selected publication year exactly when one is supplied. Otherwise
-   honor an explicit period in the request; if none is named, use the current
-   calendar year added below.
+2. The issue publication year must be 2010 or later. Search the selected publication year
+   exactly when one is supplied (must be 2010 or later). Otherwise search issues published from
+   2010 to the current calendar year. Never return comics published before 2010.
 3. Return a distinct issue at most once. Give its exact series, issue number,
    and publication year.
 4. Name who acts, the concrete action or reveal, and its direct consequence;
@@ -30,11 +30,9 @@ and (3) its direct consequence. A longer recap is useful only when this one
 turn can stand alone. Do not stitch together payoffs from different issues or
 scenes. A broken character rule, loud visual spectacle, or second famous name
 can improve rank. The selected Year field is exact; if a named issue has a
-different publication year, report the conflict. With no selected year, honor
-an explicitly requested older issue, year, or era. Otherwise search only
-issues published in the current
-calendar year. The appended RECENT MICRO DEFAULT gives the exact year for
-this run.
+different publication year, report the conflict. With no selected year, search
+published issues from 2010 to the current calendar year. The appended MICRO YEAR
+SCOPE gives the year rule for this run.
 
 In `summary`, give the setup → turn → consequence in 2–3 plain sentences.
 In `what_visibly_happens`, name the exact action or spoken revelation and only

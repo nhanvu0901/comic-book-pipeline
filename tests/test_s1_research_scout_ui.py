@@ -1134,9 +1134,9 @@ def _discover_env(tmp_path, monkeypatch, *, batches):
     calls = []
     queued = list(batches)
 
-    def _fake_discover(mode, *, count=5, exclude=(), publication_year=None):
+    def _fake_discover(mode, *, count=5, exclude=(), publication_year=None, publisher=None):
         calls.append({"mode": mode, "count": count, "exclude": list(exclude),
-                      "publication_year": publication_year})
+                      "publication_year": publication_year, "publisher": publisher})
         return queued.pop(0) if queued else []
 
     monkeypatch.setattr(s1_research_scout, "discover_questions", _fake_discover)
@@ -1406,6 +1406,101 @@ def test_micro_year_field_persists_on_new_research_and_rejects_bad_input(
     _run_recorded_task(page)
     assert calls == [("micro", "Find a moment", 2024)]
     assert store.load(created[0]).publication_year == 2024
+
+
+def test_micro_year_field_floor_clamp_rejects_pre_2010_years(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_start(mode, text, *, publication_year=None, publisher=None):
+        calls.append((mode, text, publication_year, publisher))
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.create(ScoutMode(mode), text, publication_year, publisher=publisher)
+        return session
+
+    def fake_run(session_id):
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.load(session_id)
+        session.state = SessionState.CANDIDATE_REVIEW
+        store.save(session)
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", fake_start)
+    monkeypatch.setattr(s1_research_scout, "run_scout_general", fake_run)
+    page, controls = _build(tmp_path)
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    _intent_field(controls).value = "Find a moment"
+    year_field = _by_key(controls, "scout-year")
+
+    for bad_year in ("1900", "1954", "1977", "1980", "2009"):
+        year_field.value = bad_year
+        _send(controls).on_click(object())
+        assert calls == []
+        assert "Choose a publication year from 2010 to" in _text_content(controls)
+
+    year_field.value = "2010"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+    assert calls[-1][2] == 2010
+
+    page2, controls2 = _build(tmp_path / "another")
+    mode2 = _by_key(controls2, "scout-mode")
+    mode2.value = "micro"
+    mode2.on_change(_FakeEvent("micro"))
+    _intent_field(controls2).value = "Find another moment"
+    year_field2 = _by_key(controls2, "scout-year")
+    year_field2.value = "2024"
+    _send(controls2).on_click(object())
+    _run_recorded_task(page2)
+    assert calls[-1][2] == 2024
+
+
+def test_scout_publisher_dropdown_forwards_selection_to_discover_and_start(
+    tmp_path, monkeypatch,
+):
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch, batches=[_batch("A publisher moment")],
+    )
+    pub_field = _by_key(controls, "scout-publisher")
+    assert pub_field is not None
+    assert pub_field.value == s1_research_scout.ALL_PUBLISHERS_LABEL
+    option_values = [getattr(opt, "key", None) or getattr(opt, "text", None) or str(opt) for opt in pub_field.options]
+    assert any("DC" in str(v) for v in option_values)
+    assert any("Marvel" in str(v) for v in option_values)
+
+    # Empty send with publisher selected bypasses bank and calls discovery with publisher
+    pub_field.value = "DC"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+    assert calls[-1]["publisher"] == "DC"
+
+    # With intent and publisher filled, start_scout_session gets publisher
+    start_calls = []
+
+    def fake_start(mode, text, *, publication_year=None, publisher=None):
+        start_calls.append((mode, text, publication_year, publisher))
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.create(ScoutMode(mode), text, publication_year, publisher=publisher)
+        return session
+
+    def fake_run(session_id):
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.load(session_id)
+        session.state = SessionState.CANDIDATE_REVIEW
+        store.save(session)
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", fake_start)
+    monkeypatch.setattr(s1_research_scout, "run_scout_general", fake_run)
+
+    page2, controls2 = _build(tmp_path)
+    pub2 = _by_key(controls2, "scout-publisher")
+    pub2.value = "Marvel"
+    _intent_field(controls2).value = "Iron Man armor"
+    _send(controls2).on_click(object())
+    _run_recorded_task(page2)
+    assert start_calls[-1] == ("qa", "Iron Man armor", None, "Marvel")
 
 
 def test_micro_review_explains_when_research_returns_a_different_issue(tmp_path):
