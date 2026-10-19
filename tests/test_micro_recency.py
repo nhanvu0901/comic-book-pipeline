@@ -1,11 +1,14 @@
 from datetime import date
 
 from stages.research_scout.micro_recency import (
+    candidate_release_year,
     explicit_historical_scope,
     issue_publication_year,
     micro_release_rejection_reason,
     recent_micro_instruction,
 )
+from stages.research_scout.evidence import _has_exact_issue_and_year as evidence_has_exact_year
+from stages.research_scout.project_factory import _has_exact_issue_and_year as factory_has_exact_year
 
 
 TODAY = date(2026, 9, 30)
@@ -20,6 +23,24 @@ def test_publication_year_is_after_issue_number_not_series_launch_year():
     assert issue_publication_year("Action Comics (1938) #1", allow_series_year=True) == 1938
     assert issue_publication_year("Hero #7 (2025/2026)") is None
     assert issue_publication_year("Hero #7 (2025)") == 2025
+
+
+def test_explicit_release_date_overrides_cover_year_for_micro_floor_and_selected_year():
+    early = {"series_issue_year": "Hero #7 (2010)",
+             "release_date": "December 23, 2009", "cover_date": "February 2010"}
+    assert candidate_release_year(early) == 2009
+    assert micro_release_rejection_reason(early, today=TODAY) == "outside_recent_micro_window"
+    assert micro_release_rejection_reason(early, today=TODAY, publication_year=2010) == "outside_recent_micro_window"
+    assert not evidence_has_exact_year(early)
+    assert not factory_has_exact_year(early)
+
+    modern = {"series_issue_year": "Hero #8 (2011)",
+              "on_sale_date": "December 22, 2010", "cover_date": "February 2011"}
+    assert candidate_release_year(modern) == 2010
+    assert micro_release_rejection_reason(modern, today=TODAY, publication_year=2010) is None
+    assert micro_release_rejection_reason(modern, today=TODAY, publication_year=2011) == "outside_recent_micro_window"
+    assert evidence_has_exact_year(modern)
+    assert factory_has_exact_year(modern)
 
 
 def test_broad_micro_scout_enforces_2010_floor_and_rejects_pre_2010():
@@ -154,4 +175,3 @@ def test_instruction_is_dynamic_and_requires_an_actual_story_turn():
     )
     assert "publication year of the exact issue" in instruction
     assert "setup" in instruction and "consequence" in instruction
-

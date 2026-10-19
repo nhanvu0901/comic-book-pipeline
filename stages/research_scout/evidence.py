@@ -11,7 +11,7 @@ from typing import Any
 from .micro_recency import (
     MIN_PUBLICATION_YEAR,
     _FACSIMILE_REPRINT,
-    issue_publication_year,
+    candidate_release_year,
     original_publication_year,
 )
 from .models import ScoutMode
@@ -80,7 +80,7 @@ def _has_exact_issue_and_year(candidate: Mapping[str, Any]) -> bool:
     has_issue = bool(re.search(r"(?:#|\bissue\s*)\s*\d+", value, re.IGNORECASE))
     if not has_issue:
         return False
-    year = issue_publication_year(value)
+    year = candidate_release_year(candidate)
     if year is None or year < MIN_PUBLICATION_YEAR or year > date.today().year:
         return False
     orig_year = original_publication_year(candidate)

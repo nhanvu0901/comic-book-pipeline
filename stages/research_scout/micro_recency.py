@@ -45,6 +45,23 @@ def issue_publication_year(label: str, allow_series_year: bool = False) -> int |
     return None
 
 
+def candidate_release_year(candidate: Mapping[str, Any]) -> int | None:
+    """Use an explicit issue release date before the year printed in its label.
+
+    A cover date is not a release date. Conflicting explicit dates are unresolved
+    rather than letting either one satisfy a selected year.
+    """
+    years: set[int] = set()
+    for key in ("release_date", "on_sale_date", "publication_date", "published_date",
+                "release_year", "on_sale_year"):
+        value = candidate.get(key)
+        if value is not None:
+            years.update(int(year) for year in _YEAR.findall(str(value)))
+    if years:
+        return next(iter(years)) if len(years) == 1 else None
+    return issue_publication_year(str(candidate.get("series_issue_year", "")))
+
+
 def explicit_historical_scope(user_intent: str, today: date | None = None) -> bool:
     """An issue, historical year or named era overrides the broad recent default."""
     today = today or date.today()
@@ -111,7 +128,7 @@ def micro_release_rejection_reason(
     Facsimile / reprint editions cannot launder pre-2010 stories into a modern year."""
     today = today or date.today()
     label = str(candidate.get("series_issue_year", ""))
-    year = issue_publication_year(label)
+    year = candidate_release_year(candidate)
     if year is not None and year > today.year:
         return "future_issue_year"
     if year is not None and year < MIN_PUBLICATION_YEAR:
@@ -173,4 +190,3 @@ def recent_micro_instruction(
         "and its direct consequence in the same scene; skip thin leads instead "
         "of filling gaps with invented story details."
     )
-
