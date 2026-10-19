@@ -297,15 +297,16 @@ def test_micro_discovery_rejects_old_and_unresolved_issues_before_count(tmp_path
             "evidence_urls": ["https://publisher.test/hero"],
         }
     client = _ScriptedYouCom(candidates=[
-        candidate("Old", "Hero #1 (2014)"),
+        candidate("Pre2010", "Hero #1 (2008)"),
         candidate("Unresolved", f"Hero ({year - 4}) #8"),
+        candidate("OldModern", "Hero #1 (2014)"),
         candidate("Previous", f"Hero #2 ({year - 1})"),
         candidate("Current", f"Hero ({year - 4}) #9 ({year})"),
     ])
 
     batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, count=2)
 
-    assert [entry["moment"] for entry in batch] == ["Current"]
+    assert [entry["moment"] for entry in batch] == ["Current", "Previous"]
     assert [entry["moment"] for entry in _workflow(
         tmp_path, client
     ).discover_questions(ScoutMode.MICRO, count=1)] == ["Current"]
