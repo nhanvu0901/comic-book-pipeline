@@ -114,7 +114,7 @@ def test_fix_5_stemmed_quote_matching_handles_inflections():
     assert result is True, "Quote with inflectional variation ('hands' vs 'hand') must verify"
 
 
-def test_fix_6_initial_topup_legacy_prompts_consistency():
+def test_fix_6_initial_topup_legacy_prompts_consistency(tmp_path):
     from stages.research_scout.policies import PolicyBundle
     from stages.research_scout.models import ScoutMode
     from stages.research_scout.workflow import _qa_discovery_topup_prompt
@@ -138,12 +138,11 @@ def test_fix_6_initial_topup_legacy_prompts_consistency():
     assert "viewer_payoff" in topup
 
     # 3. Legacy prompt
-    from pathlib import Path
     legacy_prompts = []
     import unittest.mock as mock
     with mock.patch("stages.youcom_scout._call_logged", lambda _k, p, *_a: legacy_prompts.append(p) or {"output": {"content": {"candidates": []}}}):
         with mock.patch("stages.youcom_scout._scouted_context_text", lambda: ""):
-            youcom_scout.run_discover("test-key", Path("/tmp"), "standard")
+            youcom_scout.run_discover("test-key", tmp_path, "standard")
     assert len(legacy_prompts) > 0
     assert all("core_premise" in p.casefold() for p in legacy_prompts)
     assert all("viewer_payoff" in p.casefold() for p in legacy_prompts)

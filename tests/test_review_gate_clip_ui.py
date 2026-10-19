@@ -19,7 +19,22 @@ from stages.stage_5 import clips
 from ui import bridge, web_routes
 from ui.screens import s_review_gate as sg
 from ui.state import AppState
-from tests.test_review_gate_grid_hide import FakePage, _walk
+from tests.test_review_gate_grid_hide import FakePage
+
+
+def _walk(control, depth: int = 0):
+    """Yield every control in the tree (controls / content / actions children)."""
+    if control is None or depth > 60:
+        return
+    yield control
+    for attr in ("controls", "actions"):
+        children = getattr(control, attr, None)
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                yield from _walk(child, depth + 1)
+    content = getattr(control, "content", None)
+    if isinstance(content, ft.Control):
+        yield from _walk(content, depth + 1)
 
 
 def _patch_roots(monkeypatch, root: Path):
@@ -168,8 +183,10 @@ def _walk_visible(control, depth: int = 0):
         return
     yield control
     for attr in ("controls", "actions"):
-        for child in (getattr(control, attr, None) or []):
-            yield from _walk_visible(child, depth + 1)
+        children = getattr(control, attr, None)
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                yield from _walk_visible(child, depth + 1)
     content = getattr(control, "content", None)
     if isinstance(content, ft.Control):
         yield from _walk_visible(content, depth + 1)
