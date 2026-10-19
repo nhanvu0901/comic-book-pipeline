@@ -51,6 +51,9 @@ def candidate_release_year(candidate: Mapping[str, Any]) -> int | None:
     A cover date is not a release date. Conflicting explicit dates are unresolved
     rather than letting either one satisfy a selected year.
     """
+    label_year = issue_publication_year(str(candidate.get("series_issue_year", "")))
+    if label_year is None:
+        return None
     years: set[int] = set()
     for key in ("release_date", "on_sale_date", "publication_date", "published_date",
                 "release_year", "on_sale_year"):
@@ -59,7 +62,7 @@ def candidate_release_year(candidate: Mapping[str, Any]) -> int | None:
             years.update(int(year) for year in _YEAR.findall(str(value)))
     if years:
         return next(iter(years)) if len(years) == 1 else None
-    return issue_publication_year(str(candidate.get("series_issue_year", "")))
+    return label_year
 
 
 def explicit_historical_scope(user_intent: str, today: date | None = None) -> bool:

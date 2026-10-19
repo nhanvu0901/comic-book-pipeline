@@ -42,6 +42,12 @@ def test_explicit_release_date_overrides_cover_year_for_micro_floor_and_selected
     assert evidence_has_exact_year(modern)
     assert factory_has_exact_year(modern)
 
+    missing_label_year = {"series_issue_year": "Hero #8", "release_date": "December 22, 2010"}
+    assert candidate_release_year(missing_label_year) is None
+    assert micro_release_rejection_reason(missing_label_year, today=TODAY) == "issue_publication_year_unresolved"
+    assert not evidence_has_exact_year(missing_label_year)
+    assert not factory_has_exact_year(missing_label_year)
+
 
 def test_broad_micro_scout_enforces_2010_floor_and_rejects_pre_2010():
     # Pre-2010 comics (<= 2009) MUST be rejected in broad scout
