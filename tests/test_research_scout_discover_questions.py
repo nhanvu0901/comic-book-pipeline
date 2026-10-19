@@ -349,6 +349,7 @@ def test_micro_discovery_selected_year_uses_source_release_not_later_cover(tmp_p
     accepted = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2010)
     assert [entry["moment"] for entry in accepted] == ["Hero wins"]
     assert accepted[0]["source_release_year"] == 2010
+    assert accepted[0]["series_issue_year"] == "Hero Vol 1 #8 (2010)"
     rejected = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2011)
     assert rejected[0]["fallback"] is True
 

@@ -39,7 +39,8 @@ For every candidate:
 - `why_it_lands`: one or two plain sentences on why the turning point changes
   the opening expectation. Mark interpretation as interpretation.
 - `series_issue_year`: exact series, volume when needed, issue, and the
-  publication year of that issue (2010 or later; not the series launch year, reprint date, or article date).
+  actual release or on-sale year of that issue (2010 or later; not its cover year,
+  series launch year, reprint date, or article date). A requested year does not override a source release date.
   Include source URLs; label uncertain identity rather than guessing.
 
 Reject listicles, a feat with no change, an entire plot or crossover, a moment

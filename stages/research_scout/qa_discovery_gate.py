@@ -329,8 +329,12 @@ def enrich_issue_release_year(
             continue
         release_years = _release_publication_years(source.text)
         if len(release_years) == 1:
-            enriched["source_release_year"] = next(iter(release_years))
+            release_year = next(iter(release_years))
+            enriched["source_release_year"] = release_year
             enriched["source_release_url"] = url
+            enriched["series_issue_year"] = _relabel(
+                issue, issue_publication_year(issue), release_year,
+            )
             break
     return enriched
 

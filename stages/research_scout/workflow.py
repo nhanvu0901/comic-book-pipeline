@@ -1791,13 +1791,13 @@ def _validate_new_general_candidates(
             rejected.append({"candidate_id": candidate_id, "reason": "claim_citation_url_not_returned"})
             continue
         if mode is ScoutMode.MICRO:
+            candidate = qa_discovery_gate.enrich_issue_release_year(
+                candidate, pages=micro_pages,
+            )
             issue_reason = micro_issue_rejection_reason(user_intent, candidate)
             if issue_reason is not None:
                 rejected.append({"candidate_id": candidate_id, "reason": issue_reason})
                 continue
-            candidate = qa_discovery_gate.enrich_issue_release_year(
-                candidate, pages=micro_pages,
-            )
             release_reason = micro_release_rejection_reason(
                 candidate, user_intent, publication_year=publication_year,
             )

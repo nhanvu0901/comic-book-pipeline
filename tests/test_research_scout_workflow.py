@@ -1,11 +1,13 @@
 import json
 import urllib.error
+from pathlib import Path
 
 import pytest
 
 import config
 from stages.research_scout import cited_sources
-from stages.research_scout.models import EvidenceGate, ScoutMode, SessionState
+from stages.research_scout import issue_pages
+from stages.research_scout.models import Candidate, EvidenceGate, ScoutMode, SessionState
 from stages.research_scout.planner import PlanField, ResearchPlan
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.errors import ScoutUserError
@@ -116,6 +118,40 @@ def _verified_micro(mock_workflow):
     session = mock_workflow.start(ScoutMode.MICRO, "new Hulk moment")
     mock_workflow.run_general(session.id)
     return mock_workflow.verify_selected(session.id, ["a"])
+
+
+def test_micro_general_persists_verified_release_year_before_review(mock_workflow, monkeypatch):
+    old_url = "https://dc.fandom.com/wiki/Wonder_Woman_Vol_3_39"
+    new_url = "https://dc.fandom.com/wiki/Hero_Vol_1_8"
+    old_page = (Path(__file__).parent / "fixtures" / "qa_issue_dates" /
+                "wonder_woman_39.txt").read_text(encoding="utf-8")
+    new_page = "Title: Hero Vol 1 #8\nRelease Date: December 22, 2010\nCover Date: February 2011\nHero wins."
+    pages = {old_url: old_page, new_url: new_page}
+    monkeypatch.setattr(issue_pages, "fetch_issue_page", lambda url: cited_sources.FetchedSource(url, text=pages[url]))
+    candidates = [
+        {"id": "old", "series_issue_year": "Wonder Woman Vol 3 #39 (2010)",
+         "claim_citation": {"url": old_url, "quote": "Diana strikes her bracelets together."},
+         "evidence_urls": [old_url]},
+        {"id": "new", "series_issue_year": "Hero Vol 1 #8 (2011)",
+         "claim_citation": {"url": new_url, "quote": "Hero wins."},
+         "evidence_urls": [new_url]},
+    ]
+    mock_workflow.client.general_response = {"output": {
+        "content": {"candidates": candidates},
+        "sources": [{"url": old_url}, {"url": new_url}],
+    }}
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a moment", publication_year=2010)
+    mock_workflow.run_general(session.id)
+    stored = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json",
+    ).read_text(encoding="utf-8"))["candidates"]
+    assert [candidate["id"] for candidate in stored] == ["new"]
+    assert stored[0]["series_issue_year"] == "Hero Vol 1 #8 (2010)"
+    assert Candidate.model_validate(stored[0]).model_dump()["source_release_year"] == 2010
+    validation = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidate_validation.rev1.v1.json",
+    ).read_text(encoding="utf-8"))
+    assert {item["candidate_id"] for item in validation["rejected"]} == {"old"}
 
 
 class _ResearchSequence:
@@ -1320,5 +1356,3 @@ def test_qa_partial_batches_surface_without_quota_shortage_discard(tmp_path, mon
     assert not any(item.get("verification_shortage") for item in batch)
     assert not any(item.get("fallback") for item in batch)
     assert [item["canonical_anchor"] for item in batch] == ["Kid Flash", "Superman", "Batman"]
-
-
