@@ -34,11 +34,38 @@ def test_broad_micro_scout_enforces_2010_floor_and_rejects_pre_2010():
         {"series_issue_year": "World's Finest #71 (1954)"}, "Find a micro moment", TODAY
     ) == "outside_recent_micro_window"
     assert micro_release_rejection_reason(
+        {"series_issue_year": "World's Finest Comics #71 (1941)"}, "Find a micro moment", TODAY
+    ) == "outside_recent_micro_window"
+    assert micro_release_rejection_reason(
         {"series_issue_year": "Batman #321 (1980)"}, "Find a micro moment", TODAY
     ) == "outside_recent_micro_window"
     assert micro_release_rejection_reason(
         {"series_issue_year": "DC Special Series #27 (1977)"}, "Find a micro moment", TODAY
     ) == "outside_recent_micro_window"
+    assert micro_release_rejection_reason(
+        {"series_issue_year": "All-Star Superman #1 (2005)"}, "Find a micro moment", TODAY
+    ) == "outside_recent_micro_window"
+    assert micro_release_rejection_reason(
+        {"series_issue_year": "Civil War: The Confession #1 (2007)"}, "Find a micro moment", TODAY
+    ) == "outside_recent_micro_window"
+
+    # Facsimile reprint laundering (reprinting pre-2010 story under a modern reprint date)
+    assert micro_release_rejection_reason(
+        {"series_issue_year": "Facsimile Edition: Action Comics (2026) #419 (2026)"},
+        "Find a micro moment", TODAY
+    ) == "outside_recent_micro_window"
+    assert micro_release_rejection_reason(
+        {"series_issue_year": "Action Comics #419 (2026)", "original_publication_year": 1972},
+        "Find a micro moment", TODAY
+    ) == "outside_recent_micro_window"
+
+    # Genuinely new issue from an old series-start (e.g. Action Comics started in 1938, issue is 2024)
+    assert micro_release_rejection_reason(
+        {"series_issue_year": "Action Comics (1938) #1064 (2024)"}, "Find a micro moment", TODAY
+    ) is None
+    assert micro_release_rejection_reason(
+        {"series_issue_year": "Daredevil (2023) #4 (2023)"}, "Find a micro moment", TODAY
+    ) is None
 
     # Modern comics (>= 2010 up to current year) MUST pass in broad scout
     assert micro_release_rejection_reason(

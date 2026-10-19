@@ -83,25 +83,57 @@ def requested_year(
     return None
 
 
+_FACSIMILE_REPRINT = re.compile(
+    r"\b(?:facsimile(?:\s+edition)?|reprint(?:\s+edition)?|true\s+believers|millennium\s+edition)\b",
+    re.IGNORECASE,
+)
+
+
+def original_publication_year(candidate: Mapping[str, Any]) -> int | None:
+    """Read original story publication year, distinguishing it from a reprint/facsimile release date."""
+    for key in ("original_publication_year", "original_year", "first_published_year", "story_year"):
+        val = candidate.get(key)
+        if val is not None and str(val).strip().isdigit():
+            return int(str(val).strip())
+    label = str(candidate.get("series_issue_year", ""))
+    orig_match = re.search(r"\boriginal(?:ly)?(?:\s+published)?(?:\s+in)?\s+((?:19|20)\d{2})\b", label, re.I)
+    if orig_match:
+        return int(orig_match.group(1))
+    return None
+
+
 def micro_release_rejection_reason(
     candidate: Mapping[str, Any], user_intent: str = "", today: date | None = None,
     publication_year: int | None = None,
 ) -> str | None:
     """Reject an un-dated or future issue; reject <= 2009; reject another year when one is requested.
-    Broad modern searches accept any published issue from MIN_PUBLICATION_YEAR to today."""
+    Broad modern searches accept any published issue from MIN_PUBLICATION_YEAR to today.
+    Facsimile / reprint editions cannot launder pre-2010 stories into a modern year."""
     today = today or date.today()
-    year = issue_publication_year(str(candidate.get("series_issue_year", "")))
+    label = str(candidate.get("series_issue_year", ""))
+    year = issue_publication_year(label)
     if year is not None and year > today.year:
         return "future_issue_year"
     if year is not None and year < MIN_PUBLICATION_YEAR:
         return "outside_recent_micro_window"
+
+    orig_year = original_publication_year(candidate)
+    if orig_year is not None and orig_year < MIN_PUBLICATION_YEAR:
+        return "outside_recent_micro_window"
+
+    # Facsimile editions / reprints cannot launder pre-2010 comics
+    if _FACSIMILE_REPRINT.search(label) or candidate.get("is_reprint"):
+        if orig_year is None or orig_year < MIN_PUBLICATION_YEAR:
+            return "outside_recent_micro_window"
+
     requested = requested_year(user_intent, publication_year, today)
     if requested is not None:
         if requested < MIN_PUBLICATION_YEAR:
             return "outside_recent_micro_window"
         if year is None:
             return "issue_publication_year_unresolved"
-        if year != requested:
+        target_year = orig_year if orig_year is not None else year
+        if target_year != requested:
             return "outside_recent_micro_window"
     else:
         if year is None:

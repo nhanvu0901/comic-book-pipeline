@@ -1266,3 +1266,59 @@ def test_publisher_filter_reaches_general_and_discover_prompts(mock_workflow):
         in mock_workflow.client.seen_prompt
     )
 
+
+def test_qa_partial_batches_surface_without_quota_shortage_discard(tmp_path, monkeypatch):
+    """Replay of real database batches (e.g. 6ba45fba with 3 survivors, 3d4b168c with 4 survivors):
+    Partial batches (1-4 survivors) must surface to the UI with batch_incomplete=True,
+    NEVER discarded by a rigid quota with false verification_shortage."""
+    from stages.research_scout.qa_discovery_gate import GateResult
+    fake_client = _FakeYouCom()
+
+    # Replay batch 6ba45fba (3 direct survivors):
+    survivors = [
+        {
+            "question": "Why does Kid Flash keep pushing forward after learning his family life is a mess?",
+            "canonical_anchor": "Kid Flash",
+            "concept_key": "family struggle",
+            "series_issue_year": "The Flash #9 (2016)",
+            "issue_evidence": [{"issue": "The Flash #9 (2016)", "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_5_9", "quote": "Wallace learns Daniel West is his father."}],
+        },
+        {
+            "question": "How does Superman’s solar flare leave him powerless?",
+            "canonical_anchor": "Superman",
+            "concept_key": "solar flare burst",
+            "series_issue_year": "Superman Vol 3 #40 (2015)",
+            "issue_evidence": [{"issue": "Superman Vol 3 #40 (2015)", "source_url": "https://dc.fandom.com/wiki/Superman_Vol_3_40", "quote": "Superman releases all his solar energy."}],
+        },
+        {
+            "question": "Why does Batman cling to the bat code in the cave?",
+            "canonical_anchor": "Batman",
+            "concept_key": "cave bat code",
+            "series_issue_year": "Batman: The Return of Bruce Wayne #1 (2010)",
+            "issue_evidence": [{"issue": "Batman: The Return of Bruce Wayne #1 (2010)", "source_url": "https://dc.fandom.com/wiki/Batman:_The_Return_of_Bruce_Wayne_Vol_1_1", "quote": "Bruce carves the bat symbol."}],
+        },
+    ]
+
+    fake_client.general_response = {
+        "output": {
+            "content": {"candidates": survivors},
+            "sources": [],
+        }
+    }
+
+    # Verifier passes all 3 survivors
+    def fake_verifier(candidate, fmt):
+        return GateResult(True, "verified", tuple(candidate["issue_evidence"]))
+
+    wf = ScoutWorkflow(store=SessionStore(tmp_path / "sessions"), client=fake_client, qa_issue_verifier=fake_verifier)
+    batch = wf.discover_questions(ScoutMode.QA, count=5)
+
+    # Must return all 3 survivors, NOT empty, NOT verification_shortage
+    assert len(batch) == 3
+    assert all(item.get("batch_incomplete") is True for item in batch)
+    assert all(item.get("batch_expected") == 5 for item in batch)
+    assert not any(item.get("verification_shortage") for item in batch)
+    assert not any(item.get("fallback") for item in batch)
+    assert [item["canonical_anchor"] for item in batch] == ["Kid Flash", "Superman", "Batman"]
+
+
