@@ -54,6 +54,9 @@ def candidate_release_year(candidate: Mapping[str, Any]) -> int | None:
     label_year = issue_publication_year(str(candidate.get("series_issue_year", "")))
     if label_year is None:
         return None
+    source_year = candidate.get("source_release_year")
+    if source_year is not None and re.fullmatch(r"(?:19|20)\d{2}", str(source_year)):
+        return int(source_year)
     years: set[int] = set()
     for key in ("release_date", "on_sale_date", "publication_date", "published_date",
                 "release_year", "on_sale_year"):

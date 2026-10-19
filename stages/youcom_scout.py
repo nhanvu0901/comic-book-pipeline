@@ -462,8 +462,8 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
     from stages.research_scout.micro_recency import (
         micro_release_rejection_reason, recent_micro_instruction,
     )
+    from stages.research_scout.qa_discovery_gate import enrich_issue_release_year
 
-    default_window = years is None
     years = years or recent_micro_instruction()
     digest = _scouted_context_text()
     rows, kept = [], []
@@ -516,11 +516,11 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
             c["_angle"] = angle
             rows.append(c)
     for c in rows:
-        if default_window:
-            release_reason = micro_release_rejection_reason(c)
-            if release_reason is not None:
-                c["_dropped_as_release"] = release_reason
-                continue
+        c.update(enrich_issue_release_year(c))
+        release_reason = micro_release_rejection_reason(c)
+        if release_reason is not None:
+            c["_dropped_as_release"] = release_reason
+            continue
         # Burn-check on series+issue AND on the moment text: the same scene resurfaces
         # under a different phrasing across angles, and a sibling issue of an already-
         # produced series is the commonest false lead (measured: 3 of 7 candidates in the

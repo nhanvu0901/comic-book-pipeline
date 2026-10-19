@@ -261,11 +261,16 @@ def _publication_years(text: str) -> set[int]:
 
     The reader's ``Published Time:`` stamp belongs to the article and is ignored.
     """
+    release_years = _release_publication_years(text)
+    return release_years or _cover_publication_years(text)
+
+
+def _release_publication_years(text: str) -> set[int]:
     release_years = _labelled_years(text, _RELEASE_DATE_LABEL)
     found = _PROSE_DATE.search(text)
     if found:
         release_years.add(int(found.group(1)))
-    return release_years or _cover_publication_years(text)
+    return release_years
 
 
 def _labelled_years(text: str, label: re.Pattern[str]) -> set[int]:
@@ -283,6 +288,51 @@ def _cover_publication_years(text: str) -> set[int]:
     if found:
         years.add(int(found.group(1)))
     return years
+
+
+def enrich_issue_release_year(
+    candidate: Mapping[str, Any], *,
+    pages: dict[str, cited_sources.FetchedSource] | None = None,
+    fetcher: Callable[[str], cited_sources.FetchedSource] | None = None,
+) -> dict[str, Any]:
+    """Attach an issue's verified source release year for Micro's year gate.
+
+    Only an issue page whose identity matches the candidate can override its label.
+    Missing or ambiguous release metadata leaves the candidate unchanged.
+    """
+    enriched = dict(candidate)
+    # These two fields are reserved for fetched evidence, not model output.
+    enriched.pop("source_release_year", None)
+    enriched.pop("source_release_url", None)
+    issue = str(candidate.get("series_issue_year") or "").strip()
+    if issue_publication_year(issue) is None:
+        return enriched
+    urls: list[str] = []
+    citation = candidate.get("claim_citation")
+    if isinstance(citation, Mapping):
+        urls.append(str(citation.get("url") or ""))
+    evidence_urls = candidate.get("evidence_urls")
+    if isinstance(evidence_urls, list):
+        urls.extend(str(url) for url in evidence_urls)
+    cache = pages if pages is not None else {}
+    fetch = fetcher or issue_pages.fetch_issue_page
+    for url in dict.fromkeys(urls):
+        if not _issue_page_url(url):
+            continue
+        if url not in cache:
+            try:
+                cache[url] = fetch(url)
+            except Exception:
+                continue
+        source = cache[url]
+        if not source.ok or _page_issue_reason(source.text, issue) is not None:
+            continue
+        release_years = _release_publication_years(source.text)
+        if len(release_years) == 1:
+            enriched["source_release_year"] = next(iter(release_years))
+            enriched["source_release_url"] = url
+            break
+    return enriched
 
 
 def _identity_lines(text: str) -> list[str]:

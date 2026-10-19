@@ -538,9 +538,9 @@ class ScoutWorkflow:
         if session.mode is ScoutMode.MICRO:
             # A prior broad round may predate this policy. Keep its old entries
             # from suppressing a fresh candidate with the same source binding.
+            kept = [qa_discovery_gate.enrich_issue_release_year(c) for c in kept]
             kept = [
-                c for c in kept
-                if micro_release_rejection_reason(
+                c for c in kept if micro_release_rejection_reason(
                     c, session.user_intent, publication_year=session.publication_year,
                 ) is None
             ]
@@ -1116,6 +1116,7 @@ class ScoutWorkflow:
         seen_anchors: set[str] = set()
         seen_concepts: set[str] = set()
         offered: list[str] = []
+        micro_pages: dict[str, cited_sources.FetchedSource] = {}
         quota = {"direct": 4, "list": 1} if (
             mode is ScoutMode.QA and count == 5 and self._qa_batch_quota
         ) else None
@@ -1157,6 +1158,9 @@ class ScoutWorkflow:
                             or (concept and concept in seen_concepts)):
                         continue
                 else:
+                    candidate = qa_discovery_gate.enrich_issue_release_year(
+                        candidate, pages=micro_pages,
+                    )
                     if micro_release_rejection_reason(
                         candidate, publication_year=publication_year,
                     ) is not None:
@@ -1760,6 +1764,7 @@ def _validate_new_general_candidates(
     rejected: list[dict[str, str]] = []
     seen = set(protected_fingerprints)
     seen_issue_keys: set[tuple[str, str, str]] = set(protected_keys or ())
+    micro_pages: dict[str, cited_sources.FetchedSource] = {}
     for candidate in candidates:
         candidate_id = str(candidate.get("id", ""))
         citation = cited_sources.claim_citation(candidate)
@@ -1790,6 +1795,9 @@ def _validate_new_general_candidates(
             if issue_reason is not None:
                 rejected.append({"candidate_id": candidate_id, "reason": issue_reason})
                 continue
+            candidate = qa_discovery_gate.enrich_issue_release_year(
+                candidate, pages=micro_pages,
+            )
             release_reason = micro_release_rejection_reason(
                 candidate, user_intent, publication_year=publication_year,
             )

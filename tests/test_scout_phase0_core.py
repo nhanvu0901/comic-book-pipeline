@@ -3,6 +3,9 @@ from stages.research_scout import avoid_list
 from stages.research_scout.cited_sources import canonical_url
 from stages.research_scout.planner import ResearchPlan, assemble_prompt
 from stages.research_scout.workflow import _validate_new_general_candidates
+from stages.research_scout import issue_pages
+from stages.research_scout.cited_sources import FetchedSource
+from pathlib import Path
 
 
 def _plan():
@@ -46,6 +49,24 @@ def test_qa_filter_rejects_old_range_adaptation_and_duplicate_issue_key():
     assert [item["reason"] for item in validation["rejected"]] == [
         "duplicate_issue_key", "qa_pre_2010", "qa_issue_unparsed", "qa_not_comic",
     ]
+
+
+def test_micro_general_gate_uses_real_page_release_year(tmp_path, monkeypatch):
+    url = "https://marvel.fandom.com/wiki/Captain_America:_Who_Will_Wield_the_Shield%3F_Vol_1_1"
+    page = (Path(__file__).parent / "fixtures" / "qa_issue_dates" /
+            "captain_america_who_will_wield.txt").read_text(encoding="utf-8")
+    monkeypatch.setattr(issue_pages, "fetch_issue_page", lambda fetched_url: FetchedSource(fetched_url, text=page))
+    candidate = {
+        "id": "c1", "series_issue_year": "Captain America: Who Will Wield the Shield? #1 (2010)",
+        "claim_citation": {"url": url, "quote": "Rogers asks Bucky to remain Captain America."},
+        "evidence_urls": [url],
+    }
+    accepted, validation = _validate_new_general_candidates(
+        [candidate], {canonical_url(url)}, mode=ScoutMode.MICRO,
+        user_intent="Find a moment", sources=[{"url": url}], protected_fingerprints=set(),
+    )
+    assert accepted == []
+    assert validation["rejected"] == [{"candidate_id": "c1", "reason": "outside_recent_micro_window"}]
 
 
 def test_qa_pre_2010_is_rejected_even_when_request_names_an_older_period():

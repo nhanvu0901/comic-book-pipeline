@@ -20,6 +20,9 @@ pre-fix behavior.
 """
 import ui.bridge as bridge
 from datetime import date
+from pathlib import Path
+from stages.research_scout import issue_pages
+from stages.research_scout.cited_sources import FetchedSource
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
@@ -315,6 +318,39 @@ def test_micro_discovery_rejects_old_and_unresolved_issues_before_count(tmp_path
     )
     assert [entry["moment"] for entry in selected] == ["Previous"]
     assert f"Search published issues from {year - 1} only" in client.seen_prompt
+
+
+def test_micro_discovery_uses_real_issue_page_release_date_before_cover_year(tmp_path, monkeypatch):
+    url = "https://dc.fandom.com/wiki/Wonder_Woman_Vol_3_39"
+    page = (Path(__file__).parent / "fixtures" / "qa_issue_dates" /
+            "wonder_woman_39.txt").read_text(encoding="utf-8")
+    monkeypatch.setattr(issue_pages, "fetch_issue_page", lambda fetched_url: FetchedSource(fetched_url, text=page))
+    client = _ScriptedYouCom(candidates=[{
+        "moment": "Diana summons Zeus's lightning", "series_issue_year": "Wonder Woman Vol 3 #39 (2010)",
+        "turning_point": "Diana strikes her bracelets together.",
+        "what_visibly_happens": "Lightning destroys Cottus.",
+        "why_it_lands": "Diana turns defense into offense.", "evidence_urls": [url],
+        "source_release_year": 2010,  # model-supplied metadata cannot override the fetched page
+    }])
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2010)
+    assert batch[0]["fallback"] is True
+    assert batch[0]["moment"]
+
+
+def test_micro_discovery_selected_year_uses_source_release_not_later_cover(tmp_path, monkeypatch):
+    url = "https://dc.fandom.com/wiki/Hero_Vol_1_8"
+    page = "Title: Hero Vol 1 #8\nRelease Date: December 22, 2010\nCover Date: February 2011\nHero wins."
+    monkeypatch.setattr(issue_pages, "fetch_issue_page", lambda fetched_url: FetchedSource(fetched_url, text=page))
+    client = _ScriptedYouCom(candidates=[{
+        "moment": "Hero wins", "series_issue_year": "Hero Vol 1 #8 (2011)",
+        "turning_point": "Hero opens the door.", "what_visibly_happens": "Hero wins.",
+        "why_it_lands": "The fight ends.", "evidence_urls": [url],
+    }])
+    accepted = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2010)
+    assert [entry["moment"] for entry in accepted] == ["Hero wins"]
+    assert accepted[0]["source_release_year"] == 2010
+    rejected = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2011)
+    assert rejected[0]["fallback"] is True
 
 
 def test_micro_discovery_skips_thin_unsourced_leads(tmp_path):
