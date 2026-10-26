@@ -500,6 +500,14 @@ def _archived_bubble(detail: dict) -> ft.Control:
     return _system_bubble(f"Session archived — {reason}" if reason else "Session archived.")
 
 
+def _rejection_summary(reasons) -> str:
+    """" (year_not_found x2, fetch_timeout x1)" — which gate checks turned candidates away."""
+    if not isinstance(reasons, dict) or not reasons:
+        return ""
+    ranked = sorted(reasons.items(), key=lambda item: (-int(item[1]), str(item[0])))
+    return " (" + ", ".join(f"{name} x{count}" for name, count in ranked) + ")"
+
+
 def _discovered_text(entry: dict) -> str:
     """The one human-readable line of a Tier B entry, whichever mode produced
     it — QA discovers a `question`, Micro discovers a `moment`."""
@@ -899,6 +907,10 @@ def build(
                 meta_parts.append(f"Issue: {entry['series_issue_year']}")
             if meta_parts:
                 entry_details.append(ft.Text(" • ".join(meta_parts), size=11, weight=ft.FontWeight.W_500, color=ACCENT, selectable=True))
+            if entry.get("core_premise"):
+                entry_details.append(ft.Text(f"Premise: {entry['core_premise']}", size=11, color=ft.Colors.CYAN_300, selectable=True))
+            if entry.get("viewer_payoff"):
+                entry_details.append(ft.Text(f"Payoff: {entry['viewer_payoff']}", size=11, color=ft.Colors.AMBER_300, selectable=True))
             if entry.get("source_evidence"):
                 entry_details.append(ft.Text(f"Evidence: {entry['source_evidence']}", size=11, color=TEXT_MUTED, selectable=True))
             if entry.get("turning_point"):
@@ -1134,14 +1146,26 @@ def build(
 
     def _show_discovered(result) -> None:
         if result.get("verification_shortage"):
+            why = _rejection_summary(result.get("rejection_reasons"))
             if discovered_holder[0]:
-                discovered_note[0] = "No issue-verified questions came back; keeping the saved batch above."
+                discovered_note[0] = (
+                    "No issue-verified questions came back" + why
+                    + "; keeping the saved batch above."
+                )
                 _render_full()
             else:
-                _render_full(error="No issue-verified questions came back. Type your own question or try Discover again.")
+                _render_full(error=(
+                    "No issue-verified questions came back" + why
+                    + ". Type your own question or try Discover again."))
             return
         batch = result["entries"]
-        entries = [entry for entry in (batch or []) if _discovered_text(entry)]
+        # A QA fallback entry only carries the research angle (an instruction); it is
+        # never a question to offer, whatever text a stale or older entry put in it.
+        qa = mode_group.value == ScoutMode.QA.value
+        entries = [
+            entry for entry in (batch or [])
+            if _discovered_text(entry) and not (qa and entry.get("fallback"))
+        ]
         already = {text.casefold() for text in discovered_offered}
         fresh = [
             entry for entry in entries
@@ -1203,7 +1227,8 @@ def build(
                 discover_kwargs["publisher"] = publisher
             batch = discover_questions(mode, **discover_kwargs)
             if mode == ScoutMode.QA.value and batch and batch[0].get("verification_shortage"):
-                return {"entries": [], "batch_id": "", "verification_shortage": True}
+                return {"entries": [], "batch_id": "", "verification_shortage": True,
+                        "rejection_reasons": batch[0].get("rejection_reasons") or {}}
             ctx: dict[str, object] = {}
             if year is not None:
                 ctx["publication_year"] = year
@@ -1349,8 +1374,8 @@ def build(
         if len(raw) != 4 or not raw.isascii() or not raw.isdigit():
             raise ValueError("Enter a four-digit publication year, or leave Year blank.")
         year = int(raw)
-        if year < 1900 or year > date.today().year:
-            raise ValueError(f"Choose a publication year from 1900 to {date.today().year}.")
+        if year < 2010 or year > date.today().year:
+            raise ValueError(f"Choose a publication year from 2010 to {date.today().year}.")
         return year
 
     def _selected_publisher() -> str | None:
@@ -1897,7 +1922,7 @@ def build(
     year_field = ft.TextField(
         key="scout-year",
         label="Micro year (optional)",
-        hint_text="All years when blank",
+        hint_text=f"2010–{date.today().year} when blank",
         width=150,
         border_color=BORDER,
         focused_border_color=ACCENT,

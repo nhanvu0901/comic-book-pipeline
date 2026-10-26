@@ -24,9 +24,10 @@ QA_FORMAT_LIST = "list"
 QA_FORMAT_DIRECT = "direct"
 
 _DIRECT_INTERROGATIVE_LEAD = (
-    r"why|how|when|what\s+(?:made|makes)|"
+    r"why|how|when|what\s+(?:made|makes|drives|causes)|"
     r"what\s+(?:actually\s+|really\s+|exactly\s+)?(?:is|was|are|were|does)(?!\s+\d+\b)|"
-    r"what\s+happened\s+(?:to|when|in)\b|what\s+happens\s+when\b"
+    r"what\s+(?:has\s+)?happened\s+(?:to|when|in)\b|what\s+happens\s+(?:to|when|in)\b|"
+    r"what\s+(?:rule|cost|price|consequence|limit|power|secret|truth|choice|event)\s+(?:governs|drives|defines|lies|comes|happens|is|causes)\b"
 )
 _DIRECT_STATEMENT_LEAD = (
     r"the\s+(?:real\s+|tragic\s+|hidden\s+)?reason|"
@@ -38,12 +39,11 @@ _DIRECT_Q_RE = re.compile(
     rf"^\s*(?:{_DIRECT_INTERROGATIVE_LEAD}|{_DIRECT_STATEMENT_LEAD})\b", re.IGNORECASE,
 )
 _LIST_Q_RE = re.compile(
-    r"^\s*(?:how\s+many\b|what\s+are\s+some\b|what\s+are\s+"
-    r"(?:the\s+)?(?:distinct|different|multiple)\s+ways\b|"
-    r"what\s+are\s+(?:the\s+)?(?:two|three|four|five|six|seven|eight|nine|ten|\d+)\b"
-    r"[^?]{0,80}\bexamples\b|what\s+are\s+"
-    r"(?:(?:some|the|distinct|unique|hidden|forgotten)\s+)*"
-    r"(?:[\w'-]+'s\s+)?(?:abilities|powers)\b|"
+    r"^\s*(?:how\s+many\b|what\s+are\s+some\b|"
+    r"what\s+are\s+(?:the\s+)?(?:distinct|different|multiple|notable|two|three|four|five|six|seven|eight|nine|ten|\d+)\b[^?]{0,80}\bexamples\b|"
+    r"what\s+are\s+(?:the\s+)?(?:distinct|different|multiple)\s+(?:ways|times|moments|instances|cases)\b|"
+    r"what\s+are\s+(?:(?:some|the|distinct|unique|hidden|forgotten)\s+)*"
+    r"(?:[\w'-]+'s\s+)?(?:abilities|powers|weapons|suits|feats|transformations)\b|"
     r"what\s+are\s+some\s+of\b[^?]{0,100}\b"
     r"(?:feats|transformations|abilities|powers)\b)",
     re.IGNORECASE,
@@ -95,10 +95,16 @@ def is_comparison(question: str) -> bool:
 
 def question_archetype(question: str) -> QuestionArchetype:
     """"direct" for Why/How/What-is/concept questions, else "list"."""
+    q = question or ""
     return QuestionArchetype(
-        QA_FORMAT_DIRECT if _DIRECT_Q_RE.match(question or "") and not _LIST_Q_RE.match(question or "")
+        QA_FORMAT_DIRECT if _DIRECT_Q_RE.match(q) and not _LIST_Q_RE.match(q)
         else QA_FORMAT_LIST
     )
+
+
+def has_list_lead(question: str) -> bool:
+    """True when the text opens the way a list question does ("What are some ...", "How many ...")."""
+    return bool(_LIST_Q_RE.match(question or ""))
 
 
 def is_narrow_direct_question(question: str) -> bool:

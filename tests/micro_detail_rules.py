@@ -60,7 +60,8 @@ def in_order(text: str) -> bool:
 FORMAT_PHRASES = (
     "In series_issue_year write only Series Title #N (YYYY)",
     "ONE four-digit year",
-    "A volume number, cover date or on-sale date goes in summary, never in that field.",
+    "Use the actual issue release year (2010 or later), never its cover year as a substitute.",
+    "A volume number and cover date go in summary, never in that field.",
     "Copy every URL",
     "character for character from the address of a page you retrieved in this run",
     "rebuild a URL from a page title or guess a slug",

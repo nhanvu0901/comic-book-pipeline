@@ -82,6 +82,8 @@ class Candidate(BaseModel):
 
     id: str = ""
     series_issue_year: str = ""
+    source_release_year: int | None = None
+    source_release_url: str | None = None
     visible_event: str = ""
     evidence_urls: list[str] = Field(default_factory=list)
     reader_url: str | None = None

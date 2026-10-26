@@ -794,3 +794,30 @@ def test_refresh_defaults_to_the_configured_roots(tmp_path, monkeypatch, no_netw
     _stored_session(tmp_path, _micro_candidate(), _gate("micro"), _verify_round("CONFIRMED", "ok"))
 
     assert factory.refresh_scout_candidate("vault-duel")["scout_check"] == "CONFIRMED — ok"
+
+
+def test_pre_2010_and_reprint_candidates_fail_exact_issue_and_year_in_factory():
+    # Pre-2010 issue (< 2010) must be rejected with EXACT_ISSUE_REQUIRED
+    pre_2010_cand = {"series_issue_year": "Batman #321 (1980)"}
+    assert factory._has_exact_issue_and_year(pre_2010_cand) is False
+
+    # Pre-2010 reprint laundering (reprint 2026 of 1972 story) must be rejected
+    reprint_cand = {
+        "series_issue_year": "Action Comics #419 (2026)",
+        "original_publication_year": 1972,
+    }
+    assert factory._has_exact_issue_and_year(reprint_cand) is False
+
+    facsimile_cand = {
+        "series_issue_year": "Facsimile Edition: Action Comics (2026) #419 (2026)",
+    }
+    assert factory._has_exact_issue_and_year(facsimile_cand) is False
+
+    # Genuinely new issue from old series (e.g. Action Comics launched 1938, issue 2024) must pass
+    new_issue_cand = {"series_issue_year": "Action Comics (1938) #1064 (2024)"}
+    assert factory._has_exact_issue_and_year(new_issue_cand) is True
+
+    # Modern issue >= 2010 must pass
+    modern_cand = {"series_issue_year": "Batman (2016) #50 (2018)"}
+    assert factory._has_exact_issue_and_year(modern_cand) is True
+

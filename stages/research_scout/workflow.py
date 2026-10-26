@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -31,9 +32,10 @@ from .errors import ScoutUserError
 from .models import EvidenceGate, FeedbackNote, ResearchSession, ScoutMode, SessionState
 from .planner import ResearchPlan
 from .policies import PolicyBundle
+from .prompt_rules import EXACT_QUOTE, HOOK_RULES, NAME_THE_HERO, REAL_RELEASE_YEAR
 from .storage import SessionStore
 from .youcom import RawCall, YouComClient
-from stages.question_archetype import is_narrow_direct_question, question_archetype
+from stages.question_archetype import has_list_lead, is_narrow_direct_question, question_archetype
 
 
 _HOOK_QUESTION_START = re.compile(
@@ -64,34 +66,44 @@ def _hook_tokens(value: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", value.casefold()))
 
 
-def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
-    """Keep only a distinct, conservative hook; empty means no safe hook.
+def _hook_changes_type(question: str, hook: str) -> bool:
+    """Whether the hook is a different kind of question than the research question. A direct
+    question's hook may open any way but a list's ("Can ...", "Does ..." are not lists, and
+    ``question_archetype`` calls everything that is not a Why/How lead a list); a list question's
+    hook must itself read like a list question."""
+    wanted = question_archetype(question)
+    if wanted == "direct":
+        return has_list_lead(hook)
+    return question_archetype(hook) != wanted
 
-    Source URLs alone cannot verify a new claim. The related answer notes returned
-    in the same call can support hook wording, but a doubtful hook stays empty.
-    """
+
+def _hook_rejection(question: str, candidate: Mapping[str, Any]) -> str:
+    """Why the candidate's viewer_hook is not safe to show ("" = it is): the name of the first check
+    it fails, so a dropped hook can be told apart from a missing one."""
     hook = re.sub(r"\s+", " ", str(candidate.get("viewer_hook") or "")).strip()
     if not hook or len(hook) > 180 or not hook.endswith("?"):
-        return ""
+        return "not_a_question"
     if re.findall(r"[a-z0-9]+", hook.casefold()) == re.findall(
         r"[a-z0-9]+", question.casefold()
     ):
-        return ""
+        return "copied_question"
     urls = candidate.get("evidence_urls")
     if not isinstance(urls, list) or not any(
         isinstance(url, str) and re.match(r"^https?://[^/\s]+", url)
         for url in urls
     ):
-        return ""
+        return "no_source_url"
     if not _HOOK_QUESTION_START.match(hook) or hook.casefold().startswith("what if "):
-        return ""
-    if _HOOK_ADAPTATION.search(hook) or question_archetype(hook) != question_archetype(question):
-        return ""
+        return "bad_start"
+    if _HOOK_ADAPTATION.search(hook):
+        return "adaptation"
+    if _hook_changes_type(question, hook):
+        return "question_type_changed"
 
     question_terms = _hook_tokens(question) - _HOOK_GENERIC_WORDS
     hook_terms = _hook_tokens(hook) - _HOOK_GENERIC_WORDS
     if question_terms and not question_terms.intersection(hook_terms):
-        return ""
+        return "no_shared_term"
 
     answer_items = candidate.get("sample_answer_items")
     if not isinstance(answer_items, list):
@@ -104,16 +116,57 @@ def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
     ])
     supported_terms = _hook_tokens(support)
     if (hook_terms & _HOOK_STAKES_WORDS) - supported_terms:
-        return ""
+        return "new_stakes"
     # A newly named person/world is an especially easy way to change the topic.
     for name in re.findall(r"\b[A-Z][a-z]+(?:[- ][A-Z][a-z]+)*\b", hook):
         if _hook_tokens(name) - _HOOK_GENERIC_WORDS - supported_terms:
-            return ""
+            return "new_name"
+    return ""
+
+
+def _normalize_viewer_hook(question: str, candidate: Mapping[str, Any]) -> str:
+    """Keep only a distinct, conservative hook; empty means no safe hook.
+
+    Source URLs alone cannot verify a new claim. The related answer notes returned
+    in the same call can support hook wording, but a doubtful hook stays empty (and the
+    log says which check dropped it).
+    """
+    hook = re.sub(r"\s+", " ", str(candidate.get("viewer_hook") or "")).strip()
+    reason = _hook_rejection(question, candidate)
+    if reason:
+        if hook:
+            logger.info("viewer_hook dropped (%s): %r for %r", reason, hook[:120], question[:90])
+        return ""
     return hook
 
 
+# The discovery prompt scopes the search ("issues published in 2010 or later", "original
+# print issues"); models sometimes echo that scope into the question as a trailing clause
+# ("... work in modern print comics?"). It is search wording, not something to ask a viewer.
+_SCOPE_NOUN = r"(?:comics?|issues?|stories|story|runs?|continuity)"
+_SCOPE_WORDS = r"(?:(?:modern|recent|current|original)\s+)+(?:print\s+)?"
+_NOT_A_PREPOSITION = r"(?!(?:in|across|throughout|within|from|of|on|at|by|to|for|with)\b)"
+# "... in modern print comics?" / "... across original print issues?" at the end of the question
+_SCOPE_CLAUSE = re.compile(
+    rf"\s*,?\s+(?:in|across|throughout|within|from)\s+"
+    rf"(?:{_NOT_A_PREPOSITION}(?-i:[a-z’'-]+)\s+){{0,3}}?{_SCOPE_WORDS}{_SCOPE_NOUN}"
+    rf"\s*(?=[?.!]*$)", re.IGNORECASE)
+# "... in Black Panther’s modern comics?": the name is the anchor, so only the scope words go
+_SCOPE_AFTER_NAME = re.compile(
+    rf"(?<=[’']s\s){_SCOPE_WORDS}(?={_SCOPE_NOUN}\s*[?.!]*$)", re.IGNORECASE)
+_MIN_QUESTION_WORDS = 4
+
+
+def _strip_scope_phrases(question: str) -> str:
+    """Drop the scope wording the prompt leaked into a question, unless that would leave too
+    little question behind."""
+    stripped = _SCOPE_AFTER_NAME.sub("", _SCOPE_CLAUSE.sub("", question)).rstrip()
+    return stripped if stripped != question and len(stripped.split()) >= _MIN_QUESTION_WORDS \
+        else question
+
+
 def _qa_discovery_topup_prompt(
-    *, missing_direct: int, missing_list: int, angles: list[str],
+    *, missing_direct: int = 0, missing_list: int = 0, angles: list[str],
     excluded: list[str], anchors: set[str], concepts: set[str],
 ) -> str:
     """Ask only for the formats lost to verification or diversity filtering."""
@@ -122,13 +175,20 @@ def _qa_discovery_topup_prompt(
         requested.append(f"{missing_direct} direct")
     if missing_list:
         requested.append(f"{missing_list} list")
+    if not requested:
+        requested.append("1 candidate")
     return (
         "QA PRINT-COMIC DISCOVER TOP-UP. Return exactly " + " and ".join(requested)
         + " new candidates using these angles:\n"
         + "\n".join(f"- {angle}" for angle in angles)
         + "\nNo movie/TV/game evidence. Default answer scope is original print issues "
-        "published in 2010 or later. Read each cited issue page before wording "
+        "published in 2010 or later; that scope is a search filter, so never write scope "
+        "words (\"modern\", \"print\", \"original issues\", a year) into a question. "
+        "Read each cited issue page before wording "
         "the question; choose one answer claim its excerpt actually states. "
+        "Rely on issue-specific full story synopses or issue records (fandom wikis, comic catalog records) "
+        "with original publication metadata; never rely on marketing catalog teasers or solicitations "
+        "that withhold the story outcome. "
         "A direct question needs ONE answer target: one mechanism, limit, rule, "
         "or explicitly stated motive. Keep it evergreen and recognizable, but "
         "do not append family/mission/stakes/ongoing consequences or infer a "
@@ -138,11 +198,18 @@ def _qa_discovery_topup_prompt(
         "Each candidate needs canonical_anchor and concept_key matching both "
         "the question and issue evidence, plus issue_evidence: exact Series #N (YYYY), source_url, "
         "and a verbatim quote from that same issue page containing a detail "
-        "relevant to the question. The page must show a separate original "
+        "relevant to the question. Field formats: canonical_anchor is only the familiar hero or "
+        "team name as written in the question (1-3 words, never a sentence); concept_key is a "
+        "short lowercase noun phrase (2-4 words, no underscores) naming the power, world, rule or "
+        "choice. " + NAME_THE_HERO + " " + REAL_RELEASE_YEAR + " " + EXACT_QUOTE + " " + HOOK_RULES + " "
+        "The page must show a separate original "
         "Published/release date; an article date does not count. A direct needs one verified issue; a list "
         "needs two different verified issues. Bare URLs and reprint years do not count. "
-        "Make the viewer_hook a distinct, grounded detail within the same answer scope "
+        "Make the viewer_hook a distinct, grounded question within the same answer scope "
         "or use the empty string; never add another answer target. "
+        "Provide core_premise (the underlying contrast, conflict, or high-curiosity rule) "
+        "and viewer_payoff (the concrete comic turning point, consequence, or resolution answering the question, "
+        "not a mere restatement of the setup). "
         "Never repeat an anchor or concept already chosen.\n"
         + "Used anchors: " + ", ".join(sorted(anchors)) + "\n"
         + "Used concepts: " + ", ".join(sorted(concepts)) + "\n"
@@ -291,7 +358,8 @@ class ScoutWorkflow:
         client: YouComClient | None = None,
         *,
         planner: Callable[[str, list[str], str], ResearchPlan | None] | None = None,
-        qa_issue_verifier: Callable[[Mapping[str, Any], str], bool] | None = None,
+        qa_issue_verifier: Callable[
+            [Mapping[str, Any], str], bool | qa_discovery_gate.GateResult] | None = None,
     ):
         self.store = store or SessionStore(config.RESEARCH_SESSIONS_ROOT)
         self.client = client or YouComClient()
@@ -300,7 +368,10 @@ class ScoutWorkflow:
         # key in this process, so nothing but run_general may reach it.
         self._uses_detailed_planner = planner is None
         self._planner = planner if planner is not None else planner_module.make_plan
-        self._qa_issue_verifier = qa_issue_verifier or qa_discovery_gate.verified_issue_evidence
+        self._qa_issue_verifier = qa_issue_verifier or qa_discovery_gate.evaluate_issue_evidence
+        # Why each QA candidate of the latest discover_questions() call was turned away
+        # ({question, reason, details}); a rejection is data, not a silent drop.
+        self.qa_rejections: list[dict[str, Any]] = []
         self._qa_batch_quota = True
         self._policies: dict[ScoutMode, PolicyBundle] = {}
 
@@ -467,9 +538,9 @@ class ScoutWorkflow:
         if session.mode is ScoutMode.MICRO:
             # A prior broad round may predate this policy. Keep its old entries
             # from suppressing a fresh candidate with the same source binding.
+            kept = [qa_discovery_gate.enrich_issue_release_year(c) for c in kept]
             kept = [
-                c for c in kept
-                if micro_release_rejection_reason(
+                c for c in kept if micro_release_rejection_reason(
                     c, session.user_intent, publication_year=session.publication_year,
                 ) is None
             ]
@@ -985,8 +1056,13 @@ class ScoutWorkflow:
         angles = [str(a) for a in bundle.general_angles.get(mode.value, [])] or [angle]
         fallback_item: dict[str, Any] = {field: angle, "angle": angle, "fallback": True}
         if mode is ScoutMode.QA:
+            # A QA angle is a research INSTRUCTION ("direct: How does ... Pick one ..."), never a
+            # question: keep it under "angle" for diagnostics and leave the question empty so no
+            # consumer (UI card, session intent, writer) can surface it as one.
+            fallback_item[field] = ""
             fallback_item["proposed_format"] = str(question_archetype(angle))
             fallback_item["viewer_hook"] = ""
+        self.qa_rejections = []
         fallback = [fallback_item]
 
         excluded = [str(item).strip() for item in exclude if str(item).strip()]
@@ -1040,6 +1116,7 @@ class ScoutWorkflow:
         seen_anchors: set[str] = set()
         seen_concepts: set[str] = set()
         offered: list[str] = []
+        micro_pages: dict[str, cited_sources.FetchedSource] = {}
         quota = {"direct": 4, "list": 1} if (
             mode is ScoutMode.QA and count == 5 and self._qa_batch_quota
         ) else None
@@ -1048,19 +1125,28 @@ class ScoutWorkflow:
             offered.extend(str(c.get(field, "")).strip() for c in candidates)
             for index, candidate in enumerate(candidates):
                 text = str(candidate.get(field, "")).strip()
+                if mode is ScoutMode.QA:
+                    text = _strip_scope_phrases(text)
+                    candidate = qa_discovery_gate.normalize_candidate({**candidate, field: text})
                 if not text or text.casefold() in seen or is_burned(text, burn_digest):
                     continue
                 if mode is ScoutMode.QA:
                     fmt = str(question_archetype(text))
-                    if quota and sum(c["proposed_format"] == fmt for c in picked) >= quota[fmt]:
-                        continue
                     if is_narrow_direct_question(text):
                         continue
                     try:
-                        evidence_ok = self._qa_issue_verifier(candidate, fmt)
-                    except Exception:
-                        evidence_ok = False
-                    if not evidence_ok:
+                        verdict = qa_discovery_gate.as_gate_result(
+                            self._qa_issue_verifier(candidate, fmt))
+                    except Exception as exc:
+                        verdict = qa_discovery_gate.GateResult(
+                            False, "verifier_error", (type(exc).__name__,))
+                    if not verdict.passed:
+                        self.qa_rejections.append({
+                            "question": text, "reason": verdict.reason,
+                            "details": list(verdict.details),
+                        })
+                        logger.info("QA discovery rejected %r: %s %s",
+                                    text[:90], verdict.reason, "; ".join(verdict.details))
                         continue
                     anchor = qa_discovery_gate.canonical_topic(
                         str(candidate.get("canonical_anchor") or candidate.get("subject") or "")
@@ -1072,6 +1158,9 @@ class ScoutWorkflow:
                             or (concept and concept in seen_concepts)):
                         continue
                 else:
+                    candidate = qa_discovery_gate.enrich_issue_release_year(
+                        candidate, pages=micro_pages,
+                    )
                     if micro_release_rejection_reason(
                         candidate, publication_year=publication_year,
                     ) is not None:
@@ -1087,6 +1176,10 @@ class ScoutWorkflow:
                 labelled = str(candidate.get("angle", "")).strip() or angles[index % len(angles)]
                 candidate_entry = {**candidate, field: text, "angle": labelled}
                 if mode is ScoutMode.QA:
+                    if verdict.claims:
+                        # Only what the gate verified goes on as evidence; a claim it never
+                        # fetched (or rejected) must not ride along as if it had been checked.
+                        candidate_entry["issue_evidence"] = [dict(c) for c in verdict.claims]
                     candidate_entry["proposed_format"] = fmt
                     candidate_entry["viewer_hook"] = _normalize_viewer_hook(text, candidate)
                     if anchor:
@@ -1098,10 +1191,12 @@ class ScoutWorkflow:
                     break
             if len(picked) >= count or not quota or attempt == 1 or _raw_call_error(raw):
                 break
-            missing_direct = quota["direct"] - sum(c["proposed_format"] == "direct" for c in picked)
-            missing_list = quota["list"] - sum(c["proposed_format"] == "list" for c in picked)
-            if not missing_direct and not missing_list:
+            missing_total = count - len(picked)
+            if missing_total <= 0:
                 break
+            has_list = any(c.get("proposed_format") == "list" for c in picked)
+            missing_list = 1 if not has_list else 0
+            missing_direct = max(0, missing_total - missing_list)
             topup_angles = (angles[:4] if missing_direct else []) + (angles[4:5] if missing_list else [])
             try:
                 raw = self.client.research(
@@ -1121,13 +1216,52 @@ class ScoutWorkflow:
                 key=lambda c: issue_publication_year(str(c.get("series_issue_year", ""))) or 0,
                 reverse=True,
             )
-        elif quota and 0 < len(picked) < count:
-            for entry in picked:
-                entry["batch_incomplete"] = True
-                entry["batch_expected"] = count
-        if quota and offered and not picked:
-            fallback_item["verification_shortage"] = True
-            fallback_item["batch_expected"] = count
+        elif mode is ScoutMode.QA:
+            def _qa_rank_key(c: Mapping[str, Any]) -> float:
+                score = 0.0
+                payoff = str(c.get("viewer_payoff") or "").strip()
+                premise = str(c.get("core_premise") or "").strip()
+                hook = str(c.get("viewer_hook") or "").strip()
+                
+                # 1. Grounded premise with conflict/contrast indicators
+                if premise:
+                    score += 2.0
+                    premise_lower = premise.casefold()
+                    if any(k in premise_lower for k in ("vs", "against", "clash", "dilemma", "cost", "limit", "refuse", "break", "struggle", "secret")):
+                        score += 1.0
+
+                # 2. Grounded viewer payoff resolving the curiosity
+                if payoff:
+                    score += 2.5
+                    payoff_lower = payoff.casefold()
+                    if any(k in payoff_lower for k in ("reveals", "discovers", "realizes", "turns", "sacrifices", "stops", "defeats", "forces")):
+                        score += 1.0
+                    # Grounding check with issue quote
+                    quote_text = " ".join(str(cl.get("quote", "")).casefold() for cl in c.get("issue_evidence") or [] if isinstance(cl, Mapping))
+                    if any(w in quote_text for w in payoff_lower.split() if len(w) > 4):
+                        score += 1.5
+
+                # 3. Viewer hook clarity
+                if hook:
+                    score += 1.0
+
+                # 4. Evidence quality
+                claims = c.get("issue_evidence")
+                if isinstance(claims, list) and len(claims) >= 1:
+                    score += min(len(claims), 2) * 1.0
+
+                return score
+            picked.sort(key=_qa_rank_key, reverse=True)
+            if 0 < len(picked) < count:
+                for entry in picked:
+                    entry["batch_incomplete"] = True
+                    entry["batch_expected"] = count
+            if offered and not picked:
+                fallback_item["verification_shortage"] = True
+                fallback_item["batch_expected"] = count
+                reasons = Counter(row["reason"] for row in self.qa_rejections)
+                if reasons:
+                    fallback_item["rejection_reasons"] = dict(reasons)
         return picked[:count] or fallback
 
     def next_angle(self, mode: ScoutMode) -> str:
@@ -1630,9 +1764,7 @@ def _validate_new_general_candidates(
     rejected: list[dict[str, str]] = []
     seen = set(protected_fingerprints)
     seen_issue_keys: set[tuple[str, str, str]] = set(protected_keys or ())
-    explicit_period = bool(_NAMED_HISTORICAL_ERA_RE.search(user_intent)) or any(
-        int(year) < 2010 for year in _YEAR_RE.findall(user_intent)
-    )
+    micro_pages: dict[str, cited_sources.FetchedSource] = {}
     for candidate in candidates:
         candidate_id = str(candidate.get("id", ""))
         citation = cited_sources.claim_citation(candidate)
@@ -1659,6 +1791,9 @@ def _validate_new_general_candidates(
             rejected.append({"candidate_id": candidate_id, "reason": "claim_citation_url_not_returned"})
             continue
         if mode is ScoutMode.MICRO:
+            candidate = qa_discovery_gate.enrich_issue_release_year(
+                candidate, pages=micro_pages,
+            )
             issue_reason = micro_issue_rejection_reason(user_intent, candidate)
             if issue_reason is not None:
                 rejected.append({"candidate_id": candidate_id, "reason": issue_reason})
@@ -1680,7 +1815,7 @@ def _validate_new_general_candidates(
             if _NON_COMIC_RE.search(label) or _NON_COMIC_RE.search(str(candidate.get("title", ""))):
                 rejected.append({"candidate_id": candidate_id, "reason": "qa_not_comic"})
                 continue
-            if identity.year and int(identity.year) < 2010 and not explicit_period:
+            if identity.year and int(identity.year) < 2010:
                 rejected.append({"candidate_id": candidate_id, "reason": "qa_pre_2010"})
                 continue
         issue_key = _issue_key(str(candidate.get("series_issue_year", "")))

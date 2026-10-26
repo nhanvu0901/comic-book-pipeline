@@ -38,9 +38,10 @@ Use the retrieved page's issue metadata or another source to establish the
 issue identity; never claim the quote alone proves a detail it does not say.
 In `series_issue_year` write only `Series Title #N (YYYY)`: the title as
 printed, the issue number and ONE four-digit year, the year the issue was
-published (or the year the request names, when a source gives it as the
-issue's cover or release year). A volume number, cover date or on-sale date
-goes in `summary`, never in that field. Copy every URL (`claim_citation.url`,
+first released or sold, even when its cover date or the requested year differs.
+Use the actual issue release year (2010 or later), never its cover year as a
+substitute. A volume number and cover date go in `summary`, never in that
+field. Copy every URL (`claim_citation.url`,
 each `detail_citations` url, `evidence_urls`) character for character from the
 address of a page you retrieved in this run; never rebuild a URL from a page
 title or guess a slug, and a sentence from a page you did not retrieve cannot

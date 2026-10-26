@@ -30,6 +30,10 @@ MAX_PHASE_RETRIES = int(os.getenv("MAX_PHASE_RETRIES", "3"))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 SCOUT_EVIDENCE_MODEL = os.getenv("SCOUT_EVIDENCE_MODEL", "deepseek/deepseek-v4-flash")
+# Semantic answer check of the QA discovery gate (stages/research_scout/qa_semantic_check.py): one
+# SCOUT_EVIDENCE_MODEL call per candidate that passed every structural check, asking whether the cited
+# synopsis really answers the question. ON unless set to 0/false/no/off; on any error it fails closed.
+QA_SEMANTIC_CHECK = os.getenv("QA_SEMANTIC_CHECK", "").strip().lower() not in ("0", "false", "no", "off", "n")
 # Cheap planner LLM that fills the Stage 1 ResearchPlan's 4 knobs (see
 # stages/research_scout/planner.py + RESEARCH_PLANNER_DESIGN.md). Defaults to
 # the evidence model — no separate key/model needed unless split later.

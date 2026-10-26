@@ -1134,9 +1134,9 @@ def _discover_env(tmp_path, monkeypatch, *, batches):
     calls = []
     queued = list(batches)
 
-    def _fake_discover(mode, *, count=5, exclude=(), publication_year=None):
+    def _fake_discover(mode, *, count=5, exclude=(), publication_year=None, publisher=None):
         calls.append({"mode": mode, "count": count, "exclude": list(exclude),
-                      "publication_year": publication_year})
+                      "publication_year": publication_year, "publisher": publisher})
         return queued.pop(0) if queued else []
 
     monkeypatch.setattr(s1_research_scout, "discover_questions", _fake_discover)
@@ -1408,6 +1408,101 @@ def test_micro_year_field_persists_on_new_research_and_rejects_bad_input(
     assert store.load(created[0]).publication_year == 2024
 
 
+def test_micro_year_field_floor_clamp_rejects_pre_2010_years(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_start(mode, text, *, publication_year=None, publisher=None):
+        calls.append((mode, text, publication_year, publisher))
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.create(ScoutMode(mode), text, publication_year, publisher=publisher)
+        return session
+
+    def fake_run(session_id):
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.load(session_id)
+        session.state = SessionState.CANDIDATE_REVIEW
+        store.save(session)
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", fake_start)
+    monkeypatch.setattr(s1_research_scout, "run_scout_general", fake_run)
+    page, controls = _build(tmp_path)
+    mode = _by_key(controls, "scout-mode")
+    mode.value = "micro"
+    mode.on_change(_FakeEvent("micro"))
+    _intent_field(controls).value = "Find a moment"
+    year_field = _by_key(controls, "scout-year")
+
+    for bad_year in ("1900", "1954", "1977", "1980", "2009"):
+        year_field.value = bad_year
+        _send(controls).on_click(object())
+        assert calls == []
+        assert "Choose a publication year from 2010 to" in _text_content(controls)
+
+    year_field.value = "2010"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+    assert calls[-1][2] == 2010
+
+    page2, controls2 = _build(tmp_path / "another")
+    mode2 = _by_key(controls2, "scout-mode")
+    mode2.value = "micro"
+    mode2.on_change(_FakeEvent("micro"))
+    _intent_field(controls2).value = "Find another moment"
+    year_field2 = _by_key(controls2, "scout-year")
+    year_field2.value = "2024"
+    _send(controls2).on_click(object())
+    _run_recorded_task(page2)
+    assert calls[-1][2] == 2024
+
+
+def test_scout_publisher_dropdown_forwards_selection_to_discover_and_start(
+    tmp_path, monkeypatch,
+):
+    page, controls, calls = _discover_env(
+        tmp_path, monkeypatch, batches=[_batch("A publisher moment")],
+    )
+    pub_field = _by_key(controls, "scout-publisher")
+    assert pub_field is not None
+    assert pub_field.value == s1_research_scout.ALL_PUBLISHERS_LABEL
+    option_values = [getattr(opt, "key", None) or getattr(opt, "text", None) or str(opt) for opt in pub_field.options]
+    assert any("DC" in str(v) for v in option_values)
+    assert any("Marvel" in str(v) for v in option_values)
+
+    # Empty send with publisher selected bypasses bank and calls discovery with publisher
+    pub_field.value = "DC"
+    _send(controls).on_click(object())
+    _run_recorded_task(page)
+    assert calls[-1]["publisher"] == "DC"
+
+    # With intent and publisher filled, start_scout_session gets publisher
+    start_calls = []
+
+    def fake_start(mode, text, *, publication_year=None, publisher=None):
+        start_calls.append((mode, text, publication_year, publisher))
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.create(ScoutMode(mode), text, publication_year, publisher=publisher)
+        return session
+
+    def fake_run(session_id):
+        store = SessionStore(tmp_path / "research_sessions")
+        session = store.load(session_id)
+        session.state = SessionState.CANDIDATE_REVIEW
+        store.save(session)
+        return session
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", fake_start)
+    monkeypatch.setattr(s1_research_scout, "run_scout_general", fake_run)
+
+    page2, controls2 = _build(tmp_path)
+    pub2 = _by_key(controls2, "scout-publisher")
+    pub2.value = "Marvel"
+    _intent_field(controls2).value = "Iron Man armor"
+    _send(controls2).on_click(object())
+    _run_recorded_task(page2)
+    assert start_calls[-1] == ("qa", "Iron Man armor", None, "Marvel")
+
+
 def test_micro_review_explains_when_research_returns_a_different_issue(tmp_path):
     from stages.research_scout.issue_identity import micro_issue_rejection_reason
 
@@ -1501,12 +1596,12 @@ def test_an_empty_send_with_a_batch_on_screen_spends_nothing_and_says_what_to_do
     assert "Pick one of the questions above" in shown
 
 
-def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(
+def test_a_dead_youcom_tells_the_user_instead_of_offering_the_angle_instruction(
     tmp_path, monkeypatch,
 ):
     """End-to-end through the real bridge with the network cut: Tier B's
-    never-raises fallback (the rotated angle) still has to reach the chat, which
-    is the pre-batch behaviour this must not lose."""
+    never-raises fallback still reaches the chat, but as a plain "nothing came
+    back" — the rotated QA angle is a research instruction, never a question."""
     root = tmp_path / "research_sessions"
     s1_research_scout.RESEARCH_SESSIONS_ROOT = root
     bridge.RESEARCH_SESSIONS_ROOT = root
@@ -1516,7 +1611,7 @@ def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(
         # bridge._scout_workflow() builds an uninjected, real YouComClient(), and
         # config.load_dotenv() can put a LIVE key in this process — so without this
         # stub the assertion below would depend on a real network call. Raising
-        # forces discover_questions' mandatory fallback, which returns the angle.
+        # forces discover_questions' mandatory fallback entry.
         def research(self, *args, **kwargs):
             raise AssertionError("test tried to reach the real You.com client")
 
@@ -1533,8 +1628,10 @@ def test_a_dead_youcom_still_offers_the_angle_rather_than_an_empty_bubble(
     page, controls = _build(tmp_path)
     _discover_twice(page, controls)
 
-    angles = PolicyBundle.load(ScoutMode.QA).general_angles["qa"]
-    assert angles[0] in _text_content(controls)
+    shown = _text_content(controls)
+    for angle in PolicyBundle.load(ScoutMode.QA).general_angles["qa"]:
+        assert angle[:40] not in shown
+    assert "No question came back" in shown
     assert not root.exists() or not any(root.iterdir())
 
 
@@ -2160,16 +2257,28 @@ def test_reroll_preserves_every_entry_even_the_one_already_picked(tmp_path, monk
     assert all(row["status"] != "rejected" for row in rows)
 
 
-def test_fallback_angle_is_not_saved_as_a_discovery(tmp_path, monkeypatch):
+def test_fallback_angle_is_neither_shown_nor_saved_as_a_discovery(tmp_path, monkeypatch):
+    instruction = "direct: How does a defining power of a hero work? Pick one source-supported cost."
     page, controls, _calls = _discover_env(
         tmp_path, monkeypatch,
-        batches=[[{"question": "an unfilled angle", "angle": "an unfilled angle",
-                  "fallback": True}]],
+        batches=[[{"question": instruction, "angle": instruction, "fallback": True}]],
     )
     _discover_twice(page, controls)
 
-    assert "an unfilled angle" in _text_content(controls)
+    assert instruction not in _text_content(controls)
+    assert "No question came back" in _text_content(controls)
     assert SavedScoutStore(tmp_path / "research_sessions").list_entries() == []
+
+
+def test_zero_verified_qa_discover_names_why_candidates_were_rejected(tmp_path, monkeypatch):
+    entry = {"question": "", "fallback": True, "verification_shortage": True,
+             "batch_expected": 5,
+             "rejection_reasons": {"year_not_found": 2, "fetch_timeout": 1}}
+    page, controls, _calls = _discover_env(tmp_path, monkeypatch, batches=[[entry]])
+    _discover_twice(page, controls)
+    shown = _text_content(controls)
+    assert "No issue-verified questions" in shown
+    assert "year_not_found" in shown and "fetch_timeout" in shown
 
 
 def test_save_failure_keeps_paid_batch_visible_and_blocks_reroll(tmp_path, monkeypatch):

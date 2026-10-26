@@ -2,12 +2,6 @@
 
 The year on a relaunched series can differ from the year of the requested
 issue. Only an unambiguous year *after* the issue number is a release year.
-
-Scope (Master 2026-10-17): a selected Year field is an exact filter; a single
-year named in the request is exact too. With no year at all, the scout searches
-EVERY publication year — it no longer defaults to the current year. Only a
-request that itself asks for recent issues ("recent", "latest", "new", "this
-year") is held to the current year.
 """
 
 from __future__ import annotations
@@ -25,20 +19,53 @@ _HISTORICAL_ERA = re.compile(
     r"\b(?:golden age|silver age|bronze age|classic|vintage|older|old comics?|historical)\b",
     re.IGNORECASE,
 )
+
+
 _RECENT_REQUEST = re.compile(
-    r"\b(?:recent(?:ly)?|latest|newest|new(?:er)? (?:issues?|comics?|releases?)|"
+    r"\b(?:recent(?:ly)?|latest|newest|new\b|new(?:er)? (?:issues?|comics?|releases?|moments?)?|"
     r"this year|current year|just (?:released|came out)|modern)\b",
     re.IGNORECASE,
 )
 
+MIN_PUBLICATION_YEAR = 2010
 
-def issue_publication_year(label: str) -> int | None:
-    """Read the single issue-year after #N; ignore a series launch year before it."""
+
+def issue_publication_year(label: str, allow_series_year: bool = False) -> int | None:
+    """Read the single issue-year after #N; ignore a series launch year before it unless allowed."""
     issues = list(_ISSUE.finditer(str(label)))
     if len(issues) != 1:
         return None
     years = _YEAR.findall(str(label)[issues[0].end():])
-    return int(years[0]) if len(years) == 1 else None
+    if len(years) == 1:
+        return int(years[0])
+    if allow_series_year and not years:
+        before_years = _YEAR.findall(str(label)[:issues[0].start()])
+        if len(before_years) == 1:
+            return int(before_years[0])
+    return None
+
+
+def candidate_release_year(candidate: Mapping[str, Any]) -> int | None:
+    """Use an explicit issue release date before the year printed in its label.
+
+    A cover date is not a release date. Conflicting explicit dates are unresolved
+    rather than letting either one satisfy a selected year.
+    """
+    label_year = issue_publication_year(str(candidate.get("series_issue_year", "")))
+    if label_year is None:
+        return None
+    source_year = candidate.get("source_release_year")
+    if source_year is not None and re.fullmatch(r"(?:19|20)\d{2}", str(source_year)):
+        return int(source_year)
+    years: set[int] = set()
+    for key in ("release_date", "on_sale_date", "publication_date", "published_date",
+                "release_year", "on_sale_year"):
+        value = candidate.get(key)
+        if value is not None:
+            years.update(int(year) for year in _YEAR.findall(str(value)))
+    if years:
+        return next(iter(years)) if len(years) == 1 else None
+    return label_year
 
 
 def explicit_historical_scope(user_intent: str, today: date | None = None) -> bool:
@@ -66,9 +93,9 @@ def asks_for_recent(user_intent: str) -> bool:
 def requested_year(
     user_intent: str = "", publication_year: int | None = None, today: date | None = None,
 ) -> int | None:
-    """The one publication year this scout is limited to, or None for every year.
+    """The one publication year this scout is limited to, or None for any modern year (>= 2010).
     Selected Year field > single year named in the request > current year only when the
-    request asks for recent issues > None (all years)."""
+    request asks for recent issues > None (all modern years)."""
     if publication_year is not None:
         return publication_year
     named = _intent_year(user_intent)
@@ -79,23 +106,61 @@ def requested_year(
     return None
 
 
+_FACSIMILE_REPRINT = re.compile(
+    r"\b(?:facsimile(?:\s+edition)?|reprint(?:\s+edition)?|true\s+believers|millennium\s+edition)\b",
+    re.IGNORECASE,
+)
+
+
+def original_publication_year(candidate: Mapping[str, Any]) -> int | None:
+    """Read original story publication year, distinguishing it from a reprint/facsimile release date."""
+    for key in ("original_publication_year", "original_year", "first_published_year", "story_year"):
+        val = candidate.get(key)
+        if val is not None and str(val).strip().isdigit():
+            return int(str(val).strip())
+    label = str(candidate.get("series_issue_year", ""))
+    orig_match = re.search(r"\boriginal(?:ly)?(?:\s+published)?(?:\s+in)?\s+((?:19|20)\d{2})\b", label, re.I)
+    if orig_match:
+        return int(orig_match.group(1))
+    return None
+
+
 def micro_release_rejection_reason(
     candidate: Mapping[str, Any], user_intent: str = "", today: date | None = None,
     publication_year: int | None = None,
 ) -> str | None:
-    """Reject a future issue always; reject another year only when one year is requested.
-    With no requested year every publication year is accepted."""
+    """Reject an un-dated or future issue; reject <= 2009; reject another year when one is requested.
+    Broad modern searches accept any published issue from MIN_PUBLICATION_YEAR to today.
+    Facsimile / reprint editions cannot launder pre-2010 stories into a modern year."""
     today = today or date.today()
-    year = issue_publication_year(str(candidate.get("series_issue_year", "")))
+    label = str(candidate.get("series_issue_year", ""))
+    year = candidate_release_year(candidate)
     if year is not None and year > today.year:
         return "future_issue_year"
-    requested = requested_year(user_intent, publication_year, today)
-    if requested is None:
-        return None
-    if year is None:
-        return "issue_publication_year_unresolved"
-    if year != requested:
+    if year is not None and year < MIN_PUBLICATION_YEAR:
         return "outside_recent_micro_window"
+
+    orig_year = original_publication_year(candidate)
+    if orig_year is not None and orig_year < MIN_PUBLICATION_YEAR:
+        return "outside_recent_micro_window"
+
+    # Facsimile editions / reprints cannot launder pre-2010 comics
+    if _FACSIMILE_REPRINT.search(label) or candidate.get("is_reprint"):
+        if orig_year is None or orig_year < MIN_PUBLICATION_YEAR:
+            return "outside_recent_micro_window"
+
+    requested = requested_year(user_intent, publication_year, today)
+    if requested is not None:
+        if requested < MIN_PUBLICATION_YEAR:
+            return "outside_recent_micro_window"
+        if year is None:
+            return "issue_publication_year_unresolved"
+        target_year = orig_year if orig_year is not None else year
+        if target_year != requested:
+            return "outside_recent_micro_window"
+    else:
+        if year is None:
+            return "issue_publication_year_unresolved"
     return None
 
 
@@ -108,24 +173,25 @@ def recent_micro_instruction(
     year = requested_year(user_intent, publication_year, today)
     if year is None:
         year_rule = (
-            "MICRO YEAR SCOPE: No publication year was selected, so search issues "
-            "from ANY publication year (any era, older or newer). Do not limit the "
-            "search to recent issues or favour the newest ones; rank by the strength "
-            f"of the moment. Never use an unpublished issue (after {today.year}). "
+            f"MICRO YEAR SCOPE: Search published issues from {MIN_PUBLICATION_YEAR} to {today.year} only. "
+            f"The channel baseline policy strictly requires comics published in {MIN_PUBLICATION_YEAR} or later. "
+            f"Comics published before {MIN_PUBLICATION_YEAR} are invalid and must never be proposed. "
+            f"Never use an unpublished issue (after {today.year}). "
+            f"Rank qualifying moments by the strength of the scene. "
         )
     else:
-        year_rule = f"MICRO YEAR SCOPE: Search published issues from {year} only. "
+        year_rule = f"MICRO YEAR SCOPE: Search published issues from {year} only (must be {MIN_PUBLICATION_YEAR} or later). "
         if publication_year is not None or _SELECTED_YEAR_LINE.search(user_intent):
             year_rule += (
                 "The selected year is the exact filter. If a named issue has a "
                 "different publication year, report the conflict. "
             )
-        elif _intent_year(user_intent) is None:
+        elif asks_for_recent(user_intent):
             year_rule += f"The request asks for recent issues, so use the current year ({today.year}). "
     return (
         year_rule +
         "Verify the publication year of the exact issue, not the series launch "
-        "year or article date. "
+        "year, a reprint date, or an article date. "
         "Each pick needs a source-supported setup, a concrete action or reveal, "
         "and its direct consequence in the same scene; skip thin leads instead "
         "of filling gaps with invented story details."

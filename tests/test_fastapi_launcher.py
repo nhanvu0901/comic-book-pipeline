@@ -26,6 +26,7 @@ def launched_app(tmp_path, monkeypatch):
     import flet as ft
     import uvicorn
     import ui.__main__ as ui_main
+    from ui import bridge
 
     monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", True)
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path)
@@ -34,9 +35,13 @@ def launched_app(tmp_path, monkeypatch):
     monkeypatch.setattr(ft, "run", lambda *a, **k: got.setdefault("ft", (a, k)) and _fake_flet_asgi())
     monkeypatch.setattr(uvicorn, "run", lambda app, *a, **k: got.update(app=app, uvicorn=k))
     monkeypatch.setattr("sys.argv", ["ui", "--lan", "--port", "8560"])
-    ui_main._run()
-    got["tmp"] = tmp_path
-    return got
+    previous_web_mode = bridge.WEB_MODE
+    try:
+        ui_main._run()
+        got["tmp"] = tmp_path
+        yield got
+    finally:
+        bridge.set_web_mode(previous_web_mode)
 
 
 def test_clip_routes_win_over_the_flet_catch_all_mount(launched_app, monkeypatch):
@@ -122,7 +127,10 @@ def test_lan_flag_off_uses_exact_old_ft_run_and_never_imports_fastapi(monkeypatc
     import flet as ft
     import sys
     import ui.__main__ as ui_main
+    from ui import bridge
 
+    # _run() sets WEB_MODE directly, so register its original value for teardown.
+    monkeypatch.setattr(bridge, "WEB_MODE", bridge.WEB_MODE)
     monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", False)
     called = []
     monkeypatch.setattr(ft, "run", lambda *a, **k: called.append((a, k)))

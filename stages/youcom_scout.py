@@ -250,6 +250,8 @@ _DISCOVER_PROPS = {
         "required": ["issue", "source_url", "quote"],
     }},
     "proposed_format": {"type": "string"},
+    "core_premise": {"type": "string"},
+    "viewer_payoff": {"type": "string"},
     "why_fans_ask_it": {"type": "string"},
     "evidence_urls": {"type": "array", "items": {"type": "string"}},
     "sample_answer_items": {"type": "array", "items": {"type": "string"}},
@@ -295,7 +297,11 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             "Do not put an issue number into a direct question: issues are answer evidence. "
             "Use four broad direct angles and one distinct abilities/times list angle. "
             "Read an issue-specific page before wording the question; choose one "
-            "answer claim that its excerpt actually states. Each direct question "
+            "answer claim that its excerpt actually states. "
+            "Rely on issue-specific full story synopses or issue records (fandom wikis, comic catalog records) "
+            "with original publication metadata; never rely on marketing catalog teasers or solicitations "
+            "that withhold the story outcome. "
+            "Each direct question "
             "needs ONE answer target: one mechanism, limit, rule, or explicitly "
             "stated motive. Do not append family/mission/stakes/ongoing consequences "
             "or guess a motive from a short blurb. For a list, each separate issue "
@@ -307,6 +313,8 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             "detail is supported. "
             "Set canonical_anchor to the hero/team in both question and evidence, "
             "and concept_key to the named power/world/rule shared by both. "
+            "Set core_premise to the underlying comic contrast, conflict, or high-curiosity premise supported by the excerpt. "
+            "Set viewer_payoff to the concrete scene revelation, turning point, or consequence answering that premise (do not merely restate the question). "
             "Supply issue_evidence for original "
             "print issues published 2010 or later: Series #N (YYYY), source_url, "
             "and a verbatim quote from that issue page about the question topic; "
@@ -324,7 +332,7 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
             c["_angle"] = angle
             rows.append(c)
     for c in rows:
-        c["proposed_format"] = str(question_archetype(str(c.get("question", ""))))
+        c["proposed_format"] = str(question_archetype(str(c.get("question", "")), c.get("proposed_format")))
         if is_narrow_direct_question(str(c.get("question", ""))):
             continue
         hit = is_burned(c.get("question", ""), digest)
@@ -337,6 +345,8 @@ def run_discover(key: str, outdir: Path, effort: str) -> None:
     for c in kept:
         lines += [f"## {c.get('question')}",
                   f"- viewer hook (draft): {c.get('viewer_hook', '')}",
+                  f"- core premise: {c.get('core_premise', '')}",
+                  f"- viewer payoff: {c.get('viewer_payoff', '')}",
                   f"- subject: {c.get('subject')} | angle: {c.get('_angle')} | format: {c.get('proposed_format', 'list')}",
                   f"- why fans ask: {c.get('why_fans_ask_it','')[:300]}",
                   f"- sample items: {'; '.join(c.get('sample_answer_items') or [])[:400]}",
@@ -452,8 +462,8 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
     from stages.research_scout.micro_recency import (
         micro_release_rejection_reason, recent_micro_instruction,
     )
+    from stages.research_scout.qa_discovery_gate import enrich_issue_release_year
 
-    default_window = years is None
     years = years or recent_micro_instruction()
     digest = _scouted_context_text()
     rows, kept = [], []
@@ -506,11 +516,11 @@ def run_micro(key: str, outdir: Path, effort: str, years: str | None = None) -> 
             c["_angle"] = angle
             rows.append(c)
     for c in rows:
-        if default_window:
-            release_reason = micro_release_rejection_reason(c)
-            if release_reason is not None:
-                c["_dropped_as_release"] = release_reason
-                continue
+        c.update(enrich_issue_release_year(c))
+        release_reason = micro_release_rejection_reason(c)
+        if release_reason is not None:
+            c["_dropped_as_release"] = release_reason
+            continue
         # Burn-check on series+issue AND on the moment text: the same scene resurfaces
         # under a different phrasing across angles, and a sibling issue of an already-
         # produced series is the commonest false lead (measured: 3 of 7 candidates in the

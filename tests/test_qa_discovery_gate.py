@@ -5,8 +5,11 @@ from pathlib import Path
 
 from stages.research_scout.cited_sources import FetchedSource
 from stages.research_scout.qa_discovery_gate import (
+    evaluate_issue_evidence,
     canonical_topic,
     verified_issue_evidence,
+    _publication_years,
+    _cover_publication_years,
 )
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
@@ -51,10 +54,12 @@ def test_issue_gate_rejects_unfetched_wrong_year_and_off_topic_urls():
     assert not verified_issue_evidence(
         old, "direct", fetcher=lambda url: FetchedSource(url, text=_page(old["issue_evidence"][0]["quote"], year=1995))
     )
+    # round 4 (A2): a label year the page contradicts is corrected when the page says 2010+ ...
     wrong_year = _candidate()
-    assert not verified_issue_evidence(
-        wrong_year, "direct", fetcher=lambda url: FetchedSource(url, text=_page(wrong_year["issue_evidence"][0]["quote"], year=2024))
-    )
+    corrected = evaluate_issue_evidence(
+        wrong_year, "direct", fetcher=lambda url: FetchedSource(url, text=_page(wrong_year["issue_evidence"][0]["quote"], year=2024)))
+    assert corrected.passed and "(2024)" in corrected.claims[0]["issue"]
+    assert any("year_corrected" in line for line in corrected.details)
     off_topic = _candidate(quote="Batman #161 (2025) has a new cover by its artist.")
     assert not verified_issue_evidence(
         off_topic, "direct", fetcher=lambda url: FetchedSource(url, text=_page(off_topic["issue_evidence"][0]["quote"]))
@@ -80,7 +85,10 @@ def test_issue_gate_ignores_reader_published_time_and_accepts_marvel_published_f
         "Title: Batman (2016) #161 | DC\nPublished Time: Wed, 14 Oct 2026 GMT\n"
         "On Sale Date: July 23, 2025\n" + quote
     ))
-    assert not verified_issue_evidence(candidate, "direct", fetcher=lambda url: stale)
+    # the reader's Published Time (2026) never vouches for the label; the page's own On Sale
+    # Date (2025) is what corrects it (round 4, A2)
+    result = evaluate_issue_evidence(candidate, "direct", fetcher=lambda url: stale)
+    assert result.passed and "(2025)" in result.claims[0]["issue"] and "2026" not in result.claims[0]["issue"]
 
     marvel = _candidate(year=2018, issue="Amazing Spider-Man Annual (2018) #1 (2018)",
                         url="https://www.marvel.com/comics/issue/71372/amazing_spider-man_annual_2018_1")
@@ -100,6 +108,59 @@ def test_issue_gate_ignores_reader_published_time_and_accepts_marvel_published_f
               "marvel_annual_2018_1.txt").read_text(encoding="utf-8"),
     )
     assert verified_issue_evidence(marvel, "direct", fetcher=lambda url: source)
+
+
+def test_issue_release_date_takes_precedence_over_later_cover_date():
+    candidate = _candidate(year=2010)
+    quote = candidate["issue_evidence"][0]["quote"]
+    for release_line in (
+        "Release Date: December 2009",
+        "On Sale Date: December 2009",
+        "It was published on December 2, 2009.",
+    ):
+        page = f"Title: Batman #161 | DC Comics\n{release_line}\nCover Date: March 2010\n{quote}"
+        assert _publication_years(page) == {2009}
+        result = evaluate_issue_evidence(
+            candidate, "direct", fetcher=lambda url: FetchedSource(url, text=page), semantic=None)
+        assert (result.passed, result.reason) == (False, "year_out_of_range")
+
+
+def test_issue_release_year_is_exact_even_when_cover_year_matches_claim():
+    candidate = _candidate(year=2011)
+    quote = candidate["issue_evidence"][0]["quote"]
+    page = f"Title: Batman #161 | DC Comics\nRelease Date: December 2010\nCover Date: March 2011\n{quote}"
+    assert _publication_years(page) == {2010}
+    result = evaluate_issue_evidence(
+        candidate, "direct", fetcher=lambda url: FetchedSource(url, text=page), semantic=None)
+    assert result.passed
+    assert result.claims[0]["issue"] == "Batman #161 (2010)"
+    assert result.claims[0]["year_corrected"] == {"from": 2011, "to": 2010}
+
+
+def test_issue_cover_date_is_used_only_when_release_date_is_absent():
+    candidate = _candidate(year=2010)
+    quote = candidate["issue_evidence"][0]["quote"]
+    page = f"Title: Batman #161 | DC Comics\nCover Date: March 2010\n{quote}"
+    assert _publication_years(page) == {2010}
+    assert evaluate_issue_evidence(
+        candidate, "direct", fetcher=lambda url: FetchedSource(url, text=page), semantic=None,
+    ).passed
+
+
+def test_real_wiki_pages_do_not_launder_2009_releases_through_2010_cover_dates():
+    fixture_dir = Path(__file__).parent / "fixtures" / "qa_issue_dates"
+    candidates = json.loads((fixture_dir / "candidates.json").read_text(encoding="utf-8"))
+    for candidate, filename in zip(
+        candidates, ("captain_america_who_will_wield.txt", "wonder_woman_39.txt"), strict=True,
+    ):
+        page = (fixture_dir / filename).read_text(encoding="utf-8")
+        assert _publication_years(page) == {2009}
+        assert _cover_publication_years(page) == {2010}
+        result = evaluate_issue_evidence(
+            candidate, "direct", semantic=None,
+            fetcher=lambda url: FetchedSource(url, text=page),
+        )
+        assert (result.passed, result.reason) == (False, "year_out_of_range")
 
 
 def test_list_requires_two_verified_distinct_issues():

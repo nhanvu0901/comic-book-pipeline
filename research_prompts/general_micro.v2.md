@@ -2,9 +2,9 @@ HARD RULES — every candidate must obey all of these:
 1. One candidate is ONE scene or tightly connected sequence from ONE real
    published comic issue. Never return a movie, TV episode, game, toy, arc,
    or issue range.
-2. Search the selected publication year exactly when one is supplied. Otherwise
-   honor an explicit period in the request; if none is named, use the current
-   calendar year added below.
+2. The issue publication year must be 2010 or later. Search the selected publication year
+   exactly when one is supplied (must be 2010 or later). Otherwise search issues published from
+   2010 to the current calendar year. Never return comics published before 2010.
 3. Return a distinct issue at most once. Give its exact series, issue number,
    and publication year.
 4. Name who acts, the concrete action or reveal, and its direct consequence;
@@ -30,9 +30,8 @@ and (3) its direct consequence. A longer recap is useful only when this one
 turn can stand alone. Do not stitch together payoffs from different issues or
 scenes. A broken character rule, loud visual spectacle, or second famous name
 can improve rank. The selected Year field is exact; if a named issue has a
-different publication year, report the conflict. With no selected year, honor
-an explicitly requested issue, year, or era. Otherwise search issues from
-any publication year and do not favour recent ones. The appended MICRO YEAR
+different publication year, report the conflict. With no selected year, search
+published issues from 2010 to the current calendar year. The appended MICRO YEAR
 SCOPE gives the year rule for this run.
 
 In `summary`, give the setup → turn → consequence in 2–3 plain sentences.
@@ -48,9 +47,10 @@ Use the retrieved page's issue metadata or another source to establish the
 issue identity; never claim the quote alone proves a detail it does not say.
 In `series_issue_year` write only `Series Title #N (YYYY)`: the title as
 printed, the issue number and ONE four-digit year, the year the issue was
-published (or the year the request names, when a source gives it as the
-issue's cover or release year). A volume number, cover date or on-sale date
-goes in `summary`, never in that field. Copy every URL (`claim_citation.url`,
+first released or sold, even when its cover date or the requested year differs.
+Use the actual issue release year (2010 or later), never its cover year as a
+substitute. A volume number and cover date go in `summary`, never in that
+field. Copy every URL (`claim_citation.url`,
 each `detail_citations` url, `evidence_urls`) character for character from the
 address of a page you retrieved in this run; never rebuild a URL from a page
 title or guess a slug, and a sentence from a page you did not retrieve cannot

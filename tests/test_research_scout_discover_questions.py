@@ -20,6 +20,9 @@ pre-fix behavior.
 """
 import ui.bridge as bridge
 from datetime import date
+from pathlib import Path
+from stages.research_scout import issue_pages
+from stages.research_scout.cited_sources import FetchedSource
 from stages.research_scout.models import ScoutMode
 from stages.research_scout.policies import PolicyBundle
 from stages.research_scout.storage import SessionStore
@@ -179,20 +182,23 @@ def test_the_same_question_twice_in_one_batch_is_only_offered_once(tmp_path):
 # ─── the never-raises guarantee ─────────────────────────────────────────────
 
 
-def test_a_client_exception_falls_back_to_the_angle_and_never_raises(tmp_path):
+def test_a_client_exception_falls_back_without_a_question_and_never_raises(tmp_path):
     client = _ScriptedYouCom(raises=True)
     workflow = _workflow(tmp_path, client)
     angle = workflow.next_angle(ScoutMode.QA)
 
     batch = workflow.discover_questions(ScoutMode.QA)  # must not propagate RuntimeError
 
-    assert [entry["question"] for entry in batch] == [angle]
+    # The QA angle is a research instruction, so it rides along as "angle" only —
+    # "question" stays empty and can never be shown or researched as one.
+    assert [entry["question"] for entry in batch] == [""]
+    assert batch[0]["angle"] == angle
     # Flagged so the chat can tell "here is a batch" from "we got nothing" and
     # keep the previous batch on screen instead of blanking it.
     assert batch[0]["fallback"] is True
 
 
-def test_an_all_burned_result_falls_back_to_the_angle(tmp_path):
+def test_an_all_burned_result_falls_back_without_a_question(tmp_path):
     burned_text = "Times Superman's invulnerability failed against kryptonite radiation"
     client = _ScriptedYouCom(candidates=[{"question": burned_text}])
     workflow = _workflow(tmp_path, client)
@@ -200,7 +206,8 @@ def test_an_all_burned_result_falls_back_to_the_angle(tmp_path):
 
     batch = workflow.discover_questions(ScoutMode.QA, exclude=[burned_text])
 
-    assert [entry["question"] for entry in batch] == [angle]
+    assert [entry["question"] for entry in batch] == [""]
+    assert batch[0]["angle"] == angle
     assert batch[0]["fallback"] is True
 
 
@@ -293,15 +300,16 @@ def test_micro_discovery_rejects_old_and_unresolved_issues_before_count(tmp_path
             "evidence_urls": ["https://publisher.test/hero"],
         }
     client = _ScriptedYouCom(candidates=[
-        candidate("Old", "Hero #1 (2014)"),
+        candidate("Pre2010", "Hero #1 (2008)"),
         candidate("Unresolved", f"Hero ({year - 4}) #8"),
+        candidate("OldModern", "Hero #1 (2014)"),
         candidate("Previous", f"Hero #2 ({year - 1})"),
         candidate("Current", f"Hero ({year - 4}) #9 ({year})"),
     ])
 
     batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, count=2)
 
-    assert [entry["moment"] for entry in batch] == ["Current"]
+    assert [entry["moment"] for entry in batch] == ["Current", "Previous"]
     assert [entry["moment"] for entry in _workflow(
         tmp_path, client
     ).discover_questions(ScoutMode.MICRO, count=1)] == ["Current"]
@@ -310,6 +318,40 @@ def test_micro_discovery_rejects_old_and_unresolved_issues_before_count(tmp_path
     )
     assert [entry["moment"] for entry in selected] == ["Previous"]
     assert f"Search published issues from {year - 1} only" in client.seen_prompt
+
+
+def test_micro_discovery_uses_real_issue_page_release_date_before_cover_year(tmp_path, monkeypatch):
+    url = "https://dc.fandom.com/wiki/Wonder_Woman_Vol_3_39"
+    page = (Path(__file__).parent / "fixtures" / "qa_issue_dates" /
+            "wonder_woman_39.txt").read_text(encoding="utf-8")
+    monkeypatch.setattr(issue_pages, "fetch_issue_page", lambda fetched_url: FetchedSource(fetched_url, text=page))
+    client = _ScriptedYouCom(candidates=[{
+        "moment": "Diana summons Zeus's lightning", "series_issue_year": "Wonder Woman Vol 3 #39 (2010)",
+        "turning_point": "Diana strikes her bracelets together.",
+        "what_visibly_happens": "Lightning destroys Cottus.",
+        "why_it_lands": "Diana turns defense into offense.", "evidence_urls": [url],
+        "source_release_year": 2010,  # model-supplied metadata cannot override the fetched page
+    }])
+    batch = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2010)
+    assert batch[0]["fallback"] is True
+    assert batch[0]["moment"]
+
+
+def test_micro_discovery_selected_year_uses_source_release_not_later_cover(tmp_path, monkeypatch):
+    url = "https://dc.fandom.com/wiki/Hero_Vol_1_8"
+    page = "Title: Hero Vol 1 #8\nRelease Date: December 22, 2010\nCover Date: February 2011\nHero wins."
+    monkeypatch.setattr(issue_pages, "fetch_issue_page", lambda fetched_url: FetchedSource(fetched_url, text=page))
+    client = _ScriptedYouCom(candidates=[{
+        "moment": "Hero wins", "series_issue_year": "Hero Vol 1 #8 (2011)",
+        "turning_point": "Hero opens the door.", "what_visibly_happens": "Hero wins.",
+        "why_it_lands": "The fight ends.", "evidence_urls": [url],
+    }])
+    accepted = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2010)
+    assert [entry["moment"] for entry in accepted] == ["Hero wins"]
+    assert accepted[0]["source_release_year"] == 2010
+    assert accepted[0]["series_issue_year"] == "Hero Vol 1 #8 (2010)"
+    rejected = _workflow(tmp_path, client).discover_questions(ScoutMode.MICRO, publication_year=2011)
+    assert rejected[0]["fallback"] is True
 
 
 def test_micro_discovery_skips_thin_unsourced_leads(tmp_path):

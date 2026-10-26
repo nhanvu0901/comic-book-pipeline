@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 import config
 
 from . import cited_sources
+from .prompt_rules import NAME_THE_HERO, REAL_RELEASE_YEAR
 
 
 _TIMEOUT = 180.0
@@ -206,8 +207,8 @@ def compile_schema(
 _HARD_RULES = {
     "qa": (
         "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
-        '1. One candidate = ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid.\n'
-        '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later.\n'
+        '1. One candidate = ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid. ' + REAL_RELEASE_YEAR + '\n'
+        '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later; it is a filter, never question wording. ' + NAME_THE_HERO + '\n'
         "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
         '4. Report what DID happen in a specific issue, never hypotheticals such as "who could".\n'
         "5. Return every supported qualifying issue, up to 15; prefer distinct series, but never pad with weak or unsupported entries."
@@ -215,7 +216,7 @@ _HARD_RULES = {
     "micro": (
         "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
         "1. One candidate = ONE scene or tightly connected sequence from ONE real published comic-book ISSUE; write `series_issue_year` exactly as `Series Title #N (YYYY)`. Movies, TV, games, toys, multi-issue arcs, and issue ranges are invalid.\n"
-        "2. Use the selected publication year exactly when supplied, or a single year the request names. With no year, search EVERY publication year (any era) and do not favour recent issues; only a request that asks for recent/latest issues is limited to the current year (`micro_recency`).\n"
+        "2. The issue publication year must be 2010 or later. Use the selected publication year exactly when supplied, or a single year the request names (both must be 2010 or later). With no selected year, search published issues from 2010 to the current year (`micro_recency`). Comics published before 2010 are invalid.\n"
         "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
         "4. Name who acts, the concrete action or reveal, and its direct consequence, each supported by a retrieved page.\n"
         "5. Return up to 10 distinct supported scenes; never pad with weak or unsupported entries."
@@ -224,8 +225,8 @@ _HARD_RULES = {
 
 _DIRECT_QA_HARD_RULES = (
     "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
-    '1. Every candidate must cite ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid.\n'
-    '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later.\n'
+    '1. Every candidate must cite ONE real published comic-book ISSUE. Write `series_issue_year` exactly as "Series Title #N (YYYY)": series title, a single issue number, and publication year. Movies, TV, games, toys, multi-issue arcs, and ranges such as #1-5 are invalid. ' + REAL_RELEASE_YEAR + '\n'
+    '2. The issue must be from 2010 or later unless the question itself names another period. "Modern" means 2010 or later; it is a filter, never question wording. ' + NAME_THE_HERO + '\n'
     "3. One candidate per distinct supported story/evidence beat. Separate beats may cite the same issue; never repeat the same claim.\n"
     '4. Report what DID happen in a specific issue, never hypotheticals such as "who could".\n'
     "5. Return the beats needed to establish one grounded answer, up to 15; never pad with weak or unsupported entries."
@@ -259,9 +260,10 @@ _MICRO_INVARIANT_RULES = (
     "never guess missing identity details.\n"
     "- In `series_issue_year` write only `Series Title #N (YYYY)`: the title "
     "as printed, the issue number and ONE four-digit year, the year the issue "
-    "was published (or the year the request names, when a source gives it as "
-    "the issue's cover or release year). A volume number, cover date or "
-    "on-sale date goes in `summary`, never in that field.\n"
+    "was first released or sold, even when its cover date or the requested "
+    "year differs. Use the actual issue release year (2010 or later), never "
+    "its cover year as a substitute. A volume number and cover date go in "
+    "`summary`, never in that field.\n"
     "- Copy every URL (`claim_citation.url`, each `detail_citations` url, "
     "`evidence_urls`) character for character from the address of a page you "
     "retrieved in this run. Never rebuild a URL from a page title or guess a "
@@ -283,11 +285,10 @@ _MICRO_SCOUT_RULES = (
     "situation, and its direct consequence. Name who acts or speaks. Reject "
     "abstract claims such as tactical patience without a sourced action.\n"
     "- For an open-ended scout, use only the selected publication year; when "
-    "none is selected, search issues from any publication year (the workflow "
+    "none is selected, search issues from 2010 to the current year (the workflow "
     "appends the MICRO YEAR SCOPE). "
     "A selected year is exact; report a conflicting named issue rather than "
-    "changing the year. Otherwise honor an explicitly requested issue, "
-    "year, or era. A broken "
+    "changing the year. A broken "
     "character rule, loud spectacle, second famous name, and low YouTube "
     "coverage are ranking bonuses, not mandatory gates.\n"
     "- Keep summary and what_visibly_happens focused on the same scene. Do not "
@@ -574,8 +575,10 @@ def _request_body(model: str, user_message: str) -> dict[str, Any]:
     if "MODE HINT: micro" in user_message:
         system_prompt += (
             "\nFor micro mode only, follow the MICRO YEAR SCOPE in the user "
-            "message. A selected publication year is exact; with no year, any "
-            "publication year qualifies and recent issues get no preference."
+            "message. The channel baseline policy is 2010 or later. "
+            "A selected publication year takes priority; with no year, "
+            "search published issues from 2010 to the current year and "
+            "do not return pre-2010 comics."
             "\nFor micro mode the code also adds aftermath, context_behind, "
             "unrevealed and detail_citations to every candidate and writes the "
             "research rules for them; never choose those names as extra_fields."

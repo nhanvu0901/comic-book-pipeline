@@ -131,10 +131,7 @@ def _scout_workflow(root: Path | None = None):
 
 
 def start_scout_session(
-    mode: str,
-    user_intent: str,
-    *,
-    publication_year: int | None = None,
+    mode: str, user_intent: str, *, publication_year: int | None = None,
     publisher: str | None = None,
 ):
     from stages.research_scout.bank_fallback import bank_suggestions_for_mode
@@ -165,19 +162,22 @@ def start_scout_session(
             # Full batch, not count=1: it is the same single research call
             # either way, and asking for one question while handing the prompt
             # all five angles just makes the prompt contradict itself.
-            discover_kwargs: dict[str, object] = {"publication_year": publication_year}
-            if publisher is not None:
-                discover_kwargs["publisher"] = publisher
             batch = workflow.discover_questions(
-                scout_mode, **discover_kwargs,
+                scout_mode, publication_year=publication_year, publisher=publisher,
             )
             field = "question" if scout_mode is ScoutMode.QA else "moment"
+            if scout_mode is ScoutMode.QA and (not batch or batch[0].get("fallback")):
+                # The fallback entry only carries the research ANGLE, which is an instruction,
+                # not a question: starting a session on it would hand that text to the writer.
+                from stages.research_scout.errors import ScoutUserError
+
+                raise ScoutUserError(
+                    "No issue-verified question could be discovered. Type a question to research."
+                )
             intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
-    if publisher is not None:
-        return workflow.start(
-            scout_mode, intent, publication_year=publication_year, publisher=publisher,
-        )
-    return workflow.start(scout_mode, intent, publication_year=publication_year)
+    return workflow.start(
+        scout_mode, intent, publication_year=publication_year, publisher=publisher,
+    )
 
 
 def record_rejected_questions(
@@ -273,6 +273,7 @@ def discover_questions(
     return _scout_workflow().discover_questions(
         ScoutMode(mode), count=count, exclude=tuple(exclude),
         publication_year=publication_year,
+        publisher=publisher,
     )
 
 

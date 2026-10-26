@@ -1,11 +1,13 @@
 import json
 import urllib.error
+from pathlib import Path
 
 import pytest
 
 import config
 from stages.research_scout import cited_sources
-from stages.research_scout.models import EvidenceGate, ScoutMode, SessionState
+from stages.research_scout import issue_pages
+from stages.research_scout.models import Candidate, EvidenceGate, ScoutMode, SessionState
 from stages.research_scout.planner import PlanField, ResearchPlan
 from stages.research_scout.storage import SessionStore
 from stages.research_scout.errors import ScoutUserError
@@ -116,6 +118,40 @@ def _verified_micro(mock_workflow):
     session = mock_workflow.start(ScoutMode.MICRO, "new Hulk moment")
     mock_workflow.run_general(session.id)
     return mock_workflow.verify_selected(session.id, ["a"])
+
+
+def test_micro_general_persists_verified_release_year_before_review(mock_workflow, monkeypatch):
+    old_url = "https://dc.fandom.com/wiki/Wonder_Woman_Vol_3_39"
+    new_url = "https://dc.fandom.com/wiki/Hero_Vol_1_8"
+    old_page = (Path(__file__).parent / "fixtures" / "qa_issue_dates" /
+                "wonder_woman_39.txt").read_text(encoding="utf-8")
+    new_page = "Title: Hero Vol 1 #8\nRelease Date: December 22, 2010\nCover Date: February 2011\nHero wins."
+    pages = {old_url: old_page, new_url: new_page}
+    monkeypatch.setattr(issue_pages, "fetch_issue_page", lambda url: cited_sources.FetchedSource(url, text=pages[url]))
+    candidates = [
+        {"id": "old", "series_issue_year": "Wonder Woman Vol 3 #39 (2010)",
+         "claim_citation": {"url": old_url, "quote": "Diana strikes her bracelets together."},
+         "evidence_urls": [old_url]},
+        {"id": "new", "series_issue_year": "Hero Vol 1 #8 (2011)",
+         "claim_citation": {"url": new_url, "quote": "Hero wins."},
+         "evidence_urls": [new_url]},
+    ]
+    mock_workflow.client.general_response = {"output": {
+        "content": {"candidates": candidates},
+        "sources": [{"url": old_url}, {"url": new_url}],
+    }}
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a moment", publication_year=2010)
+    mock_workflow.run_general(session.id)
+    stored = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidates.v1.json",
+    ).read_text(encoding="utf-8"))["candidates"]
+    assert [candidate["id"] for candidate in stored] == ["new"]
+    assert stored[0]["series_issue_year"] == "Hero Vol 1 #8 (2010)"
+    assert Candidate.model_validate(stored[0]).model_dump()["source_release_year"] == 2010
+    validation = json.loads(mock_workflow.store.artifact_path(
+        session.id, "general/candidate_validation.rev1.v1.json",
+    ).read_text(encoding="utf-8"))
+    assert {item["candidate_id"] for item in validation["rejected"]} == {"old"}
 
 
 class _ResearchSequence:
@@ -431,7 +467,7 @@ def test_broad_micro_general_filters_old_issues_with_bound_sources(mock_workflow
             "sources": [{"url": f"https://source.test/{key}"} for key, _ in issues],
         }
     }
-    session = mock_workflow.start(ScoutMode.MICRO, "Find a recent micro moment")
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
     mock_workflow.run_general(session.id)
 
     candidates = json.loads(mock_workflow.store.artifact_path(
@@ -1194,7 +1230,7 @@ def test_a_micro_candidates_aftermath_fields_reach_the_stored_candidate_untouche
             "sources": [{"url": "https://source.test/a"}],
         }
     }
-    session = mock_workflow.start(ScoutMode.MICRO, "Find a recent micro moment")
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
     mock_workflow.run_general(session.id)
 
     stored = json.loads(mock_workflow.store.artifact_path(
@@ -1266,3 +1302,57 @@ def test_publisher_filter_reaches_general_and_discover_prompts(mock_workflow):
         in mock_workflow.client.seen_prompt
     )
 
+
+def test_qa_partial_batches_surface_without_quota_shortage_discard(tmp_path, monkeypatch):
+    """Replay of real database batches (e.g. 6ba45fba with 3 survivors, 3d4b168c with 4 survivors):
+    Partial batches (1-4 survivors) must surface to the UI with batch_incomplete=True,
+    NEVER discarded by a rigid quota with false verification_shortage."""
+    from stages.research_scout.qa_discovery_gate import GateResult
+    fake_client = _FakeYouCom()
+
+    # Replay batch 6ba45fba (3 direct survivors):
+    survivors = [
+        {
+            "question": "Why does Kid Flash keep pushing forward after learning his family life is a mess?",
+            "canonical_anchor": "Kid Flash",
+            "concept_key": "family struggle",
+            "series_issue_year": "The Flash #9 (2016)",
+            "issue_evidence": [{"issue": "The Flash #9 (2016)", "source_url": "https://dc.fandom.com/wiki/The_Flash_Vol_5_9", "quote": "Wallace learns Daniel West is his father."}],
+        },
+        {
+            "question": "How does Superman’s solar flare leave him powerless?",
+            "canonical_anchor": "Superman",
+            "concept_key": "solar flare burst",
+            "series_issue_year": "Superman Vol 3 #40 (2015)",
+            "issue_evidence": [{"issue": "Superman Vol 3 #40 (2015)", "source_url": "https://dc.fandom.com/wiki/Superman_Vol_3_40", "quote": "Superman releases all his solar energy."}],
+        },
+        {
+            "question": "Why does Batman cling to the bat code in the cave?",
+            "canonical_anchor": "Batman",
+            "concept_key": "cave bat code",
+            "series_issue_year": "Batman: The Return of Bruce Wayne #1 (2010)",
+            "issue_evidence": [{"issue": "Batman: The Return of Bruce Wayne #1 (2010)", "source_url": "https://dc.fandom.com/wiki/Batman:_The_Return_of_Bruce_Wayne_Vol_1_1", "quote": "Bruce carves the bat symbol."}],
+        },
+    ]
+
+    fake_client.general_response = {
+        "output": {
+            "content": {"candidates": survivors},
+            "sources": [],
+        }
+    }
+
+    # Verifier passes all 3 survivors
+    def fake_verifier(candidate, fmt):
+        return GateResult(True, "verified", tuple(candidate["issue_evidence"]))
+
+    wf = ScoutWorkflow(store=SessionStore(tmp_path / "sessions"), client=fake_client, qa_issue_verifier=fake_verifier)
+    batch = wf.discover_questions(ScoutMode.QA, count=5)
+
+    # Must return all 3 survivors, NOT empty, NOT verification_shortage
+    assert len(batch) == 3
+    assert all(item.get("batch_incomplete") is True for item in batch)
+    assert all(item.get("batch_expected") == 5 for item in batch)
+    assert not any(item.get("verification_shortage") for item in batch)
+    assert not any(item.get("fallback") for item in batch)
+    assert [item["canonical_anchor"] for item in batch] == ["Kid Flash", "Superman", "Batman"]
