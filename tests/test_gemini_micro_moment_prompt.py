@@ -673,3 +673,175 @@ def test_fallback_without_a_scout_candidate_adds_no_extras(tmp_path, monkeypatch
     prompt, _path = gp.generate_gemini_writer_prompt(root.name)
 
     assert set(_scout_json_in(prompt)) == set(BASE_CANDIDATE)
+
+
+def test_writer_templates_include_natural_storytelling_and_issue_identification_rules():
+    """All writer templates must require natural spoken storytelling, comic issue
+    identification right after the hook, causal language guards, and ISSUE MENTION CHECK /
+    FLOW CHECK audit lines."""
+    for path in (gp.MICRO_TEMPLATE_PATH, gp.QA_TEMPLATE_PATH, gp.TOPIC_QA_TEMPLATE_PATH):
+        text = path.read_text(encoding="utf-8")
+        flat = _flat(text)
+        assert "Gemini 3.8" in flat, path.name
+        assert "VOICE — NATURAL SPOKEN STORYTELLING" in flat, path.name
+        assert "PURPOSE AND CAUSAL LANGUAGE" in flat, path.name
+        assert "COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK" in flat, path.name
+        assert "CONNECT EVERY IDEA, NOT EVERY SENTENCE" in flat, path.name
+        assert "CONNECTORS SHOULD LIVE INSIDE SENTENCES TOO" in flat, path.name
+        assert "ZOOM IN ON THE HIGHLIGHT" in flat, path.name
+        assert "ANTI-FLATNESS CHECK" in flat, path.name
+        assert "ISSUE MENTION CHECK:" in text, path.name
+        assert "FLOW CHECK:" in text, path.name
+        assert "READING LEVEL & VOCABULARY — STRICT IELTS 6.5 (CEFR B2) CAP" in flat, path.name
+        assert "HOUSEHOLD NAMES ONLY — DO NOT DROP OBSCURE CHARACTER NAMES" in flat, path.name
+        # Old contradictory rule forbidding issue numbers must be gone
+        assert "Do not read issue numbers" not in flat, path.name
+        assert "page or issue numbers" not in flat, path.name
+
+
+def test_qa_prompt_enriches_context_from_research_session(tmp_path, monkeypatch):
+    """When generating a Q&A writer prompt in Stage 2, missing drawable_moment, stakes_why,
+    relationships, verification_note, and answer_summary are backfilled from the research
+    session, and prompt-only verification details (story_arc, motivation_detail,
+    claim_citation, evidence_urls, scout_verification, retrieved_source_excerpts) reach
+    the prompt JSON while keeping answer_context.json on disk schema-clean."""
+    import config
+    from stages.research_scout.workflow import specific_search_artifact
+
+    monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
+    sessions = tmp_path / "research_sessions"
+    monkeypatch.setattr(config, "RESEARCH_SESSIONS_ROOT", sessions)
+
+    proj_name = "batman_tactics_qa"
+    root = tmp_path / proj_name
+    root.mkdir()
+
+    # Initial answer_context.json with empty drawable_moment, stakes_why, relationships
+    answer_ctx = {
+        "question": "Why did Batman change tactics by putting his team against him?",
+        "answer_summary": "Why did Batman change tactics by putting his team against him?",
+        "format": "direct",
+        "items": [
+            {
+                "rank": 1,
+                "entity": "Batman",
+                "how_or_why": "Tim Drake challenges Batman's violent methods.",
+                "source_comic": "Detective Comics #981 (2018)",
+                "source_year": "2018",
+                "reader_url": "https://batcave.biz/reader/1/1",
+                "drawable_moment": "",
+                "verification_note": "bound quote does not occur in retrieved source text",
+                "surprise_level": "medium",
+                "relationships": "",
+                "stakes_why": "",
+                "verified": True,
+                "verify_note": "",
+                "reader_url_status": "verified",
+            }
+        ],
+    }
+    (root / "answer_context.json").write_text(json.dumps(answer_ctx, indent=2), encoding="utf-8")
+    (root / "comic_context.json").write_text(
+        json.dumps({"title": answer_ctx["question"], "pipeline_mode": "explore_answer"}),
+        encoding="utf-8",
+    )
+
+    # Create matching research session
+    sdir = sessions / "sess_batman"
+    (sdir / "general").mkdir(parents=True)
+    (sdir / "specific").mkdir(parents=True)
+    (sdir / "session.json").write_text(
+        json.dumps({
+            "id": "sess_batman",
+            "mode": "qa",
+            "format": "direct",
+            "created_project": proj_name,
+            "selected_specific_candidate_ids": ["candidate-1"],
+        }),
+        encoding="utf-8",
+    )
+    (sdir / "general" / "candidates.v1.json").write_text(
+        json.dumps({
+            "answer_thesis": "Batman tests and fractures his team when compromised mentors and failsafes turn his contingencies against him.",
+            "candidates": [
+                {
+                    "id": "candidate-1",
+                    "entity": "Batman",
+                    "series_issue_year": "Detective Comics #981 (2018)",
+                    "summary": "Tim Drake challenges Batman's violent methods.",
+                    "what_visibly_happens": "Red Robin confronts Batman in the rain on a Gotham rooftop.",
+                    "motivation_detail": "Omac and Brother Eye manipulate the team's trust.",
+                    "story_arc": "Rise of the Batmen / Batmen Eternal",
+                    "evidence_urls": ["https://dc.fandom.com/wiki/Detective_Comics_Vol_1_981"],
+                    "claim_citation": {
+                        "url": "https://dc.fandom.com/wiki/Detective_Comics_Vol_1_981",
+                        "quote": "Tim confronts Bruce over the Belfry team.",
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+    (sdir / "specific" / "evidence_gate.v1.json").write_text(
+        json.dumps({
+            "gates": [
+                {
+                    "candidate_id": "candidate-1",
+                    "verdict": "inconclusive",
+                    "reason": "bound quote does not occur in retrieved source text",
+                    "evidence_urls": ["https://dc.fandom.com/wiki/Detective_Comics_Vol_1_981"],
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+    (sdir / specific_search_artifact("candidate-1")).write_text(
+        json.dumps({
+            "api": "research",
+            "payload": {
+                "output": {
+                    "content": {
+                        "candidates": [
+                            {
+                                "verdict": "CONFIRMED",
+                                "volume_and_year": "Detective Comics Vol 1 #981 (2018)",
+                                "verbatim_sentence": "Red Robin confronts Batman over the team.",
+                                "source_url": "https://dc.fandom.com/wiki/Detective_Comics_Vol_1_981",
+                            }
+                        ],
+                        "notes": "Confirmed via DC Database synopsis.",
+                    },
+                    "sources": [
+                        {
+                            "title": "Detective Comics Vol 1 981 | DC Database",
+                            "url": "https://dc.fandom.com/wiki/Detective_Comics_Vol_1_981",
+                            "snippets": ["Synopsis for Detective Comics #981: Red Robin confronts Batman."],
+                        }
+                    ],
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    prompt, _path = gp.generate_gemini_writer_prompt(proj_name)
+
+    assert "STORY / ARC CONTEXT:" in prompt
+    assert "Batman tests and fractures his team" in prompt
+    assert "Red Robin confronts Batman in the rain on a Gotham rooftop." in prompt
+    assert "Omac and Brother Eye manipulate the team's trust." in prompt
+    assert "Rise of the Batmen / Batmen Eternal" in prompt
+    assert "retrieved_source_excerpts" in prompt
+    assert "scout_verification" in prompt
+
+    # Verify on-disk answer_context.json was backfilled on standard keys only
+    stored = json.loads((root / "answer_context.json").read_text(encoding="utf-8"))
+    item0 = stored["items"][0]
+    assert item0["drawable_moment"] == "Red Robin confronts Batman in the rain on a Gotham rooftop."
+    assert item0["stakes_why"] == "Omac and Brother Eye manipulate the team's trust."
+    assert item0["relationships"] == "Rise of the Batmen / Batmen Eternal"
+    assert "Sources: https://dc.fandom.com/wiki/Detective_Comics_Vol_1_981" in item0["verification_note"]
+    assert "item_number" not in item0
+    assert "retrieved_source_excerpts" not in item0
+    assert "scout_verification" not in item0
+

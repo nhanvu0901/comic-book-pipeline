@@ -57,6 +57,106 @@ def list_custom_images(project_root: Path) -> list[dict]:
     return list(_load_sidecar(project_root).get("images") or [])
 
 
+def remap_fragment_custom_images(project_root: Path, sid: int, from_idx: int, delta: int, *,
+                                 merge_survivor: bool = False) -> bool:
+    """Shift every "<sid>:<i>" custom-image entry with i >= from_idx by `delta` (+1 after a split
+    or insert, -1 after a merge/drop). On a merge (`delta < 0, merge_survivor=True`), custom
+    images on the folded fragment move to the surviving merged fragment so they stay visible in
+    its gallery."""
+    p = _sidecar_path(project_root)
+    if not p.exists():
+        return False
+    doc = _load_sidecar(project_root)
+    items = doc.get("images") or []
+    if not items:
+        return False
+    prefix = f"{sid}:"
+    survivor_key = f"{sid}:{0 if from_idx == 0 else from_idx - 1}"
+    out: list[dict] = []
+    changed = False
+    for e in items:
+        if not isinstance(e, dict):
+            continue
+        bk = str(e.get("beat_key") or "")
+        if not bk.startswith(prefix):
+            out.append(e)
+            continue
+        try:
+            idx = int(bk[len(prefix):])
+        except ValueError:
+            out.append(e)
+            continue
+        if idx < from_idx:
+            out.append(e)
+        elif idx == from_idx and delta < 0:
+            changed = True
+            if merge_survivor:
+                moved = dict(e)
+                moved["beat_key"] = survivor_key
+                out.append(moved)
+        else:
+            moved = dict(e)
+            moved["beat_key"] = f"{sid}:{idx + delta}"
+            out.append(moved)
+            changed = True
+    if not changed:
+        return False
+    doc["images"] = out
+    _save_sidecar(project_root, doc)
+    return True
+
+
+def remove_scene_custom_images(project_root: Path, sid: int, beat_key: str = "") -> bool:
+    """Remove custom-image sidecar entries belonging to deleted scene `sid`."""
+    p = _sidecar_path(project_root)
+    if not p.exists():
+        return False
+    doc = _load_sidecar(project_root)
+    items = doc.get("images") or []
+    prefix = f"{sid}:"
+    sid_s = str(sid)
+    kept = [
+        e for e in items
+        if not (isinstance(e, dict) and (
+            str(e.get("beat_key") or "") in (sid_s, str(beat_key))
+            or str(e.get("beat_key") or "").startswith(prefix)
+        ))
+    ]
+    if len(kept) == len(items):
+        return False
+    doc["images"] = kept
+    _save_sidecar(project_root, doc)
+    return True
+
+
+def rename_beat_custom_images(project_root: Path, old_beat: str, new_beat: str) -> bool:
+    """Rebind custom-image entries from `old_beat` to `new_beat` (e.g. 'intro' <-> '1:0')."""
+    if not old_beat or not new_beat or old_beat == new_beat:
+        return False
+    p = _sidecar_path(project_root)
+    if not p.exists():
+        return False
+    doc = _load_sidecar(project_root)
+    items = doc.get("images") or []
+    changed = False
+    out: list[dict] = []
+    for e in items:
+        if not isinstance(e, dict):
+            continue
+        if str(e.get("beat_key") or "") == old_beat:
+            moved = dict(e)
+            moved["beat_key"] = new_beat
+            out.append(moved)
+            changed = True
+        else:
+            out.append(e)
+    if not changed:
+        return False
+    doc["images"] = out
+    _save_sidecar(project_root, doc)
+    return True
+
+
 def add_custom_image(project_root: Path, src_image: Path, beat_key: str, *,
                      data: bytes | None = None) -> dict:
     """Write projects/<slug>/review/custom/custom_<ts>_<origname>.<ext> and append a

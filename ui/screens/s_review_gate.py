@@ -108,9 +108,12 @@ from ..bridge import (
     asset_src, image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
     load_preprocessed, load_review_candidates, load_review_locks, list_review_projects,
     narration_sha1, review_thumb_path, run_blocking, save_hidden_panels,
-    save_music_config, save_narration_edits, save_review_locks,
+    save_music_config, save_narration_edits, save_review_candidates, save_review_locks,
 )
-from ..custom_image import add_custom_image, enrich_custom_image, list_custom_images
+from ..custom_image import (
+    add_custom_image, enrich_custom_image, list_custom_images,
+    remap_fragment_custom_images, remove_scene_custom_images, rename_beat_custom_images,
+)
 from ..intro_import import import_intro_image, remove_intro_image
 from ..layout import primary_button, secondary_button, three_col
 from ..state import AppState, save_state
@@ -344,7 +347,9 @@ def split_fragment_at(scene: dict, frag_idx: int, word_idx: int) -> None:
     word_idx-th (1-based) whitespace word. Mutates `scene` in place. Both halves inherit the
     original fragment's shape (a dict keeps its page/panel pin, a str stays a str). Raises
     ValueError if frag_idx/word_idx is out of bounds or the fragment has <=1 word."""
-    beats = scene.get("visual_beats") or []
+    beats = list(scene.get("visual_beats") or [])
+    if not beats and frag_idx == 0 and str(scene.get("text") or "").strip():
+        beats = [str(scene.get("text") or "").strip()]
     if not (0 <= frag_idx < len(beats)):
         raise ValueError(f"frag_idx {frag_idx} out of range (0..{len(beats) - 1})")
     frag = beats[frag_idx]
@@ -561,15 +566,19 @@ def insert_scene_at(narration: dict, list_index: int, text: str, neighbor: dict)
     return new_scene
 
 
-def remap_fragment_locks(locks: dict, sid: int, from_idx: int, delta: int) -> dict:
+def remap_fragment_locks(locks: dict, sid: int, from_idx: int, delta: int, *,
+                         merge_survivor: bool = False) -> dict:
     """Shift every "<sid>:<i>" key with i >= from_idx by `delta` (+1 after a split
     makes room for the new second half; -1 after a merge closes the gap). Exception:
     on a merge (delta<0), the key AT from_idx itself is the fragment that just
     vanished — its lock is DROPPED rather than shifted (shifting would collide it
-    with the surviving neighbor's own untouched key at from_idx-1). Non-matching
-    keys pass through unchanged. Returns a NEW dict — never mutates `locks`."""
+    with the surviving neighbor's own untouched key at from_idx-1), unless
+    `merge_survivor=True` and the surviving merged fragment has no lock of its own,
+    in which case the folded fragment's lock is inherited by the survivor.
+    Non-matching keys pass through unchanged. Returns a NEW dict — never mutates `locks`."""
     out: dict = {}
     prefix = f"{sid}:"
+    dropped_val = None
     for bk, val in locks.items():
         if not bk.startswith(prefix):
             out[bk] = val
@@ -582,9 +591,14 @@ def remap_fragment_locks(locks: dict, sid: int, from_idx: int, delta: int) -> di
         if idx < from_idx:
             out[bk] = val
         elif idx == from_idx and delta < 0:
-            continue  # merge: this fragment was folded away — no lock survives
+            dropped_val = val
+            continue
         else:
             out[f"{sid}:{idx + delta}"] = val
+    if delta < 0 and merge_survivor and dropped_val is not None:
+        survivor_key = f"{sid}:{0 if from_idx == 0 else from_idx - 1}"
+        if survivor_key not in out:
+            out[survivor_key] = dropped_val
     return out
 
 
@@ -678,9 +692,9 @@ def reconcile_beats(beats: list[dict], narration: dict, *, qa_mode: bool) -> lis
       (a) DROP a row whose scene is gone from narration, or whose frag_idx >= the scene's live
           fragment count (a "ghost" row — e.g. an 8:1 left behind when scene 8 dropped to one
           fragment, or a 3:*/5:* left behind when the scene was deleted);
-      (b) ADD an empty row (candidates=[], source={}) for a narration beat that has NO row yet —
-          reusing the same zero-candidate "No candidates — Rebuild/Custom image" fallback a
-          freshly-inserted scene already relies on (e.g. a 13:0 the export never wrote);
+      (b) ADD a row for a narration beat that has NO row yet — inheriting its sibling's
+          candidate pool + source when another fragment of the same scene already exists in
+          `beats`, or falling back to an empty row (candidates=[], source={}) otherwise;
       (c) take each row's narration_text from the CURRENT narration, never the (possibly stale)
           text baked into candidates.json.
     Mirrors stages.review_gate's own row derivation exactly (INTRO row + OUTRO row for EVERY mode
@@ -694,6 +708,11 @@ def reconcile_beats(beats: list[dict], narration: dict, *, qa_mode: bool) -> lis
     `qa_mode` is accepted for call-site compatibility and no longer used: Q&A gets the bookend rows
     too (its intro/outro panel used to be auto-picked from subject_panels.json)."""
     by_key = {str(b.get("beat_key") or ""): b for b in beats}
+    by_sid: dict[int, dict] = {}
+    for b in beats:
+        sid_b = int(b.get("scene_id") or 0)
+        if sid_b and (b.get("candidates") or b.get("candidates_all")) and sid_b not in by_sid:
+            by_sid[sid_b] = b
 
     def _row(bk: str, unit: str, scene: dict, text: str, bookend: str = "") -> dict:
         sid = int(scene.get("scene_id") or 0)
@@ -706,12 +725,18 @@ def reconcile_beats(beats: list[dict], narration: dict, *, qa_mode: bool) -> lis
             # the hook being fragmentable, and a stale/absent tag loses the INTRO label.
             row["bookend"] = bookend
             return row
-        return {                                # (b) new empty row = zero-candidate fallback
+        sibling = by_sid.get(sid)
+        new_row = {                             # (b) new row (inherits sibling pool if same scene)
             "scene_id": sid, "narration_text": text, "bookend": bookend,
             "page_ref": scene.get("page_ref") if scene.get("page_ref") is not None else None,
-            "panel_ref": None, "source": {}, "candidates": [],
+            "panel_ref": None,
+            "source": dict(sibling.get("source") or {}) if sibling else {},
+            "candidates": list(sibling.get("candidates") or []) if sibling else [],
             "beat_key": bk, "pre_selected": [], "unit": unit,
         }
+        if sibling and "candidates_all" in sibling:
+            new_row["candidates_all"] = list(sibling.get("candidates_all") or [])
+        return new_row
 
     # Bookend rows come from stages.review_gate.bookend_row_keys — the SAME function the
     # exporter uses. This used to be a hard-coded single "intro" row here, which stopped
@@ -847,13 +872,39 @@ def build(
         locks_doc["approved_at"] = None
         save_review_locks(project, locks_doc)
 
-    def _clear_all_locks_and_clips():
+    def _resync_background_tts():
         if not config.ENABLE_VIDEO_CLIPS:
             return
-        locks.clear()
-        clear_project_locks_and_clips(project, locks_doc)
-        clips_by_beat.clear()
-        beat_durations.clear()
+        try:
+            from stages.stage_4.background_tts import request_resync
+            request_resync(project)
+        except Exception as exc:
+            logger.warning("background TTS resync failed after the narration changed: %s", exc)
+
+    def _reload_sidecars():
+        custom_by_beat.clear()
+        for entry in list_custom_images(PROJECTS_ROOT / project):
+            custom_by_beat.setdefault(str(entry.get("beat_key") or ""), []).append(entry)
+        if config.ENABLE_VIDEO_CLIPS:
+            clips_by_beat.clear()
+            clips_by_beat.update(_load_clips_manifest(project))
+
+    def _rebind_single_beat_key(old_bk: str, new_bk: str, new_unit: str, bookend: str = "") -> None:
+        if not old_bk or not new_bk or old_bk == new_bk:
+            return
+        from stages.stage_5.clips import rename_beat_clip
+        if old_bk in locks:
+            val = locks.pop(old_bk)
+            if new_bk not in locks:
+                locks[new_bk] = val
+        rename_beat_clip(_project_dir(project), old_bk, new_bk)
+        rename_beat_custom_images(PROJECTS_ROOT / project, old_bk, new_bk)
+        for b in (review.get("beats") or []):
+            if str(b.get("beat_key") or "") == old_bk:
+                b["beat_key"] = new_bk
+                b["unit"] = new_unit
+                if bookend:
+                    b["bookend"] = bookend
 
     status_text = ft.Text("", size=12, color=TEXT_MUTED)
     # per-beat control refs (keyed by beat_key) so a lock/dup change repaints just that card
@@ -1202,21 +1253,33 @@ def build(
         # each following line took the panel of the line below it, and the last line's
         # panel vanished (its index no longer exists). Every OTHER fragment op already
         # remapped; this path was the one that didn't.
-        for sid_i, idx in dropped:
-            locks = remap_fragment_locks(locks, sid_i, idx, -1)
-            review["beats"] = _remap_beats_list(review.get("beats") or [], sid_i, idx, -1)
         if dropped:
+            from stages.stage_5.clips import remap_fragment_clips
+            for sid_i, idx in dropped:
+                locks = remap_fragment_locks(locks, sid_i, idx, -1)
+                remap_fragment_clips(_project_dir(project), sid_i, idx, -1)
+                remap_fragment_custom_images(PROJECTS_ROOT / project, sid_i, idx, -1)
+                review["beats"] = _remap_beats_list(review.get("beats") or [], sid_i, idx, -1)
+            for sid_i in {s for s, _ in dropped}:
+                sc = next((s for s in current.get("scenes") or []
+                           if int(s.get("scene_id") or 0) == sid_i), None)
+                if sc and (sc.get("is_intro") or sc.get("is_outro")) and len(sc.get("visual_beats") or []) == 1:
+                    canon_bk = "intro" if sc.get("is_intro") else "outro"
+                    _rebind_single_beat_key(f"{sid_i}:0", canon_bk, canon_bk, bookend=canon_bk)
             locks_doc["locks"] = locks
+            _reload_sidecars()
         # narration.json changed on disk → un-approve so Master must re-approve before render,
         # same as every other op here that rewrites it.
         locks_doc["approved"] = False
         locks_doc["approved_at"] = None
         save_review_locks(project, locks_doc)
-        if config.ENABLE_VIDEO_CLIPS and (script_changed or dropped):
-            _clear_all_locks_and_clips()
-            _show_snack("Đã lưu narration — video clips flag bật: đã reset toàn bộ panel & MP4 locks.")
-            on_state_change()
-            return
+        if script_changed or dropped:
+            review["beats"] = reconcile_beats(
+                review.get("beats") or [], current, qa_mode=is_answer_project(project)
+            )
+            review["beats"] = filter_hidden(review["beats"], hidden)
+            save_review_candidates(project, review)
+            _resync_background_tts()
         if dropped:
             # The card list still shows a row per OLD fragment; typing into one of those
             # ghost rows silently wrote nothing. A full rebuild is the cheapest way to
@@ -1436,8 +1499,13 @@ def build(
                     details.append(ft.Text(url, size=10, color=TEXT_MUTED,
                                            selectable=True, max_lines=2))
                 if entry.get("source_start") is not None:
-                    details.append(ft.Text(f"From {float(entry['source_start']):.1f}s",
-                                           size=10, color=TEXT_MUTED))
+                    if entry.get("source_end") is not None:
+                        details.append(ft.Text(
+                            f"From {float(entry['source_start']):.1f}s → {float(entry['source_end']):.1f}s (fit to beat)",
+                            size=10, color=TEXT_MUTED))
+                    else:
+                        details.append(ft.Text(f"From {float(entry['source_start']):.1f}s",
+                                               size=10, color=TEXT_MUTED))
                 return ft.Row([media, ft.Column(details, spacing=4)], spacing=12)
 
             panel_keys = _selected_keys(beat_key)
@@ -1787,29 +1855,33 @@ def build(
 
         def _do_delete(_e):
             page.pop_dialog()
+            from stages.stage_5.clips import remove_scene_clips
             current = load_narration(project) or {}
+            wps = float(current.get("words_per_second") or 3.4)
             current["scenes"] = [s for s in (current.get("scenes") or [])
                                  if int(s.get("scene_id") or 0) != sid]
+            _resync_narration_totals(current, wps)
             save_narration_edits(project, current)
             nonlocal narration
             narration = current
             edited_text.pop(sid, None)
-            for k in [k for k in locks if k == bk or k.startswith(f"{sid}:")]:
+            for k in [k for k in locks if k == bk or k == str(sid) or k.startswith(f"{sid}:")]:
                 locks.pop(k, None)
+            remove_scene_clips(_project_dir(project), sid, bk)
+            remove_scene_custom_images(PROJECTS_ROOT / project, sid, bk)
             locks_doc["approved"] = False
             locks_doc["approved_at"] = None
             save_review_locks(project, locks_doc)
-            if config.ENABLE_VIDEO_CLIPS:
-                _clear_all_locks_and_clips()
-                on_state_change()
-                return
             # Drop the beat row(s) too — review["beats"] is the ListView's source of
             # truth for a LOCAL _rebuild() (add/split/merge never re-read
             # candidates.json), so it must stay in sync or a deleted scene would
             # reappear after the next add/split/merge elsewhere.
             review["beats"] = [b for b in (review.get("beats") or [])
-                                if not (str(b.get("beat_key") or "") == bk
+                                if not (str(b.get("beat_key") or "") in (bk, str(sid))
                                         or str(b.get("beat_key") or "").startswith(f"{sid}:"))]
+            save_review_candidates(project, review)
+            _reload_sidecars()
+            _resync_background_tts()
             _rebuild(f"Deleted beat {sid:02d} — re-approve before render.", warn=True)
 
         page.show_dialog(ft.AlertDialog(
@@ -1825,9 +1897,10 @@ def build(
 
     def _delete_fragment(beat: dict):
         """Delete ONE fragment (not the whole scene) — its words fold into a sibling
-        fragment via merge_fragment_into_prev, its own lock is dropped, later
-        fragment locks shift down. Content isn't lost (it survives merged into the
-        sibling's text), so no confirm dialog — unlike the whole-scene delete above."""
+        fragment via merge_fragment_into_prev, its own lock is dropped (or inherited by
+        the survivor when the survivor had none), later fragment locks/clips/custom images
+        shift down. Content isn't lost (it survives merged into the sibling's text), so
+        no confirm dialog — unlike the whole-scene delete above."""
         beat_key = _beat_key(beat)
         sid = int(beat.get("scene_id") or 0)
         frag_idx = _frag_idx_from_key(beat_key)
@@ -1842,18 +1915,13 @@ def build(
         except ValueError as exc:
             _show_snack(f"Cannot delete fragment: {exc}")
             return
+        from stages.stage_5.clips import remap_fragment_clips
         save_narration_edits(project, current)
         nonlocal narration, locks
         narration = current
-        locks = remap_fragment_locks(locks, sid, frag_idx, -1)
-        locks_doc["locks"] = locks
-        locks_doc["approved"] = False
-        locks_doc["approved_at"] = None
-        save_review_locks(project, locks_doc)
-        if config.ENABLE_VIDEO_CLIPS:
-            _clear_all_locks_and_clips()
-            on_state_change()
-            return
+        locks = remap_fragment_locks(locks, sid, frag_idx, -1, merge_survivor=True)
+        remap_fragment_clips(_project_dir(project), sid, frag_idx, -1, merge_survivor=True)
+        remap_fragment_custom_images(PROJECTS_ROOT / project, sid, frag_idx, -1, merge_survivor=True)
         beats_list = _remap_beats_list(review.get("beats") or [], sid, frag_idx, -1)
         review["beats"] = beats_list
         survivor_idx = 0 if frag_idx == 0 else frag_idx - 1
@@ -1863,12 +1931,24 @@ def build(
             if b.get("beat_key") == survivor_key and survivor_idx < len(merged_beats):
                 b["narration_text"] = _frag_text(merged_beats[survivor_idx])
                 break
+        dirty_keys = {f"{sid}:{i}" for i in range(len(merged_beats) + 1)}
+        if (scene.get("is_intro") or scene.get("is_outro")) and len(merged_beats) == 1:
+            canon_bk = "intro" if scene.get("is_intro") else "outro"
+            _rebind_single_beat_key(f"{sid}:0", canon_bk, canon_bk, bookend=canon_bk)
+            dirty_keys.add(canon_bk)
+        locks_doc["locks"] = locks
+        locks_doc["approved"] = False
+        locks_doc["approved_at"] = None
+        save_review_locks(project, locks_doc)
+        save_review_candidates(project, review)
+        _reload_sidecars()
+        _resync_background_tts()
         # Every fragment key of this scene shifted (merge closed the gap), so their cached cards
         # now map to the WRONG content — rebuild the whole scene's fragment cards fresh (cheap:
         # 1 scene) while other scenes' cards stay reused. Without this a shifted key reuses a
         # stale card → duplicate/stale rows.
-        dirty = frozenset(f"{sid}:{i}" for i in range(len(merged_beats)))
-        _rebuild("Đã xóa mảnh — cần re-approve trước khi render.", warn=True, dirty=dirty)
+        _rebuild("Đã xóa mảnh — cần re-approve trước khi render.", warn=True,
+                 dirty=frozenset(dirty_keys))
 
     def _drop_fragment_line(beat: dict):
         """Trash icon on a FRAGMENT card — drop just THIS narration line (its words are
@@ -1903,19 +1983,14 @@ def build(
                 confirm_body="Đây là dòng cuối của beat — xóa nó sẽ xóa CẢ beat khỏi "
                              "narration.json. Cần re-approve trước khi render.")
             return
+        from stages.stage_5.clips import remap_fragment_clips
         _resync_narration_totals(current, wps)
         save_narration_edits(project, current)
         nonlocal narration, locks
         narration = current
         locks = remap_fragment_locks(locks, sid, frag_idx, -1)
-        locks_doc["locks"] = locks
-        locks_doc["approved"] = False
-        locks_doc["approved_at"] = None
-        save_review_locks(project, locks_doc)
-        if config.ENABLE_VIDEO_CLIPS:
-            _clear_all_locks_and_clips()
-            on_state_change()
-            return
+        remap_fragment_clips(_project_dir(project), sid, frag_idx, -1)
+        remap_fragment_custom_images(PROJECTS_ROOT / project, sid, frag_idx, -1)
         beats_list = _remap_beats_list(review.get("beats") or [], sid, frag_idx, -1)
         review["beats"] = beats_list
         # Every surviving fragment row of this scene shifted index (the drop closed the gap),
@@ -1928,8 +2003,20 @@ def build(
                 i = _frag_idx_from_key(bk)
                 if i < len(new_vb):
                     b["narration_text"] = _frag_text(new_vb[i])
-        dirty = frozenset(f"{sid}:{i}" for i in range(len(new_vb)))
-        _rebuild("Đã xóa dòng — cần re-approve trước khi render.", warn=True, dirty=dirty)
+        dirty_keys = {f"{sid}:{i}" for i in range(len(new_vb) + 1)}
+        if (scene.get("is_intro") or scene.get("is_outro")) and len(new_vb) == 1:
+            canon_bk = "intro" if scene.get("is_intro") else "outro"
+            _rebind_single_beat_key(f"{sid}:0", canon_bk, canon_bk, bookend=canon_bk)
+            dirty_keys.add(canon_bk)
+        locks_doc["locks"] = locks
+        locks_doc["approved"] = False
+        locks_doc["approved_at"] = None
+        save_review_locks(project, locks_doc)
+        save_review_candidates(project, review)
+        _reload_sidecars()
+        _resync_background_tts()
+        _rebuild("Đã xóa dòng — cần re-approve trước khi render.", warn=True,
+                 dirty=frozenset(dirty_keys))
 
     def _open_split_dialog(before: dict):
         """"Tách mảnh" dialog: `before` is the fragment card sitting right above the
@@ -1965,40 +2052,55 @@ def build(
                 except ValueError as exc:
                     _show_snack(f"Split failed: {exc}")
                     return
+                from stages.stage_5.clips import remap_fragment_clips
                 save_narration_edits(project, current)
                 nonlocal narration, locks
                 narration = current
+                target_bk = beat_key
+                dirty_extra: set[str] = set()
+                if target_bk != f"{sid}:{frag_idx}":
+                    bookend_tag = ("intro" if scene.get("is_intro")
+                                   else ("outro" if scene.get("is_outro") else ""))
+                    _rebind_single_beat_key(target_bk, f"{sid}:{frag_idx}", "fragment",
+                                            bookend=bookend_tag)
+                    dirty_extra.add(target_bk)
+                    target_bk = f"{sid}:{frag_idx}"
                 locks = remap_fragment_locks(locks, sid, frag_idx + 1, 1)
+                remap_fragment_clips(_project_dir(project), sid, frag_idx + 1, 1)
+                remap_fragment_custom_images(PROJECTS_ROOT / project, sid, frag_idx + 1, 1)
                 locks_doc["locks"] = locks
                 locks_doc["approved"] = False
                 locks_doc["approved_at"] = None
                 save_review_locks(project, locks_doc)
-                if config.ENABLE_VIDEO_CLIPS:
-                    _clear_all_locks_and_clips()
-                    on_state_change()
-                    return
 
                 beats_list = _remap_beats_list(review.get("beats") or [], sid, frag_idx + 1, 1)
                 review["beats"] = beats_list
                 new_vb = scene.get("visual_beats") or []
                 orig_i = next((i for i, b in enumerate(beats_list)
-                               if b.get("beat_key") == beat_key), None)
+                               if b.get("beat_key") == target_bk), None)
                 if orig_i is not None and frag_idx + 1 < len(new_vb):
                     orig_row = beats_list[orig_i]
+                    orig_row["unit"] = "fragment"
                     orig_row["narration_text"] = _frag_text(new_vb[frag_idx])
                     # CLONE the sibling's candidate pool in-memory for the new second
                     # half — same scene, same shared candidate pool per the review
                     # contract; no build_candidates re-run needed.
                     new_row = dict(orig_row)
                     new_row["beat_key"] = f"{sid}:{frag_idx + 1}"
+                    new_row["unit"] = "fragment"
                     new_row["narration_text"] = _frag_text(new_vb[frag_idx + 1])
                     new_row["candidates"] = list(orig_row.get("candidates") or [])
+                    if "candidates_all" in orig_row:
+                        new_row["candidates_all"] = list(orig_row.get("candidates_all") or [])
                     new_row["pre_selected"] = []
                     beats_list.insert(orig_i + 1, new_row)
+                save_review_candidates(project, review)
+                _reload_sidecars()
+                _resync_background_tts()
                 # A split shifts every following fragment key of this scene by +1, so their
                 # cached cards now map to the wrong content — rebuild the whole scene's
                 # fragment cards fresh (other scenes stay reused). See _delete_fragment.
-                dirty = frozenset(f"{sid}:{i}" for i in range(len(new_vb)))
+                dirty = frozenset({f"{sid}:{i}" for i in range(len(new_vb))} | dirty_extra)
                 _rebuild("Đã tách mảnh — cần re-approve trước khi render.", warn=True, dirty=dirty)
             return _handler
 
@@ -2029,9 +2131,10 @@ def build(
         ))
 
     def _open_insert_scene_dialog(boundary_idx: int, before: dict | None, after: dict | None):
-        """"Thêm scene" dialog: type a brand-new scene's text, inserted at this
-        boundary in both narration.json (via insert_scene_at) and the in-memory
-        review["beats"] (candidates=[] — Master rebuilds or picks a Custom image)."""
+        """"Thêm beat mới" dialog: type a brand-new beat's text, inserted at this
+        boundary in both narration.json and the in-memory review["beats"] while keeping
+        all existing panel/MP4/custom-image selections intact and cloning the neighbor's
+        candidate pool so the new beat can be picked immediately."""
         text_field = ft.TextField(
             label="Nội dung scene mới", multiline=True, min_lines=2, max_lines=5,
             border_color=BORDER, focused_border_color=ACCENT, text_size=13, autofocus=True,
@@ -2045,6 +2148,94 @@ def build(
             page.pop_dialog()
             current = load_narration(project) or {}
             scenes = current.get("scenes") or []
+            wps = float(current.get("words_per_second") or 3.4)
+            before_sid = int((before or {}).get("scene_id") or 0) if before else 0
+            after_sid = int((after or {}).get("scene_id") or 0) if after else 0
+            before_sc = next((s for s in scenes if int(s.get("scene_id") or 0) == before_sid), None) if before_sid else None
+            after_sc = next((s for s in scenes if int(s.get("scene_id") or 0) == after_sid), None) if after_sid else None
+
+            # Insert as a new fragment of an existing scene when:
+            #  (a) between two fragments of the SAME scene (before_sid == after_sid),
+            #  (b) at the very top above an is_intro scene (before is None and after_sc is_intro), or
+            #  (c) at the very bottom below an is_outro scene (after is None and before_sc is_outro)
+            # so narration.json and reconcile_beats stay in identical order.
+            frag_target_sc = None
+            insert_frag_idx = 0
+            donor_beat = before or after
+            if before is not None and after is not None and before_sid == after_sid and before_sc is not None:
+                frag_target_sc = before_sc
+                insert_frag_idx = _frag_idx_from_key(_beat_key(before)) + 1
+                donor_beat = before
+            elif before is None and after_sc is not None and after_sc.get("is_intro"):
+                frag_target_sc = after_sc
+                insert_frag_idx = 0
+                donor_beat = after
+            elif after is None and before_sc is not None and before_sc.get("is_outro"):
+                frag_target_sc = before_sc
+                existing_vbs = [vb for vb in (before_sc.get("visual_beats") or []) if _frag_text(vb)]
+                insert_frag_idx = max(1, len(existing_vbs))
+                donor_beat = before
+
+            nonlocal narration, locks
+            if frag_target_sc is not None:
+                from stages.stage_5.clips import remap_fragment_clips
+                sid = int(frag_target_sc.get("scene_id") or 0)
+                frags = [vb for vb in (frag_target_sc.get("visual_beats") or []) if _frag_text(vb)]
+                if not frags and str(frag_target_sc.get("text") or "").strip():
+                    frags = [str(frag_target_sc.get("text") or "").strip()]
+                donor_bk = _beat_key(donor_beat or {})
+                dirty_extra: set[str] = set()
+                if len(frags) == 1 and donor_bk != f"{sid}:0":
+                    bookend_tag = ("intro" if frag_target_sc.get("is_intro")
+                                   else ("outro" if frag_target_sc.get("is_outro") else ""))
+                    _rebind_single_beat_key(donor_bk, f"{sid}:0", "fragment", bookend=bookend_tag)
+                    dirty_extra.add(donor_bk)
+                insert_frag_idx = max(0, min(insert_frag_idx, len(frags)))
+                template = frags[min(insert_frag_idx, len(frags) - 1)] if frags else new_text
+                frags.insert(insert_frag_idx, _frag_with_text(template, new_text))
+                frag_target_sc["visual_beats"] = frags
+                frag_target_sc["text"] = " ".join(_frag_text(vb) for vb in frags).strip()
+                _resync_scene_timing(frag_target_sc, wps)
+                _resync_narration_totals(current, wps)
+                save_narration_edits(project, current)
+                narration = current
+
+                locks = remap_fragment_locks(locks, sid, insert_frag_idx, 1)
+                remap_fragment_clips(_project_dir(project), sid, insert_frag_idx, 1)
+                remap_fragment_custom_images(PROJECTS_ROOT / project, sid, insert_frag_idx, 1)
+                locks_doc["locks"] = locks
+                locks_doc["approved"] = False
+                locks_doc["approved_at"] = None
+                save_review_locks(project, locks_doc)
+
+                beats_list = _remap_beats_list(review.get("beats") or [], sid, insert_frag_idx, 1)
+                review["beats"] = beats_list
+                bookend_tag = ("intro" if frag_target_sc.get("is_intro")
+                               else ("outro" if frag_target_sc.get("is_outro") else ""))
+                cands = list((donor_beat or {}).get("candidates") or [])
+                new_beat = {
+                    "scene_id": sid,
+                    "narration_text": new_text,
+                    "bookend": bookend_tag,
+                    "page_ref": frag_target_sc.get("page_ref") or None,
+                    "panel_ref": None,
+                    "source": dict((donor_beat or {}).get("source") or {}),
+                    "candidates": cands,
+                    "beat_key": f"{sid}:{insert_frag_idx}",
+                    "pre_selected": [],
+                    "unit": "fragment",
+                }
+                if donor_beat and "candidates_all" in donor_beat:
+                    new_beat["candidates_all"] = list(donor_beat.get("candidates_all") or [])
+                beats_list.insert(boundary_idx, new_beat)
+                save_review_candidates(project, review)
+                _reload_sidecars()
+                _resync_background_tts()
+                dirty = frozenset({f"{sid}:{i}" for i in range(len(frags))} | dirty_extra)
+                _rebuild("Đã thêm beat mới — cần re-approve trước khi render.",
+                         warn=True, dirty=dirty)
+                return
+
             neighbor_beat = before or after
             neighbor_sid = int((neighbor_beat or {}).get("scene_id") or 0)
             neighbor = next((s for s in scenes
@@ -2053,31 +2244,34 @@ def build(
                 _show_snack("Neighbor scene not found — reload the project.")
                 return
             if after is not None:
-                after_sid = int(after.get("scene_id") or 0)
                 list_index = next((i for i, s in enumerate(scenes)
                                     if int(s.get("scene_id") or 0) == after_sid), len(scenes))
             else:
                 list_index = len(scenes)
             new_scene = insert_scene_at(current, list_index, new_text, neighbor)
             save_narration_edits(project, current)
-            nonlocal narration
             narration = current
             locks_doc["approved"] = False
             locks_doc["approved_at"] = None
             save_review_locks(project, locks_doc)
-            if config.ENABLE_VIDEO_CLIPS:
-                _clear_all_locks_and_clips()
-                on_state_change()
-                return
+            cands = list((neighbor_beat or {}).get("candidates") or [])
+            new_bk = f"{new_scene['scene_id']}:0"
             new_beat = {
                 "scene_id": new_scene["scene_id"], "narration_text": new_text,
                 "page_ref": new_scene.get("page_ref") or None, "panel_ref": None,
-                "source": {}, "candidates": [], "beat_key": str(new_scene["scene_id"]),
-                "pre_selected": [], "unit": "scene",
+                "source": dict((neighbor_beat or {}).get("source") or {}),
+                "candidates": cands, "beat_key": new_bk,
+                "pre_selected": [], "unit": "fragment",
             }
+            if neighbor_beat and "candidates_all" in neighbor_beat:
+                new_beat["candidates_all"] = list(neighbor_beat.get("candidates_all") or [])
             beats_list = review.setdefault("beats", [])
             beats_list.insert(boundary_idx, new_beat)
-            _rebuild("Đã thêm scene mới — cần Rebuild candidates + re-approve.", warn=True)
+            save_review_candidates(project, review)
+            _reload_sidecars()
+            _resync_background_tts()
+            _rebuild("Đã thêm beat mới — cần re-approve trước khi render.",
+                     warn=True, dirty=frozenset({new_bk}))
 
         page.show_dialog(ft.AlertDialog(
             modal=True,
@@ -2090,26 +2284,31 @@ def build(
         ))
 
     def _add_row(boundary_idx: int, beats_list: list[dict]) -> ft.Control:
-        """Thin "+" row at one boundary between (or before/after) beat cards. Which
-        dialog it opens depends only on the card ABOVE it: a fragment above means
-        "add more to THIS scene" (split its last fragment) even when the card below
-        is a totally different scene; anything else above (a whole scene/intro card,
-        or nothing — the very top of the list) means "insert a brand-new scene"."""
+        """Thin action row at one boundary between (or before/after) beat cards:
+        offers BOTH splitting the card above (when it has >1 word) and inserting a
+        brand-new beat right at this boundary."""
         before = beats_list[boundary_idx - 1] if boundary_idx > 0 else None
         after = beats_list[boundary_idx] if boundary_idx < len(beats_list) else None
-        is_split = before is not None and _beat_unit(before) == "fragment"
-        tooltip = "Tách mảnh ngay trên thành 2" if is_split else "Thêm scene mới tại đây"
-
-        def _click(_e, b=before, a=after, split=is_split, bidx=boundary_idx):
-            if split:
-                _open_split_dialog(b)
-            else:
-                _open_insert_scene_dialog(bidx, b, a)
+        can_split = (before is not None
+                     and len(str(before.get("narration_text") or "").split()) > 1)
+        action_btns: list[ft.Control] = []
+        if can_split:
+            action_btns.append(ft.IconButton(
+                ft.Icons.CONTENT_CUT, icon_size=15,
+                tooltip="Tách mảnh ngay trên thành 2",
+                on_click=lambda _e, b=before: _open_split_dialog(b),
+                style=ft.ButtonStyle(padding=ft.padding.all(0)),
+            ))
+        action_btns.append(ft.IconButton(
+            ft.Icons.ADD_CIRCLE_OUTLINE, icon_size=16,
+            tooltip="Thêm scene mới tại đây",
+            on_click=lambda _e, bidx=boundary_idx, b=before, a=after: _open_insert_scene_dialog(bidx, b, a),
+            style=ft.ButtonStyle(padding=ft.padding.all(0)),
+        ))
 
         return ft.Row([
             ft.Container(content=ft.Divider(height=1, color=BORDER), expand=True),
-            ft.IconButton(ft.Icons.ADD_CIRCLE_OUTLINE, icon_size=16, tooltip=tooltip,
-                          on_click=_click, style=ft.ButtonStyle(padding=ft.padding.all(0))),
+            *action_btns,
             ft.Container(content=ft.Divider(height=1, color=BORDER), expand=True),
         ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 

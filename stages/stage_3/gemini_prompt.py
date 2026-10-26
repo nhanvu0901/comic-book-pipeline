@@ -143,6 +143,306 @@ def _find_micro_scout_candidate(project_name: str, root: Path, comic_ctx: dict, 
     return rebuilt
 
 
+def _enrich_qa_context(
+    project_name: str,
+    root: Path,
+    answer_ctx: dict,
+    state_data: dict,
+) -> tuple[list[dict], str]:
+    """Enrich Q&A items with causal/context fields and verification evidence from
+    the project's research session so Stage 2's writer prompt receives full context.
+
+    Standard fields (drawable_moment, stakes_why, relationships, verification_note,
+    answer_summary, format) are backfilled into answer_context.json on disk when empty;
+    richer scout fields (story_arc, motivation_detail, claim_citation, evidence_urls,
+    scout_verification, retrieved_source_excerpts) are attached to the prompt copy only.
+    """
+    items = [dict(it) for it in (answer_ctx.get("items") or [])]
+    extra_per_index: dict[int, dict] = {}
+    dirty_disk = False
+
+    try:
+        from config import RESEARCH_SESSIONS_ROOT
+        if RESEARCH_SESSIONS_ROOT.exists() and items:
+            matched_sdir: Path | None = None
+            matched_sdata: dict = {}
+            for sdir in RESEARCH_SESSIONS_ROOT.iterdir():
+                if not sdir.is_dir():
+                    continue
+                s_file = sdir / "session.json"
+                if not s_file.exists():
+                    continue
+                sdata = _load_json(s_file)
+                if not isinstance(sdata, dict):
+                    continue
+                if sdata.get("created_project") == project_name or (
+                    state_data.get("scout_session_id")
+                    and sdata.get("id") == state_data.get("scout_session_id")
+                ):
+                    matched_sdir = sdir
+                    matched_sdata = sdata
+                    break
+
+            if matched_sdir is not None:
+                cand_doc: dict = {}
+                for c_name in ("candidates.v1.json", "candidates.rev1.v1.json"):
+                    cp = matched_sdir / "general" / c_name
+                    if cp.exists():
+                        loaded_doc = _load_json(cp)
+                        if isinstance(loaded_doc, dict) and loaded_doc.get("candidates"):
+                            cand_doc = loaded_doc
+                            break
+                if not cand_doc:
+                    for cp in sorted((matched_sdir / "general").glob("candidates*.json")):
+                        loaded_doc = _load_json(cp)
+                        if isinstance(loaded_doc, dict) and loaded_doc.get("candidates"):
+                            cand_doc = loaded_doc
+                            break
+
+                cands = [c for c in (cand_doc.get("candidates") or []) if isinstance(c, dict)]
+                by_id = {str(c.get("id")): c for c in cands if c.get("id")}
+                selected_ids = [
+                    str(cid) for cid in (matched_sdata.get("selected_specific_candidate_ids") or [])
+                ]
+
+                gate_doc = _load_json(matched_sdir / "specific" / "evidence_gate.v1.json")
+                gates = gate_doc.get("gates") if isinstance(gate_doc, dict) else []
+                gates = [g for g in (gates or []) if isinstance(g, dict)]
+                gate_by_id = {
+                    str(g.get("candidate_id") or g.get("id")): g
+                    for g in gates
+                    if g.get("candidate_id") or g.get("id")
+                }
+
+                # Backfill answer_summary / format on answer_ctx if missing
+                thesis = str(
+                    cand_doc.get("answer_thesis") or cand_doc.get("answer_summary") or ""
+                ).strip()
+                if thesis and (
+                    not answer_ctx.get("answer_summary")
+                    or answer_ctx.get("answer_summary") == answer_ctx.get("question")
+                ):
+                    answer_ctx["answer_summary"] = thesis
+                    dirty_disk = True
+                sess_fmt = str(matched_sdata.get("format") or "").strip()
+                if sess_fmt and not answer_ctx.get("format"):
+                    answer_ctx["format"] = sess_fmt
+                    dirty_disk = True
+
+                for idx, it in enumerate(items):
+                    cand: dict = {}
+                    gate: dict = {}
+                    if idx < len(selected_ids) and selected_ids[idx] in by_id:
+                        cid = selected_ids[idx]
+                        cand = by_id[cid]
+                        gate = gate_by_id.get(cid) or (gates[idx] if idx < len(gates) else {})
+                    else:
+                        ent = str(it.get("entity") or "").strip().lower()
+                        comic = str(it.get("source_comic") or "").strip().lower()
+                        for c_idx, c in enumerate(cands):
+                            c_ent = str(
+                                c.get("entity") or c.get("character") or c.get("title") or ""
+                            ).strip().lower()
+                            c_comic = str(
+                                c.get("source_comic") or c.get("series_issue_year") or ""
+                            ).strip().lower()
+                            if (ent and ent == c_ent) or (comic and comic in c_comic):
+                                cand = c
+                                cid = str(c.get("id") or "")
+                                gate = gate_by_id.get(cid) or (
+                                    gates[c_idx] if c_idx < len(gates) else {}
+                                )
+                                break
+
+                    if not cand:
+                        continue
+
+                    # Backfill empty standard keys on item
+                    if not str(it.get("drawable_moment") or "").strip():
+                        for k in ("drawable_moment", "visible_event", "what_visibly_happens", "moment"):
+                            val = str(cand.get(k) or "").strip()
+                            if val:
+                                it["drawable_moment"] = val
+                                dirty_disk = True
+                                break
+                    if not str(it.get("stakes_why") or "").strip():
+                        for k in (
+                            "stakes_why",
+                            "motivation_detail",
+                            "why_it_lands",
+                            "turning_point",
+                            "rank_reason",
+                        ):
+                            val = str(cand.get(k) or "").strip()
+                            if val:
+                                it["stakes_why"] = val
+                                dirty_disk = True
+                                break
+                    if not str(it.get("relationships") or "").strip():
+                        for k in ("relationships", "context_behind", "story_arc"):
+                            val = str(cand.get(k) or "").strip()
+                            if val:
+                                it["relationships"] = val
+                                dirty_disk = True
+                                break
+
+                    # Read specific/search.<cid>.v1.json if present
+                    cid = str(cand.get("id") or "").strip()
+                    search_verif: dict = {}
+                    excerpts: list[dict] = []
+                    if cid:
+                        sp = matched_sdir / "specific" / f"search.{cid}.v1.json"
+                        if sp.exists():
+                            srec = _load_json(sp)
+                            output = (
+                                ((srec.get("payload") or {}).get("output") or {})
+                                if isinstance(srec, dict)
+                                else {}
+                            )
+                            content = output.get("content") if isinstance(output, dict) else {}
+                            if isinstance(content, str):
+                                try:
+                                    content = json.loads(content)
+                                except Exception:
+                                    content = {}
+                            if isinstance(content, dict):
+                                vcands = content.get("candidates") or []
+                                v0 = vcands[0] if vcands and isinstance(vcands[0], dict) else {}
+                                search_verif = {
+                                    k: v
+                                    for k, v in {
+                                        "verdict": v0.get("verdict"),
+                                        "volume_and_year": v0.get("volume_and_year"),
+                                        "verbatim_sentence": v0.get("verbatim_sentence"),
+                                        "source_url": v0.get("source_url"),
+                                        "second_source_url": v0.get("second_source_url"),
+                                        "notes": content.get("notes"),
+                                    }.items()
+                                    if isinstance(v, str) and v.strip()
+                                }
+                            raw_sources = output.get("sources") if isinstance(output, dict) else []
+                            if isinstance(raw_sources, list):
+                                for src in raw_sources[:6]:
+                                    if not isinstance(src, dict):
+                                        continue
+                                    snips = [
+                                        str(s).strip()[:500]
+                                        for s in (src.get("snippets") or [])
+                                        if isinstance(s, str) and str(s).strip()
+                                    ][:2]
+                                    if snips:
+                                        excerpts.append(
+                                            {
+                                                "title": str(src.get("title") or "").strip(),
+                                                "url": str(src.get("url") or "").strip(),
+                                                "snippets": snips,
+                                            }
+                                        )
+
+                    citation = (
+                        cand.get("claim_citation")
+                        if isinstance(cand.get("claim_citation"), dict)
+                        else {}
+                    )
+                    raw_urls: list[str] = []
+                    for u_list in (gate.get("evidence_urls"), cand.get("evidence_urls")):
+                        if isinstance(u_list, str) and u_list.strip():
+                            raw_urls.append(u_list.strip())
+                        elif isinstance(u_list, list):
+                            raw_urls.extend(str(u).strip() for u in u_list if str(u).strip())
+                    for extra_u in (
+                        citation.get("url"),
+                        search_verif.get("source_url"),
+                        search_verif.get("second_source_url"),
+                    ):
+                        if isinstance(extra_u, str) and extra_u.strip():
+                            raw_urls.append(extra_u.strip())
+                    ev_urls = list(dict.fromkeys(raw_urls))
+
+                    # Enrich verification_note on disk if it only had the gate failure string
+                    cur_note = str(it.get("verification_note") or "").strip()
+                    if (not cur_note or "Sources:" not in cur_note) and (citation or ev_urls or search_verif):
+                        parts = [cur_note] if cur_note else []
+                        if search_verif.get("verdict") or search_verif.get("notes"):
+                            sv_str = " — ".join(
+                                p for p in (search_verif.get("verdict"), search_verif.get("notes")) if p
+                            )
+                            if sv_str and sv_str not in cur_note:
+                                parts.append(sv_str)
+                        if citation.get("quote"):
+                            q_str = (
+                                f'Claim quote: "{citation["quote"]}" ({citation.get("url")})'
+                                if citation.get("url")
+                                else f'Claim quote: "{citation["quote"]}"'
+                            )
+                            if q_str not in cur_note:
+                                parts.append(q_str)
+                        if ev_urls:
+                            s_str = "Sources: " + "; ".join(ev_urls)
+                            if s_str not in cur_note:
+                                parts.append(s_str)
+                        new_note = " | ".join(p for p in parts if p)
+                        if new_note and new_note != cur_note:
+                            it["verification_note"] = new_note
+                            dirty_disk = True
+
+                    # Build prompt-only extras for this item
+                    extras: dict = {}
+                    for k in ("story_arc", "motivation_detail", "turning_point", "why_it_lands"):
+                        val = str(cand.get(k) or "").strip()
+                        if val:
+                            extras[k] = val
+                    if citation and (citation.get("quote") or citation.get("url")):
+                        extras["claim_citation"] = citation
+                    if ev_urls:
+                        extras["evidence_urls"] = ev_urls
+                    if search_verif:
+                        extras["scout_verification"] = search_verif
+                    if excerpts:
+                        extras["retrieved_source_excerpts"] = excerpts
+                    extra_per_index[idx] = extras
+
+                if dirty_disk:
+                    answer_ctx["items"] = items
+                    (root / "answer_context.json").write_text(
+                        json.dumps(answer_ctx, indent=2, ensure_ascii=False), encoding="utf-8"
+                    )
+    except Exception:
+        pass
+
+    numbered: list[dict] = []
+    for n, item in enumerate(items, start=1):
+        row = {"item_number": n, **item}
+        if (n - 1) in extra_per_index:
+            row.update(extra_per_index[n - 1])
+        numbered.append(row)
+
+    # Build optional STORY / ARC CONTEXT block for the template
+    ctx_lines: list[str] = []
+    fmt = str(answer_ctx.get("format") or "").strip()
+    question = str(answer_ctx.get("question") or "").strip()
+    summary = str(answer_ctx.get("answer_summary") or "").strip()
+    viewer_ctx = str(answer_ctx.get("viewer_context") or "").strip()
+    constant_broken = str(answer_ctx.get("constant_broken") or "").strip()
+    if fmt:
+        fmt_desc = (
+            "direct (connected multi-beat causal progression answering the question)"
+            if fmt == "direct"
+            else "list (distinct examples answering the question in item_number order)"
+        )
+        ctx_lines.append(f"- Format: {fmt_desc}")
+    if summary and summary != question:
+        ctx_lines.append(f"- Overarching Thesis / Answer Summary: {summary}")
+    if viewer_ctx:
+        ctx_lines.append(f"- Viewer Context: {viewer_ctx}")
+    if constant_broken:
+        ctx_lines.append(f"- Constant Broken: {constant_broken}")
+    story_context_block = (
+        "STORY / ARC CONTEXT:\n" + "\n".join(ctx_lines) if ctx_lines else ""
+    )
+    return numbered, story_context_block
+
+
 def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
     """Build the Gemini markdown prompt for `project_name` and save it as
     projects/<project_name>/<project_name>_writer_prompt.md.
@@ -193,8 +493,10 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
             or project_name.replace("_", " ").title()
         ).strip()
 
-        if items:
-            numbered = [{"item_number": n, **item} for n, item in enumerate(items, start=1)]
+        numbered, story_context_block = _enrich_qa_context(
+            project_name, root, answer_ctx, state_data
+        )
+        if numbered:
             scout_json_str = json.dumps(numbered, indent=2, ensure_ascii=False)
         else:
             scout_json_str = json.dumps(comic_ctx, indent=2, ensure_ascii=False)
@@ -210,6 +512,10 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
             )
 
         rendered = template.replace("{{QUESTION}}", question).replace("{{SCOUT_JSON}}", scout_json_str)
+        if story_context_block:
+            rendered = rendered.replace("{{STORY_CONTEXT}}", f"{story_context_block}\n")
+        else:
+            rendered = rendered.replace("{{STORY_CONTEXT}}\n", "").replace("{{STORY_CONTEXT}}", "")
 
     # Save to project folder as <project_name>_writer_prompt.md
     out_path = root / f"{project_name}_writer_prompt.md"
@@ -243,8 +549,10 @@ _AUDIT_WORD_RE = re.compile(
 # own. A label followed by ":" or the end of the line is strict enough to trust even on a
 # markdown heading ("### OPENING CHAIN"), where _TAIL_RE's looser words are not.
 _AUDIT_LABEL_RE = re.compile(
-    r"^[\s#>(\[\-•–]*(?:opening\s+chain|story\s+frame\s+check|aftermath\s+check|open\s+loops|"
-    r"reactions|unsupported\s+facts)\s*(?::|$)", re.I)
+    r"^[\s#>(\[\-•–]*(?:opening\s+chain|story\s+frame\s+check|aftermath\s+check|"
+    r"issue\s+mention\s+check|flow\s+check|open\s+loops|reactions|unsupported\s+facts)\s*(?::|$)",
+    re.I,
+)
 _HOOK_OPTION_RE = re.compile(r"^\s*hook\s*(\d+)?\s*[:.)\-–—]\s*(.+)$", re.I)
 _CHOSEN_RE = re.compile(r"^\s*\[?\s*chosen\s+hook\b(.*)$", re.I)
 _OUTRO_LABEL_RE = re.compile(

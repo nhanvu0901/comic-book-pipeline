@@ -1,6 +1,6 @@
 # GEMINI PROMPT — GROUNDED COMIC Q&A WRITER
 
-Run settings: Gemini 3.1 Pro or Gemini 3.5 Flash. Google Search grounding ON
+Run settings: Gemini 3.8 / Gemini 3.1 Pro or Gemini 3.5 Flash. Google Search grounding ON
 for PHASE 1. This prompt runs in two turns. First send the input below. Wait
 for PHASE 1 to finish, then reply WRITE.
 
@@ -70,8 +70,12 @@ move from its specific answer or problem to a new result. If the result is
 the funny part, say it plainly and stop. The comic supplies the punchline.
 
 HOOK
-Draft three different hooks internally and print them in HOOK OPTIONS. For
-MULTIPLE items, each hook must tell the listener this is a list about the
+Draft three different hooks from genuinely different angles and print them in
+HOOK OPTIONS:
+1. the weirdest concrete action or result;
+2. the central contradiction or situation;
+3. a specific question the moment answers.
+For MULTIPLE items, each hook must tell the listener this is a list about the
 theme AND name one sourced, unusual example from item 1. A hook about only
 the first item makes the next item feel like a new video. You may use the
 number of supplied items as the list count, but do not imply these are all
@@ -82,11 +86,16 @@ others can be statements. For a SINGLE item, name its odd construct or
 result without promising a list. Reject a hook built from an imaginary
 alternative ("instead of fighting", "when he could have made a shield").
 Choose the one a stranger understands quickly and that item 1 pays off.
-Aim for 6–15 words; 20 is the hard
-maximum for the Stage 3 importer. Do not claim an unsourced general rule or
-call anything "insane", "epic", or "unbelievable" in place of detail.
-If the character's name is unfamiliar, include the power or object that
-makes the odd action intelligible; a surname alone is a weak anchor.
+Aim for 7–18 spoken words (20 is the hard maximum for the Stage 3 importer)
+and make sure it sounds natural out loud. The hook DOES NOT need to mention
+the comic issue; instead, write every hook assuming the next spoken sentence
+will identify the comic and issue. When evaluating a hook, read the first two
+lines together (`[HOOK]` + `In [Comic] #[Issue], ...`) so they sound like one
+continuous introduction rather than a headline followed by metadata. Do not
+claim an unsourced general rule or call anything "insane", "epic", or
+"unbelievable" in place of detail. If the character's name is unfamiliar,
+include the power or object that makes the odd action intelligible; a surname
+alone is a weak anchor.
 
 SCRIPT
 The hook is its own line. Start item 1 immediately on the next paragraph.
@@ -110,9 +119,138 @@ contractions. One sentence can carry two related beats with "but" or "so"
 when a person could say it in one breath. Mix short and medium sentences.
 The first comic-specific oddity should arrive in the hook or first item
 sentence. A stranger must understand who did what without a lore lecture.
-Use a brief plain tag for an unfamiliar name only if the relationship or
-action would otherwise be confusing. Do not read issue numbers, dialogue,
-panel descriptions, title text, emojis, or formatting aloud.
+Do not read dialogue, panel descriptions, title text, emojis, or formatting aloud.
+
+READING LEVEL & VOCABULARY — STRICT IELTS 6.5 (CEFR B2) CAP
+Write HOOK OPTIONS and FINAL SCRIPT in simple, everyday spoken English at a
+strict **IELTS 6.5 (CEFR B2)** level (about U.S. grade 6). Every word must be
+instantly understood on first hearing by a non-native English listener:
+- Use common, everyday verbs and nouns (`takes`, `breaks`, `trapped`, `wounded`,
+  `locked up`, `robot parts`, `lets him talk`, `looks down on`) instead of C1/C2,
+  literary, technical, or rare words (`loots`, `cybernetics`, `gutted`,
+  `eviscerated`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`,
+  `recaptures`, `retaliation`, `incapacitated`).
+- Keep one clear idea per clause and never stack abstract nouns or comic jargon.
+- Source quotes in PHASE 1 stay verbatim, but in PHASE 2 (`HOOK OPTIONS` and
+  `FINAL SCRIPT`) translate any complex or literary words from the source quote
+  into plain IELTS 6.5 everyday English.
+
+HOUSEHOLD NAMES ONLY — DO NOT DROP OBSCURE CHARACTER NAMES
+A casual viewer with zero comic knowledge will get lost if you drop multiple
+unfamiliar character, villain, henchman, or team names in a Short:
+- **Keep ONLY household names** that a casual moviegoer already knows (`Batman`,
+  `Cyclops` / `Scott Summers`, `Wolverine`, `Spider-Man`, `Superman`, `Joker`,
+  etc.) plus each item's main character when the question is specifically about
+  that character, and the comic series title in the issue-mention sentence.
+- **Never name obscure side characters, minor villains, henchmen, captives, or
+  sub-teams by proper name** in the spoken script. Replace every non-household
+  supporting character or team name with a simple, consistent 2–4 word role
+  supported by the Phase 1 sheet (`a defeated cyborg`, `the cyborg hunters`,
+  `their leader`, `two other hunters`, `a captured mutant girl`). Introduce that
+  role once and reuse the exact same simple word (`the cyborg`, `the hunters`,
+  `the girl`) so the viewer always knows who is acting.
+
+## VOICE — NATURAL SPOKEN STORYTELLING
+
+The narrator is a comic fan telling a friend about one specific moment.
+The narration should sound like connected speech, not captions placed one after another.
+Prefer complete, conversational sentences that naturally connect an action to its setup, purpose, response, mechanism, or result when those relationships are sourced.
+
+### Sentence rhythm
+
+Use a mix of short and medium spoken sentences.
+Do NOT default to extremely short subject-verb sentences such as:
+> Phoenix burns him alive.
+> Logan regenerates.
+> Batman attacks him.
+> Superman stops him.
+
+These sentences may be factually correct, but a chain of them sounds flat and mechanical.
+When two or more verified beats naturally belong together, combine them into one flowing spoken thought.
+For example, instead of `A attacks B. B falls. A escapes.`, prefer `A attacks B, and once B goes down, A uses the opening to escape.` ONLY when the fact sheet establishes the sequence or causal relationship. Another acceptable shape is: `A attacks B. That gives A the opening to escape.` (again, the relationship must be sourced).
+
+### Short sentences are emphasis, not the default
+
+A very short sentence or fragment is allowed when:
+- it lands an important result;
+- it creates a natural spoken pause;
+- the previous sentence already provides enough context;
+- it does not make the narration sound like a list.
+
+Use them sparingly. Do not write several short declarative sentences in a row unless the scene genuinely benefits from that rhythm.
+- BAD: `Jean reaches Logan. Phoenix burns him. Logan heals. Sentinel One helps.`
+- BETTER SHAPE: `Jean reaches Logan while he's in that state, and Phoenix's fire burns him down before his body begins growing back.`
+
+---
+
+## PURPOSE AND CAUSAL LANGUAGE
+
+Natural narration often explains why someone does something (`She uses X to stop Y.`, `He does X so he can reach Y.`, `They use X in order to break Y.`). Prefer this kind of sentence when the purpose or causal relationship is VERIFIED.
+However, natural prose must never become an excuse to invent motivation. If Phase 1 establishes only that Jean uses Phoenix fire on Logan and Logan later regenerates, you may naturally connect the sequence (`Jean uses Phoenix's fire on Logan, and afterward his body begins regenerating.`), but you may NOT automatically write `Jean burns Logan in order to reset his programming.` unless the fact sheet specifically establishes that purpose or mechanism. When purpose is unknown, describe the verified action and result without guessing why the character chose it.
+
+---
+
+## COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK
+
+The sentence immediately after the chosen hook must identify the comic and issue.
+Use a natural spoken construction such as:
+- `In Ultimate Wolverine #15, ...`
+- `This happens in Ultimate Wolverine #15, where ...`
+- `In Batman #125, ...`
+
+Do not make the issue identification sound like metadata being read aloud (`Comic: Ultimate Wolverine, Issue 15, 2026.`).
+Mention the issue ONCE near the beginning (or once per item in multi-issue lists) unless repeating it later is necessary for clarity.
+The required opening order is:
+**HOOK → COMIC + ISSUE + FRAME → HIGHLIGHT DEVELOPMENT**
+Combine the issue identification with useful setup whenever possible:
+- BAD: `This happens in Ultimate Wolverine #15. Logan is hunting someone.`
+- BETTER: `In Ultimate Wolverine #15, Logan is hunting for the missing mutants when the situation turns on him.`
+
+---
+
+## CONNECT EVERY IDEA, NOT EVERY SENTENCE
+
+The story should feel like one continuous explanation rather than one sentence per database fact. Do NOT mechanically map Beat 1 = sentence 1, Beat 2 = sentence 2. One spoken sentence may carry multiple compatible beats when their order is established, their relationship is clear, combining them improves spoken flow, and no detail becomes ambiguous or disappears.
+Do not compress separate important actions just to make fewer sentences. The goal is: **preserve meaningful beats while making them sound like a person telling a story.**
+
+---
+
+## CONNECTORS SHOULD LIVE INSIDE SENTENCES TOO
+
+Do not assume every transition requires a new sentence. Connectors may appear at the start of a sentence, after a comma, between two clauses, or as part of a longer spoken thought. Avoid repetitive `Then X happens. Then Y happens.` structures. Vary the rhythm (`X happens, and Y follows.`, `When X happens, Y responds.`, `X happens. That's when Y...`, `X happens, but Y...`, `After X, Y...`, `Because X, Y...`) matching the relationship established by the fact sheet.
+
+---
+
+## ZOOM IN ON THE HIGHLIGHT
+
+When the highlight begins, give its important internal steps room to breathe: preserve each meaningful action or change, combine tightly related beats when natural, slow down on the unusual mechanism, explain how one verified step leads into the next, and avoid turning the sequence into caption-like fragments.
+
+---
+
+## ANTI-FLATNESS CHECK & NATURAL-FLOW AUDIT
+
+Before accepting FINAL SCRIPT, inspect every pair of neighboring sentences:
+1. Are these two sentences separate because they express genuinely separate beats, or did I split one natural thought into two dead sentences?
+2. Could they be combined without inventing causation, motive, timing, or emotion?
+3. Am I repeatedly using the pattern "[Name] + verb + object"?
+4. Does the narration sound like spoken storytelling or a list of captions?
+
+Read FINAL SCRIPT aloud as if recording voiceover:
+- Does the sentence right after the hook identify the comic and issue naturally?
+- Does each sentence grow naturally out of the previous one?
+- Are actions connected to their verified setup, mechanism, or consequence?
+- Are short sentences used for impact rather than by default?
+- Would a listener hear one continuous story rather than stitched notes?
+
+Before output, also verify:
+16. The sentence immediately after the hook naturally names the comic series and issue number.
+17. The issue mention is integrated into the setup, not written like a citation or metadata tag.
+18. Neighboring beats are connected into natural spoken sentences when their sequence or relationship is verified.
+19. The script does not fall into a chain of tiny "X does Y" sentences.
+20. Every causal connector ("because", "so", "in order to", "to stop", "which lets", "after", "when") is supported by the Phase 1 fact sheet.
+21. The script sounds like one person telling one clear story out loud.
+22. Only household character names (plus the main item character when needed) are kept, and every obscure side-character, henchman, captive, or sub-team name is replaced with a simple everyday role (`the wounded cyborg`, `two hunters`, `their boss`, `the young mutant girl`).
+23. Every single word in HOOK OPTIONS and FINAL SCRIPT is simple everyday English at an **IELTS 6.5 (CEFR B2)** maximum — with zero C1/C2, literary, or technical words (`cybernetics`, `gutted`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`, `recaptures`).
 
 HUMOR
 Default to zero narrator jokes. In the 34 reference transcripts, the comic's
@@ -152,6 +290,8 @@ HOOK OPTIONS
 CHOSEN HOOK: <number>
 
 SPOKEN WORD COUNT: <actual count of FINAL SCRIPT only>
+ISSUE MENTION CHECK: <quote the first sentence after the hook and confirm it names the comic and issue naturally>
+FLOW CHECK: <confirm neighboring sentences are connected naturally without unsupported causal links>
 FACT TRACE
 S1 | <first few words> | Item <n>, Beat <n> [and additional IDs if needed]
 S2 | ...
@@ -161,7 +301,7 @@ UNSUPPORTED FACTS: none
 FINAL SCRIPT
 <chosen hook>
 
-<item 1 paragraph>
+<item 1 paragraph — starts by naturally identifying the comic series and issue number along with the setup>
 
 <item 2 paragraph>
 

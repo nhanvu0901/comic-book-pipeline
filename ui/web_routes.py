@@ -182,6 +182,7 @@ class PickMomentRequest(BaseModel):
     beat: str
     video_id: str
     start: float
+    end: float | None = None
 
 
 def process_clip_pick(
@@ -192,23 +193,44 @@ def process_clip_pick(
     beat_duration: float,
     url: str | None = None,
     *,
+    end: float | None = None,
     on_state: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Download the section for the picked moment, render its 9:16 preview, and put it in the
-    manifest with a rebased timeline. Raises ClipPickError (with the reason) when the footage
-    after `start` cannot fill the beat. Returns the manifest entry."""
+    manifest with a rebased timeline. When `end` (> start) is given, the entire [start, end]
+    span is downloaded and speed-adjusted (`fit_to_beat=True`) to fit `beat_duration` exactly.
+    Raises ClipPickError (with the reason) when the footage after `start` cannot fill the beat.
+    Returns the manifest entry."""
     say = on_state or (lambda _s: None)
     clips_dir = project_root / "review" / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_url = f"https://www.youtube.com/watch?v={video_id}"     # rebuilt: a given url is never fetched
+    has_end = end is not None and float(end) > float(start)
+    end_f = float(end) if has_end else None
+    clip_span = round(end_f - float(start), 3) if end_f is not None else None
 
     say("downloading")
-    section_path = clip_fetch.fetch_clip_section(video_url, clips_dir, start=start, beat_duration=beat_duration)
+    if has_end and end_f is not None:
+        section_path = clip_fetch.fetch_clip_section(
+            video_url, clips_dir, start=start, beat_duration=beat_duration, end=end_f
+        )
+    else:
+        section_path = clip_fetch.fetch_clip_section(
+            video_url, clips_dir, start=start, beat_duration=beat_duration
+        )
 
     say("rendering")
     preview_path = clips_dir / f"preview_{beat.replace(':', '_')}.mp4"
     try:
-        clips.render_clip_preview(section_path, start=0.0, beat_duration=beat_duration, out_path=preview_path)
+        if has_end and clip_span is not None:
+            clips.render_clip_preview(
+                section_path, start=0.0, beat_duration=beat_duration,
+                out_path=preview_path, end=clip_span, fit_to_beat=True,
+            )
+        else:
+            clips.render_clip_preview(
+                section_path, start=0.0, beat_duration=beat_duration, out_path=preview_path
+            )
     except clips.ClipTooShort as exc:
         raise ClipPickError(
             f"Từ mốc {start:.1f}s video chỉ còn quá ít cảnh để lấp beat {beat} ({beat_duration:.1f}s): {exc}. "
@@ -219,21 +241,33 @@ def process_clip_pick(
     def rel(p: Path) -> str:
         return p.relative_to(project_root).as_posix()
 
-    entry = {
+    entry: dict[str, Any] = {
         "id": video_id,
         "file": rel(section_path),
         "beat": beat,
         "start": 0.0,                 # t=0 of the section file IS the picked moment
-        "source_url": video_url,      # (no "end": open-ended, Stage 5's fit may extend into the margin)
+        "source_url": video_url,      # (no "end" when open-ended: Stage 5's fit may extend into the margin)
         "source_start": start,
         "beat_duration": beat_duration,
         "preview_file": rel(preview_path),
     }
+    if has_end and clip_span is not None and end_f is not None:
+        entry["end"] = clip_span
+        entry["fit_to_beat"] = True
+        entry["source_end"] = end_f
     clips.upsert_beat_clip(project_root, entry)
     return entry
 
 
-def _run_pick_job(project: str, project_root: Path, beat: str, video_id: str, start: float, gen: int) -> dict | None:
+def _run_pick_job(
+    project: str,
+    project_root: Path,
+    beat: str,
+    video_id: str,
+    start: float,
+    gen: int,
+    end: float | None = None,
+) -> dict | None:
     def state(s: str, **kw: Any) -> bool:
         return _set_pick(project, beat, gen, state=s, **kw) != -1
 
@@ -256,7 +290,7 @@ def _run_pick_job(project: str, project_root: Path, beat: str, video_id: str, st
                 raise ClipPickError("TTS chưa tính xong thời lượng beat này (quá thời gian chờ). "
                                     "Mở lại sau khi giọng đọc chạy tới đoạn này.")
         state("downloading", beat_duration=beat_dur, message="Đang tải đoạn clip…")
-        entry = process_clip_pick(project_root, beat, video_id, start, beat_dur,
+        entry = process_clip_pick(project_root, beat, video_id, start, beat_dur, end=end,
                                   on_state=lambda s: state(s, message={"downloading": "Đang tải đoạn clip…",
                                                                       "rendering": "Đang dựng preview 9:16…"}.get(s, s)))
         if not state("ready", entry=entry, message="✓ Đã chọn clip cho beat."):
@@ -349,7 +383,14 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
                 f'<div class="video-container">'
                 f'<iframe id="player_{e(vid)}" src="https://www.youtube.com/embed/{e(vid)}?enablejsapi=1" '
                 f'allow="autoplay; encrypted-media" allowfullscreen></iframe></div>')
-            time_ctrl = (f'<span>Mốc hiện tại của player: <b id="cur_{e(vid)}">0.0</b>s</span>')
+            time_ctrl = (
+                f'<span>Mốc hiện tại của player: <b id="cur_{e(vid)}">0.0</b>s '
+                f'(<span id="cur_fmt_{e(vid)}">0:00.0</span>)</span>')
+            player_range_btns = (
+                f'<button type="button" class="mini-btn" onclick="setInFromPlayer({e(_js(vid))})">⏱ Lấy điểm đầu</button>'
+                f'<button type="button" class="mini-btn" onclick="setOutFromPlayer({e(_js(vid))})">⏱ Lấy điểm cuối</button>'
+                f'<button type="button" class="mini-btn" onclick="previewRange({e(_js(vid))})">▶ Xem thử đoạn</button>'
+            )
         else:
             player_elem = (
                 f'<div class="no-embed"><p>Video này chặn nhúng trực tiếp.</p>'
@@ -357,6 +398,23 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
                 f'Xem trên YouTube tại {first_start:.1f}s ↗</a></div>')
             time_ctrl = (f'<label>Mốc bắt đầu (giây, xem trên YouTube rồi nhập): '
                          f'<input type="number" step="0.5" min="0" id="start_{e(vid)}" value="{first_start}"></label>')
+            player_range_btns = ""
+
+        range_ctrl = f"""
+          <div class="range-bar">
+            <div class="range-inputs">
+              <label>Từ (Bắt đầu):
+                <input type="text" class="time-text" id="in_{e(vid)}" placeholder="VD: 0:05 hoặc 5" oninput="updateRangeInfo({e(_js(vid))})">
+              </label>
+              <label>Đến (Kết thúc):
+                <input type="text" class="time-text" id="out_{e(vid)}" placeholder="VD: 0:15 (trống = tự động)" oninput="updateRangeInfo({e(_js(vid))})">
+              </label>
+              {player_range_btns}
+            </div>
+            <div class="range-hint" id="range_info_{e(vid)}">
+              Mẹo: Nhập khoảng <b>Từ</b> → <b>Đến</b> (VD: <code>0:05</code> đến <code>0:15</code>) để lấy trọn đoạn đó và tự động co giãn tốc độ vừa khít với Beat {e(beat)}. Để trống ô <b>Đến</b> nếu chỉ muốn lấy từ mốc bắt đầu.
+            </div>
+          </div>"""
 
         cards_html.append(f"""
         <div class="card" id="card_{e(vid)}">
@@ -364,6 +422,7 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
           <p class="channel">{e(channel)} | <a href="{e(url)}&t={int(first_start)}s" target="_blank" rel="noopener noreferrer">Xem trực tiếp trên YouTube tại mốc t ↗</a></p>
           {player_elem}
           <div class="timestamps">Gợi ý: {' '.join(buttons_html)}</div>
+          {range_ctrl}
           <div class="controls">
             {time_ctrl}
             <button class="btn pick-btn" onclick="pickMoment({e(_js(vid))})">✓ Dùng từ đây cho Beat {e(beat)}</button>
@@ -400,6 +459,14 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     .timestamps {{ margin-bottom: 12px; }}
     .time-btn {{ background: #21262d; color: #58a6ff; border: 1px solid #30363d; padding: 6px 10px; border-radius: 4px; cursor: pointer; margin-right: 6px; margin-bottom: 6px; font-size: 13px; }}
     .time-btn:hover {{ background: #30363d; }}
+    .range-bar {{ background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }}
+    .range-inputs {{ display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 13px; }}
+    .time-text {{ background: #161b22; color: #f0f6fc; border: 1px solid #30363d; padding: 5px 8px; border-radius: 4px; width: 135px; font-size: 13px; margin-left: 4px; }}
+    .mini-btn {{ background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 5px 9px; border-radius: 4px; cursor: pointer; font-size: 12px; }}
+    .mini-btn:hover {{ background: #30363d; color: #58a6ff; }}
+    .range-hint {{ color: #8b949e; font-size: 12px; line-height: 1.4; }}
+    .range-hint b.ok {{ color: #3fb950; }}
+    .range-hint b.warn {{ color: #f85149; }}
     .controls {{ display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #21262d; padding-top: 12px; }}
     input[type=number] {{ background: #0d1117; color: white; border: 1px solid #30363d; padding: 6px 10px; border-radius: 4px; width: 80px; font-size: 14px; }}
     .btn {{ background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; }}
@@ -425,6 +492,33 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     const PROJECT = {_js(project)};
     const BEAT = {_js(beat)};
     window.players = {{}};
+    window.beatDurationSec = null;
+    window.previewStopTimers = {{}};
+
+    function fmtTime(sec) {{
+      if (typeof sec !== 'number' || isNaN(sec) || sec < 0) return '0:00.0';
+      const m = Math.floor(sec / 60);
+      const s = (sec - m * 60).toFixed(1).padStart(4, '0');
+      return m + ':' + s;
+    }}
+
+    function parseTimeStr(raw) {{
+      if (raw === null || raw === undefined) return null;
+      let s = String(raw).trim();
+      if (!s) return null;
+      s = s.replace(/s$/i, '').trim();
+      // Normalize accidental 'o'/'O' typed instead of '0' (e.g. "o:15" -> "0:15", "0:o5" -> "0:05")
+      s = s.replace(/[oO](?=[:\\d])/g, '0').replace(/(?<=[:\\d])[oO]/g, '0');
+      if (s.includes(':')) {{
+        const parts = s.split(':').map(p => p.trim());
+        if (parts.some(p => p === '' || isNaN(Number(p)))) return NaN;
+        let total = 0;
+        for (const p of parts) total = total * 60 + parseFloat(p);
+        return Math.round(total * 10) / 10;
+      }}
+      const v = parseFloat(s);
+      return isNaN(v) ? NaN : Math.round(v * 10) / 10;
+    }}
 
     // The API calls this global the moment it has loaded — it must already exist (so this script comes
     // BEFORE the iframe_api tag below) and the iframes must already be in the DOM.
@@ -442,15 +536,108 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     setInterval(() => {{
         for (const [vid, p] of Object.entries(window.players)) {{
           const el = document.getElementById('cur_' + vid);
+          const fmtEl = document.getElementById('cur_fmt_' + vid);
           if (el && p && typeof p.getCurrentTime === 'function') {{
-            try {{ el.textContent = (Math.round(p.getCurrentTime() * 10) / 10).toFixed(1); }} catch (err) {{}}
+            try {{
+              const cur = Math.round(p.getCurrentTime() * 10) / 10;
+              el.textContent = cur.toFixed(1);
+              if (fmtEl) fmtEl.textContent = fmtTime(cur);
+            }} catch (err) {{}}
           }}
         }}
       }}, 400);
 
+    function getPlayerTime(vid) {{
+      const p = window.players[vid];
+      if (p && typeof p.getCurrentTime === 'function') {{
+        try {{
+          const cur = p.getCurrentTime();
+          if (typeof cur === 'number' && !isNaN(cur)) return Math.round(cur * 10) / 10;
+        }} catch (err) {{}}
+      }}
+      return null;
+    }}
+
+    function updateRangeInfo(vid) {{
+      const infoEl = document.getElementById('range_info_' + vid);
+      if (!infoEl) return;
+      const inRaw = (document.getElementById('in_' + vid) || {{}}).value || '';
+      const outRaw = (document.getElementById('out_' + vid) || {{}}).value || '';
+      const inVal = parseTimeStr(inRaw);
+      const outVal = parseTimeStr(outRaw);
+      if (inVal !== null && isNaN(inVal)) {{
+        infoEl.innerHTML = '<b class="warn">⚠ Mốc bắt đầu không hợp lệ (hãy nhập như 0:05 hoặc 5).</b>';
+        return;
+      }}
+      if (outVal !== null && isNaN(outVal)) {{
+        infoEl.innerHTML = '<b class="warn">⚠ Mốc kết thúc không hợp lệ (hãy nhập như 0:15 hoặc 15).</b>';
+        return;
+      }}
+      if (outVal !== null) {{
+        const st = (inVal !== null) ? inVal : (getPlayerTime(vid) || 0.0);
+        if (outVal <= st) {{
+          infoEl.innerHTML = '<b class="warn">⚠ Mốc kết thúc (' + fmtTime(outVal) + ') phải lớn hơn mốc bắt đầu (' + fmtTime(st) + ').</b>';
+          return;
+        }}
+        const span = Math.round((outVal - st) * 10) / 10;
+        let speedTxt = 'sẽ tự co giãn tốc độ để vừa khít thời lượng beat';
+        if (window.beatDurationSec && window.beatDurationSec > 0) {{
+          const spd = (span / window.beatDurationSec).toFixed(2);
+          speedTxt = 'tốc độ ~' + spd + 'x để khớp chính xác beat ' + window.beatDurationSec.toFixed(2) + 's';
+        }}
+        infoEl.innerHTML = '<b class="ok">✓ Đoạn chọn: ' + fmtTime(st) + ' → ' + fmtTime(outVal) + ' (dài ' + span.toFixed(1) + 's — ' + speedTxt + ')</b>';
+      }} else if (inVal !== null) {{
+        infoEl.innerHTML = 'Bắt đầu từ <b>' + fmtTime(inVal) + '</b> (' + inVal.toFixed(1) + 's) — để trống ô Đến sẽ tự lấy độ dài theo thời lượng beat.';
+      }} else {{
+        infoEl.innerHTML = 'Mẹo: Nhập khoảng <b>Từ</b> → <b>Đến</b> (VD: <code>0:05</code> đến <code>0:15</code>) để lấy trọn đoạn đó và tự động co giãn tốc độ vừa khít với Beat ' + BEAT + '.';
+      }}
+    }}
+
+    function setInFromPlayer(vid) {{
+      const cur = getPlayerTime(vid);
+      if (cur !== null) {{
+        const inEl = document.getElementById('in_' + vid);
+        if (inEl) inEl.value = fmtTime(cur);
+        updateRangeInfo(vid);
+      }}
+    }}
+
+    function setOutFromPlayer(vid) {{
+      const cur = getPlayerTime(vid);
+      if (cur !== null) {{
+        const inEl = document.getElementById('in_' + vid);
+        if (inEl && !inEl.value.trim()) inEl.value = '0:00.0';
+        const outEl = document.getElementById('out_' + vid);
+        if (outEl) outEl.value = fmtTime(cur);
+        updateRangeInfo(vid);
+      }}
+    }}
+
+    function previewRange(vid) {{
+      const p = window.players[vid];
+      if (!p || typeof p.seekTo !== 'function') return;
+      const inVal = parseTimeStr((document.getElementById('in_' + vid) || {{}}).value);
+      const outVal = parseTimeStr((document.getElementById('out_' + vid) || {{}}).value);
+      const st = (inVal !== null && !isNaN(inVal)) ? inVal : (getPlayerTime(vid) || 0.0);
+      if (window.previewStopTimers[vid]) clearInterval(window.previewStopTimers[vid]);
+      p.seekTo(st, true);
+      if (typeof p.playVideo === 'function') p.playVideo();
+      if (outVal !== null && !isNaN(outVal) && outVal > st) {{
+        window.previewStopTimers[vid] = setInterval(() => {{
+          const cur = getPlayerTime(vid);
+          if (cur !== null && cur >= outVal) {{
+            if (typeof p.pauseVideo === 'function') p.pauseVideo();
+            clearInterval(window.previewStopTimers[vid]);
+          }}
+        }}, 150);
+      }}
+    }}
+
     function seekTo(vid, seconds) {{
       const input = document.getElementById('start_' + vid);
       if (input) input.value = seconds;
+      const inEl = document.getElementById('in_' + vid);
+      if (inEl) {{ inEl.value = fmtTime(seconds); updateRangeInfo(vid); }}
       const p = window.players[vid];
       if (p && typeof p.seekTo === 'function') {{
         p.seekTo(seconds, true);
@@ -484,24 +671,44 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     }}
 
     async function pickMoment(vid) {{
-      // The player's own clock is the truth (spec 4.2); the number box only exists for videos that cannot be embedded.
-      let startVal = null;
-      const p = window.players[vid];
-      if (p && typeof p.getCurrentTime === 'function') {{
-        try {{
-          const cur = p.getCurrentTime();
-          if (typeof cur === 'number' && !isNaN(cur)) startVal = Math.round(cur * 10) / 10;
-        }} catch (err) {{ console.warn('Could not read getCurrentTime():', err); }}
+      const inEl = document.getElementById('in_' + vid);
+      const outEl = document.getElementById('out_' + vid);
+      const inParsed = parseTimeStr(inEl ? inEl.value : '');
+      const outParsed = parseTimeStr(outEl ? outEl.value : '');
+      if (inParsed !== null && isNaN(inParsed)) {{
+        showPick('Mốc bắt đầu (Từ) không hợp lệ. Hãy nhập dạng 0:05 hoặc số giây như 5.', true);
+        return;
+      }}
+      if (outParsed !== null && isNaN(outParsed)) {{
+        showPick('Mốc kết thúc (Đến) không hợp lệ. Hãy nhập dạng 0:15 hoặc số giây như 15.', true);
+        return;
+      }}
+
+      let startVal = inParsed;
+      if (startVal === null) {{
+        startVal = getPlayerTime(vid);
       }}
       if (startVal === null) {{
         const input = document.getElementById('start_' + vid);
         startVal = parseFloat((input && input.value) || "0");
       }}
-      showPick('Đang gửi lựa chọn (mốc ' + startVal.toFixed(1) + 's)…', false);
+
+      const payload = {{ project: PROJECT, beat: BEAT, video_id: vid, start: startVal }};
+      if (outParsed !== null) {{
+        if (outParsed <= startVal) {{
+          showPick('Mốc kết thúc (' + fmtTime(outParsed) + ') phải lớn hơn mốc bắt đầu (' + fmtTime(startVal) + ')!', true);
+          return;
+        }}
+        payload.end = outParsed;
+        showPick('Đang gửi đoạn ' + fmtTime(startVal) + ' → ' + fmtTime(outParsed) + ' (' + (outParsed - startVal).toFixed(1) + 's, tự động co giãn khớp beat)…', false);
+      }} else {{
+        showPick('Đang gửi lựa chọn (mốc ' + startVal.toFixed(1) + 's)…', false);
+      }}
+
       try {{
         const resp = await fetch('/api/pick_moment', {{
           method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
-          body: JSON.stringify({{ project: PROJECT, beat: BEAT, video_id: vid, start: startVal }})
+          body: JSON.stringify(payload)
         }});
         if (!resp.ok) {{ showPick('Lỗi gửi lựa chọn: ' + resp.status + ' ' + (await resp.text()), true); return; }}
         clearTimeout(pollTimer);
@@ -514,6 +721,7 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
         const r = await fetch('/api/beat_tts_status?project=' + encodeURIComponent(PROJECT));
         const j = await r.json();
         const d = (j.beat_durations || {{}})[BEAT];
+        if (d) window.beatDurationSec = d;
         document.getElementById('beat-dur').textContent = d ? d.toFixed(2) + ' s' : 'đang tính… (TTS chưa tới đoạn này)';
         if (d) return;
       }} catch (err) {{}}
@@ -539,9 +747,15 @@ async def pick_moment(req: PickMomentRequest, sync: bool = False) -> dict[str, A
     video_id = validate_video_id(req.video_id)
     if not math.isfinite(req.start) or not 0 <= req.start <= _MAX_START:
         raise HTTPException(status_code=400, detail="Invalid start time")
+    end_val: float | None = None
+    if req.end is not None:
+        if not math.isfinite(req.end) or req.end <= req.start or req.end > _MAX_START:
+            raise HTTPException(status_code=400, detail="Invalid end time (must be greater than start)")
+        end_val = float(req.end)
 
-    gen = _set_pick(req.project, beat, state="queued", message="Đang xếp hàng…", video_id=video_id, start=req.start)
-    args = (req.project, project_root, beat, video_id, float(req.start), gen)
+    gen = _set_pick(req.project, beat, state="queued", message="Đang xếp hàng…",
+                    video_id=video_id, start=req.start, end=end_val)
+    args = (req.project, project_root, beat, video_id, float(req.start), gen, end_val)
     if sync:
         entry = await run_in_threadpool(_run_pick_job, *args)
         st = get_pick_state(req.project, beat)

@@ -74,6 +74,18 @@ _BUBBLE_WIDTH = 640
 # research_policies/general_angles.v1.json.
 _DISCOVER_BATCH = 5
 
+ALL_PUBLISHERS_LABEL = "All publishers"
+SCOUT_PUBLISHERS: tuple[str, ...] = (
+    "Marvel",
+    "DC",
+    "Dark Horse",
+    "Image",
+    "IDW",
+    "BOOM! Studios",
+    "Dynamite",
+    "Valiant",
+)
+
 
 def _session_for_ui(session_id: str) -> ResearchSession | None:
     if not session_id:
@@ -432,6 +444,8 @@ def _session_created_bubble(session: ResearchSession) -> ft.Control:
         ft.Text(session.user_intent, size=13, color=TEXT_PRIMARY, selectable=True),
         *([ft.Text(f"Publication year: {session.publication_year}", size=11,
                    color=TEXT_MUTED, selectable=True)] if session.publication_year else []),
+        *([ft.Text(f"Publisher: {session.publisher}", size=11,
+                   color=TEXT_MUTED, selectable=True)] if session.publisher else []),
         chip,
     ], spacing=6))
 
@@ -1029,6 +1043,7 @@ def build(
             selected_specific.update(ids)
         intent_field.value = ""
         year_field.value = ""
+        publisher_field.value = ALL_PUBLISHERS_LABEL
         _forget_suggestions()
         _render_full()
 
@@ -1043,6 +1058,7 @@ def build(
         state.returned_scout_session_id = ""
         intent_field.value = ""
         year_field.value = ""
+        publisher_field.value = ALL_PUBLISHERS_LABEL
         _forget_suggestions()
         _render_full()
 
@@ -1066,6 +1082,7 @@ def build(
         busy[0] = True
         intent_field.disabled = True
         year_field.disabled = True
+        publisher_field.disabled = True
         send_button.disabled = True
         transcript.controls = _render_chat() + [_progress_bubble(label)]
         page.update()
@@ -1170,22 +1187,32 @@ def build(
         except ValueError as exc:
             _render_full(error=str(exc))
             return
+        publisher = _selected_publisher()
         previous_batch_id = discovered_batch_id[0]
 
         def _work():
             if previous_batch_id:
                 defer_scout_batch(previous_batch_id, root=RESEARCH_SESSIONS_ROOT)
-            batch = discover_questions(
-                mode, count=_DISCOVER_BATCH, exclude=excluded, publication_year=year,
-            ) if mode == ScoutMode.MICRO.value else discover_questions(
-                mode, count=_DISCOVER_BATCH, exclude=excluded,
-            )
+            discover_kwargs: dict[str, object] = {
+                "count": _DISCOVER_BATCH,
+                "exclude": excluded,
+            }
+            if mode == ScoutMode.MICRO.value:
+                discover_kwargs["publication_year"] = year
+            if publisher is not None:
+                discover_kwargs["publisher"] = publisher
+            batch = discover_questions(mode, **discover_kwargs)
             if mode == ScoutMode.QA.value and batch and batch[0].get("verification_shortage"):
                 return {"entries": [], "batch_id": "", "verification_shortage": True}
+            ctx: dict[str, object] = {}
+            if year is not None:
+                ctx["publication_year"] = year
+            if publisher is not None:
+                ctx["publisher"] = publisher
             try:
                 saved = save_scout_batch(
                     mode, batch,
-                    context={"publication_year": year} if year is not None else None,
+                    context=ctx or None,
                     root=RESEARCH_SESSIONS_ROOT,
                 )
             except Exception as exc:
@@ -1230,6 +1257,7 @@ def build(
             except ValueError as exc:
                 _render_full(error=str(exc))
                 return
+            publisher = _selected_publisher()
             if mode == ScoutMode.MICRO.value and year is not None and text:
                 named_issue_year = issue_publication_year(text)
                 if named_issue_year is not None and named_issue_year != year:
@@ -1249,7 +1277,7 @@ def build(
                     return
                 # First empty Send: show Tier A (bank) suggestions for free and stop —
                 # do NOT spend API budget without the user asking for it.
-                if not bank_shown[0]:
+                if not bank_shown[0] and publisher is None:
                     suggestions = list_bank_suggestions(mode)
                     if suggestions:
                         bank_shown[0] = True
@@ -1278,11 +1306,12 @@ def build(
             def _work():
                 if old is not None and old.state not in {SessionState.ARCHIVED, SessionState.COMPLETE}:
                     archive_scout_session(old.id, "Started a new research session")
-                new_session = (
-                    start_scout_session(mode, text, publication_year=year)
-                    if mode == ScoutMode.MICRO.value
-                    else start_scout_session(mode, text)
-                )
+                start_kwargs: dict[str, object] = {}
+                if mode == ScoutMode.MICRO.value:
+                    start_kwargs["publication_year"] = year
+                if publisher is not None:
+                    start_kwargs["publisher"] = publisher
+                new_session = start_scout_session(mode, text, **start_kwargs)
                 return run_scout_general(new_session.id)
 
             state.scout_mode = mode
@@ -1309,6 +1338,10 @@ def build(
         _forget_suggestions()
         _render_full()
 
+    def _publisher_changed(_e) -> None:
+        _forget_suggestions()
+        _render_full()
+
     def _selected_year() -> int | None:
         raw = str(year_field.value or "").strip()
         if not raw:
@@ -1319,6 +1352,12 @@ def build(
         if year < 1900 or year > date.today().year:
             raise ValueError(f"Choose a publication year from 1900 to {date.today().year}.")
         return year
+
+    def _selected_publisher() -> str | None:
+        raw = str(publisher_field.value or "").strip()
+        if not raw or raw == ALL_PUBLISHERS_LABEL:
+            return None
+        return raw
 
     def _selection_changed(candidate_id: str, checked: bool) -> None:
         if busy[0]:
@@ -1522,6 +1561,7 @@ def build(
             state.scout_mode = loaded.mode.value
             state.last_prompt = loaded.user_intent
             year_field.value = ""
+            publisher_field.value = ALL_PUBLISHERS_LABEL
             if state.returned_scout_session_id != loaded.id:
                 state.returned_scout_project = ""
                 state.returned_scout_session_id = ""
@@ -1647,6 +1687,8 @@ def build(
         state.last_prompt = intent_field.value
         year = row["context"].get("publication_year") if mode is ScoutMode.MICRO else None
         year_field.value = str(year) if year is not None else ""
+        saved_pub = str(row["context"].get("publisher") or "").strip()
+        publisher_field.value = saved_pub if saved_pub else ALL_PUBLISHERS_LABEL
         page.pop_dialog()
         _render_full()
 
@@ -1805,10 +1847,13 @@ def build(
         intent_field.hint_text = hint
         intent_field.disabled = disabled
         year_field.disabled = disabled
+        publisher_field.disabled = disabled
         send_button.disabled = disabled
         input_row.controls = ([mode_group] if show_mode else [])
         if show_mode and mode_group.value == ScoutMode.MICRO.value:
             input_row.controls.append(year_field)
+        if show_mode:
+            input_row.controls.append(publisher_field)
         input_row.controls += [intent_field, send_button]
 
     def _apply_render(error: str | None = None) -> None:
@@ -1852,10 +1897,22 @@ def build(
     year_field = ft.TextField(
         key="scout-year",
         label="Micro year (optional)",
-        hint_text=f"Micro uses {date.today().year} when blank",
+        hint_text="All years when blank",
         width=150,
         border_color=BORDER,
         focused_border_color=ACCENT,
+    )
+    publisher_field = ft.Dropdown(
+        key="scout-publisher",
+        label="Publisher (optional)",
+        value=ALL_PUBLISHERS_LABEL,
+        options=[ft.dropdown.Option(ALL_PUBLISHERS_LABEL)]
+        + [ft.dropdown.Option(p) for p in SCOUT_PUBLISHERS],
+        width=165,
+        border_color=BORDER,
+        focused_border_color=ACCENT,
+        text_size=12,
+        on_select=_publisher_changed,
     )
     send_button = primary_button("Send", _send_click)
     send_button.key = "chat-send"

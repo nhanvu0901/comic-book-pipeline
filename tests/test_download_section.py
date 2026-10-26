@@ -20,8 +20,15 @@ def test_ytdlp_section_args_contains_download_sections_and_keyframes(tmp_path):
     assert "--download-sections" in joined
     assert f"*{start:.2f}-{expected_end:.2f}" in joined
     assert "--force-keyframes-at-cuts" in joined
+    assert "--force-overwrites" in joined
     assert "--js-runtimes node" in joined
     assert "--merge-output-format mp4" in joined
+
+    # Explicit end (e.g. 5.0 -> 15.0, margin=2.0 -> 5.00-17.00)
+    args_range = clip_fetch.ytdlp_section_args(url, tmp_path, start=5.0, end=15.0, beat_duration=3.0)
+    joined_range = " ".join(args_range)
+    assert "*5.00-17.00" in joined_range
+    assert "_sec_5.0_17.0." in joined_range
 
 
 def test_render_clip_preview_geometry_and_frames(tmp_path):

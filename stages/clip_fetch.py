@@ -496,23 +496,28 @@ def ytdlp_section_args(
     *,
     start: float,
     beat_duration: float,
+    end: float | None = None,
     margin: float = 2.0,
     max_height: int = 1080,
 ) -> list[str]:
     import config
-    end = start + beat_duration * config.CLIP_SPEED_MAX + margin
+    if end is not None and end > start:
+        dl_end = float(end) + margin
+    else:
+        dl_end = start + beat_duration * config.CLIP_SPEED_MAX + margin
     fmt = f"bv*[height<={max_height}]+ba/b[height<={max_height}]/bv*+ba/b"
     return [
         *_ytdlp_cmd(),
         "--no-playlist",
         "--js-runtimes", "node",
         "-f", fmt,
-        "--download-sections", f"*{start:.2f}-{end:.2f}",
+        "--download-sections", f"*{start:.2f}-{dl_end:.2f}",
         "--force-keyframes-at-cuts",
+        "--force-overwrites",
         "--merge-output-format", "mp4",
         "--write-info-json",
         "--no-progress",
-        "-o", str(Path(out_dir) / "%(id)s.%(ext)s"),
+        "-o", str(Path(out_dir) / f"%(id)s_sec_{start:.1f}_{dl_end:.1f}.%(ext)s"),
         "--print", "after_move:filepath",
         url,
     ]
@@ -570,6 +575,7 @@ def fetch_clip_section(
     *,
     start: float,
     beat_duration: float,
+    end: float | None = None,
     margin: float = 2.0,
     max_height: int = 1080,
     log=print,
@@ -579,14 +585,19 @@ def fetch_clip_section(
     src_dir.mkdir(parents=True, exist_ok=True)
     m = _YT_ID.search(url)
     vid = m.group(1) if m else "clip"
-    out = clip_dir / f"{vid}_{start:.1f}_{beat_duration:.1f}.mp4"
+    has_end = end is not None and float(end) > start
+    if has_end:
+        out = clip_dir / f"{vid}_{start:.1f}_to_{float(end):.1f}.mp4"
+    else:
+        out = clip_dir / f"{vid}_{start:.1f}_{beat_duration:.1f}.mp4"
     if out.is_file():
         log(f"[clip] cached section: {out}")
         return out
 
     import config
-    end = start + beat_duration * config.CLIP_SPEED_MAX + margin
+    dl_end = (float(end) + margin) if has_end else (start + beat_duration * config.CLIP_SPEED_MAX + margin)
     cmd = ytdlp_section_args(url, src_dir, start=start, beat_duration=beat_duration,
+                            end=float(end) if has_end else None,
                             margin=margin, max_height=max_height)
     try:
         res = _run_capture(cmd, timeout=SECTION_TIMEOUT)
@@ -602,12 +613,12 @@ def fetch_clip_section(
     log(f"[clip] section download failed ({reason}) — falling back to the whole video, cut locally")
     # An outdated yt-dlp gets HTTP 403 from googlevideo when ffmpeg pulls a section (seen on the Windows
     # server: yt-dlp 2026.07.04 failed, 2026.08.19 worked). The native downloader still works, so take the
-    # whole video (cached per id in src/) and cut the very same [start, end] window out of it.
+    # whole video (cached per id in src/) and cut the very same [start, dl_end] window out of it.
     try:
         whole = src_dir / f"{vid}.mp4"
         if not whole.is_file():
             whole = download(url, src_dir, max_height=max_height, log=log)
-        normalize(whole, out, start=start, duration=end - start, log=log)
+        normalize(whole, out, start=start, duration=dl_end - start, log=log)
     except Exception as exc:
         raise RuntimeError(f"yt-dlp section download failed for {url}: {reason}; "
                            f"whole-video fallback failed too: {exc}") from exc

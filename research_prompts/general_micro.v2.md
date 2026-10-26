@@ -31,10 +31,9 @@ turn can stand alone. Do not stitch together payoffs from different issues or
 scenes. A broken character rule, loud visual spectacle, or second famous name
 can improve rank. The selected Year field is exact; if a named issue has a
 different publication year, report the conflict. With no selected year, honor
-an explicitly requested older issue, year, or era. Otherwise search only
-issues published in the current
-calendar year. The appended RECENT MICRO DEFAULT gives the exact year for
-this run.
+an explicitly requested issue, year, or era. Otherwise search issues from
+any publication year and do not favour recent ones. The appended MICRO YEAR
+SCOPE gives the year rule for this run.
 
 In `summary`, give the setup → turn → consequence in 2–3 plain sentences.
 In `what_visibly_happens`, name the exact action or spoken revelation and only

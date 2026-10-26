@@ -131,7 +131,11 @@ def _scout_workflow(root: Path | None = None):
 
 
 def start_scout_session(
-    mode: str, user_intent: str, *, publication_year: int | None = None,
+    mode: str,
+    user_intent: str,
+    *,
+    publication_year: int | None = None,
+    publisher: str | None = None,
 ):
     from stages.research_scout.bank_fallback import bank_suggestions_for_mode
     from stages.research_scout.models import ScoutMode
@@ -154,18 +158,25 @@ def start_scout_session(
         # this with an empty intent; see discover_questions() below for why.
         # The batch's first entry is this caller's single question; the UI is
         # the only place that gets to show the rest as a choice.
-        suggestions = bank_suggestions_for_mode(scout_mode)
+        suggestions = bank_suggestions_for_mode(scout_mode) if publisher is None else []
         if suggestions:
             intent = suggestions[0]["question"]
         else:
             # Full batch, not count=1: it is the same single research call
             # either way, and asking for one question while handing the prompt
             # all five angles just makes the prompt contradict itself.
+            discover_kwargs: dict[str, object] = {"publication_year": publication_year}
+            if publisher is not None:
+                discover_kwargs["publisher"] = publisher
             batch = workflow.discover_questions(
-                scout_mode, publication_year=publication_year,
+                scout_mode, **discover_kwargs,
             )
             field = "question" if scout_mode is ScoutMode.QA else "moment"
             intent = str(batch[0].get(field, "")).strip() or workflow.next_angle(scout_mode)
+    if publisher is not None:
+        return workflow.start(
+            scout_mode, intent, publication_year=publication_year, publisher=publisher,
+        )
     return workflow.start(scout_mode, intent, publication_year=publication_year)
 
 
@@ -231,6 +242,7 @@ def discard_saved_scout_entry(entry_id: str, *, root: Path | None = None):
 def discover_questions(
     mode: str, *, count: int = 5, exclude: list[str] | tuple[str, ...] = (),
     publication_year: int | None = None,
+    publisher: str | None = None,
 ) -> list[dict]:
     """Tier B on its own, WITHOUT starting a session — the human-review step
     that stages/youcom_scout.py::is_burned's docstring deliberately relies on.
@@ -252,6 +264,12 @@ def discover_questions(
     session-free discovery itself."""
     from stages.research_scout.models import ScoutMode
 
+    if publisher is not None:
+        return _scout_workflow().discover_questions(
+            ScoutMode(mode), count=count, exclude=tuple(exclude),
+            publication_year=publication_year,
+            publisher=publisher,
+        )
     return _scout_workflow().discover_questions(
         ScoutMode(mode), count=count, exclude=tuple(exclude),
         publication_year=publication_year,
@@ -824,6 +842,23 @@ def load_review_candidates(project_name: str) -> dict | None:
         return json.loads(p.read_text())
     except json.JSONDecodeError:
         return None
+
+
+def save_review_candidates(project_name: str, doc: dict) -> None:
+    """Persist the reconciled/updated review candidates doc to review/candidates.json,
+    preserving each beat's unfiltered candidate pool (`candidates_all` when present) so
+    the hidden-panels filter remains a pure UI layer."""
+    out = dict(doc or {})
+    beats_out: list[dict] = []
+    for b in (out.get("beats") or []):
+        if not isinstance(b, dict):
+            continue
+        row = {k: v for k, v in b.items() if k != "candidates_all"}
+        if "candidates_all" in b:
+            row["candidates"] = list(b.get("candidates_all") or [])
+        beats_out.append(row)
+    out["beats"] = beats_out
+    write_json_atomic(PROJECTS_ROOT / project_name / "review" / "candidates.json", out)
 
 
 def load_review_locks(project_name: str) -> dict:

@@ -353,9 +353,9 @@ def test_planner_gets_recent_default_only_for_micro():
     micro = planner._user_message("Find a moment", [], "micro")
     qa = planner._user_message("Find a question", [], "qa")
     assert str(date.today().year) in micro
-    assert "RECENT MICRO DEFAULT" in planner._request_body("test", micro)["messages"][1]["content"]
-    assert "recently published issues" in planner._request_body("test", micro)["messages"][0]["content"]
-    assert "RECENT MICRO DEFAULT" not in qa
+    assert "MICRO YEAR SCOPE" in planner._request_body("test", micro)["messages"][1]["content"]
+    assert "MICRO YEAR SCOPE" in planner._request_body("test", micro)["messages"][0]["content"]
+    assert "MICRO YEAR SCOPE" not in qa
     assert planner._request_body("test", qa)["messages"][0]["content"] == planner._SYSTEM_PROMPT
 
 

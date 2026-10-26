@@ -431,7 +431,7 @@ def test_broad_micro_general_filters_old_issues_with_bound_sources(mock_workflow
             "sources": [{"url": f"https://source.test/{key}"} for key, _ in issues],
         }
     }
-    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a recent micro moment")
     mock_workflow.run_general(session.id)
 
     candidates = json.loads(mock_workflow.store.artifact_path(
@@ -1194,7 +1194,7 @@ def test_a_micro_candidates_aftermath_fields_reach_the_stored_candidate_untouche
             "sources": [{"url": "https://source.test/a"}],
         }
     }
-    session = mock_workflow.start(ScoutMode.MICRO, "Find a new micro moment")
+    session = mock_workflow.start(ScoutMode.MICRO, "Find a recent micro moment")
     mock_workflow.run_general(session.id)
 
     stored = json.loads(mock_workflow.store.artifact_path(
@@ -1252,3 +1252,17 @@ def test_verification_summary_reads_the_verdict_and_notes(payload, expected):
     from stages.research_scout.workflow import verification_summary
 
     assert verification_summary(payload) == expected
+
+
+def test_publisher_filter_reaches_general_and_discover_prompts(mock_workflow):
+    session = mock_workflow.start(ScoutMode.QA, "Hulk questions", publisher="Marvel")
+    assert session.publisher == "Marvel"
+    mock_workflow.run_general(session.id)
+    assert "PUBLISHER FILTER: Search and return Marvel comic-book issues only." in mock_workflow.client.seen_prompt
+
+    mock_workflow.discover_questions(ScoutMode.MICRO, publisher="Dark Horse")
+    assert (
+        "PUBLISHER FILTER: Propose questions/moments for Dark Horse comics only."
+        in mock_workflow.client.seen_prompt
+    )
+

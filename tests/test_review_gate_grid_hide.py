@@ -200,8 +200,10 @@ def _walk(control, depth: int = 0):
         return
     yield control
     for attr in ("controls", "actions"):
-        for child in (getattr(control, attr, None) or []):
-            yield from _walk(child, depth + 1)
+        children = getattr(control, attr, None)
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                yield from _walk(child, depth + 1)
     content = getattr(control, "content", None)
     if isinstance(content, ft.Control):
         yield from _walk(content, depth + 1)

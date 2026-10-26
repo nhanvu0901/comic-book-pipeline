@@ -137,13 +137,23 @@ def web(tmp_path, monkeypatch):
             calls = {"fetch": [], "preview": []}
 
             def fetch(url, out_dir, *, start, beat_duration, **kw):
-                calls["fetch"].append({"url": url, "start": start, "beat_duration": beat_duration})
-                f = Path(out_dir) / f"{VID}_{start:.1f}_{beat_duration:.1f}.mp4"
+                rec = {"url": url, "start": start, "beat_duration": beat_duration}
+                if "end" in kw and kw["end"] is not None:
+                    rec["end"] = kw["end"]
+                    f = Path(out_dir) / f"{VID}_{start:.1f}_to_{kw['end']:.1f}.mp4"
+                else:
+                    f = Path(out_dir) / f"{VID}_{start:.1f}_{beat_duration:.1f}.mp4"
+                calls["fetch"].append(rec)
                 f.write_bytes(b"section")
                 return f
 
             def preview(clip_path, start, beat_duration, out_path, **kw):
-                calls["preview"].append({"clip": Path(clip_path).name, "start": start, "beat_duration": beat_duration})
+                rec = {"clip": Path(clip_path).name, "start": start, "beat_duration": beat_duration}
+                if "end" in kw and kw["end"] is not None:
+                    rec["end"] = kw["end"]
+                if "fit_to_beat" in kw:
+                    rec["fit_to_beat"] = kw["fit_to_beat"]
+                calls["preview"].append(rec)
                 if beat_duration > footage_left:
                     raise clips.ClipTooShort(f"shortfall exceeds CLIP_MAX_HOLD ({footage_left:.1f}s of footage)")
                 Path(out_path).write_bytes(b"preview")
@@ -155,9 +165,11 @@ def web(tmp_path, monkeypatch):
     return W()
 
 
-def _pick(w, beat="2:0", video=VID, start=42.0, sync=True):
-    return w.client.post(f"/api/pick_moment{'?sync=true' if sync else ''}",
-                         json={"project": "qa", "beat": beat, "video_id": video, "start": start})
+def _pick(w, beat="2:0", video=VID, start=42.0, end=None, sync=True):
+    body = {"project": "qa", "beat": beat, "video_id": video, "start": start}
+    if end is not None:
+        body["end"] = end
+    return w.client.post(f"/api/pick_moment{'?sync=true' if sync else ''}", json=body)
 
 
 def _manifest(w):
@@ -409,3 +421,42 @@ def test_listeners_are_keyed_not_stacked():
     assert web_routes.listener_count() == 1
     web_routes.remove_moment_picked_listener(cb)
     assert web_routes.listener_count() == 0
+
+
+def test_a_pick_with_start_and_end_range_downloads_span_and_fits_to_beat(web, monkeypatch):
+    """Picking a video range (e.g. 0:05 to 0:15 -> start=5.0, end=15.0) downloads the full 10s span,
+    renders the preview with end=10.0 & fit_to_beat=True, and stores end/fit_to_beat/source_end in clips.json."""
+    web.status({"2:1": 3.25})
+    calls = web.fake_download()
+    res = _pick(web, "2:1", start=5.0, end=15.0)
+    assert res.status_code == 200 and res.json()["status"] == "ok"
+    assert calls["fetch"] == [{
+        "url": f"https://www.youtube.com/watch?v={VID}",
+        "start": 5.0,
+        "end": 15.0,
+        "beat_duration": 3.25,
+    }]
+    assert calls["preview"] == [{
+        "clip": f"{VID}_5.0_to_15.0.mp4",
+        "start": 0.0,
+        "end": 10.0,
+        "fit_to_beat": True,
+        "beat_duration": 3.25,
+    }]
+    (entry,) = _manifest(web)
+    assert entry["beat"] == "2:1"
+    assert entry["start"] == 0.0 and entry["end"] == 10.0
+    assert entry["fit_to_beat"] is True
+    assert entry["source_start"] == 5.0 and entry["source_end"] == 15.0
+    assert entry["beat_duration"] == 3.25
+
+    # Invalid end (<= start) is rejected with HTTP 400
+    assert _pick(web, "2:1", start=15.0, end=5.0).status_code == 400
+    assert _pick(web, "2:1", start=5.0, end=5.0).status_code == 400
+
+    # The moments_review page exposes in/out range inputs and the JS parser for mm:ss / o:15
+    monkeypatch.setattr(clip_fetch, "moment_search", lambda q, **kw: CANDS)
+    html = web.client.get("/moments_review?project=qa&beat=2:1").text
+    assert f'id="in_{VID}"' in html and f'id="out_{VID}"' in html
+    assert "parseTimeStr" in html and "setInFromPlayer" in html and "setOutFromPlayer" in html
+

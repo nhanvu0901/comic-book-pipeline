@@ -168,8 +168,10 @@ def _walk_visible(control, depth: int = 0):
         return
     yield control
     for attr in ("controls", "actions"):
-        for child in (getattr(control, attr, None) or []):
-            yield from _walk_visible(child, depth + 1)
+        children = getattr(control, attr, None)
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                yield from _walk_visible(child, depth + 1)
     content = getattr(control, "content", None)
     if isinstance(content, ft.Control):
         yield from _walk_visible(content, depth + 1)
@@ -179,20 +181,19 @@ def _texts(root) -> list[str]:
     return [str(c.value) for c in _walk_visible(root) if isinstance(c, ft.Text) and c.value is not None]
 
 
-def test_a_narration_edit_clears_every_lock_and_clip_of_the_project(screen):
+def test_a_narration_edit_preserves_locks_and_clips_and_resyncs_tts(screen):
     root = screen.build()
     assert set(screen.locks()["locks"]) == {"2:0", "3:1"} and len(screen.clips()) == 2
 
     _type(_fields(root)["s3 · mảnh 2"], "Nobody cheered at all.")
     _save(root)
 
-    assert screen.locks()["locks"] == {}, "ALL panel locks go — not just the edited scene's"
+    assert set(screen.locks()["locks"]) == {"2:0", "3:1"}, "panel locks must be preserved on narration edit"
     assert screen.locks()["approved"] is False
-    assert screen.clips() is None, "ALL MP4 clips go — clips.json is deleted"
+    assert len(screen.clips()) == 2, "MP4 clips must be preserved on narration edit"
     assert screen.c["resync"] == ["qa"], "the background TTS is told to re-plan (only changed sentences re-synthesize)"
     new_nar = json.loads((screen.root / "narration.json").read_text())
     assert new_nar["scenes"][2]["visual_beats"][1] == "Nobody cheered at all."
-    assert screen.c.get("reload"), "the screen reloads against the cleared state"
 
 
 def test_a_save_that_changes_nothing_keeps_the_selections(screen):
@@ -205,13 +206,73 @@ def test_a_save_that_changes_nothing_keeps_the_selections(screen):
     assert len(screen.clips()) == 2 and screen.c["resync"] == []
 
 
-def test_every_structural_edit_clears_everything_too(screen):
-    """Delete-a-line (trash), split and merge all rewrite narration.json: each must clear all."""
-    root = screen.build()
-    drop = next(c for c in _walk(root) if isinstance(c, ft.IconButton)
-                and str(c.tooltip or "").startswith("Xóa dòng này"))
-    drop.on_click(None)
-    assert screen.locks()["locks"] == {} and screen.clips() is None and screen.c["resync"] == ["qa"]
+def test_every_structural_edit_preserves_and_remaps_locks_and_clips(screen):
+    """Split, insert, merge, and drop-line must preserve unrelated selections and remap shifted fragment keys."""
+    # Give 2:0 a candidate pool so we can verify split + insert inherit candidates on disk and in UI
+    cands_path = screen.root / "review" / "candidates.json"
+    cands_path.write_text(json.dumps({"beats": [
+        {"beat_key": "2:0", "unit": "fragment", "scene_id": 2, "narration_text": "Peter fell,",
+         "candidates": [{"page": 1, "panel": 0, "thumb": "review/thumbs/p001_0.jpg"}],
+         "source": {"title": "Cyclops #4"}, "pre_selected": []},
+        {"beat_key": "2:1", "unit": "fragment", "scene_id": 2, "narration_text": "then he rose again.",
+         "candidates": [{"page": 1, "panel": 0, "thumb": "review/thumbs/p001_0.jpg"}],
+         "source": {"title": "Cyclops #4"}, "pre_selected": []},
+    ]}))
+    prev_2_1 = screen.root / "review" / "clips" / "preview_2_1.mp4"
+    prev_2_1.write_bytes(b"mp4data")
+    (screen.root / "review" / "clips" / "clips.json").write_text(json.dumps({"clips": [
+        {"id": "aaaaaaaaaaa", "beat": "2:1", "file": "review/clips/a.mp4",
+         "preview_file": "review/clips/preview_2_1.mp4", "start": 0.0},
+        {"id": "bbbbbbbbbbb", "beat": "3:0", "file": "review/clips/b.mp4", "start": 0.0},
+    ]}))
+
+    page = FakePage()
+    root = screen.build(page)
+
+    # 1. Split 2:0 ("Peter fell,") -> 2:0 ("Peter") and 2:1 ("fell,"), shifting old 2:1 -> 2:2
+    split_btns = [c for c in _walk(root) if isinstance(c, ft.IconButton)
+                  and str(c.tooltip or "") == "Tách mảnh ngay trên thành 2"]
+    # First split button is below "intro", second is below "2:0"
+    split_btns[1].on_click(None)
+    cut_btn = next(c for c in _walk(page.dialogs[-1]) if isinstance(c, ft.IconButton)
+                   and "Tách sau từ #1" in str(c.tooltip or ""))
+    cut_btn.on_click(None)
+
+    assert screen.locks()["locks"]["2:0"] == {"panels": [{"page": 1, "panel": 0}]}
+    assert screen.locks()["locks"]["3:1"] == {"panels": [{"page": 1, "panel": 1}]}
+    clips_after_split = {c["beat"]: c for c in screen.clips()}
+    assert set(clips_after_split) == {"2:2", "3:0"}, "2:1 clip shifted to 2:2 after splitting 2:0"
+    assert clips_after_split["2:2"]["preview_file"] == "review/clips/preview_2_2.mp4"
+    assert (screen.root / "review" / "clips" / "preview_2_2.mp4").read_bytes() == b"mp4data"
+    saved_cands = {b["beat_key"]: b for b in json.loads(cands_path.read_text())["beats"]}
+    assert len(saved_cands["2:1"]["candidates"]) == 1, "new split fragment persisted with candidates"
+
+    # 2. Insert a brand-new scene between scene 2 and scene 3
+    insert_btns = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton)
+                   and str(c.tooltip or "") == "Thêm scene mới tại đây"]
+    # Boundary index 4 is right after 2:2 (before 3:0)
+    insert_btns[4].on_click(None)
+    dlg = page.dialogs[-1]
+    tf = next(c for c in _walk(dlg) if isinstance(c, ft.TextField))
+    tf.value = "A brand new beat appears."
+    add_btn = next(c for c in _walk(dlg) if isinstance(c, ft.ElevatedButton))
+    add_btn.on_click(None)
+
+    assert screen.locks()["locks"]["2:0"] == {"panels": [{"page": 1, "panel": 0}]}
+    assert screen.locks()["locks"]["3:1"] == {"panels": [{"page": 1, "panel": 1}]}
+    assert {c["beat"] for c in screen.clips()} == {"2:2", "3:0"}
+    saved_cands = {b["beat_key"]: b for b in json.loads(cands_path.read_text())["beats"]}
+    assert "5:0" in saved_cands and saved_cands["5:0"]["unit"] == "fragment"
+    assert len(saved_cands["5:0"]["candidates"]) == 1, "inserted beat inherits neighbor candidates"
+
+    # 3. Drop fragment 3:0 (trash icon on 3:0) -> 3:0's clip is dropped, 3:1's panel lock shifts to 3:0
+    drop_btns = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton)
+                 and str(c.tooltip or "").startswith("Xóa dòng này")]
+    # Fragments in order: 2:0, 2:1, 2:2, 5:0, 3:0, 3:1 -> index 4 is 3:0
+    drop_btns[4].on_click(None)
+    assert screen.locks()["locks"]["3:0"] == {"panels": [{"page": 1, "panel": 1}]}
+    assert "3:1" not in screen.locks()["locks"]
+    assert {c["beat"] for c in screen.clips()} == {"2:2"}
 
 
 def test_with_the_flag_off_an_edit_keeps_the_stable_behaviour(screen, monkeypatch):
@@ -274,6 +335,12 @@ def test_selected_area_shows_picked_mp4_then_restores_comic_panel(screen):
     undo[0].on_click(None)
     assert not any(isinstance(c, Video) for c in _walk_visible(screen.root_ctrl))
     assert "p01·0" in _texts(screen.root_ctrl)
+
+    # A range pick with source_start and source_end displays the full range on the beat card
+    range_entry = {**entry, "end": 10.0, "fit_to_beat": True, "source_start": 5.0, "source_end": 15.0}
+    clips.upsert_beat_clip(screen.root, range_entry)
+    web_routes._broadcast_moment_picked({"project": "qa", "state": "ready", **range_entry})
+    assert any("From 5.0s → 15.0s (fit to beat)" in t for t in _texts(screen.root_ctrl))
 
 
 def test_selected_mp4_uses_preview_api_in_web_mode(screen, monkeypatch):
@@ -339,3 +406,52 @@ def test_a_pick_or_a_rollback_after_approve_withdraws_the_approval(screen):
     undo = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     undo[0].on_click(None)
     assert screen.locks()["approved"] is False
+
+
+def test_bookend_split_and_merge_preserves_clip_and_panel_locks(screen):
+    """Splitting an unfragmented 'intro' card rebinds its clip/lock to '1:0', and merging back
+    restores 'intro' so reload + Stage 5 never lose the hook's MP4 or panel lock."""
+    (screen.root / "review" / "clips" / "clips.json").write_text(json.dumps({"clips": [
+        {"id": "hookclip111", "beat": "intro", "file": "review/clips/hook.mp4", "start": 0.0},
+    ]}))
+    page = FakePage()
+    root = screen.build(page)
+
+    # Split "intro" ("Hook line here.") after word #1
+    split_btns = [c for c in _walk(root) if isinstance(c, ft.IconButton)
+                  and str(c.tooltip or "") == "Tách mảnh ngay trên thành 2"]
+    split_btns[0].on_click(None)
+    cut_btn = next(c for c in _walk(page.dialogs[-1]) if isinstance(c, ft.IconButton)
+                   and "Tách sau từ #1" in str(c.tooltip or ""))
+    cut_btn.on_click(None)
+
+    assert [c["beat"] for c in screen.clips()] == ["1:0"]
+
+    # Merge "1:1" back into "1:0" -> only 1 fragment left on intro, so beat_key returns to "intro"
+    merge_btns = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton)
+                  and "Gộp mảnh này" in str(c.tooltip or "")]
+    merge_btns[1].on_click(None)
+    assert [c["beat"] for c in screen.clips()] == ["intro"]
+
+
+def test_insert_between_same_scene_fragments_adds_fragment_and_shifts_clips(screen):
+    """Inserting a new beat between 2:0 and 2:1 inserts into scene 2's visual_beats at 2:1 and
+    shifts the old 2:1 MP4 clip to 2:2."""
+    page = FakePage()
+    root = screen.build(page)
+    # Boundary index 2 is between 2:0 (card #1) and 2:1 (card #2)
+    insert_btns = [c for c in _walk(root) if isinstance(c, ft.IconButton)
+                   and str(c.tooltip or "") == "Thêm scene mới tại đây"]
+    insert_btns[2].on_click(None)
+    dlg = page.dialogs[-1]
+    tf = next(c for c in _walk(dlg) if isinstance(c, ft.TextField))
+    tf.value = "inserted middle clause,"
+    add_btn = next(c for c in _walk(dlg) if isinstance(c, ft.ElevatedButton))
+    add_btn.on_click(None)
+
+    nar = json.loads((screen.root / "narration.json").read_text())
+    s2 = next(s for s in nar["scenes"] if s["scene_id"] == 2)
+    assert s2["visual_beats"] == ["Peter fell,", "inserted middle clause,", "then he rose again."]
+    assert screen.locks()["locks"]["2:0"] == {"panels": [{"page": 1, "panel": 0}]}
+    assert {c["beat"] for c in screen.clips()} == {"2:2", "3:0"}
+

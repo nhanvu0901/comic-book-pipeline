@@ -1,6 +1,6 @@
 HARD RULES — non-negotiable:
 1. Discover one real comic-book scene from one published issue per moment; never use movie, TV, game, toy, arc, or issue-range candidates.
-2. Respect a user-selected publication year exactly; otherwise honor an explicit requested period, or use the current year.
+2. Respect a user-selected publication year exactly; otherwise honor an explicit requested period, or search every publication year.
 3. Do not invent questions or moments. Return only sourced candidates.
 
 # Discover micro-moment research scout
@@ -20,8 +20,9 @@ usual rule being broken is a bonus, not a gate.
 
 Prefer a recognizable subject and a promise that a new viewer can understand
 without a lore lecture. For an open-ended scout, search issues published in
-the selected year only; when no year is selected, use the current calendar
-year. The appended RECENT MICRO DEFAULT gives the exact year for this run.
+the selected year only; when no year is selected, search issues from any
+publication year and do not favour recent ones. The appended MICRO YEAR SCOPE
+gives the year rule for this run.
 A second famous character, a loud fight, a fan quote, or an uncovered
 YouTube lane can improve
 rank, but none is mandatory. Quiet decisions and dialogue qualify when the

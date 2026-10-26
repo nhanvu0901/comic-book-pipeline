@@ -1,6 +1,6 @@
 # CHATGPT PROMPT — GRIMFRAME MICRO-MOMENT WRITER (GROUNDED)
 
-> **Run settings:** ChatGPT with web search enabled for PHASE 1.
+> **Run settings:** Gemini 3.8 / Gemini 3.1 Pro (or ChatGPT) with web search / Google Search grounding enabled for PHASE 1.
 > This prompt runs in **two turns**. Paste everything below `---`, attach the scout's
 > verification block, and let it finish PHASE 1. Only then reply `WRITE`.
 
@@ -199,7 +199,7 @@ RELATIONSHIPS
 R1 | <only a relationship the script needs> | Tier <n> | <URL> | "<quote>"
 or NONE
 
-NAMES I MUST USE | <name — 3-6 plain words a moviegoer would understand>
+NAMES I MUST USE | <household name(s) to keep (max 1-2); for every obscure character/team, write: DO NOT NAME (<name>) -> use "<2-4 word plain role>" instead>
 COMIC OR ADAPTATION | <comic / names the adaptation>
 ALL BEATS IN ONE ISSUE | yes / no — <explain>
 GAPS | <what I could not confirm and therefore cannot write>
@@ -276,8 +276,8 @@ end is a tease, end one sentence earlier, on the strongest verified detail.
 
 HOOK AND FIRST BEAT
 Draft three openings from different angles and print them in HOOK OPTIONS:
-1. Lead with the sourced odd action or result.
-2. Drop into the shortest sourced setup that makes the situation unusual.
+1. Lead with the sourced odd action or result (the weirdest concrete action or result).
+2. Drop into the shortest sourced setup that makes the situation unusual (the central contradiction or situation).
 3. Ask a specific question that this moment actually answers.
 Choose by the FACT SHEET, not by a fixed formula. The opening must deliver
 the same concrete person-and-event promise as MOMENT or the intended title.
@@ -286,15 +286,20 @@ when both sides are sourced. A setup-led opening can hold back the result,
 but it must give the listener a concrete reason to care immediately. A
 question is allowed; "What happens next?" is too empty. Name a familiar
 character or give an unfamiliar one a plain role, and avoid making the
-listener decode several new names in the first breath. Aim for 8–16 spoken
+listener decode several new names in the first breath. Aim for 7–18 spoken
 words when the fact supports it, and stay under about 24. A shorter concrete
-hook is fine. Trace every factual clause in the chosen hook.
+hook is fine. The hook DOES NOT need to mention the comic issue; instead,
+every hook is written with the assumption that the next spoken sentence will
+identify the comic and issue. When evaluating a hook, read the first two
+lines together (`[HOOK]` followed by `In [Comic] #[Issue], ...`): they should
+sound like one continuous introduction rather than a headline followed by
+metadata. Trace every factual clause in the chosen hook.
 
 Write the first THREE spoken sentences as one opening chain:
-HOOK (the specific sourced promise) -> STORY FRAME if verified and needed
-(what is happening around this encounter or why it occurs) -> MOVEMENT
+HOOK (the specific sourced promise) -> COMIC + ISSUE + STORY FRAME if verified and needed
+(identify the comic and issue while stating what is happening around this encounter or why it occurs) -> MOVEMENT
 (the action, mechanism, or consequence that answers the hook). If the hook
-already states the frame, move straight to the action. The second sentence
+already states the frame, combine the comic + issue identification with the first movement. The second sentence
 must never translate the hook into new words or begin a separate lore
 lecture. The third must not restate either earlier sentence. Do not force a
 reveal into these sentences: some stories earn it later. In a thin one-beat
@@ -303,10 +308,14 @@ inventing three angles.
 
 STORY
 Open on the chosen hook. The hook line is spoken once: the story's first
-sentence is the one after it, never the hook again in other words. When the
-sheet has a useful STORY FRAME, give it one short sentence or clause before
-expanding the tactic or mechanism. This should answer where the characters are
-in the conflict, what they are trying to do, or why they have crossed paths.
+sentence is the one after it, never the hook again in other words. That
+first body sentence immediately after the hook MUST naturally identify the
+comic and issue (for example, `In [Series] #[Issue], ...` or `This happens in [Series] #[Issue], where ...`)
+while beginning the active setup. When the
+sheet has a useful STORY FRAME, give it one short sentence or clause combined
+with the comic + issue identification before expanding the tactic or mechanism.
+This should answer where the characters are in the conflict, what they are
+trying to do, or why they have crossed paths.
 Choose the part that actually explains this moment; do not recite the whole
 arc. Then move through sourced facts in story order: setup, the act, what it
 leads to, how it ends. Keep the current short length by using the frame to
@@ -322,20 +331,46 @@ If it does none of these, cut it. Use "but", "because", and "so" when
 they express actual cause. Do not use "suddenly", "meanwhile", "years
 later", or a tense switch unless the sheet supports the time or turn.
 
-Keep the relationship clear at its first necessary mention. Introduce
-at most two unfamiliar names and give each a short plain tag only if
-needed. Report dialogue indirectly only when it matters. Do not describe
-panels, poses, colors, camera moves, issue numbers, or the narrator's
-research process. Use spoken English with ordinary verbs, contractions,
-and a mix of short and medium sentences.
+Keep the relationship clear at its first necessary mention. Report dialogue
+indirectly only when it matters. Do not describe panels, poses, colors, camera
+moves, or the narrator's research process. Use spoken English with ordinary
+verbs, contractions, and a mix of short and medium sentences.
 
-READING LEVEL
-Write HOOK OPTIONS and FINAL SCRIPT in easy English at about a U.S. grade
-6–7 reading level (target 6.5). Use familiar words, short direct sentences,
-and one idea at a time. Explain a needed comic term in a few plain words only
-when the fact sheet supports that explanation. Keep proper names exact, and
-never simplify a fact so much that its meaning changes. Source quotes in
-PHASE 1 stay verbatim.
+READING LEVEL & VOCABULARY — STRICT IELTS 6.5 (CEFR B2) CAP
+Write HOOK OPTIONS and FINAL SCRIPT in simple, everyday spoken English at a
+strict **IELTS 6.5 (CEFR B2)** level (about U.S. grade 6). Every word must be
+instantly understood on first hearing by a non-native English listener:
+- Use common, everyday verbs and nouns (`takes`, `breaks`, `trapped`, `wounded`,
+  `locked up`, `robot parts`, `lets him talk`, `looks down on`) instead of C1/C2,
+  literary, technical, or rare words (`loots`, `cybernetics`, `gutted`,
+  `eviscerated`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`,
+  `recaptures`, `retaliation`, `incapacitated`).
+- Keep one clear idea per clause and never stack abstract nouns or comic jargon.
+- Explain a needed comic mechanism in a few plain words when the fact sheet
+  supports it, and never simplify a fact so much that its meaning changes.
+- Source quotes in PHASE 1 stay verbatim, but in PHASE 2 (`HOOK OPTIONS` and
+  `FINAL SCRIPT`) translate any complex or literary words from the source quote
+  into plain IELTS 6.5 everyday English.
+
+HOUSEHOLD NAMES ONLY — DO NOT DROP OBSCURE CHARACTER NAMES
+A casual viewer with zero comic knowledge will get lost if you drop multiple
+unfamiliar character, villain, henchman, or team names in a 40-second Short:
+- **Keep ONLY household names** that a casual moviegoer already knows (`Cyclops` /
+  `Scott Summers`, `Batman`, `Wolverine`, `Spider-Man`, `Superman`, `Magneto`,
+  `Joker`, etc.) plus the comic series title in the issue-mention sentence.
+- **Hard cap of 1–2 proper character names in the entire script.** Never make
+  the listener track minor characters, side villains, henchmen, captives, or
+  sub-teams by proper name (for example, do NOT name obscure characters like
+  `Tearjerker`, `Coldcut`, `Sockeye`, `Donald Pierce`, `the Reavers`, or `Mei`
+  in the spoken script).
+- **Replace every non-household character or team name with a simple, consistent
+  2–4 word role** supported by the Phase 1 sheet (`a defeated cyborg`, `the
+  cyborg hunters`, `their leader`, `two other hunters`, `his own teammate`, `a
+  captured mutant girl`). Introduce that role once, then reuse the exact same
+  simple word (`the cyborg`, `the hunters`, `the girl`) so the viewer always
+  knows who is acting. Replacing an obscure proper name from Phase 1 with its
+  verified plain role is required for clarity and is fully allowed by `SOURCE
+  BOUNDARY`.
 
 The final sentence states a concrete verified outcome: how it ends or what the
 twist turns out to be when the sheet has AFTERMATH, otherwise the strongest
@@ -346,6 +381,107 @@ Default to zero narrator jokes. If one brief, dry observation arises
 from an exact verified detail, put it after that detail and do not
 explain it. Tell an absurd fact plainly instead of announcing that it is
 shocking. Never insert slang just to sound young.
+
+## VOICE — NATURAL SPOKEN STORYTELLING
+
+The narrator is a comic fan telling a friend about one specific moment.
+The narration should sound like connected speech, not captions placed one after another.
+Prefer complete, conversational sentences that naturally connect an action to its setup, purpose, response, mechanism, or result when those relationships are sourced.
+
+### Sentence rhythm
+
+Use a mix of short and medium spoken sentences.
+Do NOT default to extremely short subject-verb sentences such as:
+> Phoenix burns him alive.
+> Logan regenerates.
+> Batman attacks him.
+> Superman stops him.
+
+These sentences may be factually correct, but a chain of them sounds flat and mechanical.
+When two or more verified beats naturally belong together, combine them into one flowing spoken thought.
+For example, instead of the abstract pattern `A attacks B. B falls. A escapes.`, prefer something like:
+> A attacks B, and once B goes down, A uses the opening to escape.
+
+ONLY use that connection when the fact sheet establishes the sequence or causal relationship.
+Another acceptable shape is:
+> A attacks B. That gives A the opening to escape.
+
+Again, the relationship must be sourced.
+
+### Short sentences are emphasis, not the default
+
+A very short sentence or fragment is allowed when:
+- it lands an important result;
+- it creates a natural spoken pause;
+- the previous sentence already provides enough context;
+- it does not make the narration sound like a list.
+
+Use them sparingly. Do not write several short declarative sentences in a row unless the scene genuinely benefits from that rhythm.
+- BAD: `Jean reaches Logan. Phoenix burns him. Logan heals. Sentinel One helps.`
+- BETTER SHAPE: `Jean reaches Logan while he's in that state, and Phoenix's fire burns him down before his body begins growing back.`
+This is only a STYLE example. In a real script, every action, sequence, cause, and purpose must still be supported by the Phase 1 fact sheet.
+
+## PURPOSE AND CAUSAL LANGUAGE
+
+Natural narration often explains why someone does something (`She uses X to stop Y.`, `He does X so he can reach Y.`, `They use X in order to break Y.`).
+Prefer this kind of sentence when the purpose or causal relationship is VERIFIED.
+However, natural prose must never become an excuse to invent motivation.
+If Phase 1 establishes only that Jean uses Phoenix fire on Logan and Logan later regenerates, you may naturally connect the sequence (`Jean uses Phoenix's fire on Logan, and afterward his body begins regenerating.`), but you may NOT automatically write `Jean burns Logan in order to reset his programming.` unless the fact sheet specifically establishes that purpose or mechanism.
+When purpose is unknown, describe the verified action and result without guessing why the character chose it.
+
+## COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK
+
+The sentence immediately after the chosen hook must identify the comic and issue.
+Use a natural spoken construction such as:
+- `In Ultimate Wolverine #15, ...`
+- `This happens in Ultimate Wolverine #15, where ...`
+- `In Batman #125, ...`
+
+Do not make the issue identification sound like metadata being read aloud (BAD: `Comic: Ultimate Wolverine, Issue 15, 2026.`; GOOD: `In Ultimate Wolverine #15, Logan and Jean are...`).
+Mention the issue ONCE near the beginning unless repeating it later is necessary for clarity.
+The hook itself does NOT need to contain the issue name.
+The required opening order is:
+**HOOK → COMIC + ISSUE → STORY FRAME / FIRST HIGHLIGHT MOVEMENT**
+
+Combine the issue identification with useful setup whenever possible (BAD: `This happens in Ultimate Wolverine #15. Logan is hunting someone.`; BETTER: `In Ultimate Wolverine #15, Logan is hunting for the missing mutants when the situation turns on him.`). The factual content of the setup must still come entirely from verified beats.
+
+## CONNECT EVERY IDEA, NOT EVERY SENTENCE
+
+The story should feel like one continuous explanation rather than one sentence per database fact.
+Do NOT mechanically map `B1 = sentence 1`, `B2 = sentence 2`, `B3 = sentence 3`, `B4 = sentence 4` (or `H1 = sentence 1`, `H2 = sentence 2`).
+One spoken sentence may carry multiple compatible beats when:
+- their order is established;
+- their relationship is clear;
+- combining them improves spoken flow;
+- no detail becomes ambiguous or disappears.
+
+For example, if B2 is "Character activates an object" and B3 is "The object disables the barrier", these may become `He activates the device, which shuts down the barrier.` ONLY if the fact sheet establishes causation; if causation is not established, write `He activates the device, and the barrier goes down afterward.`
+Do not compress separate important actions just to make fewer sentences.
+The goal is: **preserve meaningful beats while making them sound like a person telling a story.**
+
+## CONNECTORS SHOULD LIVE INSIDE SENTENCES TOO
+
+Do not assume every transition requires a new sentence. Natural spoken narration often works better with internal connectors (`Logan falls back into his old state, so Jean steps in...`, `He reaches the machine, but activating it creates another problem...`, `She breaks the seal, and that lets the others through...`) when those relationships are sourced.
+Connectors may appear at the start of a sentence, after a comma, between two clauses, or as part of a longer spoken thought.
+Avoid repetitive structures like `Then X happens. Then Y happens. Then Z happens.`
+Vary the rhythm using structures that match the relationship established by the fact sheet (`X happens, and Y follows.`, `When X happens, Y responds.`, `X happens. That's when Y...`, `X happens, but Y...`, `After X, Y...`, `Because X, Y...`).
+
+## ZOOM IN ON THE HIGHLIGHT
+
+When the highlight begins, give its important internal steps room to breathe. This does NOT mean every beat needs its own tiny sentence. Instead:
+- preserve each meaningful action or change;
+- combine tightly related beats when natural;
+- slow down on the unusual mechanism;
+- explain how one verified step leads into the next;
+- avoid reducing a rich sequence to a generic outcome;
+- avoid turning the sequence into caption-like fragments.
+Describe the intervention as one connected progression, using the verified action, response, and outcome together where the evidence supports those links. The narration should sound like someone understands the whole scene, not someone reading individual fact cards.
+
+## OPENING CHAIN
+
+The default opening structure is:
+**HOOK → COMIC + ISSUE + FRAME → HIGHLIGHT DEVELOPMENT**
+The first body sentence after the hook MUST name the comic and issue, and whenever possible also provide the minimum active setup (`In [SERIES] #[ISSUE], [verified immediate situation], and [movement toward the highlight].`). Then move directly into the highlighted action. Enter the highlight by the second or third body sentence at the latest unless the source requires unusual context. Do not spend a separate sentence solely announcing the comic unless no natural combined sentence is possible.
 
 RUNTIME AND AUDIT
 Draft the shortest complete version first. Then count it. A complete simple
@@ -364,6 +500,27 @@ the script aloud; remove caption-like phrases, stacked adjectives, and
 sentences that repeat what the listener already knows. Compare with
 PREVIOUS SCRIPTS if supplied, and vary repeated openings or endings.
 
+## ANTI-FLATNESS CHECK
+
+Before accepting FINAL SCRIPT, inspect every pair of neighboring sentences and ask:
+1. Are these two sentences separate because they express genuinely separate beats?
+2. Or did I split one natural thought into two dead sentences?
+3. Could they be combined without inventing causation, motive, timing, or emotion?
+4. Am I repeatedly using the pattern "[Name] + verb + object"?
+5. Does the narration sound like spoken storytelling or a list of captions?
+If several neighboring sentences look like `X does Y. A does B. C does D.`, rewrite the passage for better flow. Do NOT solve the problem by adding decorative adjectives, unsupported motives, or invented causal links. Improve syntax, not facts.
+
+## NATURAL-FLOW AUDIT
+
+Before output, read FINAL SCRIPT aloud. Flag a sentence as FLAT if:
+- it is unusually short without a deliberate reason;
+- it merely reports one action that could naturally connect to the sentence beside it;
+- several sentences in a row use the same subject-verb-object rhythm;
+- it sounds like a panel caption instead of conversational narration.
+For each FLAT sentence, try in this order: (1) connect it to the previous verified beat; (2) connect it to the following verified beat; (3) add a verified mechanism, result, or response; (4) restructure the sentence; (5) keep it short only if the short form genuinely sounds better. Never add unsupported facts simply to make a sentence longer.
+
+## BEFORE OUTPUT — ADD THESE CHECKS
+
 Before output, trace every factual clause, including the hook and last
 sentence. For every sentence, check the beat wording word by word: does
 the source establish ALL modifiers and causal links as well as the main
@@ -376,7 +533,17 @@ Compare MOMENT or the intended title, the chosen hook, and the full spoken
 story: the hook's concrete promise must be explained or resolved by verified
 events in the script. If the sheet cannot support that promise, narrow the
 hook; do not leave the promised moment offscreen or only imply its outcome.
-Count the spoken words in FINAL SCRIPT only.
+In addition to the existing audit, ask:
+16. Does the sentence immediately after the hook naturally mention the comic title and issue number?
+17. Are there two or more unnecessarily short declarative sentences in a row?
+18. Did I mistake "one important beat at a time" for "one tiny sentence per beat"?
+19. Can any neighboring verified beats be connected into more natural spoken English without inventing a causal relationship?
+20. Does the script have varied sentence length and structure?
+21. If I use "to," "so," "because," "which lets," "in order to," or similar purpose/causal language, does Phase 1 explicitly support that relationship?
+22. Did I keep ONLY household character names (max 1–2 proper names total) and replace every obscure side-character, henchman, captive, or sub-team name (`Tearjerker`, `Coldcut`, `Sockeye`, `Donald Pierce`, `the Reavers`, `Mei`, etc.) with a simple everyday role (`the wounded cyborg`, `two hunters`, `their boss`, `the young mutant girl`)?
+23. Is every single word in HOOK OPTIONS and FINAL SCRIPT simple everyday English at an **IELTS 6.5 (CEFR B2)** maximum — with zero C1/C2, literary, or technical words (`cybernetics`, `gutted`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`, `recaptures`)?
+If any check fails, revise before output.
+Count the spoken words in FINAL SCRIPT only. The comic issue sentence is spoken narration and counts toward SPOKEN WORD COUNT.
 
 OUTPUT, IN ENGLISH, WITHOUT A PREFACE
 
@@ -404,11 +571,13 @@ FACT TRACE
 S1 | <first few words> | B<n>, R<n>
 S2 | ...
 <one row for every spoken sentence>
-OPENING CHAIN: <hook promise> -> <new fact in first body sentence, B/R ID> -> <next verified movement or END if the sheet is thin>
+OPENING CHAIN: <hook promise> -> <new fact in first body sentence naming SERIES + ISSUE, B/R ID> -> <next verified movement or END if the sheet is thin>
 STORY FRAME CHECK: <frame beat ID and the spoken sentence that uses it, or UNKNOWN; confirm no generic trait was substituted>
 AFTERMATH CHECK: <AFTERMATH beat IDs and the sentence that tells them, or UNKNOWN — main moment expanded instead>
 OPEN LOOPS: <every sentence that mentions a twist, reveal, ending, or surprise, each paired with the sentence that states what it is; or none>
 REACTIONS: <list or none>
 UNSUPPORTED FACTS: none
+ISSUE MENTION CHECK: <quote the first body sentence and confirm that it naturally identifies the comic series and issue immediately after the hook>
+FLOW CHECK: <identify any intentionally short sentences and explain why they remain short; confirm there is no accidental chain of caption-like subject-verb sentences>
 
-Do not put audit text or quotation marks inside FINAL SCRIPT.
+Do not put audit text or quotation marks inside FINAL SCRIPT. Do not place citations, year metadata, or beat IDs inside FINAL SCRIPT.

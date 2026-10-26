@@ -482,14 +482,42 @@ def _qa_research(
     items = []
     for candidate, gate in selected:
         gate = gate or {}
-        evidence_urls = gate.get("evidence_urls") or candidate.get("evidence_urls") or []
-        if isinstance(evidence_urls, str):
-            evidence_urls = [evidence_urls]
-        verification_note = (
-            candidate.get("verification_note")
-            or gate.get("reason")
-            or "; ".join(str(url) for url in evidence_urls)
+        raw_urls = list(gate.get("evidence_urls") or []) + list(candidate.get("evidence_urls") or [])
+        if isinstance(gate.get("evidence_urls"), str):
+            raw_urls = [gate["evidence_urls"]]
+        elif isinstance(candidate.get("evidence_urls"), str):
+            raw_urls = [candidate["evidence_urls"]]
+        citation = (
+            candidate.get("claim_citation")
+            if isinstance(candidate.get("claim_citation"), Mapping)
+            else {}
         )
+        cit_url = _first_text(citation, "url")
+        if cit_url:
+            raw_urls.append(cit_url)
+        evidence_urls = list(dict.fromkeys(str(u).strip() for u in raw_urls if str(u).strip()))
+
+        explicit_note = _first_text(candidate, "verification_note")
+        if explicit_note:
+            verification_note = explicit_note
+        else:
+            note_parts: list[str] = []
+            gate_reason = _first_text(gate, "reason")
+            if gate_reason:
+                note_parts.append(gate_reason)
+            if store is not None:
+                check = _scout_check(store, session.id, candidate)
+                if check and check not in note_parts:
+                    note_parts.append(check)
+            cit_quote = _first_text(citation, "quote")
+            if cit_quote:
+                note_parts.append(
+                    f'Claim quote: "{cit_quote}" ({cit_url})' if cit_url else f'Claim quote: "{cit_quote}"'
+                )
+            if evidence_urls:
+                note_parts.append("Sources: " + "; ".join(evidence_urls))
+            verification_note = " | ".join(note_parts)
+
         items.append(
             {
                 "entity": _first_text(candidate, "entity", "character", "title"),
@@ -498,12 +526,21 @@ def _qa_research(
                 "source_year": _first_text(candidate, "source_year") or _year(candidate),
                 "reader_url": _first_text(gate, "reader_url") or _first_text(candidate, "reader_url"),
                 "drawable_moment": _first_text(
-                    candidate, "drawable_moment", "visible_event", "moment"
+                    candidate, "drawable_moment", "visible_event", "what_visibly_happens", "moment"
                 ),
                 "verification_note": str(verification_note),
                 "surprise_level": _first_text(candidate, "surprise_level") or "medium",
-                "relationships": _first_text(candidate, "relationships"),
-                "stakes_why": _first_text(candidate, "stakes_why"),
+                "relationships": _first_text(
+                    candidate, "relationships", "context_behind", "story_arc"
+                ),
+                "stakes_why": _first_text(
+                    candidate,
+                    "stakes_why",
+                    "motivation_detail",
+                    "why_it_lands",
+                    "turning_point",
+                    "rank_reason",
+                ),
             }
         )
     return {
@@ -587,7 +624,14 @@ def build_scout_candidate(
         "evidence_urls": ev_urls,
         "verdict": str(gate.get("verdict") or "CONFIRMED").upper(),
     }
-    for key in ("turning_point", "why_it_lands"):
+    for key in (
+        "turning_point",
+        "why_it_lands",
+        "motivation_detail",
+        "story_arc",
+        "relationships",
+        "stakes_why",
+    ):
         text = _first_text(candidate, key)
         if text:
             scout_candidate[key] = text

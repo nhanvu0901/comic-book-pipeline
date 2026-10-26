@@ -60,6 +60,7 @@ class Shot:
     clip_path: str = ""          # absolute path of the local clip file
     clip_in: float = 0.0         # in-point, seconds in the clip file
     clip_out: float = 0.0        # out-point, seconds; 0 = play as long as the shot needs
+    clip_fit_to_beat: bool = False  # True = adjust playback speed so [clip_in, clip_out] fits the shot duration
     clip_crop: dict = field(default_factory=dict)   # optional subject-crop hint (clips.parse_crop)
     clip_id: str = ""            # manifest entry id, for logs/credits
     clip_source_url: str = ""    # credit only

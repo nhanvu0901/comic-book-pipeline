@@ -2198,3 +2198,68 @@ def test_legacy_rejections_do_not_appear_in_saved_scout(tmp_path, monkeypatch):
 
     assert "No saved discoveries yet." in _text_content(page.dialogs[-1])
     assert SavedScoutStore(tmp_path / "research_sessions").list_entries() == []
+
+
+def test_publisher_dropdown_is_beside_year_and_threads_publisher_into_session_and_discover(
+    tmp_path, monkeypatch,
+):
+    page, controls = _build(tmp_path)
+    pub_dd = _by_key(controls, "scout-publisher")
+    option_labels = [opt.key or opt.text for opt in pub_dd.options]
+    assert "All publishers" in option_labels
+    assert "Marvel" in option_labels
+    assert "DC" in option_labels
+    assert "Dark Horse" in option_labels
+
+    # Switch to Micro mode: publisher_field sits right beside year_field
+    _by_key(controls, "scout-mode").value = "micro"
+    _by_key(controls, "scout-mode").on_change(object())
+    year_ctl = _by_key(controls, "scout-year")
+    assert year_ctl is not None
+    assert _by_key(controls, "scout-publisher") is not None
+
+    # Empty intent with publisher="Marvel" skips bank and calls discover_questions with publisher="Marvel"
+    seen_discover: list[dict] = []
+
+    def _fake_discover(mode, **kwargs):
+        seen_discover.append({"mode": mode, **kwargs})
+        return [{"moment": "Hellboy breaks the right hand of doom", "angle": "twist"}]
+
+    monkeypatch.setattr(s1_research_scout, "discover_questions", _fake_discover)
+    pub_dd.value = "Dark Horse"
+    _by_key(controls, "chat-send").on_click(object())
+    _run_recorded_task(page)
+
+    assert len(seen_discover) == 1
+    assert seen_discover[0]["publisher"] == "Dark Horse"
+    saved_rows = SavedScoutStore(tmp_path / "research_sessions").list_entries("micro")
+    assert saved_rows[0]["context"]["publisher"] == "Dark Horse"
+
+    # Typed intent with publisher="DC" passes publisher="DC" to start_scout_session and renders bubble
+    seen_start: list[dict] = []
+
+    def _fake_start(mode, text, **kwargs):
+        seen_start.append({"mode": mode, "text": text, **kwargs})
+        store = SessionStore(tmp_path / "research_sessions")
+        return store.create(
+            ScoutMode(mode),
+            text,
+            publication_year=kwargs.get("publication_year"),
+            publisher=kwargs.get("publisher"),
+        )
+
+    monkeypatch.setattr(s1_research_scout, "start_scout_session", _fake_start)
+    monkeypatch.setattr(
+        s1_research_scout,
+        "run_scout_general",
+        lambda sid: SessionStore(tmp_path / "research_sessions").load(sid),
+    )
+    pub_dd.value = "DC"
+    _intent_field(controls).value = "Absolute Batman moment"
+    _by_key(controls, "chat-send").on_click(object())
+    _run_recorded_task(page)
+
+    assert len(seen_start) == 1
+    assert seen_start[0]["publisher"] == "DC"
+    assert "Publisher: DC" in _text_content(controls)
+

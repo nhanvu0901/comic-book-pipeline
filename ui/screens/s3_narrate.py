@@ -3,7 +3,7 @@ Screen 3 (Step 4 of 8): Narration Script (Gemini-First Workflow).
 
 Workflow:
 1. User clicks "Copy Gemini Prompt" (or "Export Prompt (.md)").
-2. User pastes the prompt into their Gemini account (Gemini 3.1 Pro, Search Grounding ON).
+2. User pastes the prompt into their Gemini account (Gemini 3.8 / 3.1 Pro, Search Grounding ON).
 3. User copies Gemini's generated script and pastes it into the text box.
 4. User clicks "Approve & Continue →" to parse, anchor, and proceed to Stage 5.
 No Claude API call is used.
@@ -423,7 +423,7 @@ def build(
         ft.Text(
             "Gemini-First Narration (0% Claude):\n"
             "1. Click 'Copy Gemini Prompt'.\n"
-            "2. Paste into Gemini Web (3.1 Pro, Search Grounding ON).\n"
+            "2. Paste into Gemini (3.8 / 3.1 Pro, Search Grounding ON).\n"
             "3. Copy Gemini's script and paste on the left.\n"
             "4. Click 'Approve & Continue →'.",
             size=12, color=TEXT_MUTED,

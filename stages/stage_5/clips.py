@@ -87,6 +87,7 @@ class ClipEntry:
     desc: str = ""
     crop: dict = field(default_factory=dict)
     source_url: str = ""
+    fit_to_beat: bool = False      # True = stretch/compress [start, end] to fit the beat duration
 
 
 # ─── manifest ───────────────────────────────────────────────────────────────────
@@ -137,6 +138,135 @@ def remove_beat_clip(project_root: Path, beat: str) -> bool:
         if len(kept) == len(doc["clips"]):
             return False
         doc["clips"] = kept
+        _write_manifest_doc(project_root, doc)
+        return True
+
+
+def _rebind_entry_beat(project_root: Path, entry: dict, new_beat: str,
+                       pending_copies: list[tuple[Path, bytes]]) -> dict:
+    moved = dict(entry)
+    moved["beat"] = new_beat
+    pf = str(moved.get("preview_file") or "")
+    if pf:
+        src = Path(project_root) / pf
+        new_rel = (CLIP_DIR_REL / f"preview_{new_beat.replace(':', '_')}.mp4").as_posix()
+        if pf != new_rel and src.is_file():
+            try:
+                pending_copies.append((Path(project_root) / new_rel, src.read_bytes()))
+                moved["preview_file"] = new_rel
+            except OSError:
+                pass
+    return moved
+
+
+def remap_fragment_clips(project_root: Path, sid: int, from_idx: int, delta: int, *,
+                         merge_survivor: bool = False) -> bool:
+    """Shift every "<sid>:<i>" clip entry with i >= from_idx by `delta` (+1 after a split/insert,
+    -1 after a merge/drop). When `delta < 0` and `merge_survivor=True`, a clip on the folded
+    fragment is inherited by the surviving merged fragment if that survivor has no clip of its own."""
+    with _MANIFEST_LOCK:
+        if not manifest_path(project_root).exists():
+            return False
+        doc = read_manifest_doc(project_root)
+        items = doc.get("clips") or []
+        if not items:
+            return False
+        prefix = f"{sid}:"
+        out: list[dict] = []
+        dropped_at_from: list[dict] = []
+        pending_copies: list[tuple[Path, bytes]] = []
+        changed = False
+        for c in items:
+            if not isinstance(c, dict):
+                continue
+            bk = str(c.get("beat") or "")
+            if not bk.startswith(prefix):
+                out.append(c)
+                continue
+            try:
+                idx = int(bk[len(prefix):])
+            except ValueError:
+                out.append(c)
+                continue
+            if idx < from_idx:
+                out.append(c)
+            elif idx == from_idx and delta < 0:
+                dropped_at_from.append(c)
+                changed = True
+            else:
+                new_bk = f"{sid}:{idx + delta}"
+                out.append(_rebind_entry_beat(project_root, c, new_bk, pending_copies))
+                changed = True
+        if delta < 0 and merge_survivor and dropped_at_from:
+            survivor_key = f"{sid}:{0 if from_idx == 0 else from_idx - 1}"
+            if not any(str(c.get("beat") or "") == survivor_key for c in out):
+                for c in dropped_at_from:
+                    out.append(_rebind_entry_beat(project_root, c, survivor_key, pending_copies))
+        if not changed:
+            return False
+        for dst, data in pending_copies:
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(data)
+            except OSError:
+                pass
+        doc["clips"] = out
+        _write_manifest_doc(project_root, doc)
+        return True
+
+
+def remove_scene_clips(project_root: Path, sid: int, beat_key: str = "") -> bool:
+    """Drop every clip entry belonging to scene `sid` (whole-scene key, `beat_key`, or `<sid>:<i>`)."""
+    with _MANIFEST_LOCK:
+        if not manifest_path(project_root).exists():
+            return False
+        doc = read_manifest_doc(project_root)
+        prefix = f"{sid}:"
+        sid_s = str(sid)
+        kept = [
+            c for c in doc["clips"]
+            if not (isinstance(c, dict) and (
+                str(c.get("beat") or "") in (sid_s, str(beat_key))
+                or str(c.get("beat") or "").startswith(prefix)
+            ))
+        ]
+        if len(kept) == len(doc["clips"]):
+            return False
+        doc["clips"] = kept
+        _write_manifest_doc(project_root, doc)
+        return True
+
+
+def rename_beat_clip(project_root: Path, old_beat: str, new_beat: str) -> bool:
+    """Rebind clip entries on `old_beat` to `new_beat` (e.g. bookend 'intro' <-> '1:0' when
+    splitting a single-line hook into fragments or merging back to 1 line)."""
+    if not old_beat or not new_beat or old_beat == new_beat:
+        return False
+    with _MANIFEST_LOCK:
+        if not manifest_path(project_root).exists():
+            return False
+        doc = read_manifest_doc(project_root)
+        items = doc.get("clips") or []
+        if not any(isinstance(c, dict) and str(c.get("beat") or "") == old_beat for c in items):
+            return False
+        has_new = any(isinstance(c, dict) and str(c.get("beat") or "") == new_beat for c in items)
+        pending_copies: list[tuple[Path, bytes]] = []
+        out: list[dict] = []
+        for c in items:
+            if not isinstance(c, dict):
+                continue
+            if str(c.get("beat") or "") == old_beat:
+                if not has_new:
+                    out.append(_rebind_entry_beat(project_root, c, new_beat, pending_copies))
+            else:
+                out.append(c)
+        for dst, data in pending_copies:
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(data)
+            except OSError:
+                pass
+        doc["clips"] = out
         _write_manifest_doc(project_root, doc)
         return True
 
@@ -232,7 +362,8 @@ def parse_manifest(raw, project_root: Path) -> tuple[list[ClipEntry], list[str]]
             p = Path(f)
             path = str(p if p.is_absolute() else root / p)
         out.append(ClipEntry(id=cid, file=path, start=start, end=end, beat=beat,
-                             desc=desc, crop=crop, source_url=url))
+                             desc=desc, crop=crop, source_url=url,
+                             fit_to_beat=bool(it.get("fit_to_beat", False))))
     return out, problems
 
 
@@ -361,6 +492,7 @@ def _stamp(sh: Shot, e: ClipEntry, clip_in: float) -> None:
     sh.clip_source_url = e.source_url
     sh.clip_in = round(clip_in, 3)
     sh.clip_out = e.end
+    sh.clip_fit_to_beat = bool(e.fit_to_beat)
     sh.clip_crop = dict(e.crop)
     if e.file:
         sh.clip_path = e.file
@@ -427,11 +559,18 @@ def apply_clips_to_shots(shots: list, assignments: list[tuple[str, ClipEntry]],
         groups = _partition([shots[k].duration_seconds for k in idxs], len(entries))
         for e, grp in zip(entries, groups):
             t = e.start
+            grp_dur = sum(float(shots[idxs[pos]].duration_seconds) for pos in grp)
+            span_total = (e.end - e.start) if (e.fit_to_beat and e.end > e.start) else 0.0
             for pos in grp:
                 sh = shots[idxs[pos]]
                 _stamp(sh, e, t)
+                if span_total > 0 and grp_dur > 0:
+                    piece = span_total * (float(sh.duration_seconds) / grp_dur)
+                    sh.clip_out = round(t + piece, 3)
+                    t += piece
+                else:
+                    t += float(sh.duration_seconds)
                 owner[id(sh)] = bk
-                t += float(sh.duration_seconds)
     if split_any:
         for k, s in enumerate(shots):
             s.shot_id = k
@@ -643,7 +782,8 @@ class ClipTooShort(ValueError):
 
 
 def fit(span: float, avail: float, dur: float, *, speed_min: float | None = None,
-        speed_max: float | None = None, max_hold: float | None = None) -> ClipFit:
+        speed_max: float | None = None, max_hold: float | None = None,
+        fit_to_beat: bool = False) -> ClipFit:
     """Pure fit math (spec 4.4) — the ONE place the clip/shot timing is decided; both
     render_clip_shot and frozen_tail_seconds call it.
 
@@ -652,12 +792,15 @@ def fit(span: float, avail: float, dur: float, *, speed_min: float | None = None
       avail  source-seconds that really exist from the in-point on (>= span; pass avail == span
              for a window that must not be extended)
       dur    the shot's length in output seconds
+      fit_to_beat  when True, adjust playback speed so the entire `span` plays across `dur`
+                   seconds (speed = span / dur, hold = 0.0) instead of trimming or freezing.
 
-    1. TRIM    span >= dur            → play `dur` seconds, nothing else to do
-    2. EXTEND  the window is short    → keep playing into real footage, up to `avail`
-    3. SPEED   still short            → slow down to ext/dur, never below speed_min (CLIP_SPEED_MIN);
-                                        never speeds up (a longer clip is trimmed, not rushed)
-    4. HOLD    still short            → freeze the last frame, at most max_hold (CLIP_MAX_HOLD)
+    1. FIT_TO_BEAT  explicit [in, out] window → play the whole window at `span / dur` speed
+    2. TRIM         span >= dur               → play `dur` seconds, nothing else to do
+    3. EXTEND       the window is short       → keep playing into real footage, up to `avail`
+    4. SPEED        still short               → slow down to ext/dur, never below speed_min (CLIP_SPEED_MIN);
+                                                never speeds up (a longer clip is trimmed, not rushed)
+    5. HOLD         still short               → freeze the last frame, at most max_hold (CLIP_MAX_HOLD)
     else raise ClipTooShort."""
     import config
     lo = config.CLIP_SPEED_MIN if speed_min is None else speed_min
@@ -666,6 +809,11 @@ def fit(span: float, avail: float, dur: float, *, speed_min: float | None = None
     if dur <= 0:
         raise ValueError(f"shot duration must be positive, got {dur}")
     span, avail = max(0.0, span), max(0.0, avail)
+    if fit_to_beat:
+        used = min(span, avail) if avail > 0 else span
+        if used <= 0:
+            raise ClipTooShort(f"clip has no footage (shot needs {dur:.2f}s, CLIP_MAX_HOLD {cap:.2f}s)")
+        return ClipFit(used, used / dur, 0.0)
     if span >= dur - 1e-6:
         return ClipFit(dur, 1.0, 0.0)
     ext = min(max(avail, span), dur)
@@ -692,15 +840,25 @@ def plan_clip_shot(shot, src_dur: float) -> tuple[float, ClipFit]:
     dur = max(0.4, float(shot.duration_seconds))
     clip_in = max(0.0, float(shot.clip_in))
     clip_out = float(shot.clip_out or 0.0)
-    file_left = max(0.0, src_dur - clip_in) if src_dur > 0 else dur
+    fit_to_beat = bool(getattr(shot, "clip_fit_to_beat", False))
+    file_left = max(0.0, src_dur - clip_in) if src_dur > 0 else (max(dur, clip_out - clip_in) if clip_out > clip_in else dur)
     if clip_out and clip_in > clip_out - 1.0 / fps:
         clip_in = max(0.0, clip_out - 1.0 / fps)
         span = 1.0 / fps
+        fit_to_beat = False
     elif clip_out > clip_in:
-        span = min(clip_out - clip_in, file_left)      # a fixed window is never extended
+        req_span = clip_out - clip_in
+        if fit_to_beat and src_dur > 0 and file_left < min(req_span * 0.5, 0.4):
+            raise ClipTooShort(
+                f"clip has only {file_left:.2f}s of footage left after {clip_in:.2f}s "
+                f"(wanted {req_span:.2f}s up to {clip_out:.2f}s for a {dur:.2f}s shot, CLIP_MAX_HOLD)")
+        span = min(req_span, file_left)      # a fixed window is never extended
+        if span > dur + 1e-6:
+            fit_to_beat = True
     else:
-        span = file_left                               # open-ended: as long as the shot needs
-    return clip_in, fit(span, span, dur)
+        span = file_left                     # open-ended: as long as the shot needs
+        fit_to_beat = False
+    return clip_in, fit(span, span, dur, fit_to_beat=fit_to_beat)
 
 
 def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = None,
@@ -817,7 +975,7 @@ def shot_log_entry(shot) -> dict | None:
 
 def copy_clip_fields(dst, src) -> None:
     """Point dst's clip at src's (loop-close echo)."""
-    for k in ("clip_path", "clip_in", "clip_out", "clip_id", "clip_source_url", "clip_fallback"):
+    for k in ("clip_path", "clip_in", "clip_out", "clip_fit_to_beat", "clip_id", "clip_source_url", "clip_fallback"):
         setattr(dst, k, getattr(src, k))
     dst.clip_crop = copy.deepcopy(getattr(src, "clip_crop", {}) or {})
 
@@ -828,12 +986,17 @@ def render_clip_preview(
     beat_duration: float,
     out_path: Path,
     crop: dict | None = None,
+    end: float | None = None,
+    fit_to_beat: bool = False,
 ) -> Path:
     """The 9:16 review preview of a picked clip — rendered by render_clip_shot itself (fast
     encode), so it shows exactly what Stage 5 will lay on the beat: the same fit, speed and hold.
     Raises ClipTooShort when the footage can't fill `beat_duration` (the pick would fall back to
     the panel at render time) so the review UI can say so instead of showing a clip that won't play."""
+    clip_out = float(end or 0.0)
     shot = Shot(shot_id=0, scene_id=0, duration_seconds=beat_duration, panel_bbox={},
                 source_image="", motion="zoom_in", clip_path=str(clip_path),
-                clip_in=float(start), clip_out=0.0, clip_id="preview", clip_crop=dict(crop or {}))
+                clip_in=float(start), clip_out=clip_out,
+                clip_fit_to_beat=bool(fit_to_beat or (clip_out > float(start))),
+                clip_id="preview", clip_crop=dict(crop or {}))
     return render_clip_shot(shot, out_path, preset="veryfast", crf=22)

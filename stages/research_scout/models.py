@@ -46,6 +46,8 @@ class ResearchSession(BaseModel):
     user_intent: str
     # Optional exact publication year for micro scouting. Old sessions load as before.
     publication_year: int | None = None
+    # Optional publisher filter (e.g., Marvel, DC, Dark Horse). Old sessions load as before.
+    publisher: str | None = None
     state: SessionState = SessionState.GENERAL_DRAFT
     revision: int = 1
     selected_specific_candidate_ids: list[str] = Field(default_factory=list)

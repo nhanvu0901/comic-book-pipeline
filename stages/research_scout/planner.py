@@ -215,7 +215,7 @@ _HARD_RULES = {
     "micro": (
         "HARD RULES — non-negotiable; discard candidates that break any rule:\n"
         "1. One candidate = ONE scene or tightly connected sequence from ONE real published comic-book ISSUE; write `series_issue_year` exactly as `Series Title #N (YYYY)`. Movies, TV, games, toys, multi-issue arcs, and issue ranges are invalid.\n"
-        "2. Use the selected publication year exactly when supplied; otherwise use the current year as the default recency window (`micro_recency`). Honor an explicitly requested older year or era when no selected year overrides it.\n"
+        "2. Use the selected publication year exactly when supplied, or a single year the request names. With no year, search EVERY publication year (any era) and do not favour recent issues; only a request that asks for recent/latest issues is limited to the current year (`micro_recency`).\n"
         "3. One candidate per distinct issue; never repeat an issue, even across sources.\n"
         "4. Name who acts, the concrete action or reveal, and its direct consequence, each supported by a retrieved page.\n"
         "5. Return up to 10 distinct supported scenes; never pad with weak or unsupported entries."
@@ -282,10 +282,11 @@ _MICRO_SCOUT_RULES = (
     "- Give the setup, the specific action or reveal that changes the "
     "situation, and its direct consequence. Name who acts or speaks. Reject "
     "abstract claims such as tactical patience without a sourced action.\n"
-    "- For an open-ended scout, use only the selected publication year, or "
-    "the current year when none is selected; the workflow appends the exact year. "
+    "- For an open-ended scout, use only the selected publication year; when "
+    "none is selected, search issues from any publication year (the workflow "
+    "appends the MICRO YEAR SCOPE). "
     "A selected year is exact; report a conflicting named issue rather than "
-    "changing the year. Otherwise honor an explicitly requested older issue, "
+    "changing the year. Otherwise honor an explicitly requested issue, "
     "year, or era. A broken "
     "character rule, loud spectacle, second famous name, and low YouTube "
     "coverage are ranking bonuses, not mandatory gates.\n"
@@ -572,10 +573,9 @@ def _request_body(model: str, user_message: str) -> dict[str, Any]:
     system_prompt = _SYSTEM_PROMPT
     if "MODE HINT: micro" in user_message:
         system_prompt += (
-            "\nFor micro mode only, the channel's default scope is recently "
-            "published issues. Honor the exact year in the user message. "
-            "A selected publication year takes priority; otherwise an "
-            "explicitly requested older issue, year, or era may override the default."
+            "\nFor micro mode only, follow the MICRO YEAR SCOPE in the user "
+            "message. A selected publication year is exact; with no year, any "
+            "publication year qualifies and recent issues get no preference."
             "\nFor micro mode the code also adds aftermath, context_behind, "
             "unrevealed and detail_citations to every candidate and writes the "
             "research rules for them; never choose those names as extra_fields."

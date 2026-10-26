@@ -382,3 +382,45 @@ def test_a_tagged_source_does_not_leak_its_colour_tags_into_the_shot(tmp_path, m
     monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", False)
     legacy = clips.render_clip_shot(shot, tmp_path / "legacy.mp4")
     assert _color_tags(legacy)[:2] == ("tv", "bt709")
+
+
+@needs_ffmpeg
+def test_range_pick_stretches_or_compresses_entire_span_to_fit_beat(tmp_path, monkeypatch):
+    """When the user picks an explicit [start, end] range (e.g. 0:05 to 0:15 = 10s span) for a
+    beat of 2.0s, the entire 10s span is speed-adjusted (5.0x) to fit the 2.0s beat rather than
+    being trimmed at 2.0s. Proved by a 2-colour source: 0..5s red, 5..10s green -> a 2.0s beat
+    starts red and ends green."""
+    _flag_on(monkeypatch)
+    two_tone = tmp_path / "two_tone.mp4"
+    subprocess.run([
+        FFMPEG, "-y",
+        "-f", "lavfi", "-i", "color=c=0xc82828:size=640x360:rate=30:d=5",
+        "-f", "lavfi", "-i", "color=c=0x28c828:size=640x360:rate=30:d=5",
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(two_tone)
+    ], check=True, capture_output=True)
+
+    # Preview with 10s span (0.0 -> 10.0) fitted into a 2.0s beat (60 frames)
+    pv = clips.render_clip_preview(
+        two_tone, start=0.0, end=10.0, beat_duration=2.0,
+        out_path=tmp_path / "preview_range.mp4", fit_to_beat=True
+    )
+    assert _frames(pv) == 60
+    # First frames are red (from 0..5s), last frames are green (from 5..10s)
+    assert _is_near(_center_rgb(pv, 2, tmp_path), (200, 40, 40), tol=20)
+    assert _is_near(_center_rgb(pv, 55, tmp_path), (40, 200, 40), tol=20)
+
+    # Also test a short range (e.g. 1.0s span) fitted into a 2.5s beat with fit_to_beat=True:
+    # slowed down to 0.4x with zero frozen tail hold.
+    shot_slow = Shot(
+        shot_id=1, scene_id=1, duration_seconds=2.5,
+        panel_bbox={"x": 0, "y": 0, "w": 100, "h": 100}, source_image="dummy.png",
+        motion="zoom_in", clip_path=str(two_tone), clip_in=4.5, clip_out=5.5,
+        clip_fit_to_beat=True, clip_id="slow_range"
+    )
+    _, plan = clips.plan_clip_shot(shot_slow, 10.0)
+    assert plan == pytest.approx((1.0, 1.0 / 2.5, 0.0))
+    assert clips.frozen_tail_seconds(shot_slow) == 0.0
+    out_slow = clips.render_clip_shot(shot_slow, tmp_path / "slow_range.mp4")
+    assert _frames(out_slow) == 75
+
