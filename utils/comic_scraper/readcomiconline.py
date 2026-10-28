@@ -215,6 +215,50 @@ def _ajax_chapter_images(reader_url: str, news_id, chapter_id) -> list[str]:
         return []
 
 
+def _advertised_page_count(data: dict[str, Any]) -> int | None:
+    """Return Batcave's explicit positive page count, if it supplied one.
+
+    The reader's image array can retain stale trailing URLs.  `pages` is the
+    canonical count displayed by the reader, so use it as the upper bound when
+    present.  An absent or malformed value remains backwards-compatible with
+    older reader payloads that only supplied `images`.
+    """
+    value = data.get("pages")
+    if isinstance(value, bool):
+        return None
+    try:
+        count = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return count if count > 0 else None
+
+
+def _cached_image_is_usable(path: Path) -> bool:
+    """Return whether a cached page can actually be decoded as an image.
+
+    A process can be interrupted while writing a page.  Presence alone must
+    never make that truncated file satisfy the chapter-completion cache check.
+    Valid cached pages are left untouched, so a retry fetches only bad or
+    missing pages.
+    """
+    if not path.is_file():
+        return False
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            image.verify()
+        # ``verify()`` checks JPEG structure but can accept a stream truncated
+        # after its header. Reopen and decode the payload before calling this
+        # cache entry complete; the prior context manager has closed its file.
+        with Image.open(path) as image:
+            image.load()
+    except (OSError, SyntaxError, ValueError):
+        path.unlink(missing_ok=True)
+        print(f"[scraper] discarded corrupt cached image: {path.name}")
+        return False
+    return True
+
+
 # ─── Image download ──────────────────────────────────────────────────────────
 
 
@@ -360,6 +404,18 @@ def scrape_issue_pages(
         img if img.startswith("http") else SITE_BASE + img
         for img in (i.strip() for i in raw_images) if img
     ]
+    advertised_pages = _advertised_page_count(data)
+    if advertised_pages is not None:
+        if len(image_urls) < advertised_pages:
+            raise RuntimeError(
+                f"reader advertises {advertised_pages} pages but supplied only "
+                f"{len(image_urls)} image URLs for {reader_url}; refusing to treat "
+                "the chapter as complete"
+            )
+        if len(image_urls) > advertised_pages:
+            print(f"[scraper] reader advertises {advertised_pages} pages; ignoring "
+                  f"{len(image_urls) - advertised_pages} stale trailing image URL(s)")
+            image_urls = image_urls[:advertised_pages]
     # Cache short-circuit ONLY when the chapter is COMPLETE. The old "any file
     # exists → return" froze partially-downloaded chapters forever (a guard/network
     # failure mid-chapter left 20/40 pages that every later run happily reused,
@@ -369,7 +425,8 @@ def scrape_issue_pages(
     # longer earlier download are not part of it, and a plain sort put page_100 before
     # page_11.
     expected = [raw_dir / f"{prefix}page_{i:02d}.jpg" for i in range(1, len(image_urls) + 1)]
-    cached = [p for p in expected if p.exists()]
+    cached = [p for p in expected if _cached_image_is_usable(p)]
+    cached_paths = set(cached)
     if len(cached) == len(expected):
         print(f"[scraper] Using cached pages: {len(cached)}/{len(image_urls)} in {raw_dir} ({prefix}*)")
         return expected
@@ -382,7 +439,7 @@ def scrape_issue_pages(
     stalled = 0       # pages in a row that ran out of retries on a network error
     gave_up = False
     for i, (url, page_path) in enumerate(zip(image_urls, expected), start=1):
-        if page_path.exists():
+        if page_path in cached_paths:
             continue
 
         print(f"[scraper] Page {i}/{len(image_urls)}...", end=" ", flush=True)

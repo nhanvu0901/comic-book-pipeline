@@ -4,9 +4,11 @@ A chapter that failed, came back empty, or still holds a previous comic's pages 
 recorded (or skipped) silently, so a later paragraph landed on the wrong comic with no
 error anywhere. These tests pin the fail-loud behaviour. No network."""
 import json
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 import stages.stage_2.cache as cache
 import stages.stage_2.pipeline as pipe
@@ -17,6 +19,12 @@ from stages.user_errors import UserFacingError
 
 U1, U2, U3 = ("https://batcave.biz/reader/1/11", "https://batcave.biz/reader/2/22",
               "https://batcave.biz/reader/3/33")
+
+
+def _jpeg_bytes() -> bytes:
+    out = BytesIO()
+    Image.new("RGB", (1, 1), "white").save(out, format="JPEG")
+    return out.getvalue()
 
 
 # ── item → chapter: one rule, shared by download and narration ───────────────
@@ -139,9 +147,113 @@ def test_scraper_cache_returns_exactly_this_chapters_pages_in_reading_order(tmp_
     raw = tmp_path / "raw_comic"
     raw.mkdir()
     for k in (1, 2, 3, 4, 5):                       # a longer, older chapter's leftovers
-        (raw / f"ch01_page_{k:02d}.jpg").write_bytes(b"x")
+        (raw / f"ch01_page_{k:02d}.jpg").write_bytes(_jpeg_bytes())
     pages = rco.scrape_issue_pages(U1, project_root=tmp_path, chapter_index=1)
     assert [p.name for p in pages] == ["ch01_page_01.jpg", "ch01_page_02.jpg", "ch01_page_03.jpg"]
+
+
+def test_scraper_redownloads_only_a_corrupt_cached_page(tmp_path, monkeypatch):
+    """A JPEG truncated after its header must not make a chapter look complete.
+
+    Pillow's ``verify()`` accepts this particular truncation; the cache guard
+    must force an actual pixel decode before trusting a file from a past run.
+    """
+    monkeypatch.setattr(rco, "_fetch_data", lambda url: {
+        "pages": 2,
+        "images": ["/img/1.jpg", "/img/2.jpg"],
+    })
+    raw = tmp_path / "raw_comic"
+    raw.mkdir()
+    (raw / "ch01_page_01.jpg").write_bytes(_jpeg_bytes())
+    (raw / "ch01_page_02.jpg").write_bytes(_jpeg_bytes()[:-1])
+    attempted = []
+
+    def _download(url, path):
+        attempted.append(url)
+        Path(path).write_bytes(_jpeg_bytes())
+        return True
+
+    monkeypatch.setattr(rco, "_download_image", _download)
+    monkeypatch.setattr(rco.time, "sleep", lambda _s: None)
+
+    pages = rco.scrape_issue_pages(U1, project_root=tmp_path, chapter_index=1)
+
+    assert [p.name for p in pages] == ["ch01_page_01.jpg", "ch01_page_02.jpg"]
+    assert attempted == ["https://batcave.biz/img/2.jpg"]
+
+
+def test_scraper_still_rejects_a_missing_page_inside_the_advertised_count(tmp_path, monkeypatch):
+    """`pages` only discards stale URLs beyond its bound, never a real hole within it."""
+    monkeypatch.setattr(rco, "_fetch_data", lambda url: {
+        "pages": 3,
+        "images": ["/img/1.jpg", "/img/2.jpg", "/img/3.jpg", "/img/4-dead.jpg"],
+    })
+    attempted = []
+
+    def _download(url, path):
+        attempted.append(url)
+        if url.endswith("/2.jpg"):
+            return False
+        Path(path).write_bytes(_jpeg_bytes())
+        return True
+
+    monkeypatch.setattr(rco, "_download_image", _download)
+    monkeypatch.setattr(rco.time, "sleep", lambda _s: None)
+
+    with pytest.raises(RuntimeError, match=r"1 of 3 page\(s\) did not download.*page\(s\) 2"):
+        rco.scrape_issue_pages(U1, project_root=tmp_path, chapter_index=1)
+
+    assert attempted == [
+        "https://batcave.biz/img/1.jpg",
+        "https://batcave.biz/img/2.jpg",
+        "https://batcave.biz/img/3.jpg",
+    ]
+
+
+def test_scraper_uses_advertised_count_not_a_stale_trailing_image_url(tmp_path, monkeypatch):
+    """Batcave may retain one dead URL after its canonical `pages` count.
+
+    Without respecting that count, retrying a complete 3-page issue always asks for
+    the stale fourth URL and reports the entire chapter as incomplete.
+    """
+    monkeypatch.setattr(rco, "_fetch_data", lambda url: {
+        "pages": 3,
+        "images": ["/img/1.jpg", "/img/2.jpg", "/img/3.jpg", "/img/4-dead.jpg"],
+    })
+    attempted = []
+
+    def _download(url, path):
+        attempted.append(url)
+        if url.endswith("/4-dead.jpg"):
+            pytest.fail("must not probe a URL beyond the reader's terminal page")
+        Path(path).write_bytes(b"img")
+        return True
+
+    monkeypatch.setattr(rco, "_download_image", _download)
+    monkeypatch.setattr(rco.time, "sleep", lambda _s: None)
+
+    pages = rco.scrape_issue_pages(U1, project_root=tmp_path, chapter_index=1)
+
+    assert [p.name for p in pages] == [
+        "ch01_page_01.jpg", "ch01_page_02.jpg", "ch01_page_03.jpg",
+    ]
+    assert attempted == [
+        "https://batcave.biz/img/1.jpg",
+        "https://batcave.biz/img/2.jpg",
+        "https://batcave.biz/img/3.jpg",
+    ]
+
+
+def test_scraper_rejects_manifest_that_advertises_more_pages_than_it_lists(tmp_path, monkeypatch):
+    """A short image list could hide real comic content; never call it complete."""
+    monkeypatch.setattr(rco, "_fetch_data", lambda url: {
+        "pages": 3,
+        "images": ["/img/1.jpg", "/img/2.jpg"],
+    })
+    monkeypatch.setattr(rco, "_download_image", lambda *_args: pytest.fail("must not download a known-incomplete manifest"))
+
+    with pytest.raises(RuntimeError, match=r"advertises 3 pages but supplied only 2 image URLs"):
+        rco.scrape_issue_pages(U1, project_root=tmp_path, chapter_index=1)
 
 
 def test_scraper_keeps_numeric_order_past_page_99(tmp_path, monkeypatch):
