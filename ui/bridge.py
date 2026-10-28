@@ -439,7 +439,110 @@ def load_scout_candidates(session_id: str, root: Path | None = None) -> list[dic
     except json.JSONDecodeError:
         return []
     candidates = data.get("candidates", []) if isinstance(data, dict) else []
-    return [dict(candidate) for candidate in candidates if isinstance(candidate, dict)]
+    cards = [dict(candidate) for candidate in candidates if isinstance(candidate, dict)]
+    # Existing sessions get the same offline-only advisory annotation on read;
+    # this does not write or re-run any research/eligibility gate.
+    from stages.research_scout.audience_evidence import AudienceEvidenceStore
+    return _annotate_scout_audience(cards, AudienceEvidenceStore(store.root))
+
+
+def _manual_audience_import(registry, key: str, payload: dict) -> None:
+    """Validate manual observations before writing, so malformed input preserves snapshots."""
+    demand = payload.get("demand") or []
+    videos = payload.get("videos") or []
+    if not isinstance(demand, list) or not isinstance(videos, list):
+        raise ValueError("Manual audience import needs arrays named demand and videos.")
+    for item in demand:
+        if not isinstance(item, dict):
+            raise ValueError("Each demand item must be an object.")
+        required = ("query", "url", "quote", "source_type", "confidence")
+        if any(not str(item.get(name) or "").strip() for name in required):
+            raise ValueError("Each demand item needs query, url, quote, source_type, and confidence.")
+    for item in videos:
+        if not isinstance(item, dict):
+            raise ValueError("Each video item must be an object.")
+        required = ("video_id", "url", "channel", "views")
+        if any(item.get(name) is None or not str(item.get(name)).strip() for name in required):
+            raise ValueError("Each video item needs video_id, url, channel, and views.")
+        int(item["views"])
+    for item in demand:
+        registry.add_demand_evidence(
+            candidate_key=key, query=str(item["query"]), url=str(item["url"]), quote=str(item["quote"]),
+            source_type=str(item["source_type"]), confidence=str(item["confidence"]),
+            checked_at=str(item.get("checked_at") or "") or None,
+        )
+    for item in videos:
+        video_id = str(item["video_id"])
+        registry.link_video(key, video_id, relation=str(item.get("relation") or "related"))
+        registry.add_video_snapshot(
+            video_id=video_id, url=str(item["url"]), channel=str(item["channel"]),
+            published_at=str(item.get("published_at") or "") or None,
+            duration_seconds=float(item["duration_seconds"]) if item.get("duration_seconds") is not None else None,
+            views=int(item["views"]), observed_at=str(item.get("observed_at") or "") or None,
+            origin="manual_import",
+        )
+
+
+def _annotate_scout_audience(candidates: list[dict], registry) -> list[dict]:
+    from stages.research_scout.opportunity import rank_with_registry
+
+    return rank_with_registry(candidates, registry)
+
+
+def update_scout_audience(
+    session_id: str, candidate_id: str, *, manual_import: dict | None = None,
+    manual_quality: dict | None = None, refresh: bool = False, assess: bool = False,
+    root: Path | None = None,
+) -> list[dict]:
+    """Import explicit manual observations and/or refresh already-linked public metadata.
+
+    A refresh has no discovery side effect: it only revisits already-linked video IDs.
+    On unavailable metadata it records the status while retaining every prior snapshot.
+    """
+    from stages.research_scout.audience_evidence import AudienceEvidenceStore, PublicVideoMetadataAdapter
+    from stages.research_scout.opportunity import candidate_key, editorial_quality
+
+    store = _scout_store(root)
+    candidates = load_scout_candidates(session_id, root=root)
+    selected = next((candidate for candidate in candidates if str(candidate.get("id") or "") == str(candidate_id)), None)
+    if selected is None:
+        raise ValueError("Candidate is no longer available in this scout session.")
+    registry = AudienceEvidenceStore(store.root)
+    key = candidate_key(selected)
+    if manual_import is not None:
+        if not isinstance(manual_import, dict):
+            raise ValueError("Manual audience evidence must be a JSON object.")
+        _manual_audience_import(registry, key, manual_import)
+    if manual_quality is not None:
+        if not isinstance(manual_quality, dict) or editorial_quality(manual_quality)["status"] != "assessed":
+            raise ValueError("Manual quality needs at least one 0–1 score, rationale, and selected fact cue.")
+        registry.save_quality_assessment(key, manual_quality, assessor="manual")
+    assessment_detail: dict[str, object] = {}
+    if assess:
+        from stages.research_scout.editorial_assessor import ConfiguredEditorialAssessor
+        batch = [selected] + [candidate for candidate in candidates if candidate is not selected][:2]
+        result = ConfiguredEditorialAssessor().assess_batch(batch)
+        for assessed_id, assessment in result.assessments.items():
+            candidate = next((row for row in batch if str(row.get("id") or "") == assessed_id), None)
+            if candidate is not None:
+                registry.save_quality_assessment(candidate_key(candidate), assessment,
+                                                 assessor=f"model:{result.model or 'unknown'}")
+        if result.error:
+            registry.save_quality_assessment(key, {"reason": result.error},
+                                             assessor=f"model:{result.model or 'unknown'}", status="unavailable")
+        assessment_detail = {"assessed_count": len(result.assessments), "status": "unavailable" if result.error else "assessed",
+                             "model": result.model or "unknown"}
+    if refresh:
+        adapter = PublicVideoMetadataAdapter()
+        adapter.refresh_many(registry, key)
+    ranked = _annotate_scout_audience(candidates, registry)
+    store.write_artifact(session_id, "general/candidates.v1.json", {"candidates": ranked})
+    store.append_audit(session_id, "audience_evidence_updated", detail={
+        "candidate_id": str(candidate_id), "manual_import": manual_import is not None,
+        "manual_quality": manual_quality is not None, "refresh": refresh, "assess": assess,
+        **assessment_detail,
+    })
+    return ranked
 
 
 def load_scout_audit(session_id: str, root: Path | None = None) -> list[dict]:

@@ -138,6 +138,62 @@ def test_approve_is_disabled_for_qa_with_two_selected_items(tmp_path):
     assert approve.disabled is True
 
 
+def test_candidate_card_shows_advisory_opportunity_and_audience_evidence_links():
+    card = s1_research_scout._candidate_card(
+        {
+            "id": "a", "title": "Candidate", "source_material_coverage": {
+                "available_dimensions": 3, "possible_dimensions": 5, "dimensions": {
+                    "premise": {"status": "unknown", "reason": "No cue."},
+                    "turning_point": {"status": "available", "reason": "Fact cue: source."},
+                    "payoff": {"status": "available", "reason": "Fact cue: ending."},
+                    "drawable_scene": {"status": "available", "reason": "Fact cue: action."},
+                    "claim": {"status": "available", "reason": "Fact cue: claim."},
+                },
+            }, "editorial_quality": {
+                "total": 0.8, "coverage": 1.0,
+                "formula": "weighted mean of explicit assessments",
+                "dimensions": {
+                    "curiosity": {"score": 0.6, "rationale": "Source.", "fact_cues": []},
+                    "stakes": {"score": 0.8, "rationale": "Source.", "fact_cues": []},
+                    "payoff": {"score": 0.9, "rationale": "Ending.", "fact_cues": []},
+                    "clarity": {"score": 0.8, "rationale": "Action.", "fact_cues": []},
+                },
+            },
+            "audience_evidence": {"demand_evidence": [
+                {"url": "https://forum.example/thread", "checked_at": "2026-10-27T00:00:00+00:00", "source_type": "community"}
+            ], "signals": {"saturation": {"coverage_proof": False, "videos": [
+                {"url": "https://youtube.example/watch?v=abc", "observed_at": "2026-10-27T00:00:00+00:00", "relation": "related",
+                 "current_views": 42, "growth": {"status": "unknown"}}
+            ], "cohort": {"status": "unknown", "reason": "No matched cohort."}}}},
+        }, 0, gate={}, selection=ft.Checkbox(),
+    )
+
+    text = _text_content(card)
+    assert "Source material coverage" in text
+    assert "Editorial quality" in text
+    assert "https://forum.example/thread" in text
+    assert "https://youtube.example/watch?v=abc" in text
+    assert "not exact-question coverage" in text
+    assert "current count only; growth unknown" in text
+    assert "Cohort comparison: unknown" in text
+
+
+def test_candidate_review_wires_audience_evidence_action(tmp_path):
+    store = SessionStore(tmp_path / "research_sessions")
+    session = ResearchSession(id="audience-session", mode=ScoutMode.MICRO, user_intent="Find a moment",
+                              state=SessionState.CANDIDATE_REVIEW)
+    store.save(session)
+    store.write_artifact(session.id, "general/candidates.v1.json", {
+        "candidates": [{"id": "a", "title": "Candidate"}],
+    })
+
+    _page, controls = _build(tmp_path, session)
+
+    assert any(getattr(node, "key", None) == "audience-evidence-a" for node in _walk(controls))
+    assert any(getattr(node, "key", None) == "editorial-quality-a" for node in _walk(controls))
+    assert "Source material coverage" in _text_content(controls)
+
+
 def test_qa_diversity_warning_updates_with_ticks_and_lists_parseable_series(tmp_path):
     store = SessionStore(tmp_path / "research_sessions")
     session = ResearchSession(

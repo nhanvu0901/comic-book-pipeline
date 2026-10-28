@@ -20,7 +20,7 @@ from typing import Callable
 
 import flet as ft
 
-from config import RESEARCH_SESSIONS_ROOT
+from config import RESEARCH_SESSIONS_ROOT, SCOUT_EVIDENCE_MODEL
 from stages.research_scout.micro_recency import issue_publication_year
 from stages.research_scout.issue_identity import _candidate_identity
 from stages.research_scout.project_factory import can_override_production_gates
@@ -55,6 +55,7 @@ from ..bridge import (
     run_scout_general,
     save_scout_batch,
     start_scout_session,
+    update_scout_audience,
     verify_scout_selection,
 )
 from ..layout import primary_button, secondary_button, three_col
@@ -284,6 +285,86 @@ def _candidate_card(
             details.append(ft.Text(f"{label}: {text}", size=11, color=color, selectable=True))
     if candidate.get("rank_reason"):
         details.append(ft.Text(f"Rank reason: {candidate['rank_reason']}", size=11, italic=True, color=TEXT_MUTED, selectable=True))
+    source_coverage = candidate.get("source_material_coverage")
+    if isinstance(source_coverage, dict):
+        available, possible = source_coverage.get("available_dimensions"), source_coverage.get("possible_dimensions")
+        details.append(ft.Text(f"Source material coverage: {available}/{possible} · not editorial quality",
+                               size=11, color=TEXT_MUTED, selectable=True))
+        for label, key in (("Premise facts", "premise"), ("Turning-point facts", "turning_point"),
+                           ("Payoff facts", "payoff"), ("Drawable-scene facts", "drawable_scene"),
+                           ("Claim facts", "claim")):
+            value = (source_coverage.get("dimensions") or {}).get(key)
+            if isinstance(value, dict):
+                details.append(ft.Text(f"{label}: {value.get('status', 'unknown')} — {value.get('reason', '')}",
+                                       size=10, color=TEXT_MUTED, selectable=True))
+    editorial_quality = candidate.get("editorial_quality")
+    if isinstance(editorial_quality, dict):
+        total = editorial_quality.get("total")
+        coverage = editorial_quality.get("coverage")
+        details.append(ft.Text(
+            (f"Editorial quality: {total}/1.0 (assessed coverage {coverage}) · advisory, not predicted views"
+             if total is not None else f"Editorial quality: unknown — {editorial_quality.get('reason') or 'assess from grounded fact cues before ranking.'}"),
+            size=11, color=ACCENT, weight=ft.FontWeight.W_500, selectable=True,
+        ))
+        formula = str(editorial_quality.get("formula") or "").strip()
+        if formula:
+            details.append(ft.Text(f"Formula: {formula}", size=10, color=TEXT_MUTED, selectable=True))
+        for label, key in (("Curiosity", "curiosity"), ("Stakes", "stakes"),
+                           ("Payoff", "payoff"), ("Easy to follow", "clarity")):
+            value = (editorial_quality.get("dimensions") or {}).get(key)
+            if not isinstance(value, dict):
+                continue
+            details.append(ft.Text(f"{label}: {value.get('score')} — {value.get('rationale', '')}",
+                                   size=10, color=TEXT_MUTED, selectable=True))
+            for cue in value.get("fact_cues") or []:
+                if isinstance(cue, dict) and str(cue.get("url") or "").strip():
+                    details.append(ft.Text(f"Editorial fact cue: {cue['url']}", size=10, color=ACCENT, selectable=True))
+    audience_evidence = candidate.get("audience_evidence")
+    if isinstance(audience_evidence, dict):
+        for row in audience_evidence.get("demand_evidence") or []:
+            if not isinstance(row, dict):
+                continue
+            url = str(row.get("url") or "").strip()
+            if url:
+                checked = str(row.get("checked_at") or "")[:10]
+                source_type = str(row.get("source_type") or "source")
+                details.append(ft.Text(
+                    f"Audience source ({source_type}, checked {checked}): {url}",
+                    size=10, color=ACCENT, selectable=True,
+                ))
+        signals = audience_evidence.get("signals")
+        saturation = signals.get("saturation") if isinstance(signals, dict) else None
+        if isinstance(saturation, dict):
+            if saturation.get("coverage_proof") is False:
+                details.append(ft.Text(
+                    "Competitor observations are related signals, not exact-question coverage.",
+                    size=10, color=TEXT_MUTED, selectable=True,
+                ))
+            for video in saturation.get("videos") or []:
+                if not isinstance(video, dict):
+                    continue
+                url = str(video.get("url") or "").strip()
+                if not url:
+                    continue
+                observed = str(video.get("observed_at") or "")[:10] or "unknown date"
+                relation = str(video.get("relation") or "related")
+                details.append(ft.Text(
+                    f"Competitor source ({relation}, observed {observed}; not exact-question coverage): {url}",
+                    size=10, color=ACCENT, selectable=True,
+                ))
+                views = video.get("current_views")
+                growth = video.get("growth") if isinstance(video.get("growth"), dict) else {}
+                if growth.get("status") == "observed":
+                    growth_text = f"+{growth.get('views_delta')} views over {round(float(growth.get('seconds') or 0) / 86400, 1)}d"
+                else:
+                    growth_text = "one snapshot: current count only; growth unknown"
+                origin = str(video.get("metadata_origin") or "unknown")
+                details.append(ft.Text(f"Views ({origin}): {views}; {growth_text}. Retention is unknown.",
+                                       size=10, color=TEXT_MUTED, selectable=True))
+            cohort = saturation.get("cohort")
+            if isinstance(cohort, dict):
+                details.append(ft.Text(f"Cohort comparison: {cohort.get('status', 'unknown')} — {cohort.get('reason', '')}",
+                                       size=10, color=TEXT_MUTED, selectable=True))
     if gate.get("reason"):
         details.append(ft.Text(str(gate["reason"]), size=11, color=TEXT_MUTED, selectable=True))
     for url in urls:
@@ -670,6 +751,16 @@ def build(
                 )
                 reverify.key = f"reverify-{candidate_id}"
                 trailing.append(reverify)
+            audience = secondary_button(
+                "Audience evidence", lambda _e, cid=candidate_id: _audience_click(cid),
+            )
+            audience.key = f"audience-evidence-{candidate_id}"
+            trailing.append(audience)
+            quality = secondary_button(
+                "Assess editorial quality", lambda _e, cid=candidate_id: _quality_click(cid),
+            )
+            quality.key = f"editorial-quality-{candidate_id}"
+            trailing.append(quality)
             cards.append(_candidate_card(
                 candidate, index,
                 gate=_candidate_gate(candidate_id, gates),
@@ -1110,6 +1201,112 @@ def build(
             (on_success or _apply_session_and_render)(result)
 
         page.run_task(_execute)
+
+    def _audience_click(candidate_id: str) -> None:
+        """Keep manual imports explicit; refresh only visits already-linked IDs."""
+        session = session_holder[0]
+        if busy[0] or session is None:
+            return
+        payload_field = ft.TextField(
+            key=f"audience-import-{candidate_id}", multiline=True, min_lines=4, max_lines=10,
+            label="Manual evidence JSON (optional)",
+            hint_text='{"demand":[...],"videos":[...]}',
+        )
+
+        def _apply(*, refresh: bool) -> None:
+            raw = str(payload_field.value or "").strip()
+            try:
+                manual = json.loads(raw) if raw else None
+            except json.JSONDecodeError:
+                payload_field.error_text = "Enter valid JSON, or leave this field empty to refresh linked videos."
+                page.update()
+                return
+            page.pop_dialog()
+            _run_busy(
+                "Updating audience evidence…",
+                lambda: update_scout_audience(
+                    session.id, candidate_id, root=RESEARCH_SESSIONS_ROOT,
+                    manual_import=manual, refresh=refresh,
+                ),
+                on_success=lambda _result: _render_full(),
+            )
+
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Audience evidence", selectable=True),
+            content=ft.Column([
+                ft.Text(
+                    "Import is manual evidence. Refresh only visits videos already linked here: YouTube Data API "
+                    "when its key exists, otherwise a public yt-dlp metadata-only probe. It never downloads media or measures retention.",
+                    size=11, color=TEXT_MUTED, selectable=True,
+                ),
+                payload_field,
+            ], tight=True, spacing=8),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                secondary_button("Import manual", lambda _e: _apply(refresh=False)),
+                primary_button("Refresh linked metadata", lambda _e: _apply(refresh=True)),
+            ],
+        ))
+
+    def _quality_click(candidate_id: str) -> None:
+        """Run one bounded configured-model batch, or enter a grounded manual score."""
+        session = session_holder[0]
+        if busy[0] or session is None:
+            return
+        candidate = next((row for row in load_scout_candidates(session.id, root=RESEARCH_SESSIONS_ROOT)
+                          if str(row.get("id") or "") == candidate_id), None)
+        if candidate is None:
+            _render_full(error="Candidate is no longer available in this scout session.")
+            return
+        cues: dict[str, dict[str, str]] = {}
+        claim = candidate.get("claim_citation")
+        if isinstance(claim, dict) and str(claim.get("url") or "").strip() and str(claim.get("quote") or "").strip():
+            cues["claim"] = {"url": str(claim["url"]), "quote": str(claim["quote"])}
+        for index, detail in enumerate(candidate.get("detail_citations") or []):
+            if isinstance(detail, dict) and str(detail.get("url") or "").strip() and str(detail.get("quote") or "").strip():
+                cues[f"detail-{index}"] = {"url": str(detail["url"]), "quote": str(detail["quote"])}
+        fields: dict[str, tuple[ft.TextField, ft.TextField, ft.Dropdown]] = {}
+        controls: list[ft.Control] = [ft.Text(
+            f"Model assessment uses configured {SCOUT_EVIDENCE_MODEL}, at most 3 cards, and only supplied fact cues. "
+            "It may return unknown. Manual entry below is the no-model fallback.", size=11, color=TEXT_MUTED, selectable=True)]
+        options = [ft.dropdown.Option(key=key, text=f"{key}: {cue['quote'][:70]}") for key, cue in cues.items()]
+        for label, name in (("Curiosity", "curiosity"), ("Stakes", "stakes"), ("Payoff", "payoff"), ("Easy to follow", "clarity")):
+            score = ft.TextField(label=f"{label} score (0–1, optional)", width=170)
+            rationale = ft.TextField(label=f"{label} rationale", expand=True)
+            cue = ft.Dropdown(label="Fact cue", width=260, options=options)
+            fields[name] = (score, rationale, cue)
+            controls.append(ft.Row([score, rationale, cue], spacing=6))
+
+        def _manual() -> None:
+            dimensions: dict[str, dict] = {}
+            try:
+                for name, (score, rationale, cue) in fields.items():
+                    raw_score = str(score.value or "").strip()
+                    dimensions[name] = {"score": float(raw_score) if raw_score else None,
+                                        "rationale": str(rationale.value or "").strip(),
+                                        "fact_cues": [cues[str(cue.value)]] if cue.value in cues else []}
+            except ValueError:
+                page.pop_dialog()
+                _render_full(error="Manual editorial scores must be numbers from 0 to 1.")
+                return
+            page.pop_dialog()
+            _run_busy("Saving manual editorial assessment…", lambda: update_scout_audience(
+                session.id, candidate_id, root=RESEARCH_SESSIONS_ROOT, manual_quality={"dimensions": dimensions}),
+                on_success=lambda _result: _render_full())
+
+        def _assess() -> None:
+            page.pop_dialog()
+            _run_busy("Assessing up to 3 cards from their supplied facts…", lambda: update_scout_audience(
+                session.id, candidate_id, root=RESEARCH_SESSIONS_ROOT, assess=True),
+                on_success=lambda _result: _render_full())
+
+        page.show_dialog(ft.AlertDialog(modal=True, title=ft.Text("Editorial quality", selectable=True),
+            content=ft.Column(controls, tight=True, spacing=8, scroll=ft.ScrollMode.AUTO), actions=[
+                ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                secondary_button("Save manual assessment", lambda _e: _manual()),
+                primary_button("Assess up to 3 cards", lambda _e: _assess()),
+            ]))
 
     def _discovered_pick_changed(event) -> None:
         """Tick a discovered question -> it lands in the input box, full stop.

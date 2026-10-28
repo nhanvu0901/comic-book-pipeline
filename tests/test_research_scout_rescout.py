@@ -126,6 +126,18 @@ def test_round_two_ids_never_collide_with_round_one(workflow):
     assert not set(round_one) & set(round_two)
 
 
+def test_run_general_persists_separate_coverage_and_unknown_editorial_quality(workflow):
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    workflow.run_general(session.id)
+    payload = json.loads(workflow.store.artifact_path(session.id, "general/candidates.v1.json").read_text())
+
+    card = payload["candidates"][0]
+    assert card["source_material_coverage"]["explanation"].startswith("Source-material coverage")
+    assert card["editorial_quality"]["status"] == "unknown"
+    assert card["editorial_quality"]["total"] is None
+    assert card["audience_evidence"]["demand_evidence"] == []
+
+
 def test_the_tier_b_discover_batch_stays_out_of_the_revision_namespace(workflow):
     """`_extract_candidates` parses the Tier B discover batch as well.
 

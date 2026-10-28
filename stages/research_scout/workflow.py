@@ -638,6 +638,12 @@ class ScoutWorkflow:
                 reverse=True,
             )
         candidates = kept + candidates
+        # Eligibility has already run above.  The local registry is read-only on
+        # this path: unavailable/offline audience data becomes an explicit
+        # unknown annotation, never a rejected card or a fresh network request.
+        from .audience_evidence import AudienceEvidenceStore
+        from .opportunity import rank_with_registry
+        candidates = rank_with_registry(candidates, AudienceEvidenceStore(self.store.root))
         accepted_bound_sources = {
             cited_sources.citation_fingerprint(citation)[0]
             for candidate in candidates
