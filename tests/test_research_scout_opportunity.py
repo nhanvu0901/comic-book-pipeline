@@ -1,4 +1,4 @@
-from stages.research_scout.opportunity import editorial_quality, rank_candidates, source_material_coverage
+from stages.research_scout.opportunity import editorial_quality, factual_input_hash, rank_candidates, source_material_coverage
 
 
 def _candidate(candidate_id: str, **extra):
@@ -44,9 +44,21 @@ def test_unknown_quality_is_null_and_keeps_input_tie_order():
 
 def test_explicit_assessment_and_direct_demand_order_but_never_change_eligibility():
     candidates = [_candidate("low"), _candidate("high")]
-    ranked = rank_candidates(candidates, assessments_by_key={"||low": _assessment(.2), "||high": _assessment(.9)},
+    ranked = rank_candidates(candidates, assessments_by_key={"||low": {**_assessment(.2), "input_hash": factual_input_hash(candidates[0])},
+                                                         "||high": {**_assessment(.9), "input_hash": factual_input_hash(candidates[1])}},
                              signals_by_key={"||high": {"demand": {"status": "observed", "direct_count": 1}}})
 
     assert [item["id"] for item in ranked] == ["high", "low"]
     assert "eligibility" not in ranked[0]["ranking"]
     assert "prediction" in ranked[0]["ranking"]["reason"]
+
+
+def test_changed_factual_input_invalidates_cached_editorial_assessment():
+    card = _candidate("a")
+    assessment = {**_assessment(), "input_hash": factual_input_hash(card)}
+    card["claim_citation"]["quote"] = "A changed fact."
+
+    ranked = rank_candidates([card], assessments_by_key={"||a": assessment})
+
+    assert ranked[0]["editorial_quality"]["status"] == "unknown"
+    assert "factual input changed" in ranked[0]["editorial_quality"]["reason"]

@@ -6,6 +6,8 @@ cards, or turns a merely present field into a quality claim.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import hashlib
+import json
 from typing import Any
 
 RUBRIC_VERSION = 2
@@ -22,9 +24,46 @@ def candidate_key(candidate: Mapping[str, Any]) -> str:
 
 def _citation(candidate: Mapping[str, Any]) -> tuple[str, str]:
     citation = candidate.get("claim_citation")
-    if not isinstance(citation, Mapping):
-        return "", ""
-    return str(citation.get("url") or "").strip(), str(citation.get("quote") or "").strip()
+    if isinstance(citation, Mapping):
+        url, quote = str(citation.get("url") or "").strip(), str(citation.get("quote") or "").strip()
+        if url and quote:
+            return url, quote
+    for item in candidate.get("issue_evidence") or []:
+        if isinstance(item, Mapping):
+            url, quote = str(item.get("source_url") or item.get("url") or "").strip(), str(item.get("quote") or "").strip()
+            if url and quote:
+                return url, quote
+    return "", ""
+
+
+def grounded_facts(candidate: Mapping[str, Any]) -> list[dict[str, str]]:
+    """All allowed assessor cues, including the QA issue_evidence contract."""
+    facts: list[dict[str, str]] = []
+    citation = candidate.get("claim_citation")
+    if isinstance(citation, Mapping):
+        url, quote = str(citation.get("url") or "").strip(), str(citation.get("quote") or "").strip()
+        if url and quote:
+            facts.append({"kind": "claim", "url": url, "quote": quote})
+    for detail in candidate.get("detail_citations") or []:
+        if isinstance(detail, Mapping):
+            url, quote = str(detail.get("url") or "").strip(), str(detail.get("quote") or "").strip()
+            if url and quote:
+                facts.append({"kind": "detail", "url": url, "quote": quote})
+    for item in candidate.get("issue_evidence") or []:
+        if isinstance(item, Mapping):
+            url, quote = str(item.get("source_url") or item.get("url") or "").strip(), str(item.get("quote") or "").strip()
+            if url and quote:
+                facts.append({"kind": "issue_evidence", "url": url, "quote": quote,
+                              "issue": str(item.get("issue") or "").strip()})
+    return facts
+
+
+def factual_input_hash(candidate: Mapping[str, Any]) -> str:
+    """Invalidates a cached assessment whenever the supplied factual input changes."""
+    payload = {"title": str(candidate.get("title") or ""),
+               "question": str(candidate.get("question") or candidate.get("moment") or ""),
+               "facts": grounded_facts(candidate), "rubric_version": RUBRIC_VERSION}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _detail_quote(candidate: Mapping[str, Any], supports: str) -> str:
@@ -124,7 +163,10 @@ def rank_candidates(candidates: Sequence[Mapping[str, Any]], *,
     annotated: list[tuple[int, dict[str, Any]]] = []
     for index, original in enumerate(candidates):
         candidate, key = dict(original), candidate_key(original)
-        quality = editorial_quality(assessments_by_key.get(key))
+        assessment = assessments_by_key.get(key)
+        if isinstance(assessment, Mapping) and assessment.get("input_hash") != factual_input_hash(candidate):
+            assessment = {"reason": "Stored assessment is stale because its factual input changed."}
+        quality = editorial_quality(assessment)
         demand = dict(signals_by_key.get(key, {}).get("demand") or {})
         direct = int(demand.get("direct_count") or 0) if demand.get("status") == "observed" else 0
         candidate["source_material_coverage"] = source_material_coverage(candidate)

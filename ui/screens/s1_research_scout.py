@@ -23,6 +23,7 @@ import flet as ft
 from config import RESEARCH_SESSIONS_ROOT, SCOUT_EVIDENCE_MODEL
 from stages.research_scout.micro_recency import issue_publication_year
 from stages.research_scout.issue_identity import _candidate_identity
+from stages.research_scout.opportunity import grounded_facts
 from stages.research_scout.project_factory import can_override_production_gates
 from stages.research_scout.models import ResearchSession, ScoutMode, SessionState
 from stages.research_scout.workflow import _series_key
@@ -309,6 +310,10 @@ def _candidate_card(
         formula = str(editorial_quality.get("formula") or "").strip()
         if formula:
             details.append(ft.Text(f"Formula: {formula}", size=10, color=TEXT_MUTED, selectable=True))
+        if editorial_quality.get("assessor"):
+            assessed = str(editorial_quality.get("assessed_at") or "unknown time")[:19]
+            details.append(ft.Text(f"Assessment provenance: {editorial_quality['assessor']} · {assessed}",
+                                   size=10, color=TEXT_MUTED, selectable=True))
         for label, key in (("Curiosity", "curiosity"), ("Stakes", "stakes"),
                            ("Payoff", "payoff"), ("Easy to follow", "clarity")):
             value = (editorial_quality.get("dimensions") or {}).get(key)
@@ -1259,13 +1264,8 @@ def build(
         if candidate is None:
             _render_full(error="Candidate is no longer available in this scout session.")
             return
-        cues: dict[str, dict[str, str]] = {}
-        claim = candidate.get("claim_citation")
-        if isinstance(claim, dict) and str(claim.get("url") or "").strip() and str(claim.get("quote") or "").strip():
-            cues["claim"] = {"url": str(claim["url"]), "quote": str(claim["quote"])}
-        for index, detail in enumerate(candidate.get("detail_citations") or []):
-            if isinstance(detail, dict) and str(detail.get("url") or "").strip() and str(detail.get("quote") or "").strip():
-                cues[f"detail-{index}"] = {"url": str(detail["url"]), "quote": str(detail["quote"])}
+        cues = {f"fact-{index}": {"url": fact["url"], "quote": fact["quote"]}
+                for index, fact in enumerate(grounded_facts(candidate))}
         fields: dict[str, tuple[ft.TextField, ft.TextField, ft.Dropdown]] = {}
         controls: list[ft.Control] = [ft.Text(
             f"Model assessment uses configured {SCOUT_EVIDENCE_MODEL}, at most 3 cards, and only supplied fact cues. "

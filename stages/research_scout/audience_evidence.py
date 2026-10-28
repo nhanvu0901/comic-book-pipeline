@@ -270,6 +270,8 @@ class PublicVideoMetadataAdapter:
 
     @staticmethod
     def _store_ytdlp_metadata(store: AudienceEvidenceStore, video_id: str, info: Mapping[str, Any]) -> None:
+        if info.get("view_count") is None:
+            raise ValueError("metadata_missing_views")
         timestamp = info.get("release_timestamp") or info.get("timestamp")
         published_at = datetime.fromtimestamp(float(timestamp), timezone.utc).isoformat() if timestamp else str(info.get("upload_date") or "") or None
         store.add_video_snapshot(
@@ -278,7 +280,7 @@ class PublicVideoMetadataAdapter:
             channel=str(info.get("channel") or info.get("uploader") or ""),
             published_at=published_at,
             duration_seconds=float(info["duration"]) if info.get("duration") is not None else None,
-            views=int(info.get("view_count") or 0), origin="yt_dlp_public_metadata",
+            views=int(info["view_count"]), origin="yt_dlp_public_metadata",
         )
 
     def refresh(self, store: AudienceEvidenceStore, video_id: str, *, candidate_key: str | None = None) -> dict[str, Any]:
@@ -296,10 +298,12 @@ class PublicVideoMetadataAdapter:
             item = items[0]
             snippet = item.get("snippet") or {}
             statistics = item.get("statistics") or {}
+            if statistics.get("viewCount") is None:
+                raise ValueError("metadata_missing_views")
             store.add_video_snapshot(video_id=video_id, url=f"https://www.youtube.com/watch?v={video_id}",
                                      channel=str(snippet.get("channelTitle") or ""), published_at=snippet.get("publishedAt"),
                                      duration_seconds=_iso8601_duration_seconds((item.get("contentDetails") or {}).get("duration")),
-                                     views=int(statistics.get("viewCount") or 0), origin="youtube_data_api_v3")
+                                     views=int(statistics["viewCount"]), origin="youtube_data_api_v3")
             return store.video_signal(video_id)
         except Exception as exc:  # preserve historical observations on all provider failures
             store.record_refresh_failure(video_id, type(exc).__name__ if str(exc) == "" else str(exc)[:160])

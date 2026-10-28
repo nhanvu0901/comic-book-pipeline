@@ -88,6 +88,24 @@ def test_no_key_uses_injected_ytdlp_public_metadata_fallback_without_media(tmp_p
     assert signal["channel"] == "Comic Test"
 
 
+def test_missing_views_from_either_provider_keeps_last_good_snapshot_without_fake_zero(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    store.add_video_snapshot(video_id="abc", url="https://youtu.be/abc", channel="Comic Test",
+                             published_at=None, duration_seconds=45, views=99, origin="manual_import")
+    api = PublicVideoMetadataAdapter(api_key="present", fetch_json=lambda _url: {"items": [{
+        "snippet": {"channelTitle": "Comic Test"}, "statistics": {}, "contentDetails": {"duration": "PT45S"}}]})
+    ytdlp = PublicVideoMetadataAdapter(api_key="", metadata_fetch=lambda _id: {
+        "id": "abc", "channel": "Comic Test", "duration": 45})
+
+    api_result = api.refresh(store, "abc")
+    ytdlp_result = ytdlp.refresh(store, "abc")
+
+    assert api_result["current_views"] == 99
+    assert ytdlp_result["current_views"] == 99
+    assert api_result["last_refresh_error"] == "metadata_missing_views"
+    assert ytdlp_result["last_refresh_error"] == "metadata_missing_views"
+
+
 def test_linked_competitor_is_related_observation_not_exact_coverage_and_refresh_is_bounded(tmp_path):
     store = AudienceEvidenceStore(tmp_path)
     store.link_video("hero|rule|question", "abc")

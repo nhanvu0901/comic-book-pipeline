@@ -500,7 +500,7 @@ def update_scout_audience(
     On unavailable metadata it records the status while retaining every prior snapshot.
     """
     from stages.research_scout.audience_evidence import AudienceEvidenceStore, PublicVideoMetadataAdapter
-    from stages.research_scout.opportunity import candidate_key, editorial_quality
+    from stages.research_scout.opportunity import candidate_key, editorial_quality, factual_input_hash
 
     store = _scout_store(root)
     candidates = load_scout_candidates(session_id, root=root)
@@ -516,15 +516,16 @@ def update_scout_audience(
     if manual_quality is not None:
         if not isinstance(manual_quality, dict) or editorial_quality(manual_quality)["status"] != "assessed":
             raise ValueError("Manual quality needs at least one 0–1 score, rationale, and selected fact cue.")
+        manual_quality = {**manual_quality, "input_hash": factual_input_hash(selected), "rubric_version": 2, "model": "manual"}
         registry.save_quality_assessment(key, manual_quality, assessor="manual")
     assessment_detail: dict[str, object] = {}
     if assess:
-        from stages.research_scout.editorial_assessor import ConfiguredEditorialAssessor
+        from stages.research_scout.editorial_assessor import ConfiguredEditorialAssessor, candidate_token
         batch = [selected] + [candidate for candidate in candidates if candidate is not selected][:2]
         result = ConfiguredEditorialAssessor().assess_batch(batch)
-        for assessed_id, assessment in result.assessments.items():
-            candidate = next((row for row in batch if str(row.get("id") or "") == assessed_id), None)
-            if candidate is not None:
+        for index, candidate in enumerate(batch):
+            assessment = result.assessments.get(candidate_token(index, candidate))
+            if assessment is not None:
                 registry.save_quality_assessment(candidate_key(candidate), assessment,
                                                  assessor=f"model:{result.model or 'unknown'}")
         if result.error:
