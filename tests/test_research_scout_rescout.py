@@ -435,11 +435,10 @@ def test_the_sessions_already_on_disk_still_load_and_their_ids_still_resolve():
         ]
         if not on_disk:
             continue
-        if session.revision <= 1 and not session.kept_candidate_ids:
-            assert session.kept_candidate_ids == []
-            assert on_disk[0] == "candidate-1", "these predate the revision namespace"
         # The lookup verify_selected and the gate machinery use has to keep
-        # resolving them: a bare candidate-N is still a first-round id.
+        # resolving every id written to the artifact.  Revision 1 can include
+        # a top-up (`topup-r1-candidate-N`), so it is not evidence that an
+        # artifact predates the revision namespace.
         resolved = reader._candidates_by_id(session)
         assert set(on_disk) <= set(resolved)
         checked += 1
@@ -477,6 +476,28 @@ def test_a_directly_seeded_legacy_candidate_keeps_its_original_gate_path(monkeyp
 
     assert verified.selected_specific_candidate_ids == ["candidate-1"]
     assert _gates_on_disk(workflow, session.id)[0]["verdict"] == "confirmed"
+
+
+def test_a_revision_one_topup_id_with_no_kept_candidates_still_resolves(workflow):
+    """Revision one top-ups are valid persisted IDs, not legacy corruption."""
+    session = workflow.start(ScoutMode.QA, "Hulk questions")
+    session.state = SessionState.CANDIDATE_REVIEW
+    workflow.store.save(session)
+    workflow.store.write_artifact(
+        session.id,
+        "general/candidates.v1.json",
+        {"candidates": [{
+            "id": "topup-r1-candidate-1",
+            "title": "Top-up Alpha",
+            "summary": "Top-up Alpha visibly happens.",
+        }]},
+    )
+
+    loaded = workflow.store.load(session.id)
+
+    assert loaded.revision == 1
+    assert loaded.kept_candidate_ids == []
+    assert set(workflow._candidates_by_id(loaded)) == {"topup-r1-candidate-1"}
 
 
 def test_a_rerun_with_nothing_to_prune_writes_no_empty_gate_artifact(workflow):
