@@ -4,7 +4,7 @@ import sqlite3
 from stages.research_scout.audience_evidence import AudienceEvidenceStore, PublicVideoMetadataAdapter
 from stages.research_scout.opportunity import candidate_key
 from stages.research_scout.storage import SessionStore
-from ui.bridge import update_scout_audience
+from ui.bridge import annotate_scout_entries, parse_public_video_id, update_scout_audience, update_scout_entry_evidence
 
 
 def test_registry_persists_source_evidence_and_unknown_when_no_signals(tmp_path):
@@ -205,3 +205,19 @@ def test_manual_quality_updates_ranked_card_with_grounded_cue(tmp_path):
 
     assert updated[0]["editorial_quality"]["status"] == "assessed"
     assert updated[0]["editorial_quality"]["dimensions"]["curiosity"]["score"] == 0.8
+
+
+def test_session_free_partial_entries_keep_duplicate_ids_and_accept_link_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(PublicVideoMetadataAdapter, "_ytdlp_metadata", staticmethod(lambda _id: {
+        "id": "PsoefS94HSY", "webpage_url": "https://youtube.com/shorts/PsoefS94HSY", "channel": "Seed",
+        "timestamp": 1, "duration": 60, "view_count": 3}))
+    entries = [{"id": "candidate-2", "question": f"Question {index}?", "issue_evidence": [{
+        "source_url": "https://example.test", "quote": f"Fact {index}."}]} for index in range(3)]
+
+    annotated = annotate_scout_entries(entries, root=tmp_path)
+    updated = update_scout_entry_evidence(annotated[0], root=tmp_path,
+        video_url="https://www.youtube.com/shorts/PsoefS94HSY", refresh=True)
+
+    assert [entry["id"] for entry in annotated] == ["candidate-2"] * 3
+    assert updated["audience_evidence"]["signals"]["saturation"]["videos"][0]["current_views"] == 3
+    assert parse_public_video_id("https://youtu.be/PsoefS94HSY") == "PsoefS94HSY"

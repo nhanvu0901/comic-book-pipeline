@@ -32,6 +32,7 @@ from stages.user_errors import NothingToDeleteError
 
 from ..bridge import (
     archive_scout_session,
+    annotate_scout_entries,
     approve_scout_selection,
     back_scout_candidates,
     create_scout_project,
@@ -57,6 +58,8 @@ from ..bridge import (
     save_scout_batch,
     start_scout_session,
     update_scout_audience,
+    update_scout_entry_evidence,
+    parse_public_video_id,
     verify_scout_selection,
 )
 from ..layout import primary_button, secondary_button, three_col
@@ -1017,6 +1020,23 @@ def build(
                 entry_details.append(ft.Text(f"What happens: {entry['what_visibly_happens']}", size=12, color=TEXT_MUTED, selectable=True))
             if entry.get("why_it_lands"):
                 entry_details.append(ft.Text(f"Why it lands: {entry['why_it_lands']}", size=11, color=TEXT_MUTED, selectable=True))
+            coverage = entry.get("source_material_coverage") or {}
+            quality = entry.get("editorial_quality") or {}
+            if coverage:
+                entry_details.append(ft.Text(
+                    f"Source material coverage: {coverage.get('available_dimensions')}/{coverage.get('possible_dimensions')} · not editorial quality",
+                    size=10, color=TEXT_MUTED, selectable=True))
+            if quality:
+                entry_details.append(ft.Text(
+                    f"Editorial quality: {quality.get('total')}/1.0" if quality.get("total") is not None
+                    else "Editorial quality: unknown — assess from grounded fact cues.",
+                    size=10, color=ACCENT, selectable=True))
+            entry_details.append(ft.Row([
+                ft.TextButton("Audience evidence", key=f"discover-audience-{index}",
+                              on_click=lambda _e, i=index: _standalone_evidence_click(i)),
+                ft.TextButton("Assess quality", key=f"discover-quality-{index}",
+                              on_click=lambda _e, i=index: _standalone_quality_click(i)),
+            ], spacing=4))
 
             choices.append(ft.Container(
                 content=ft.Row([
@@ -1254,6 +1274,47 @@ def build(
             ],
         ))
 
+    def _standalone_evidence_click(index: int) -> None:
+        entry = discovered_holder[0][index]
+        video = ft.TextField(label="Link YouTube video", hint_text="https://youtube.com/shorts/...", width=420)
+        query = ft.TextField(label="Fan question/query", width=420)
+        source_url = ft.TextField(label="Fan source URL", width=420)
+        quote = ft.TextField(label="Quoted fan signal", width=420)
+        confidence = ft.Dropdown(label="Confidence", value="direct", options=[ft.dropdown.Option("direct"), ft.dropdown.Option("indirect")])
+
+        def _save(*, refresh: bool) -> None:
+            try:
+                url = str(video.value or "").strip()
+                if url:
+                    parse_public_video_id(url)
+                demand = []
+                values = [str(field.value or "").strip() for field in (query, source_url, quote)]
+                if any(values):
+                    if not all(values):
+                        raise ValueError("Fan evidence needs query, source URL, and a quote.")
+                    demand = [{"query": values[0], "url": values[1], "quote": values[2],
+                               "source_type": "manual_fan_source", "confidence": str(confidence.value or "direct")}]
+                updated = update_scout_entry_evidence(entry, root=RESEARCH_SESSIONS_ROOT,
+                    manual_import={"demand": demand, "videos": []} if demand else None,
+                    video_url=url or None, refresh=refresh or bool(url))
+            except Exception as exc:
+                page.pop_dialog(); _render_full(error=format_exception(exc)); return
+            discovered_holder[0][index] = updated
+            page.pop_dialog(); _render_full()
+
+        page.show_dialog(ft.AlertDialog(title=ft.Text("Audience evidence", selectable=True), content=ft.Column([
+            ft.Text("Link a YouTube video to track public metadata, or record a source-linked fan question. Manual JSON remains optional advanced import.", size=11, color=TEXT_MUTED, selectable=True),
+            video, query, source_url, quote, confidence,
+        ], tight=True, spacing=7), actions=[ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+            secondary_button("Save fan evidence", lambda _e: _save(refresh=False)),
+            primary_button("Link + refresh metadata", lambda _e: _save(refresh=True))]))
+
+    def _standalone_quality_click(index: int) -> None:
+        entry = discovered_holder[0][index]
+        _run_busy("Assessing this discovery from its supplied facts…", lambda: update_scout_entry_evidence(
+            entry, root=RESEARCH_SESSIONS_ROOT, assess=True),
+            on_success=lambda updated: (discovered_holder[0].__setitem__(index, updated), _render_full()))
+
     def _quality_click(candidate_id: str) -> None:
         """Run one bounded configured-model batch, or enter a grounded manual score."""
         session = session_holder[0]
@@ -1383,6 +1444,9 @@ def build(
         if not fresh:
             _render_full(error="No question came back — type one into the box yourself.")
             return
+        # A session-free annotation: it cannot alter tier-B IDs, text, partial
+        # markers, or gates, and it makes unknown evidence explicit before pick.
+        fresh = annotate_scout_entries(fresh, root=RESEARCH_SESSIONS_ROOT)
         bank_shown[0] = False
         bank_suggestions_holder[0] = []
         discovered_note[0] = ""
@@ -1947,6 +2011,24 @@ def build(
         except Exception as exc:
             _render_full(error=format_exception(exc))
             return
+        def _saved_assess(row) -> None:
+            _run_busy("Assessing saved discovery from supplied facts…", lambda: update_scout_entry_evidence(
+                row["entry"], root=RESEARCH_SESSIONS_ROOT, assess=True),
+                on_success=lambda _result: _open_saved_scout(None))
+
+        def _saved_video(row) -> None:
+            field = ft.TextField(label="Link YouTube video", width=420)
+            def _link(_event) -> None:
+                try:
+                    parse_public_video_id(str(field.value or ""))
+                    update_scout_entry_evidence(row["entry"], root=RESEARCH_SESSIONS_ROOT,
+                                                video_url=str(field.value), refresh=True)
+                except Exception as exc:
+                    page.pop_dialog(); _render_full(error=format_exception(exc)); return
+                page.pop_dialog(); _open_saved_scout(None)
+            page.show_dialog(ft.AlertDialog(title=ft.Text("Link competitor video", selectable=True), content=field,
+                actions=[ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
+                         primary_button("Link + refresh metadata", _link)]))
         cards: list[ft.Control] = []
         for row in rows:
             entry = row["entry"]
@@ -1967,6 +2049,8 @@ def build(
                     f"{row['mode'].upper()} · {row['status'].capitalize()} · {row['created_at'][:10]}",
                     size=10, color=ACCENT, selectable=True,
                 ),
+                ft.Text(f"Editorial quality: {entry.get('editorial_quality', {}).get('total')}" if entry.get('editorial_quality', {}).get('total') is not None
+                        else "Editorial quality: unknown", size=10, color=TEXT_MUTED, selectable=True),
             ]
             for key, value in entry.items():
                 if key in {"question", "moment", "viewer_hook", "fallback"} or value in (None, "", []):
@@ -1988,6 +2072,10 @@ def build(
                             "Discard", key=f"saved-discard-{row['id']}",
                             on_click=lambda _e, r=row: _discard_saved_scout(r),
                         ),
+                        ft.TextButton("Audience evidence", key=f"saved-audience-{row['id']}",
+                                      on_click=lambda _e, r=row: _saved_video(r)),
+                        ft.TextButton("Assess quality", key=f"saved-quality-{row['id']}",
+                                      on_click=lambda _e, r=row: _saved_assess(r)),
                     ], spacing=8),
                 ], spacing=4),
                 padding=10, border=ft.border.all(1, BORDER), border_radius=6,

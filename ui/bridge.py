@@ -5,6 +5,7 @@ them off the event loop via page.run_task().
 import asyncio
 import contextlib
 import json
+import re
 import os
 import queue
 import re
@@ -223,8 +224,9 @@ def save_scout_batch(mode: str, entries, *, context=None, root: Path | None = No
 
 def list_saved_scout(*, root: Path | None = None):
     from stages.research_scout.saved_scout import SavedScoutStore
-
-    return SavedScoutStore(root or RESEARCH_SESSIONS_ROOT).list_entries()
+    rows = SavedScoutStore(root or RESEARCH_SESSIONS_ROOT).list_entries()
+    annotations = annotate_scout_entries([row["entry"] for row in rows], root=root)
+    return [{**row, "entry": annotated} for row, annotated in zip(rows, annotations)]
 
 
 def defer_scout_batch(batch_id: str, *, root: Path | None = None) -> None:
@@ -487,6 +489,53 @@ def _annotate_scout_audience(candidates: list[dict], registry) -> list[dict]:
     from stages.research_scout.opportunity import rank_with_registry
 
     return rank_with_registry(candidates, registry)
+
+
+_YOUTUBE_ID = re.compile(r"(?:youtu\.be/|youtube\.com/(?:watch\?v=|shorts/|embed/))([A-Za-z0-9_-]{11})(?:[?&#/]|$)")
+
+
+def parse_public_video_id(value: str) -> str:
+    match = _YOUTUBE_ID.search(str(value or "").strip())
+    if not match:
+        raise ValueError("Paste a valid YouTube watch, Shorts, embed, or youtu.be URL.")
+    return match.group(1)
+
+
+def annotate_scout_entries(entries: list[dict], *, root: Path | None = None) -> list[dict]:
+    """Session-free discovery/saved-batch annotations; never changes entry identity."""
+    from stages.research_scout.audience_evidence import AudienceEvidenceStore
+    return _annotate_scout_audience([dict(entry) for entry in entries], AudienceEvidenceStore(_scout_store(root).root))
+
+
+def update_scout_entry_evidence(
+    entry: dict, *, manual_import: dict | None = None, manual_quality: dict | None = None,
+    video_url: str | None = None, refresh: bool = False, assess: bool = False, root: Path | None = None,
+) -> dict:
+    """Evidence actions for discovery/saved entries before a ResearchSession exists."""
+    from stages.research_scout.audience_evidence import AudienceEvidenceStore, PublicVideoMetadataAdapter
+    from stages.research_scout.opportunity import candidate_key, editorial_quality, factual_input_hash
+    registry = AudienceEvidenceStore(_scout_store(root).root)
+    key = candidate_key(entry)
+    if manual_import is not None:
+        _manual_audience_import(registry, key, manual_import)
+    if video_url:
+        registry.link_video(key, parse_public_video_id(video_url))
+    if manual_quality is not None:
+        if editorial_quality(manual_quality)["status"] != "assessed":
+            raise ValueError("Manual quality needs a 0–1 score, rationale, and selected fact cue.")
+        registry.save_quality_assessment(key, {**manual_quality, "input_hash": factual_input_hash(entry),
+                                               "rubric_version": 2, "model": "manual"}, assessor="manual")
+    if assess:
+        from stages.research_scout.editorial_assessor import ConfiguredEditorialAssessor, candidate_token
+        result = ConfiguredEditorialAssessor().assess_batch([entry])
+        assessment = result.assessments.get(candidate_token(0, entry))
+        if assessment:
+            registry.save_quality_assessment(key, assessment, assessor=f"model:{result.model or 'unknown'}")
+        elif result.error:
+            registry.save_quality_assessment(key, {"reason": result.error}, assessor=f"model:{result.model or 'unknown'}", status="unavailable")
+    if refresh:
+        PublicVideoMetadataAdapter().refresh_many(registry, key)
+    return _annotate_scout_audience([entry], registry)[0]
 
 
 def update_scout_audience(
