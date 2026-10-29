@@ -38,6 +38,7 @@ def tts_env(tmp_path, monkeypatch):
     log = tmp_path / "worker_launches.jsonl"
     monkeypatch.setenv("FAKE_WORKER_LOG", str(log))
     monkeypatch.delenv("FAKE_WORKER_DELAY", raising=False)
+    monkeypatch.delenv("FAKE_WORKER_CRASH_EXIT", raising=False)
     monkeypatch.setattr(bt, "_RUNNERS", {})
 
     class Env:
@@ -273,6 +274,23 @@ def test_a_chunk_the_worker_cannot_make_is_retried_once_then_reported(tts_env):
     assert len(tts_env.launches()) == 2                # one retry in a fresh job
     assert "could not be synthesized" in status["error"] and status["completed"] is False
     assert status["chunks_done"] == 1 and "1" in {k.partition(":")[0] for k in status["beat_durations"]}
+
+
+def test_worker_native_exit_is_reported_without_a_retry(tts_env, monkeypatch):
+    """A process-level crash cannot be repaired by replaying every missing chunk.
+
+    This catches removal of the subprocess exit-code/tail propagation that lets a native
+    Chatterbox failure degrade into the misleading generic "could not be synthesized" status.
+    """
+    monkeypatch.setenv("FAKE_WORKER_CRASH_EXIT", "137")
+    tts_env.project("qa", [_scene(1, "One sentence.")])
+
+    status = bt.BackgroundTTSRunner("qa").run_sync()
+
+    assert tts_env.launches() and len(tts_env.launches()) == 1
+    assert status["completed"] is False
+    assert "exited with code 137" in status["error"]
+    assert "native-like crash diagnostic" in status["error"]
 
 
 def test_a_narration_with_no_file_reports_an_error(tts_env):

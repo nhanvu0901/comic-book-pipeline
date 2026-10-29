@@ -25,8 +25,29 @@ so a narration can carry emotion per scene.
 from __future__ import annotations
 
 import json
+import inspect
 import sys
 from pathlib import Path
+
+
+def enable_windows_pread_loader(tts_module, load_file) -> None:
+    """Keep Chatterbox model weights off safetensors' Windows mmap path.
+
+    Torch can terminate with a native access violation while indexing mmap-backed safetensors on
+    Windows.  safetensors 0.8 introduced ``backend=\"pread\"``, which avoids that path.  Patch the
+    loader reference captured by Chatterbox, rather than changing its provider or model files.
+    """
+    if sys.platform != "win32":
+        return
+    if "backend" not in inspect.signature(load_file).parameters:
+        raise RuntimeError(
+            "Windows Chatterbox requires safetensors >= 0.8 for backend='pread'; "
+            "repair the isolated .venv-chatterbox, not the pipeline venv.")
+
+    def _pread_load_file(filename, device="cpu"):
+        return load_file(filename, device=device, backend="pread")
+
+    tts_module.load_file = _pread_load_file
 
 
 def main() -> int:
@@ -37,7 +58,11 @@ def main() -> int:
     import wave
 
     import torch
+    import chatterbox.tts as chatterbox_tts
     from chatterbox.tts import ChatterboxTTS
+    from safetensors.torch import load_file as safetensors_load_file
+
+    enable_windows_pread_loader(chatterbox_tts, safetensors_load_file)
 
     def _save_wav(path: Path, wav, sr: int) -> None:
         """Write float32 [-1,1] as 16-bit PCM. torchaudio.save is NOT used: torchaudio 2.11

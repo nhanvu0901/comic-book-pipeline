@@ -254,7 +254,10 @@ def synthesize_missing(
     }))
     _log(f"[bg-tts] one worker job for {len(todo)} chunk(s)")
 
-    proc = subprocess.Popen([str(venv_py), str(chatterbox_tts._WORKER), str(job)],
+    # Native extensions can terminate the interpreter before Python can emit an exception.
+    # Faulthandler writes the active native-crash stack into the same receipt stream as normal
+    # worker progress, so the caller can expose a repairable diagnostic instead of retrying it.
+    proc = subprocess.Popen([str(venv_py), "-X", "faulthandler", str(chatterbox_tts._WORKER), str(job)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace", bufsize=1)
     lines: "queue.Queue[str | None]" = queue.Queue()
@@ -270,6 +273,7 @@ def synthesize_missing(
     tail: list[str] = []
     last_output = time.monotonic()
     stopped = False
+    exit_code: int | None = None
     try:
         while True:
             if should_stop is not None and should_stop():
@@ -321,11 +325,17 @@ def synthesize_missing(
             proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             pass
+        exit_code = proc.returncode
         shutil.rmtree(tmp, ignore_errors=True)
 
     left = [t for t in todo if not cache.has(t)]
     if left and not stopped:
-        _log(f"[bg-tts] {len(left)} chunk(s) not produced. Worker output: " + " | ".join(tail[-6:]))
+        receipt = " | ".join(tail[-12:]) or "(no worker output)"
+        if exit_code not in (None, 0):
+            raise RuntimeError(
+                f"Chatterbox worker exited with code {exit_code} before producing {len(left)} chunk(s). "
+                f"Worker output: {receipt}")
+        _log(f"[bg-tts] {len(left)} chunk(s) not produced. Worker output: {receipt}")
     return left
 
 

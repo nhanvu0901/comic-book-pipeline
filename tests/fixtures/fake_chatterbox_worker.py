@@ -22,6 +22,10 @@ def main() -> int:
     out_dir = Path(job["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     print(json.dumps({"ready": True, "device": "cpu", "sr": 24000}), flush=True)
+    crash_code = os.environ.get("FAKE_WORKER_CRASH_EXIT")
+    if crash_code:
+        print("native-like crash diagnostic", flush=True)
+        return int(crash_code)
     delay = float(os.environ.get("FAKE_WORKER_DELAY", "0") or 0)
     for i, ch in enumerate(job["chunks"]):
         if delay:
