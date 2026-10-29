@@ -195,12 +195,16 @@ def process_clip_pick(
     *,
     end: float | None = None,
     on_state: Callable[[str], None] | None = None,
-) -> dict[str, Any]:
+    preview_token: str | None = None,
+    commit: Callable[[dict[str, Any]], bool] | None = None,
+) -> dict[str, Any] | None:
     """Download the section for the picked moment, render its 9:16 preview, and put it in the
     manifest with a rebased timeline. When `end` (> start) is given, the entire [start, end]
     span is downloaded and speed-adjusted (`fit_to_beat=True`) to fit `beat_duration` exactly.
     Raises ClipPickError (with the reason) when the footage after `start` cannot fill the beat.
-    Returns the manifest entry."""
+    `commit`, when supplied by a background job, is the short critical section that decides
+    whether this completed work is still current before it reaches the durable manifest. Returns
+    None when that job was superseded."""
     say = on_state or (lambda _s: None)
     clips_dir = project_root / "review" / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
@@ -220,7 +224,11 @@ def process_clip_pick(
         )
 
     say("rendering")
-    preview_path = clips_dir / f"preview_{beat.replace(':', '_')}.mp4"
+    preview_stem = f"preview_{beat.replace(':', '_')}"
+    # Concurrent picks for one beat must never render to the same preview path. A generation-scoped
+    # artifact lets a superseded job remove only its own output after its durable commit is refused.
+    preview_name = f"{preview_stem}_{preview_token}.mp4" if preview_token else f"{preview_stem}.mp4"
+    preview_path = clips_dir / preview_name
     try:
         if has_end and clip_span is not None:
             clips.render_clip_preview(
@@ -255,7 +263,16 @@ def process_clip_pick(
         entry["end"] = clip_span
         entry["fit_to_beat"] = True
         entry["source_end"] = end_f
-    clips.upsert_beat_clip(project_root, entry)
+    if commit is not None:
+        if not commit(entry):
+            if preview_token:
+                try:
+                    preview_path.unlink()
+                except OSError:
+                    pass
+            return None
+    else:
+        clips.upsert_beat_clip(project_root, entry)
     return entry
 
 
@@ -270,6 +287,19 @@ def _run_pick_job(
 ) -> dict | None:
     def state(s: str, **kw: Any) -> bool:
         return _set_pick(project, beat, gen, state=s, **kw) != -1
+
+    def commit(entry: dict[str, Any]) -> bool:
+        """Check this job's generation and persist as one short operation.
+
+        `_set_pick()` takes the same lock, so a newer pick cannot arrive between the generation
+        check and manifest upsert. Network/download/render work remains outside this lock.
+        """
+        with _PICKS_LOCK:
+            current = _PICKS.get((project, beat))
+            if current is None or current.get("gen") != gen:
+                return False
+            clips.upsert_beat_clip(project_root, entry)
+            return True
 
     try:
         from stages.stage_4.background_tts import bump_priority_beat
@@ -292,16 +322,21 @@ def _run_pick_job(
         state("downloading", beat_duration=beat_dur, message="Đang tải đoạn clip…")
         entry = process_clip_pick(project_root, beat, video_id, start, beat_dur, end=end,
                                   on_state=lambda s: state(s, message={"downloading": "Đang tải đoạn clip…",
-                                                                      "rendering": "Đang dựng preview 9:16…"}.get(s, s)))
+                                                                      "rendering": "Đang dựng preview 9:16…"}.get(s, s)),
+                                  preview_token=str(gen), commit=commit)
+        if entry is None:
+            return None
         if not state("ready", entry=entry, message="✓ Đã chọn clip cho beat."):
             return None
         _broadcast_moment_picked({"project": project, "state": "ready", **entry})
         return entry
     except ClipPickError as exc:
-        state("error", message=str(exc))
+        if not state("error", message=str(exc)):
+            return None
     except Exception as exc:
         logger.warning("clip pick failed for %s/%s: %s", project, beat, exc, exc_info=True)
-        state("error", message=f"Lỗi khi tải/dựng clip: {exc}")
+        if not state("error", message=f"Lỗi khi tải/dựng clip: {exc}"):
+            return None
     _broadcast_moment_picked({"project": project, "beat": beat, "state": "error",
                               "message": get_pick_state(project, beat).get("message", "")})
     return None

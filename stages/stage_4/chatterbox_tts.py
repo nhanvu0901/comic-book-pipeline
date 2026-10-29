@@ -19,9 +19,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import queue
 import re
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -130,6 +134,26 @@ def _wrap_pcm_as_wav(pcm: bytes, *, sample_rate: int, sampwidth: int, channels: 
     return buf.getvalue()
 
 
+def _kill_worker_tree(proc: subprocess.Popen) -> None:
+    """Stop the isolated worker and everything it launched, then let the caller reap it.
+
+    On Windows the venv launcher/model stack can have descendants, so ``proc.kill()`` alone is
+    insufficient. POSIX workers are born in their own session for the equivalent group kill.
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, check=False)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
 def synthesize(
     text: str,
     *,
@@ -178,12 +202,37 @@ def synthesize(
         "seed": active_seed,
     }))
 
+    popen_kwargs = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+                    if os.name == "nt" else {"start_new_session": True})
     proc = subprocess.Popen([str(venv_py), str(_WORKER), str(job)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, bufsize=1)
+                            text=True, bufsize=1, **popen_kwargs)
     done, failed, tail = 0, [], []
+    lines: "queue.Queue[str | None]" = queue.Queue()
+
+    def _pump_stdout() -> None:
+        try:
+            for line in proc.stdout or ():
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    reader = threading.Thread(target=_pump_stdout, daemon=True, name="chatterbox-stdout")
+    reader.start()
+    deadline = time.monotonic() + max(0.0, float(timeout))
     try:
-        for line in proc.stdout:                       # progress, not a silent 40-minute wait
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                tail.append(f"(worker timed out after {timeout}s)")
+                raise RuntimeError("Chatterbox worker timed out after "
+                                   f"{timeout}s. Worker output:\n  " + "\n  ".join(tail[-12:]))
+            try:
+                line = lines.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                continue
+            if line is None:
+                break
             line = line.strip()
             if not line:
                 continue
@@ -205,10 +254,15 @@ def synthesize(
                 done += 1
                 if done % 25 == 0 or done == len(chunks):
                     _log(f"[chatterbox] {done}/{len(chunks)} chunks")
-        proc.wait(timeout=timeout)
     finally:
         if proc.poll() is None:
-            proc.kill()
+            _kill_worker_tree(proc)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _kill_worker_tree(proc)
+            proc.wait(timeout=10)
+        reader.join(timeout=1)
 
     wav_dir = tmp / "wav"
     pcm_parts: list[bytes] = []

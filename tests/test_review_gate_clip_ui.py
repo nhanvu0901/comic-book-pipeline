@@ -5,6 +5,7 @@ The invalidation is tested through the REAL code: the module-level clear_project
 directly, and then the whole screen built headless (FakePage) on a synthetic project with a save
 replayed through the real handler — not a copy of the rule re-implemented in the test."""
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,60 @@ def test_beat_durations_come_from_the_one_status_file(tmp_path, monkeypatch):
     (proj / "cache" / "tts").mkdir(parents=True)
     (proj / "cache" / "tts" / "status.json").write_text(json.dumps({"beat_durations": {"1:0": 99.0}}))
     assert sg._load_beat_durations("test_proj")["1:0"] == 2.9
+
+
+def test_latest_overlapping_pick_wins_the_durable_manifest_and_preview(tmp_path, monkeypatch):
+    """A slower old pick may finish after a new one, but it must not replace the new selection."""
+    _patch_roots(monkeypatch, tmp_path)
+    project, review = tmp_path / "test_proj", tmp_path / "test_proj" / "review"
+    review.mkdir(parents=True)
+    (review / "tts_status.json").write_text(json.dumps({"beat_durations": {"1:0": 2.0}}))
+    old_started, release_old = threading.Event(), threading.Event()
+    renders = []
+
+    def fake_fetch(url, out_dir, **_kw):
+        video_id = url.rsplit("=", 1)[-1]
+        out = Path(out_dir) / f"{video_id}.mp4"
+        out.write_bytes(video_id.encode())
+        return out
+
+    def fake_render(section_path, *, out_path, **_kw):
+        renders.append(Path(out_path))
+        marker = len(renders)
+        if marker == 1:
+            old_started.set()
+            assert release_old.wait(5), "old pick was never released"
+        Path(out_path).write_text(f"render-{marker}", encoding="utf-8")
+        return Path(out_path)
+
+    monkeypatch.setattr(web_routes.clip_fetch, "fetch_clip_section", fake_fetch)
+    monkeypatch.setattr(clips, "render_clip_preview", fake_render)
+    web_routes._PICKS.clear()
+    try:
+        old_gen = web_routes._set_pick("test_proj", "1:0", state="queued")
+        old = threading.Thread(
+            target=web_routes._run_pick_job,
+            args=("test_proj", project, "1:0", "AAAAAAAAAAA", 0.0, old_gen),
+        )
+        old.start()
+        assert old_started.wait(5), "old pick never reached its render"
+
+        new_gen = web_routes._set_pick("test_proj", "1:0", state="queued")
+        new_entry = web_routes._run_pick_job(
+            "test_proj", project, "1:0", "AAAAAAAAAAA", 1.0, new_gen,
+        )
+        release_old.set()
+        old.join(5)
+
+        manifest = clips.read_manifest_doc(project)["clips"]
+        assert not old.is_alive()
+        assert new_entry and new_entry["source_start"] == 1.0
+        assert manifest == [new_entry]
+        assert (project / new_entry["preview_file"]).read_text(encoding="utf-8") == "render-2"
+        assert not (project / "review" / "clips" / f"preview_1_0_{old_gen}.mp4").exists()
+        assert (project / "review" / "clips" / "AAAAAAAAAAA.mp4").exists(), "shared source stays for B"
+    finally:
+        web_routes._PICKS.clear()
 
 
 def test_clear_project_locks_and_clips_is_total_and_resyncs_tts(tmp_path, monkeypatch):
