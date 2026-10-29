@@ -31,6 +31,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _aware_timestamp(value: Any) -> datetime | None:
+    """Parse a persisted timestamp only when it includes a UTC offset.
+
+    Older manual rows can be naive.  They remain readable as stale observations
+    rather than crashing the card; only new writes require an explicit offset.
+    """
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
+
+
 class AudienceEvidenceStore:
     """Separate SQLite registry; it never mutates scout sessions or production data."""
 
@@ -110,11 +123,27 @@ class AudienceEvidenceStore:
     def add_video_snapshot(self, *, video_id: str, url: str, channel: str, published_at: str | None,
                            duration_seconds: float | None, views: int, observed_at: str | None = None,
                            origin: str = "unknown") -> None:
+        normalized_observed_at = self.normalize_observed_at(observed_at)
         with self._connect(write=True) as connection:
             connection.execute(
                 "INSERT INTO video_snapshots(video_id, url, channel, published_at, duration_seconds, views, observed_at, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (video_id, url, channel, published_at, duration_seconds, int(views), observed_at or _now(), origin),
+                (video_id, url, channel, published_at, duration_seconds, int(views), normalized_observed_at, origin),
             )
+
+    @staticmethod
+    def normalize_observed_at(observed_at: str | None) -> str:
+        """Normalize a new observation timestamp, requiring an explicit timezone.
+
+        Empty values mean "observed now" and are stored in UTC.  Manual values
+        must name an offset (or ``Z``) so they cannot become ambiguous database
+        rows that later break growth/staleness calculations.
+        """
+        if observed_at is None or not str(observed_at).strip():
+            return _now()
+        parsed = _aware_timestamp(observed_at)
+        if parsed is None:
+            raise ValueError("observed_at must be ISO 8601 with an explicit timezone offset or Z")
+        return parsed.isoformat()
 
     def record_refresh_failure(self, video_id: str, error: str, *, checked_at: str | None = None) -> None:
         with self._connect(write=True) as connection:
@@ -138,17 +167,14 @@ class AudienceEvidenceStore:
         if not rows:
             return {"status": "unknown", "current_views": None, "growth": {"status": "unknown"}}
         latest = rows[-1]
-        try:
-            stale = (datetime.now(timezone.utc) - datetime.fromisoformat(str(latest["observed_at"]))).total_seconds() > stale_after_seconds
-        except ValueError:
-            stale = True
+        latest_at = _aware_timestamp(latest["observed_at"])
+        stale = (latest_at is None or
+                 (datetime.now(timezone.utc) - latest_at).total_seconds() > stale_after_seconds)
         growth: dict[str, Any] = {"status": "unknown"}
         if len(rows) >= 2:
             prior = rows[-2]
-            try:
-                seconds = (datetime.fromisoformat(str(latest["observed_at"])) - datetime.fromisoformat(str(prior["observed_at"]))).total_seconds()
-            except ValueError:
-                seconds = 0.0
+            prior_at = _aware_timestamp(prior["observed_at"])
+            seconds = (latest_at - prior_at).total_seconds() if latest_at and prior_at else 0.0
             if seconds > 0:
                 growth = {"status": "observed", "views_delta": int(latest["views"]) - int(prior["views"]), "seconds": seconds}
         return {
@@ -318,10 +344,9 @@ class PublicVideoMetadataAdapter:
         skipped_fresh: list[str] = []
         for video_id in store.videos_for(candidate_key)[:max(0, limit)]:
             observed_at = store.last_observed_at(video_id)
-            try:
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(observed_at)).total_seconds() if observed_at else None
-            except ValueError:
-                age = None
+            parsed_observed_at = _aware_timestamp(observed_at) if observed_at else None
+            age = ((datetime.now(timezone.utc) - parsed_observed_at).total_seconds()
+                   if parsed_observed_at is not None else None)
             if age is not None and age < min_refresh_seconds:
                 skipped_fresh.append(video_id)
                 continue

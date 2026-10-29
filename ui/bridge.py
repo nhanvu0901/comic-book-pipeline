@@ -467,6 +467,9 @@ def _manual_audience_import(registry, key: str, payload: dict) -> None:
         if any(item.get(name) is None or not str(item.get(name)).strip() for name in required):
             raise ValueError("Each video item needs video_id, url, channel, and views.")
         int(item["views"])
+        observed_at = str(item.get("observed_at") or "").strip()
+        if observed_at:
+            registry.normalize_observed_at(observed_at)
     for item in demand:
         registry.add_demand_evidence(
             candidate_key=key, query=str(item["query"]), url=str(item["url"]), quote=str(item["quote"]),

@@ -620,7 +620,8 @@ def _answer_digest(question: str, items: list[dict]) -> str:
 
 def build_contexts(
     question: str, research: dict, project_name: str,
-    *, researched_at: str = "", allow_missing_reader_urls: bool = False, log=print,
+    *, researched_at: str = "", allow_missing_reader_urls: bool = False,
+    publisher: str | None = None, log=print,
 ) -> tuple[Path, Path]:
     """Materialise research into answer_context.json + comic_context.json.
 
@@ -730,7 +731,7 @@ def build_contexts(
         "series": question,
         "issue": "Q&A",
         "year": year,
-        "publisher": "Marvel/DC (mixed)",
+        "publisher": str(publisher or "").strip() or "Marvel/DC (mixed)",
         "characters": [it["entity"] for it in items],
         "plot_summary": _answer_digest(question, items),
         "plot_status": "OK",

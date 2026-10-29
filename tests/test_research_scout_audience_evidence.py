@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 import sqlite3
 
+import pytest
+
 from stages.research_scout.audience_evidence import AudienceEvidenceStore, PublicVideoMetadataAdapter
 from stages.research_scout.opportunity import candidate_key
 from stages.research_scout.storage import SessionStore
@@ -185,6 +187,59 @@ def test_manual_import_and_offline_refresh_keep_candidate_and_existing_snapshot(
     assert card["audience_evidence"]["demand_evidence"][0]["url"] == "https://forum.example/q"
     assert card["audience_evidence"]["signals"]["saturation"]["videos"][0]["current_views"] == 100
     assert card["audience_evidence"]["signals"]["saturation"]["videos"][0]["last_refresh_error"] == "offline"
+
+
+def test_manual_import_rejects_naive_timestamp_before_any_new_rows_are_written(tmp_path):
+    sessions = tmp_path / "research_sessions"
+    store = SessionStore(sessions)
+    session = store.create(mode="qa", user_intent="Why does Hero change?")
+    candidate = {
+        "id": "c1", "title": "Hero", "question": "Why does Hero change?",
+        "canonical_anchor": "Hero", "concept_key": "change",
+        "claim_citation": {"url": "https://example.test", "quote": "Hero changes course."},
+    }
+    store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [candidate]})
+    registry = AudienceEvidenceStore(sessions)
+    key = candidate_key(candidate)
+    registry.add_demand_evidence(candidate_key=key, query="existing", url="https://forum.example/old",
+                                 quote="Existing evidence.", source_type="community", confidence="direct")
+
+    with pytest.raises(ValueError, match="timezone"):
+        update_scout_audience(session.id, "c1", root=sessions, manual_import={
+            "demand": [{"query": "new", "url": "https://forum.example/new", "quote": "New evidence.",
+                        "source_type": "community", "confidence": "direct"}],
+            "videos": [
+                {"video_id": "good-video", "url": "https://youtu.be/good-video", "channel": "Test", "views": 1,
+                 "observed_at": "2026-01-01T00:00:00+00:00"},
+                {"video_id": "bad-video", "url": "https://youtu.be/bad-video", "channel": "Test", "views": 2,
+                 "observed_at": "2026-01-01T00:00:00"},
+            ],
+        })
+
+    assert [row["query"] for row in registry.evidence_for(key)] == ["existing"]
+    with sqlite3.connect(registry.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM video_snapshots").fetchone()[0] == 0
+
+
+def test_legacy_naive_snapshot_is_stale_but_does_not_break_card_annotation(tmp_path):
+    candidate = {"title": "Hero", "question": "Why does Hero change?", "canonical_anchor": "Hero",
+                 "concept_key": "change", "claim_citation": {"url": "https://example.test", "quote": "Fact."}}
+    registry = AudienceEvidenceStore(tmp_path)
+    key = candidate_key(candidate)
+    registry.link_video(key, "legacy-video")
+    with sqlite3.connect(registry.path) as connection:
+        connection.execute(
+            "INSERT INTO video_snapshots(video_id, url, channel, published_at, duration_seconds, views, observed_at, origin) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("legacy-video", "https://youtu.be/legacy-video", "Test", None, None, 7,
+             "2026-01-01T00:00:00", "manual_import"),
+        )
+
+    annotated = annotate_scout_entries([candidate], root=tmp_path)
+
+    video = annotated[0]["audience_evidence"]["signals"]["saturation"]["videos"][0]
+    assert video["status"] == "stale"
+    assert video["current_views"] == 7
 
 
 def test_manual_quality_updates_ranked_card_with_grounded_cue(tmp_path):

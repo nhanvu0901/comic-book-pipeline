@@ -259,7 +259,8 @@ def create_project_from_session(
         research = _qa_research(session, selected, store=store)
         try:
             answer_research.build_contexts(
-                session.user_intent, research, project_slug, allow_missing_reader_urls=override
+                session.user_intent, research, project_slug, allow_missing_reader_urls=override,
+                publisher=session.publisher,
             )
         except answer_research.MissingReaderUrlsError as exc:
             raise ScoutUserError(
@@ -540,7 +541,7 @@ def _qa_research(
                 "entity": _first_text(candidate, "entity", "character", "title"),
                 "how_or_why": _first_text(candidate, "how_or_why", "summary", "visible_event"),
                 "source_comic": _first_text(candidate, "source_comic", "series_issue_year"),
-                "source_year": _first_text(candidate, "source_year") or _year(candidate),
+                "source_year": _issue_source_year(candidate),
                 "reader_url": _first_text(gate, "reader_url") or _first_text(candidate, "reader_url"),
                 "drawable_moment": _first_text(
                     candidate, "drawable_moment", "visible_event", "what_visibly_happens", "moment"
@@ -589,7 +590,7 @@ def _micro_facts(candidate: Mapping[str, Any], gate: Mapping[str, Any]) -> _Micr
         exact_issue=exact_issue,
         reader_url=_first_text(gate, "reader_url") or _first_text(candidate, "reader_url"),
         series=series,
-        year=_first_text(candidate, "source_year") or _year(candidate),
+        year=_issue_source_year(candidate),
         target_moment=_first_text(candidate, "visible_event", "what_visibly_happens", "moment"),
         char_name=_first_text(candidate, "character_or_thing", "character", "entity", "title") or series,
     )
@@ -818,7 +819,7 @@ def _create_micro_project(
         "series": facts.series,
         "issues": facts.exact_issue,
         "year": facts.year,
-        "publisher": "",
+        "publisher": session.publisher or "",
         "characters": [facts.char_name],
         "reader_url": facts.reader_url,
         "batcave_url": facts.reader_url,
@@ -849,9 +850,16 @@ def _first_text(data: Mapping[str, Any], *keys: str) -> str:
     return ""
 
 
-def _year(candidate: Mapping[str, Any]) -> str:
-    match = re.search(r"\b(?:19|20)\d{2}\b", _first_text(candidate, "series_issue_year"))
-    return match.group(0) if match else ""
+def _issue_source_year(candidate: Mapping[str, Any]) -> str:
+    """Return the verified release year for this exact issue, never its volume year.
+
+    ``candidate_release_year`` already resolves the evidence policy: a fetched
+    ``source_release_year`` wins over the label's cover year, otherwise only the
+    one year after the exact issue number is usable.  Do not fall back to an
+    arbitrary year elsewhere in the label — that is commonly the series launch.
+    """
+    year = candidate_release_year(candidate)
+    return str(year) if year is not None else ""
 
 
 def _series_from_issue(value: str) -> str:

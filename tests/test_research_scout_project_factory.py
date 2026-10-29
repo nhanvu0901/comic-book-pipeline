@@ -82,6 +82,59 @@ def test_micro_factory_writes_target_moment_without_changing_stage_contract(tmp_
     assert context["reader_url"] == candidate["reader_url"]
 
 
+def test_micro_factory_preserves_verified_issue_year_and_selected_publisher(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidate = _candidate("micro", mode=ScoutMode.MICRO)
+    candidate.update({
+        "series_issue_year": "Action Comics (1938) #1064 (2024)",
+        "source_release_year": 2024,
+        "source_year": "1938",
+    })
+    session = _session(tmp_path, ScoutMode.MICRO, [candidate], [_gate("micro")])
+    session.publisher = "DC"
+    SessionStore(tmp_path / "research-sessions").save(session)
+
+    slug = factory.create_project_from_session(session.id, "action-modern")
+
+    context = json.loads((tmp_path / "projects" / slug / "comic_context.json").read_text())
+    assert context["year"] == "2024"
+    assert context["publisher"] == "DC"
+
+
+def test_qa_factory_hands_each_verified_issue_year_and_publisher_to_context_builder(tmp_path, monkeypatch):
+    _wire_roots(tmp_path, monkeypatch)
+    candidates = [_candidate("a", index=1), _candidate("b", index=2), _candidate("c", index=3)]
+    for candidate, label, release_year in zip(candidates, (
+        "Hero One (2011) #7 (2014)",
+        "Hero Two (2016) #8 (2018)",
+        "Hero Three (2020) #9 (2021)",
+    ), (2014, 2018, 2021)):
+        candidate.update({"series_issue_year": label, "source_release_year": release_year,
+                          "source_year": str(release_year - 1)})
+    session = _session(tmp_path, ScoutMode.QA, candidates, [_gate(c["id"]) for c in candidates])
+    session.publisher = "DC"
+    SessionStore(tmp_path / "research-sessions").save(session)
+    monkeypatch.setattr(factory.answer_research, "verify_issue",
+                        lambda *args, **kwargs: {"ok": True, "note": "verified"})
+
+    factory.create_project_from_session(session.id, "dc-answer", series_diversity_override=True)
+
+    root = tmp_path / "projects" / "dc-answer"
+    answer = json.loads((root / "answer_context.json").read_text())
+    comic = json.loads((root / "comic_context.json").read_text())
+    assert [item["source_year"] for item in answer["items"]] == ["2014", "2018", "2021"]
+    assert comic["publisher"] == "DC"
+
+
+@pytest.mark.parametrize(("candidate", "expected"), [
+    ({"series_issue_year": "Action Comics (1938) #1064 (2024)", "source_release_year": 2024}, "2024"),
+    ({"series_issue_year": "Hero (2011) #7 (2015)", "source_release_year": 2014}, "2014"),
+    ({"series_issue_year": "Hero (2011) #7"}, ""),
+])
+def test_issue_source_year_never_uses_series_start_year(candidate, expected):
+    assert factory._issue_source_year(candidate) == expected
+
+
 def test_micro_factory_refuses_an_old_off_topic_candidate_even_with_override(tmp_path, monkeypatch):
     _wire_roots(tmp_path, monkeypatch)
     candidate = _candidate("wrong", mode=ScoutMode.MICRO)
