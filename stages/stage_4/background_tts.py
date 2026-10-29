@@ -241,7 +241,7 @@ def synthesize_missing(
     if not venv_py.exists():
         raise RuntimeError(
             f"Chatterbox venv missing at {venv_py.parent.parent} (set CHATTERBOX_VENV, or create it "
-            f"with: python -m stages.stage_4.chatterbox_runtime)")
+            f"with: python stages/stage_4/chatterbox_runtime.py)")
 
     st = cache.settings
     tmp = Path(tempfile.mkdtemp(prefix="chatterbox_batch_"))

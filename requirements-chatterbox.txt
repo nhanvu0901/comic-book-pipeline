@@ -3,4 +3,4 @@
 # applies stages/stage_4/chatterbox_runtime.patch to PACKAGE METADATA only, builds the local
 # chatterbox-tts==0.1.7+cbp.1 wheel, then lets pip resolve its declared safetensors==0.8.0 normally.
 #
-#   python -m stages.stage_4.chatterbox_runtime
+#   python stages/stage_4/chatterbox_runtime.py
