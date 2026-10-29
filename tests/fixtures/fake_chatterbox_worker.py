@@ -26,6 +26,7 @@ def main() -> int:
     if crash_code:
         print("native-like crash diagnostic", flush=True)
         return int(crash_code)
+    crash_after = int(os.environ.get("FAKE_WORKER_CRASH_AFTER", "0") or 0)
     delay = float(os.environ.get("FAKE_WORKER_DELAY", "0") or 0)
     for i, ch in enumerate(job["chunks"]):
         if delay:
@@ -40,6 +41,9 @@ def main() -> int:
             wf.setframerate(24000)
             wf.writeframes(b"\x00\x00" * int(sec * 24000))
         print(json.dumps({"i": i, "sec": sec, "sr": 24000}), flush=True)
+        if crash_after and i + 1 >= crash_after:
+            print("native-like crash diagnostic", flush=True)
+            return 137
     return 0
 
 

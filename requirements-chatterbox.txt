@@ -1,0 +1,5 @@
+# Dedicated local runtime for stages/stage_4/_chatterbox_worker.py only.
+# Do not install this into the pipeline venv: it intentionally carries newer transformers/huggingface deps.
+chatterbox-tts==0.1.7
+# Windows uses backend="pread" to avoid the native crash from the default mmap loader.
+safetensors>=0.8,<0.9

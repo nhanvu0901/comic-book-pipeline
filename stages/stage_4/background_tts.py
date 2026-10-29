@@ -213,6 +213,14 @@ def _prompt_wav(voice: str) -> str | None:
     return None
 
 
+def worker_exit_label(exit_code: int) -> str:
+    """Render Windows native status codes consistently whether Popen returns them signed or unsigned."""
+    unsigned = exit_code & 0xFFFFFFFF
+    if unsigned >= 0x80000000:
+        return f"{exit_code} (0x{unsigned:08X})"
+    return str(exit_code)
+
+
 def synthesize_missing(
     texts: Sequence[str],
     cache: ChunkCache,
@@ -233,7 +241,8 @@ def synthesize_missing(
     if not venv_py.exists():
         raise RuntimeError(
             f"Chatterbox venv missing at {venv_py.parent.parent} (set CHATTERBOX_VENV, or create it "
-            f"with: python3 -m venv .venv-chatterbox && {venv_py} -m pip install chatterbox-tts)")
+            f"with: python3 -m venv .venv-chatterbox && {venv_py} -m pip install -r "
+            f"{Path(__file__).resolve().parents[2] / 'requirements-chatterbox.txt'})")
 
     st = cache.settings
     tmp = Path(tempfile.mkdtemp(prefix="chatterbox_batch_"))
@@ -333,7 +342,7 @@ def synthesize_missing(
         receipt = " | ".join(tail[-12:]) or "(no worker output)"
         if exit_code not in (None, 0):
             raise RuntimeError(
-                f"Chatterbox worker exited with code {exit_code} before producing {len(left)} chunk(s). "
+                f"Chatterbox worker exited with code {worker_exit_label(exit_code)} before producing {len(left)} chunk(s). "
                 f"Worker output: {receipt}")
         _log(f"[bg-tts] {len(left)} chunk(s) not produced. Worker output: {receipt}")
     return left

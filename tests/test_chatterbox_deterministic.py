@@ -39,6 +39,7 @@ def tts_env(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_WORKER_LOG", str(log))
     monkeypatch.delenv("FAKE_WORKER_DELAY", raising=False)
     monkeypatch.delenv("FAKE_WORKER_CRASH_EXIT", raising=False)
+    monkeypatch.delenv("FAKE_WORKER_CRASH_AFTER", raising=False)
     monkeypatch.setattr(bt, "_RUNNERS", {})
 
     class Env:
@@ -291,6 +292,23 @@ def test_worker_native_exit_is_reported_without_a_retry(tts_env, monkeypatch):
     assert status["completed"] is False
     assert "exited with code 137" in status["error"]
     assert "native-like crash diagnostic" in status["error"]
+
+
+def test_native_exit_keeps_completed_chunks_and_records_the_receipt(tts_env, monkeypatch):
+    """A child crash must preserve audio already cached before it and expose its last output."""
+    monkeypatch.setenv("FAKE_WORKER_CRASH_AFTER", "1")
+    tts_env.project("qa", [_scene(1, "First sentence."), _scene(2, "Second sentence.")])
+
+    status = bt.BackgroundTTSRunner("qa").run_sync()
+    chunks = bt.plan_chunks([_scene(1, "First sentence."), _scene(2, "Second sentence.")])
+    cache = bt.ChunkCache(tts_env.root / "qa" / "cache" / "tts",
+                          bt.TTSSettings.current(voice_wav=None, post_atempo=1.0))
+
+    assert cache.has(chunks[0]) and not cache.has(chunks[1])
+    assert status["chunks_done"] == 1
+    assert "exited with code 137" in status["error"]
+    assert "native-like crash diagnostic" in status["error"]
+    assert tts_status.read_status(tts_env.root / "qa")["error"] == status["error"]
 
 
 def test_a_narration_with_no_file_reports_an_error(tts_env):
