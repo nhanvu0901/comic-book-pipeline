@@ -34,7 +34,7 @@ def enable_windows_pread_loader(tts_module, load_file) -> None:
     """Keep Chatterbox model weights off safetensors' Windows mmap path.
 
     Torch can terminate with a native access violation while indexing mmap-backed safetensors on
-    Windows.  safetensors 0.8 introduced ``backend=\"pread\"``, which avoids that path.  Patch the
+    Windows. safetensors 0.8 introduced ``backend="pread"``, which avoids that path. Patch the
     loader reference captured by Chatterbox, rather than changing its provider or model files.
     """
     if sys.platform != "win32":

@@ -153,7 +153,7 @@ def synthesize(
         raise RuntimeError(
             f"Chatterbox venv missing at {venv_py.parent.parent}. Create it with:\n"
             f"  python3 -m venv .venv-chatterbox && "
-            f"{venv_py} -m pip install -r {_REPO / 'requirements-chatterbox.txt'}")
+            f"python -m stages.stage_4.chatterbox_runtime")
 
     chunks = _chunks(text)
     ex = CHATTERBOX_EXAGGERATION if exaggeration is None else float(exaggeration)

@@ -24,16 +24,17 @@ def test_windows_weight_loads_use_pread_not_mmap(monkeypatch):
     assert calls == [("weights.safetensors", "cpu", "pread")]
 
 
-def test_windows_old_safetensors_has_a_clear_runtime_repair_message(monkeypatch):
-    """A clean install with the old loader must fail in Python before any native model load."""
-    tts_module = SimpleNamespace(load_file=lambda *_a, **_kw: {})
+def test_non_windows_keeps_chatterbox_loader_unchanged(monkeypatch):
+    """The compatibility workaround is scoped to the Windows native failure."""
+    original = object()
+    tts_module = SimpleNamespace(load_file=original)
 
-    def old_load_file(filename, device="cpu"):
+    def load_file(filename, device="cpu", *, backend="mmap"):
         return {}
 
-    monkeypatch.setattr(worker.sys, "platform", "win32")
-    with pytest.raises(RuntimeError, match=r"safetensors >= 0.8.*\.venv-chatterbox"):
-        worker.enable_windows_pread_loader(tts_module, old_load_file)
+    monkeypatch.setattr(worker.sys, "platform", "darwin")
+    worker.enable_windows_pread_loader(tts_module, load_file)
+    assert tts_module.load_file is original
 
 
 @pytest.mark.parametrize("exit_code", [-1073741819, 3221225477])

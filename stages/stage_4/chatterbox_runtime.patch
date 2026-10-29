@@ -1,0 +1,8 @@
+--- pyproject.toml (upstream chatterbox-tts 0.1.7)
++++ pyproject.toml (local comic-book-pipeline runtime wheel)
+@@
+-version = "0.1.7"
++version = "0.1.7+cbp.1"
+@@
+-"safetensors==0.5.3",
++"safetensors==0.8.0",
