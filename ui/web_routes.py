@@ -196,7 +196,7 @@ def process_clip_pick(
     end: float | None = None,
     on_state: Callable[[str], None] | None = None,
     preview_token: str | None = None,
-    commit: Callable[[dict[str, Any]], bool] | None = None,
+    commit: Callable[[dict[str, Any], Path, Path], bool] | None = None,
 ) -> dict[str, Any] | None:
     """Download the section for the picked moment, render its 9:16 preview, and put it in the
     manifest with a rebased timeline. When `end` (> start) is given, the entire [start, end]
@@ -225,10 +225,11 @@ def process_clip_pick(
 
     say("rendering")
     preview_stem = f"preview_{beat.replace(':', '_')}"
-    # Concurrent picks for one beat must never render to the same preview path. A generation-scoped
-    # artifact lets a superseded job remove only its own output after its durable commit is refused.
-    preview_name = f"{preview_stem}_{preview_token}.mp4" if preview_token else f"{preview_stem}.mp4"
-    preview_path = clips_dir / preview_name
+    canonical_preview = clips_dir / f"{preview_stem}.mp4"
+    # Keep the manifest's long-standing public path stable. Concurrent jobs render to private
+    # generation-scoped staging files; only the current job promotes its artifact at commit time.
+    preview_path = (clips_dir / f"{preview_stem}.pending_{preview_token}.mp4"
+                    if commit is not None and preview_token else canonical_preview)
     try:
         if has_end and clip_span is not None:
             clips.render_clip_preview(
@@ -257,15 +258,15 @@ def process_clip_pick(
         "source_url": video_url,      # (no "end" when open-ended: Stage 5's fit may extend into the margin)
         "source_start": start,
         "beat_duration": beat_duration,
-        "preview_file": rel(preview_path),
+        "preview_file": rel(canonical_preview),
     }
     if has_end and clip_span is not None and end_f is not None:
         entry["end"] = clip_span
         entry["fit_to_beat"] = True
         entry["source_end"] = end_f
     if commit is not None:
-        if not commit(entry):
-            if preview_token:
+        if not commit(entry, preview_path, canonical_preview):
+            if preview_path != canonical_preview:
                 try:
                     preview_path.unlink()
                 except OSError:
@@ -288,7 +289,7 @@ def _run_pick_job(
     def state(s: str, **kw: Any) -> bool:
         return _set_pick(project, beat, gen, state=s, **kw) != -1
 
-    def commit(entry: dict[str, Any]) -> bool:
+    def commit(entry: dict[str, Any], staged_preview: Path, canonical_preview: Path) -> bool:
         """Check this job's generation and persist as one short operation.
 
         `_set_pick()` takes the same lock, so a newer pick cannot arrive between the generation
@@ -298,6 +299,7 @@ def _run_pick_job(
             current = _PICKS.get((project, beat))
             if current is None or current.get("gen") != gen:
                 return False
+            os.replace(staged_preview, canonical_preview)
             clips.upsert_beat_clip(project_root, entry)
             return True
 

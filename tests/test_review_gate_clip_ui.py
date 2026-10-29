@@ -123,8 +123,9 @@ def test_latest_overlapping_pick_wins_the_durable_manifest_and_preview(tmp_path,
         assert not old.is_alive()
         assert new_entry and new_entry["source_start"] == 1.0
         assert manifest == [new_entry]
+        assert new_entry["preview_file"] == "review/clips/preview_1_0.mp4"
         assert (project / new_entry["preview_file"]).read_text(encoding="utf-8") == "render-2"
-        assert not (project / "review" / "clips" / f"preview_1_0_{old_gen}.mp4").exists()
+        assert not (project / "review" / "clips" / f"preview_1_0.pending_{old_gen}.mp4").exists()
         assert (project / "review" / "clips" / "AAAAAAAAAAA.mp4").exists(), "shared source stays for B"
     finally:
         web_routes._PICKS.clear()
