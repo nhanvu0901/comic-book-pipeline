@@ -136,3 +136,39 @@ def test_rank_with_registry_marks_stale_demand_and_zero_ranking_direct_count(tmp
     # Eligibility unaffected
     assert "eligibility" not in ranked[0]["ranking"]
 
+
+def test_rank_with_registry_ignores_persisted_future_demand_in_tie_break(tmp_path):
+    import sqlite3
+    from stages.research_scout.audience_evidence import AudienceEvidenceStore
+    from stages.research_scout.opportunity import candidate_key, rank_with_registry
+
+    registry = AudienceEvidenceStore(tmp_path)
+    card_future = _candidate("c_future")
+    card_other = _candidate("c_other")
+    key_future = candidate_key(card_future)
+
+    # Persist a future timestamp directly into SQLite (e.g. legacy/corrupt input)
+    with sqlite3.connect(registry.path) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS demand_evidence (id INTEGER PRIMARY KEY, candidate_key TEXT, "
+            "query_text TEXT, url TEXT, quote TEXT, source_type TEXT, confidence TEXT, checked_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO demand_evidence(candidate_key, query_text, url, quote, source_type, confidence, checked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (key_future, "q", "https://example.test", "quote", "community", "direct", "2099-01-01T00:00:00+00:00"),
+        )
+
+    # Both cards have no editorial assessment (tied)
+    ranked = rank_with_registry([card_future, card_other], registry)
+    # The future card must not get tie-break advantage; stable input order preserved
+    assert [c["id"] for c in ranked] == ["c_future", "c_other"]
+    assert ranked[0]["ranking"]["direct_demand_observations"] == 0
+    assert ranked[0]["ranking"]["ranking_direct_count"] == 0
+    assert ranked[0]["audience_evidence"]["signals"]["demand"]["status"] == "stale"
+
+    # In reverse input order, c_other is first
+    ranked_rev = rank_with_registry([card_other, card_future], registry)
+    assert [c["id"] for c in ranked_rev] == ["c_other", "c_future"]
+
+

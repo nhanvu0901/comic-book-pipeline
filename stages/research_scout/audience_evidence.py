@@ -21,6 +21,7 @@ except ImportError:
     SCOUT_DEMAND_STALE_AFTER_SECONDS = 30 * 86400.0
 
 
+MAX_CLOCK_SKEW_SECONDS = 60.0
 SCHEMA_VERSION = 4
 
 
@@ -110,18 +111,22 @@ class AudienceEvidenceStore:
         return connection
 
     @staticmethod
-    def normalize_checked_at(checked_at: str | None) -> str:
-        """Normalize a new checked timestamp, requiring an explicit timezone.
+    def normalize_checked_at(checked_at: str | None, *, now: datetime | None = None,
+                             max_future_seconds: float = MAX_CLOCK_SKEW_SECONDS) -> str:
+        """Normalize a new checked timestamp, requiring an explicit timezone and not in the future.
 
         Empty values mean "checked now" and are stored in UTC.  Manual values
         must name an offset (or ``Z``) so they cannot become ambiguous database
-        rows that later break staleness calculations.
+        rows that later break staleness calculations. Future timestamps are rejected.
         """
         if checked_at is None or not str(checked_at).strip():
             return _now()
         parsed = _aware_timestamp(checked_at)
         if parsed is None:
             raise ValueError("checked_at must be ISO 8601 with an explicit timezone offset or Z")
+        current_time = now or datetime.now(timezone.utc)
+        if (parsed - current_time).total_seconds() > max_future_seconds:
+            raise ValueError("checked_at cannot be in the future")
         return parsed.isoformat()
 
     def add_demand_evidence(self, *, candidate_key: str, query: str, url: str, quote: str,
@@ -224,7 +229,7 @@ class AudienceEvidenceStore:
             fresh_rows = [
                 row for row in evidence
                 if (row_at := _aware_timestamp(row.get("checked_at"))) is not None
-                and (now_dt - row_at).total_seconds() <= max_age
+                and -MAX_CLOCK_SKEW_SECONDS <= (now_dt - row_at).total_seconds() <= max_age
             ]
             fresh_direct_count = sum(1 for row in fresh_rows if str(row.get("confidence") or "").casefold() == "direct")
             total_direct_count = sum(1 for row in evidence if str(row.get("confidence") or "").casefold() == "direct")

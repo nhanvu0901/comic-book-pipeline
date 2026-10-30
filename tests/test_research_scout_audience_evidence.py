@@ -395,3 +395,52 @@ def test_demand_evidence_mixed_fresh_and_stale_only_counts_fresh_direct(tmp_path
     assert demand["direct_count"] == 1  # only the fresh direct observation counts!
     assert demand["checked_at"] == fresh_time
 
+
+def test_normalize_checked_at_and_manual_import_rejects_future_timestamp(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    future_time = "2099-01-01T00:00:00+00:00"
+
+    with pytest.raises(ValueError, match="future"):
+        store.add_demand_evidence(
+            candidate_key="hero|future", query="q", url="https://example.test", quote="quote",
+            source_type="community", confidence="direct", checked_at=future_time,
+        )
+
+    sessions = tmp_path / "research_sessions"
+    session_store = SessionStore(sessions)
+    session = session_store.create(mode="qa", user_intent="Why?")
+    candidate = {
+        "id": "c_future", "title": "Hero", "question": "Why?",
+        "canonical_anchor": "Hero", "concept_key": "why",
+        "claim_citation": {"url": "https://example.test", "quote": "Hero."},
+    }
+    session_store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [candidate]})
+
+    with pytest.raises(ValueError, match="future"):
+        update_scout_audience(session.id, "c_future", root=sessions, manual_import={
+            "demand": [{"query": "q", "url": "https://example.test", "quote": "quote",
+                        "source_type": "community", "confidence": "direct", "checked_at": future_time}],
+            "videos": [],
+        })
+
+
+def test_persisted_future_timestamp_treated_as_stale_without_crashing(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    # Direct insert into sqlite simulating corrupt/future legacy data
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS demand_evidence (id INTEGER PRIMARY KEY, candidate_key TEXT, "
+            "query_text TEXT, url TEXT, quote TEXT, source_type TEXT, confidence TEXT, checked_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO demand_evidence(candidate_key, query_text, url, quote, source_type, confidence, checked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("hero|future_row", "future q", "https://forum.example/future", "future quote", "community", "direct", "2099-01-01T00:00:00+00:00"),
+        )
+
+    signal = store.signals_for("hero|future_row")["demand"]
+    assert signal["status"] == "stale"
+    assert signal["direct_count"] == 0
+    assert signal["checked_at"] == "2099-01-01T00:00:00+00:00"
+
+
