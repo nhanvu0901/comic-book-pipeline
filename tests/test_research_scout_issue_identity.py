@@ -197,3 +197,70 @@ def test_negative_cases_different_series_with_shared_words_fail(intent, candidat
     reason = micro_issue_rejection_reason(intent, {"series_issue_year": candidate})
     assert reason is not None
 
+
+@pytest.mark.parametrize("series_issue", [
+    "Detective Comics #1000 (2019)",
+    "Action Comics #1 (1938)",
+    "The Comic Book #1 (1990)",
+])
+def test_series_name_ending_with_comics_or_book_is_preserved(series_issue):
+    assert micro_issue_rejection_reason(
+        series_issue, {"series_issue_year": series_issue}
+    ) is None
+
+
+def test_candidate_title_with_series_ending_with_comics_is_preserved():
+    assert micro_issue_rejection_reason(
+        "Detective Comics #1000 (2019)",
+        {
+            "series_issue_year": "Detective Comics #1000 (2019)",
+            "title": "Detective Comics #1000 (2019) — 80th Anniversary",
+        },
+    ) is None
+
+
+@pytest.mark.parametrize("intent,candidate", [
+    ("Batman: Year One #1", "Green Arrow: Year One #1 (1987)"),
+    ("Spider-Man: Reign #1", "X-Men: Reign #1 (2006)"),
+    ("Batman: Hush #1", "Superman: Hush #1 (2003)"),
+])
+def test_different_series_sharing_subtitle_are_rejected(intent, candidate):
+    reason = micro_issue_rejection_reason(intent, {"series_issue_year": candidate})
+    assert reason is not None
+    assert "Batman" in reason or "Spider-Man" in reason or "Hush" in reason
+
+
+def test_intent_with_two_series_sharing_subtitle_fails_closed_as_ambiguous():
+    prompt = "Compare Batman: Year One #1 with Green Arrow: Year One #1."
+    reason = micro_issue_rejection_reason(
+        prompt, {"series_issue_year": "Batman: Year One #1 (1987)"}
+    )
+    assert reason is not None
+    assert "ambiguous" in reason.lower()
+
+
+def test_year_in_bare_mention_is_merged_and_enforced():
+    prompt = "Batman #1. In #1 (2016), he investigates the murder."
+    # Mismatched candidate year
+    reason_wrong = micro_issue_rejection_reason(
+        prompt, {"series_issue_year": "Batman #1 (2020)"}
+    )
+    assert reason_wrong is not None
+    assert "year missing or different" in reason_wrong or "2016" in reason_wrong
+
+    # Matching candidate year
+    reason_ok = micro_issue_rejection_reason(
+        prompt, {"series_issue_year": "Batman #1 (2016)"}
+    )
+    assert reason_ok is None
+
+
+def test_conflicting_years_in_bare_mentions_fail_closed():
+    prompt = "Batman #1. In #1 (2016). And in #1 (2020)."
+    reason = micro_issue_rejection_reason(
+        prompt, {"series_issue_year": "Batman #1 (2016)"}
+    )
+    assert reason is not None
+    assert "ambiguous" in reason.lower()
+
+
