@@ -460,6 +460,9 @@ def _manual_audience_import(registry, key: str, payload: dict) -> None:
         required = ("query", "url", "quote", "source_type", "confidence")
         if any(not str(item.get(name) or "").strip() for name in required):
             raise ValueError("Each demand item needs query, url, quote, source_type, and confidence.")
+        checked_at = str(item.get("checked_at") or "").strip()
+        if checked_at:
+            registry.normalize_checked_at(checked_at)
     for item in videos:
         if not isinstance(item, dict):
             raise ValueError("Each video item must be an object.")
