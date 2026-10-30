@@ -311,17 +311,17 @@ def test_demand_evidence_freshness_fresh_vs_stale_vs_boundary(tmp_path):
         candidate_key="hero|boundary_exact", query="q_bound", url="https://forum.example/bound",
         quote="bound quote", source_type="community", confidence="direct", checked_at=boundary_exact,
     )
-    signal_bound = store.signals_for("hero|boundary_exact", stale_after_seconds=max_age_seconds)["demand"]
+    signal_bound = store.signals_for("hero|boundary_exact", stale_after_seconds=max_age_seconds, now=now)["demand"]
     assert signal_bound["status"] == "observed"
     assert signal_bound["direct_count"] == 1
 
-    # 4. Boundary: just over boundary (age == max_age_seconds + 10s) -> stale
-    boundary_over = (now - timedelta(seconds=max_age_seconds + 10)).isoformat()
+    # 4. Boundary: just over boundary (age == max_age_seconds + 1s) -> stale
+    boundary_over = (now - timedelta(seconds=max_age_seconds + 1)).isoformat()
     store.add_demand_evidence(
         candidate_key="hero|boundary_over", query="q_over", url="https://forum.example/over",
         quote="over quote", source_type="community", confidence="direct", checked_at=boundary_over,
     )
-    signal_over = store.signals_for("hero|boundary_over", stale_after_seconds=max_age_seconds)["demand"]
+    signal_over = store.signals_for("hero|boundary_over", stale_after_seconds=max_age_seconds, now=now)["demand"]
     assert signal_over["status"] == "stale"
     assert signal_over["direct_count"] == 0
     assert signal_over["checked_at"] == boundary_over
