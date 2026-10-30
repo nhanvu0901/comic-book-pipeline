@@ -62,3 +62,77 @@ def test_changed_factual_input_invalidates_cached_editorial_assessment():
 
     assert ranked[0]["editorial_quality"]["status"] == "unknown"
     assert "factual input changed" in ranked[0]["editorial_quality"]["reason"]
+
+
+def test_ranking_tie_break_ignores_stale_demand_observations():
+    candidates = [_candidate("stale_cand"), _candidate("fresh_cand")]
+    assessments = {
+        "||stale_cand": {**_assessment(0.8), "input_hash": factual_input_hash(candidates[0])},
+        "||fresh_cand": {**_assessment(0.8), "input_hash": factual_input_hash(candidates[1])},
+    }
+    signals = {
+        "||stale_cand": {"demand": {"status": "stale", "direct_count": 0, "total_direct_count": 1, "checked_at": "2000-01-01T00:00:00+00:00"}},
+        "||fresh_cand": {"demand": {"status": "observed", "direct_count": 1, "checked_at": "2026-10-30T00:00:00+00:00"}},
+    }
+
+    ranked = rank_candidates(candidates, assessments_by_key=assessments, signals_by_key=signals)
+
+    assert [item["id"] for item in ranked] == ["fresh_cand", "stale_cand"]
+    assert ranked[0]["ranking"]["direct_demand_observations"] == 1
+    assert ranked[1]["ranking"]["direct_demand_observations"] == 0
+    assert ranked[1]["ranking"]["ranking_direct_count"] == 0
+
+
+def test_ranking_stale_demand_preserves_stable_input_order_against_no_demand():
+    candidates = [_candidate("c1"), _candidate("c2")]
+    assessments = {
+        "||c1": {**_assessment(0.8), "input_hash": factual_input_hash(candidates[0])},
+        "||c2": {**_assessment(0.8), "input_hash": factual_input_hash(candidates[1])},
+    }
+    signals_stale_first = {
+        "||c1": {"demand": {"status": "stale", "direct_count": 0, "checked_at": "2000-01-01T00:00:00+00:00"}},
+        "||c2": {"demand": {"status": "unknown"}},
+    }
+
+    ranked = rank_candidates(candidates, assessments_by_key=assessments, signals_by_key=signals_stale_first)
+    assert [item["id"] for item in ranked] == ["c1", "c2"]
+
+    # In reverse input order, stable order is also preserved
+    ranked_rev = rank_candidates([candidates[1], candidates[0]], assessments_by_key=assessments, signals_by_key=signals_stale_first)
+    assert [item["id"] for item in ranked_rev] == ["c2", "c1"]
+
+
+def test_rank_with_registry_marks_stale_demand_and_zero_ranking_direct_count(tmp_path):
+    from stages.research_scout.audience_evidence import AudienceEvidenceStore
+    from stages.research_scout.opportunity import candidate_key, rank_with_registry
+
+    registry = AudienceEvidenceStore(tmp_path)
+    card = _candidate("card1")
+    key = candidate_key(card)
+
+    registry.add_demand_evidence(
+        candidate_key=key,
+        query="why hero changed",
+        url="https://forum.example/thread",
+        quote="Historical question from years ago",
+        source_type="community",
+        confidence="direct",
+        checked_at="2000-01-01T00:00:00+00:00",
+    )
+
+    ranked = rank_with_registry([card], registry)
+
+    assert len(ranked) == 1
+    assert ranked[0]["id"] == "card1"
+    # Status must be stale, direct count for ranking must be 0
+    signals = ranked[0]["audience_evidence"]["signals"]
+    assert signals["demand"]["status"] == "stale"
+    assert signals["demand"]["direct_count"] == 0
+    assert ranked[0]["ranking"]["direct_demand_observations"] == 0
+    assert ranked[0]["ranking"]["ranking_direct_count"] == 0
+    # Provenance date must remain visible
+    assert signals["demand"]["checked_at"] == "2000-01-01T00:00:00+00:00"
+    assert ranked[0]["audience_evidence"]["demand_evidence"][0]["checked_at"] == "2000-01-01T00:00:00+00:00"
+    # Eligibility unaffected
+    assert "eligibility" not in ranked[0]["ranking"]
+
