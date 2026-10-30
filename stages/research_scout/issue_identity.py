@@ -35,6 +35,14 @@ _GENERIC_ISSUE_MARKER_RE = re.compile(
     re.I,
 )
 _URL_PREFIX_RE = re.compile(r"https?://\S*$", re.I)
+_BEFORE_YEAR_RE = re.compile(
+    r"\(((?:19|20)\d{2})(?:\s*[-–—]\s*(?:(?:19|20)\d{2}|present)?)?\)\s*$",
+    re.I,
+)
+_AFTER_YEAR_RE = re.compile(
+    r"^\s*\(((?:19|20)\d{2})(?:\s*[-–—]\s*(?:(?:19|20)\d{2}|present)?)?\)",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -205,8 +213,8 @@ def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
 
         segment_text = user_intent[last_end:match.start()]
         suffix = user_intent[match.end():]
-        year_match = re.match(r"\s*\(((?:19|20)\d{2})\)", suffix)
-        before_year = re.search(r"\(((?:19|20)\d{2})\)\s*$", segment_text)
+        year_match = _AFTER_YEAR_RE.match(suffix)
+        before_year = _BEFORE_YEAR_RE.search(segment_text)
         year = year_match.group(1) if year_match else (before_year.group(1) if before_year else "")
         issue_number = _normal_issue(match.group(1))
 
