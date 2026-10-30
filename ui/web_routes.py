@@ -143,8 +143,7 @@ def _broadcast_moment_picked(payload: dict[str, Any]) -> None:
 
 # ─── the pick job ─────────────────────────────────────────────────────────────────────────────
 
-class ClipPickError(RuntimeError):
-    """A pick that cannot succeed, with the reason shown to Master."""
+from stages.clip_fetch import ClipPickError, process_clip_pick
 
 
 _PICKS: dict[tuple[str, str], dict[str, Any]] = {}
@@ -183,98 +182,6 @@ class PickMomentRequest(BaseModel):
     video_id: str
     start: float
     end: float | None = None
-
-
-def process_clip_pick(
-    project_root: Path,
-    beat: str,
-    video_id: str,
-    start: float,
-    beat_duration: float,
-    url: str | None = None,
-    *,
-    end: float | None = None,
-    on_state: Callable[[str], None] | None = None,
-    preview_token: str | None = None,
-    commit: Callable[[dict[str, Any], Path, Path], bool] | None = None,
-) -> dict[str, Any] | None:
-    """Download the section for the picked moment, render its 9:16 preview, and put it in the
-    manifest with a rebased timeline. When `end` (> start) is given, the entire [start, end]
-    span is downloaded and speed-adjusted (`fit_to_beat=True`) to fit `beat_duration` exactly.
-    Raises ClipPickError (with the reason) when the footage after `start` cannot fill the beat.
-    `commit`, when supplied by a background job, is the short critical section that decides
-    whether this completed work is still current before it reaches the durable manifest. Returns
-    None when that job was superseded."""
-    say = on_state or (lambda _s: None)
-    clips_dir = project_root / "review" / "clips"
-    clips_dir.mkdir(parents=True, exist_ok=True)
-    video_url = f"https://www.youtube.com/watch?v={video_id}"     # rebuilt: a given url is never fetched
-    has_end = end is not None and float(end) > float(start)
-    end_f = float(end) if has_end else None
-    clip_span = round(end_f - float(start), 3) if end_f is not None else None
-
-    say("downloading")
-    if has_end and end_f is not None:
-        section_path = clip_fetch.fetch_clip_section(
-            video_url, clips_dir, start=start, beat_duration=beat_duration, end=end_f
-        )
-    else:
-        section_path = clip_fetch.fetch_clip_section(
-            video_url, clips_dir, start=start, beat_duration=beat_duration
-        )
-
-    say("rendering")
-    preview_stem = f"preview_{beat.replace(':', '_')}"
-    canonical_preview = clips_dir / f"{preview_stem}.mp4"
-    # Keep the manifest's long-standing public path stable. Concurrent jobs render to private
-    # generation-scoped staging files; only the current job promotes its artifact at commit time.
-    preview_path = (clips_dir / f"{preview_stem}.pending_{preview_token}.mp4"
-                    if commit is not None and preview_token else canonical_preview)
-    try:
-        if has_end and clip_span is not None:
-            clips.render_clip_preview(
-                section_path, start=0.0, beat_duration=beat_duration,
-                out_path=preview_path, end=clip_span, fit_to_beat=True,
-            )
-        else:
-            clips.render_clip_preview(
-                section_path, start=0.0, beat_duration=beat_duration, out_path=preview_path
-            )
-    except clips.ClipTooShort as exc:
-        raise ClipPickError(
-            f"Từ mốc {start:.1f}s video chỉ còn quá ít cảnh để lấp beat {beat} ({beat_duration:.1f}s): {exc}. "
-            f"Hãy chọn mốc sớm hơn.") from exc
-    except Exception as exc:
-        raise ClipPickError(f"Không dựng được preview 9:16: {exc}") from exc
-
-    def rel(p: Path) -> str:
-        return p.relative_to(project_root).as_posix()
-
-    entry: dict[str, Any] = {
-        "id": video_id,
-        "file": rel(section_path),
-        "beat": beat,
-        "start": 0.0,                 # t=0 of the section file IS the picked moment
-        "source_url": video_url,      # (no "end" when open-ended: Stage 5's fit may extend into the margin)
-        "source_start": start,
-        "beat_duration": beat_duration,
-        "preview_file": rel(canonical_preview),
-    }
-    if has_end and clip_span is not None and end_f is not None:
-        entry["end"] = clip_span
-        entry["fit_to_beat"] = True
-        entry["source_end"] = end_f
-    if commit is not None:
-        if not commit(entry, preview_path, canonical_preview):
-            if preview_path != canonical_preview:
-                try:
-                    preview_path.unlink()
-                except OSError:
-                    pass
-            return None
-    else:
-        clips.upsert_beat_clip(project_root, entry)
-    return entry
 
 
 def _run_pick_job(
@@ -814,11 +721,42 @@ async def clip_preview(project: str = "", beat: str = ""):
     """The 9:16 preview mp4 of the beat's picked clip."""
     root = get_safe_project_dir(project)
     beat = validate_beat_key(beat)
-    for c in clips.read_manifest_doc(root)["clips"]:
-        if isinstance(c, dict) and str(c.get("beat")) == beat and c.get("preview_file"):
-            target = (root / str(c["preview_file"])).resolve()
-            if target.is_relative_to(root) and target.is_file():
-                return FileResponse(target, media_type="video/mp4")
+    manifest_clips = clips.read_manifest_doc(root)["clips"]
+    for c in manifest_clips:
+        if isinstance(c, dict) and str(c.get("beat")) == beat:
+            rel = c.get("preview_file") or c.get("file")
+            if rel:
+                target = (root / str(rel)).resolve()
+                if target.is_relative_to(root) and target.is_file():
+                    return FileResponse(target, media_type="video/mp4")
+    # Legacy fallback: if beat is a bookend fragment ("<sid>:0"), check for "intro"/"outro" entry
+    if beat.endswith(":0"):
+        narr_p = root / "narration.json"
+        if narr_p.is_file():
+            try:
+                narr = json.loads(narr_p.read_text(encoding="utf-8"))
+                scenes = narr.get("scenes") or []
+                sid_str = beat.partition(":")[0]
+                intro = next((s for s in scenes if s.get("is_intro")), None)
+                if intro and str(intro.get("scene_id")) == sid_str:
+                    for c in manifest_clips:
+                        if isinstance(c, dict) and str(c.get("beat")) == "intro":
+                            rel = c.get("preview_file") or c.get("file")
+                            if rel:
+                                target = (root / str(rel)).resolve()
+                                if target.is_relative_to(root) and target.is_file():
+                                    return FileResponse(target, media_type="video/mp4")
+                outro = next((s for s in scenes if s.get("is_outro")), None)
+                if outro and str(outro.get("scene_id")) == sid_str:
+                    for c in manifest_clips:
+                        if isinstance(c, dict) and str(c.get("beat")) == "outro":
+                            rel = c.get("preview_file") or c.get("file")
+                            if rel:
+                                target = (root / str(rel)).resolve()
+                                if target.is_relative_to(root) and target.is_file():
+                                    return FileResponse(target, media_type="video/mp4")
+            except Exception:
+                pass
     raise HTTPException(status_code=404, detail="No preview for this beat")
 
 
