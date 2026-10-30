@@ -31,7 +31,7 @@ _GENERIC_SERIES_WORDS = frozenset({
     "chapter", "chapters", "vol", "volume", "part", "no", "number",
 })
 _GENERIC_ISSUE_MARKER_RE = re.compile(
-    r"\b(?:issues?|comics?|chapters?|books?|parts?|volumes?|vol\.?|nos?\.?|numbers?)\s*$",
+    r"\b(?:issues?|chapters?|volumes?|vol\.?|nos?\.?|numbers?)\s*$",
     re.I,
 )
 _URL_PREFIX_RE = re.compile(r"https?://\S*$", re.I)
@@ -108,12 +108,15 @@ def _series_match(series_a: str, series_b: str) -> bool:
         return True
     variants_a = [_normal_series(v) for v in _series_variants(series_a)]
     variants_b = [_normal_series(v) for v in _series_variants(series_b)]
-    for va in variants_a[1:]:
-        if any(va == vb for vb in variants_b if vb):
-            return True
-    for vb in variants_b[1:]:
-        if any(vb == va for va in variants_a if va):
-            return True
+    # An umbrella/event prefix alias requires that one side's suffix after the prefix
+    # matches the other side's full series name (e.g. "DC All In Saga: Darkseid vs. the World"
+    # matches "Darkseid vs The World", or vice versa).
+    # Two different series that merely share a subtitle (e.g. "Batman: Year One" vs
+    # "Green Arrow: Year One") must NOT match.
+    if any(va == norm_b for va in variants_a[1:] if va):
+        return True
+    if any(vb == norm_a for vb in variants_b[1:] if vb):
+        return True
     return False
 
 
@@ -236,27 +239,37 @@ def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
         return [], True
 
     # Resolve named targets: all named targets must agree (via alias matching)
-    # with the same issue number and compatible years.
+    # with the same issue number.
     primary = named_targets[0]
     for other in named_targets[1:]:
         if other.number != primary.number:
             return [], True
         if not _series_match(other.series, primary.series):
             return [], True
-        if other.year and primary.year and other.year != primary.year:
-            return [], True
-        # Prefer the named target with year or more complete title
-        if other.year and not primary.year:
-            primary = other
-        elif len(other.series) > len(primary.series) and not (primary.year and not other.year):
-            primary = other
+        # Prefer the more complete title
+        if len(other.series) > len(primary.series):
+            primary = IssueIdentity(other.series, primary.number, primary.year)
 
-    # Check that all bare mentions agree with the resolved named issue
-    for bare_num, bare_yr in bare_targets:
+    # Check that all bare mentions agree with the resolved named issue number
+    for bare_num, _ in bare_targets:
         if bare_num != primary.number:
             return [], True
-        if bare_yr and primary.year and bare_yr != primary.year:
-            return [], True
+
+    # Collect years across all mentions (both named and bare)
+    all_years: set[str] = set()
+    for target in named_targets:
+        if target.year:
+            all_years.add(target.year)
+    for _, bare_yr in bare_targets:
+        if bare_yr:
+            all_years.add(bare_yr)
+
+    if len(all_years) > 1:
+        return [], True
+
+    resolved_year = next(iter(all_years)) if all_years else ""
+    if primary.year != resolved_year:
+        primary = IssueIdentity(primary.series, primary.number, resolved_year)
 
     return [primary], False
 
