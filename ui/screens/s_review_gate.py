@@ -1749,23 +1749,36 @@ def build(
                           style=ft.ButtonStyle(padding=ft.padding.all(0))),
         ]
         if config.ENABLE_VIDEO_CLIPS:
-            def _open_mp4_review(_e, bk=beat_key):
-                try:
-                    from stages.stage_4.background_tts import bump_priority_beat
-                    bump_priority_beat(project, bk)
-                except Exception as exc:
-                    logger.warning("Failed to bump priority beat: %s", exc)
-                async def _go():
-                    await page.launch_url(f"/moments_review?project={project}&beat={bk}")
-                page.run_task(_go)
+            if bridge.WEB_MODE:
+                def _open_mp4_review(_e, bk=beat_key):
+                    try:
+                        from stages.stage_4.background_tts import bump_priority_beat
+                        bump_priority_beat(project, bk)
+                    except Exception as exc:
+                        logger.warning("Failed to bump priority beat: %s", exc)
+                    async def _go():
+                        await page.launch_url(f"/moments_review?project={project}&beat={bk}")
+                    page.run_task(_go)
 
-            header_icons.append(ft.IconButton(
-                ft.Icons.VIDEO_FILE_OUTLINED, icon_size=18,
-                icon_color=SUCCESS if has_clip else None,
-                tooltip="Dùng MP4 (Chọn khoảnh khắc từ YouTube)",
-                on_click=_open_mp4_review,
-                style=ft.ButtonStyle(padding=ft.padding.all(0)),
-            ))
+                header_icons.append(ft.IconButton(
+                    ft.Icons.VIDEO_FILE_OUTLINED, icon_size=18,
+                    icon_color=SUCCESS if has_clip else None,
+                    tooltip="Dùng MP4 (Chọn khoảnh khắc từ YouTube)",
+                    on_click=_open_mp4_review,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                ))
+            else:
+                def _show_desktop_mp4_disabled(_e):
+                    _show_snack("MP4 picker cần chạy UI với --lan")
+
+                header_icons.append(ft.IconButton(
+                    ft.Icons.VIDEO_FILE_OUTLINED, icon_size=18,
+                    icon_color=SUCCESS if has_clip else None,
+                    tooltip="MP4 picker cần chạy UI với --lan",
+                    disabled=True,
+                    on_click=_show_desktop_mp4_disabled,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                ))
             if has_clip:
                 def _rollback_mp4(_e, bk=beat_key):
                     _remove_clip_for_beat(project, bk)

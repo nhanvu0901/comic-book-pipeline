@@ -359,7 +359,8 @@ def test_with_the_flag_off_an_edit_keeps_the_stable_behaviour(screen, monkeypatc
     assert not any(isinstance(c, ft.IconButton) and "Dùng MP4" in str(c.tooltip or "") for c in _walk(root))
 
 
-def test_mp4_chip_duration_chip_and_use_mp4_button(screen):
+def test_mp4_chip_duration_chip_and_use_mp4_button(screen, monkeypatch):
+    monkeypatch.setattr(bridge, "WEB_MODE", True)
     root = screen.build()
     assert screen.c["start"] == ["qa"], "the screen starts the background TTS"
     texts = _texts(root)
@@ -370,6 +371,42 @@ def test_mp4_chip_duration_chip_and_use_mp4_button(screen):
     assert len(buttons) == 6                                         # one per review beat: intro, 2:0, 2:1, 3:0, 3:1, outro
     buttons[1].on_click(None)                                        # beat "2:0"
     assert screen.c["bump"] == [("qa", "2:0")], "opening the picker moves that beat to the front of the TTS queue"
+
+
+def test_desktop_mode_disables_mp4_button_with_tooltip_and_snack_and_keeps_rollback(screen):
+    """In desktop mode (WEB_MODE=False), the MP4 button is disabled with a clear tooltip/snack,
+    while existing clips still show their MP4 badge and functional rollback."""
+    page = FakePage()
+    root = screen.build(page)
+
+    # 1. MP4 picker button is disabled on all beats with tooltip and snack
+    buttons = [c for c in _walk(root) if isinstance(c, ft.IconButton) and c.icon == ft.Icons.VIDEO_FILE_OUTLINED]
+    assert len(buttons) == 6
+    for btn in buttons:
+        assert btn.disabled is True
+        assert btn.tooltip == "MP4 picker cần chạy UI với --lan"
+
+    # Clicking the disabled button does NOT bump TTS and displays the snack
+    buttons[1].on_click(None)
+    assert screen.c["bump"] == [], "desktop MP4 button must not bump TTS queue"
+    assert len(page.overlay) > 0, "desktop MP4 click must show a snackbar"
+    assert getattr(page.overlay[-1], "open", False) is True
+    assert page.overlay[-1].content.value == "MP4 picker cần chạy UI với --lan"
+
+    # 2. Existing clips still show their MP4 badge
+    texts = _texts(root)
+    assert texts.count("MP4") == 2
+
+    # 3. Existing clips still offer functional rollback (UNDO button)
+    undo_buttons = [c for c in _walk(root) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
+    assert len(undo_buttons) == 2
+    for u in undo_buttons:
+        assert not u.disabled
+
+    undo_buttons[0].on_click(None)
+    assert [c["beat"] for c in screen.clips()] == ["3:0"], "rollback still removes clip in desktop mode"
+    assert "2:0" in screen.locks()["locks"], "panel lock restored"
+
 
 
 def test_rollback_removes_only_that_beats_clip(screen):

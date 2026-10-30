@@ -145,3 +145,28 @@ def test_lan_flag_off_uses_exact_old_ft_run_and_never_imports_fastapi(monkeypatc
     assert kwargs.get("host") == "0.0.0.0" and "assets_dir" in kwargs
     assert "export_asgi_app" not in kwargs
     assert "ui.web_routes" not in sys.modules, "flag OFF must not even load the clip routes"
+
+
+def test_desktop_mode_with_clips_on_leaves_desktop_ft_run_unchanged_and_web_mode_false(monkeypatch):
+    import flet as ft
+    import uvicorn
+    import ui.__main__ as ui_main
+    from ui import bridge
+
+    monkeypatch.setattr(bridge, "WEB_MODE", bridge.WEB_MODE)
+    monkeypatch.setattr(config, "ENABLE_VIDEO_CLIPS", True)
+    called = []
+    uvicorn_called = []
+    monkeypatch.setattr(ft, "run", lambda *a, **k: called.append((a, k)))
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: uvicorn_called.append((a, k)))
+    monkeypatch.setattr("sys.argv", ["ui"])
+
+    ui_main._run()
+
+    assert len(called) == 1
+    args, kwargs = called[0]
+    assert args[0] == ui_main.main
+    assert kwargs == {}, "desktop mode calls ft.run(main) with no web arguments"
+    assert len(uvicorn_called) == 0, "desktop mode never starts uvicorn"
+    assert bridge.WEB_MODE is False, "desktop mode leaves bridge.WEB_MODE as False"
+
