@@ -17,7 +17,8 @@ _RANGE_RE = re.compile(r"\s*[-–—]\s*\d")
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _TITLE_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:[-'’][A-Za-z0-9]+)*|[:/&]")
 _TRAILING_QUALIFIER_RE = re.compile(
-    r"\s*(?:\((?:19|20)\d{2}\)|(?:vol(?:ume)?\.?\s*\d+))\s*$", re.I
+    r"\s*(?:\((?:19|20)\d{2}(?:\s*[-–—]\s*(?:(?:19|20)\d{2}|present)?)?\)|(?:vol(?:ume)?\.?\s*\d+))\s*$",
+    re.I,
 )
 _TITLE_CONNECTORS = frozenset({"a", "an", "and", "for", "in", "of", "the", "to", "vs", "with"})
 _INTRO_WORDS = frozenset({
@@ -25,6 +26,15 @@ _INTRO_WORDS = frozenset({
     "scout", "show", "tell", "use", "verify", "write",
 })
 _LEADING_PREPOSITIONS = frozenset({"for", "from", "in", "of", "on"})
+_GENERIC_SERIES_WORDS = frozenset({
+    "issue", "issues", "comic", "comics", "book", "books",
+    "chapter", "chapters", "vol", "volume", "part", "no", "number",
+})
+_GENERIC_ISSUE_MARKER_RE = re.compile(
+    r"\b(?:issues?|comics?|chapters?|books?|parts?|volumes?|vol\.?|nos?\.?|numbers?)\s*$",
+    re.I,
+)
+_URL_PREFIX_RE = re.compile(r"https?://\S*$", re.I)
 
 
 @dataclass(frozen=True)
@@ -55,11 +65,56 @@ def _normal_issue(value: str) -> str:
     return str(int(numeric.group())) + suffix.lower() + (dot + tail.lower() if dot else "")
 
 
+def _series_tokens(value: str) -> list[str]:
+    raw_words = re.findall(r"[a-z0-9]+", value.casefold())
+    words: list[str] = []
+    for w in raw_words:
+        if w in {"versus", "v"}:
+            words.append("vs")
+        else:
+            words.append(w)
+    stripped = [w for w in words if w not in {"the", "a", "an"}]
+    return stripped if stripped else words
+
+
 def _normal_series(value: str) -> str:
-    words = re.findall(r"[a-z0-9]+", value.casefold())
-    if words and words[0] == "the":
-        words = words[1:]
-    return " ".join(words)
+    return " ".join(_series_tokens(value))
+
+
+def _series_variants(series: str) -> list[str]:
+    variants = [series]
+    if ":" in series:
+        parts = series.split(":")
+        for i in range(1, len(parts)):
+            suffix = ":".join(parts[i:]).strip()
+            if suffix:
+                variants.append(suffix)
+    for dash in (" - ", " – ", " — "):
+        if dash in series:
+            parts = series.split(dash)
+            for i in range(1, len(parts)):
+                suffix = dash.join(parts[i:]).strip()
+                if suffix:
+                    variants.append(suffix)
+    return variants
+
+
+def _series_match(series_a: str, series_b: str) -> bool:
+    norm_a = _normal_series(series_a)
+    norm_b = _normal_series(series_b)
+    if not norm_a or not norm_b:
+        return False
+    if norm_a == norm_b:
+        return True
+    variants_a = [_normal_series(v) for v in _series_variants(series_a)]
+    variants_b = [_normal_series(v) for v in _series_variants(series_b)]
+    for va in variants_a[1:]:
+        if any(va == vb for vb in variants_b if vb):
+            return True
+    for vb in variants_b[1:]:
+        if any(vb == va for va in variants_a if va):
+            return True
+    return False
 
 
 def _intent_series(prefix: str) -> str:
@@ -67,12 +122,24 @@ def _intent_series(prefix: str) -> str:
     prefix = _strip_qualifiers(prefix)
     # Periods are part of real series names ("DC K.O.") and abbreviations.
     segment = re.split(r"[!?\n]", prefix)[-1].strip()
-    for preposition in reversed(list(re.finditer(r"\b(?:in|from|of|for)\b", segment, re.I))):
-        left_words = _TITLE_TOKEN_RE.findall(segment[:preposition.start()])
-        if any(word[0].islower() and word.casefold() not in _TITLE_CONNECTORS
-               for word in left_words if word not in {":", "/", "&"}):
-            segment = segment[preposition.end():].strip()
+
+    # Preposition boundary trimming: prefer a preposition immediately preceded by
+    # lowercase prose to avoid cutting inside capitalized titles (e.g. "DC All In Saga").
+    matches = list(re.finditer(r"\b(?:in|from|of|for)\b", segment, re.I))
+    cut_done = False
+    for prep in matches:
+        left_words = [w for w in _TITLE_TOKEN_RE.findall(segment[:prep.start()]) if w not in {":", "/", "&"}]
+        if left_words and left_words[-1][0].islower() and left_words[-1].casefold() not in _TITLE_CONNECTORS:
+            segment = segment[prep.end():].strip()
+            cut_done = True
             break
+    if not cut_done:
+        for prep in reversed(matches):
+            left_words = [w for w in _TITLE_TOKEN_RE.findall(segment[:prep.start()]) if w not in {":", "/", "&"}]
+            if any(w[0].islower() and w.casefold() not in _TITLE_CONNECTORS for w in left_words):
+                segment = segment[prep.end():].strip()
+                break
+
     tokens = [match.group() for match in _TITLE_TOKEN_RE.finditer(segment)]
     selected: list[str] = []
     for token in reversed(tokens):
@@ -121,22 +188,77 @@ def _candidate_identity(value: str) -> IssueIdentity | None:
 
 
 def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
-    targets: list[IssueIdentity] = []
-    unresolved = False
+    named_targets: list[IssueIdentity] = []
+    bare_targets: list[tuple[str, str]] = []
+    last_end = 0
+
     for match in _ISSUE_RE.finditer(user_intent):
         if _RANGE_RE.match(user_intent[match.end():]):
             continue  # a range is not one exact issue
         prefix = user_intent[:match.start()]
-        series = _intent_series(prefix)
-        if not series:
-            unresolved = True
+        # Skip URL fragments (e.g. https://example.com/page#1)
+        if _URL_PREFIX_RE.search(prefix):
             continue
+
+        segment_text = user_intent[last_end:match.start()]
         suffix = user_intent[match.end():]
         year_match = re.match(r"\s*\(((?:19|20)\d{2})\)", suffix)
-        before_year = re.search(r"\(((?:19|20)\d{2})\)\s*$", prefix)
+        before_year = re.search(r"\(((?:19|20)\d{2})\)\s*$", segment_text)
         year = year_match.group(1) if year_match else (before_year.group(1) if before_year else "")
-        targets.append(IssueIdentity(series, _normal_issue(match.group(1)), year))
-    return targets, unresolved
+        issue_number = _normal_issue(match.group(1))
+
+        if year_match:
+            last_end = match.end() + year_match.end()
+        else:
+            last_end = match.end()
+
+        # Check for trailing generic issue words directly before #N
+        marker = _GENERIC_ISSUE_MARKER_RE.search(segment_text)
+        if marker:
+            candidate_prefix = segment_text[:marker.start()].rstrip()
+            series = _intent_series(candidate_prefix)
+        else:
+            series = _intent_series(segment_text)
+
+        if series and _normal_series(series) in _GENERIC_SERIES_WORDS:
+            series = ""
+
+        if series:
+            named_targets.append(IssueIdentity(series, issue_number, year))
+        else:
+            bare_targets.append((issue_number, year))
+
+    if not named_targets and not bare_targets:
+        return [], False
+
+    # Bare issue mentions without ANY named series fail closed as ambiguous
+    if not named_targets and bare_targets:
+        return [], True
+
+    # Resolve named targets: all named targets must agree (via alias matching)
+    # with the same issue number and compatible years.
+    primary = named_targets[0]
+    for other in named_targets[1:]:
+        if other.number != primary.number:
+            return [], True
+        if not _series_match(other.series, primary.series):
+            return [], True
+        if other.year and primary.year and other.year != primary.year:
+            return [], True
+        # Prefer the named target with year or more complete title
+        if other.year and not primary.year:
+            primary = other
+        elif len(other.series) > len(primary.series) and not (primary.year and not other.year):
+            primary = other
+
+    # Check that all bare mentions agree with the resolved named issue
+    for bare_num, bare_yr in bare_targets:
+        if bare_num != primary.number:
+            return [], True
+        if bare_yr and primary.year and bare_yr != primary.year:
+            return [], True
+
+    return [primary], False
 
 
 def micro_issue_rejection_reason(user_intent: str, candidate: Mapping[str, Any]) -> str | None:
@@ -149,27 +271,27 @@ def micro_issue_rejection_reason(user_intent: str, candidate: Mapping[str, Any])
     targets, unresolved = _intent_targets(str(user_intent or ""))
     if not targets and not unresolved:
         return None
-    keys = {(_normal_series(target.series), target.number) for target in targets}
-    years = {target.year for target in targets if target.year}
-    if unresolved or len(keys) != 1 or len(years) > 1:
+    if unresolved or not targets:
         return "Ambiguous exact comic issue in user intent; review the requested series and issue."
 
-    expected = next((target for target in targets if target.year), targets[0])
+    expected = targets[0]
     given_text = str(candidate.get("series_issue_year") or "").strip()
     given = _candidate_identity(given_text)
     if given is None:
         return f"Expected {expected.label}; candidate has no unambiguous series and issue: {given_text or '(missing)'}."
-    if (_normal_series(given.series), given.number) != next(iter(keys)):
+    if given.number != expected.number or not _series_match(expected.series, given.series):
         return f"Expected {expected.label}; candidate is {given.label}."
-    if years and given.year not in years:
+    if expected.year and given.year != expected.year:
         return f"Expected {expected.label}; candidate is {given.label} (year missing or different)."
+
     title = str(candidate.get("title") or "").strip()
     title_targets, title_unresolved = _intent_targets(title)
-    title_keys = {(_normal_series(target.series), target.number) for target in title_targets}
-    if title_unresolved or len(title_keys) > 1:
+    if title_unresolved:
         return f"Expected {expected.label}; candidate title names an ambiguous issue: {title}."
-    if title_keys and title_keys != keys:
-        return f"Expected {expected.label}; candidate title names {title_targets[0].label}."
-    if title_targets and years and any(target.year and target.year not in years for target in title_targets):
-        return f"Expected {expected.label}; candidate title names a different year: {title}."
+    if title_targets:
+        title_target = title_targets[0]
+        if title_target.number != expected.number or not _series_match(expected.series, title_target.series):
+            return f"Expected {expected.label}; candidate title names {title_target.label}."
+        if expected.year and title_target.year and title_target.year != expected.year:
+            return f"Expected {expected.label}; candidate title names a different year: {title}."
     return None
