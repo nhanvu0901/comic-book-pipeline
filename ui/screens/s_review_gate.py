@@ -48,11 +48,33 @@ def _project_dir(project: str) -> Path:
 def _load_clips_manifest(project: str) -> dict[str, dict]:
     """{beat_key: clip entry} of the project's enabled clip entries (review/clips/clips.json)."""
     from stages.stage_5.clips import read_manifest_doc
-    return {
+    out = {
         str(c.get("beat")): c
         for c in read_manifest_doc(_project_dir(project)).get("clips", [])
         if isinstance(c, dict) and c.get("beat") and c.get("enabled", True) is not False
     }
+    narr_p = _project_dir(project) / "narration.json"
+    if narr_p.is_file():
+        try:
+            narr = json.loads(narr_p.read_text(encoding="utf-8"))
+            scenes = narr.get("scenes") or []
+            if "intro" in out:
+                intro = next((s for s in scenes if s.get("is_intro")), None)
+                if intro:
+                    from stages.review_gate import bookend_row_keys
+                    keys = [bk for bk, _u, _t in bookend_row_keys(intro, "intro")]
+                    if len(keys) > 1 and keys[0] not in out:
+                        out[keys[0]] = out["intro"]
+            if "outro" in out:
+                outro = next((s for s in scenes if s.get("is_outro")), None)
+                if outro:
+                    from stages.review_gate import bookend_row_keys
+                    keys = [bk for bk, _u, _t in bookend_row_keys(outro, "outro")]
+                    if len(keys) > 1 and keys[0] not in out:
+                        out[keys[0]] = out["outro"]
+        except Exception:
+            pass
+    return out
 
 
 def _remove_clip_for_beat(project: str, beat_key: str) -> None:
@@ -1484,7 +1506,7 @@ def build(
                 root = _project_dir(project).resolve()
                 media_path = (root / rel).resolve() if rel else root
                 resource = asset_src(media_path)
-                if bridge.WEB_MODE and entry.get("preview_file") and media_path.is_file():
+                if bridge.WEB_MODE and (entry.get("preview_file") or entry.get("file")) and media_path.is_file():
                     resource = "/api/clip_preview?" + urlencode({
                         "project": project, "beat": beat_key, "t": media_path.stat().st_mtime_ns})
                 media = (Video(playlist=[VideoMedia(resource=resource)],

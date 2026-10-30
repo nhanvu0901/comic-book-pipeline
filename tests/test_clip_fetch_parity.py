@@ -89,8 +89,8 @@ def test_clip_fetch_add_rejects_intro_when_hook_is_fragmented(tmp_path, monkeypa
         ])
 
     assert exc.value.code != 0
-    err = capsys.readouterr().err + capsys.readouterr().out
-    assert "fragmented" in err.lower()
+    err = (capsys.readouterr().err + capsys.readouterr().out + str(exc.value)).lower()
+    assert "fragmented" in err
     assert "1:0" in err
     assert "1:1" in err
 
@@ -128,8 +128,8 @@ def test_clip_fetch_add_rejects_unknown_beat_key(tmp_path, monkeypatch, capsys):
         ])
 
     assert exc.value.code != 0
-    err = capsys.readouterr().err + capsys.readouterr().out
-    assert "unknown beat" in err.lower() or "invalid" in err.lower()
+    err = (capsys.readouterr().err + capsys.readouterr().out + str(exc.value)).lower()
+    assert "unknown beat" in err or "invalid" in err
     assert "1:0" in err
 
 
@@ -237,7 +237,7 @@ def test_legacy_manifest_without_preview_file_served_in_route_and_ui(tmp_path, m
     # In web route, /api/clip_preview resolves the legacy file when preview_file is absent
     import asyncio
     res = asyncio.run(web_routes.clip_preview(project="test_proj", beat="intro"))
-    assert res.path == str(legacy_file.resolve())
+    assert str(res.path) == str(legacy_file.resolve())
 
 
 def test_legacy_intro_key_in_fragmented_hook_manifest(tmp_path, monkeypatch):
