@@ -15,6 +15,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import re
 
+try:
+    from config import SCOUT_DEMAND_STALE_AFTER_SECONDS
+except ImportError:
+    SCOUT_DEMAND_STALE_AFTER_SECONDS = 30 * 86400.0
+
 
 SCHEMA_VERSION = 4
 
@@ -104,12 +109,28 @@ class AudienceEvidenceStore:
             connection.commit()
         return connection
 
+    @staticmethod
+    def normalize_checked_at(checked_at: str | None) -> str:
+        """Normalize a new checked timestamp, requiring an explicit timezone.
+
+        Empty values mean "checked now" and are stored in UTC.  Manual values
+        must name an offset (or ``Z``) so they cannot become ambiguous database
+        rows that later break staleness calculations.
+        """
+        if checked_at is None or not str(checked_at).strip():
+            return _now()
+        parsed = _aware_timestamp(checked_at)
+        if parsed is None:
+            raise ValueError("checked_at must be ISO 8601 with an explicit timezone offset or Z")
+        return parsed.isoformat()
+
     def add_demand_evidence(self, *, candidate_key: str, query: str, url: str, quote: str,
                             source_type: str, confidence: str, checked_at: str | None = None) -> None:
+        normalized_checked_at = self.normalize_checked_at(checked_at)
         with self._connect(write=True) as connection:
             connection.execute(
                 "INSERT INTO demand_evidence(candidate_key, query_text, url, quote, source_type, confidence, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (candidate_key, query, url, quote, source_type, confidence, checked_at or _now()),
+                (candidate_key, query, url, quote, source_type, confidence, normalized_checked_at),
             )
 
     def link_video(self, candidate_key: str, video_id: str, *, relation: str = "related") -> None:
@@ -184,7 +205,8 @@ class AudienceEvidenceStore:
             **({"last_refresh_error": failure["error"]} if failure else {}),
         }
 
-    def signals_for(self, candidate_key: str) -> dict[str, dict[str, Any]]:
+    def signals_for(self, candidate_key: str, *, stale_after_seconds: float | None = None,
+                    now: datetime | None = None) -> dict[str, dict[str, Any]]:
         evidence = self.evidence_for(candidate_key)
         if not self.path.exists():
             return {"demand": {"status": "unknown"}, "saturation": {"status": "unknown"}}
@@ -193,12 +215,46 @@ class AudienceEvidenceStore:
                 "SELECT video_id, relation FROM candidate_videos WHERE candidate_key = ? ORDER BY video_id", (candidate_key,))]
         videos = [{**self.video_signal(str(row["video_id"])), "relation": str(row["relation"] or "related")}
                   for row in linked]
-        direct_count = sum(1 for row in evidence if str(row.get("confidence") or "").casefold() == "direct")
+
+        if not evidence:
+            demand = {"status": "unknown"}
+        else:
+            now_dt = now or datetime.now(timezone.utc)
+            max_age = float(stale_after_seconds if stale_after_seconds is not None else SCOUT_DEMAND_STALE_AFTER_SECONDS)
+            fresh_rows = [
+                row for row in evidence
+                if (row_at := _aware_timestamp(row.get("checked_at"))) is not None
+                and (now_dt - row_at).total_seconds() <= max_age
+            ]
+            fresh_direct_count = sum(1 for row in fresh_rows if str(row.get("confidence") or "").casefold() == "direct")
+            total_direct_count = sum(1 for row in evidence if str(row.get("confidence") or "").casefold() == "direct")
+            latest_checked_at = evidence[0]["checked_at"]
+            if fresh_rows:
+                demand = {
+                    "status": "observed",
+                    "count": len(fresh_rows),
+                    "total_count": len(evidence),
+                    "direct_count": fresh_direct_count,
+                    "total_direct_count": total_direct_count,
+                    "checked_at": latest_checked_at,
+                    "cue": f"{fresh_direct_count} direct source-linked demand observation(s).",
+                }
+            else:
+                demand = {
+                    "status": "stale",
+                    "count": 0,
+                    "total_count": len(evidence),
+                    "direct_count": 0,
+                    "total_direct_count": total_direct_count,
+                    "checked_at": latest_checked_at,
+                    "cue": (
+                        f"{total_direct_count} direct demand observation(s) are stale; "
+                        "refresh needed before ranking."
+                    ),
+                }
+
         return {
-            "demand": ({"status": "observed", "count": len(evidence), "direct_count": direct_count,
-                        "checked_at": evidence[0]["checked_at"],
-                        "cue": f"{direct_count} direct source-linked demand observation(s)."}
-                       if evidence else {"status": "unknown"}),
+            "demand": demand,
             "saturation": (
                 {"status": "observed", "count": len(videos), "videos": videos,
                  "coverage_proof": False,
