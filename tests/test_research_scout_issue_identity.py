@@ -264,3 +264,24 @@ def test_conflicting_years_in_bare_mentions_fail_closed():
     assert "ambiguous" in reason.lower()
 
 
+@pytest.mark.parametrize("intent", [
+    "Batman (2016-) #1",
+    "Batman (2016-present) #1",
+    "Batman #1 (2016-)",
+    "Batman #1 (2016-present)",
+])
+def test_intent_with_ongoing_year_qualifier_enforces_year_constraint(intent):
+    # Candidate from a different volume/year must be rejected
+    reason_wrong = micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #1 (2011)"}
+    )
+    assert reason_wrong is not None
+    assert "2016" in reason_wrong or "year missing or different" in reason_wrong
+
+    # Candidate matching the publication/volume start year must be accepted
+    assert micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #1 (2016)"}
+    ) is None
+
+
+
