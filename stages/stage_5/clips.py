@@ -134,7 +134,27 @@ def remove_beat_clip(project_root: Path, beat: str) -> bool:
         if not manifest_path(project_root).exists():
             return False
         doc = read_manifest_doc(project_root)
-        kept = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) == str(beat))]
+        beats_to_remove = {str(beat)}
+        narr_p = Path(project_root) / "narration.json"
+        if narr_p.is_file():
+            try:
+                narr = json.loads(narr_p.read_text(encoding="utf-8"))
+                scenes = narr.get("scenes") or []
+                intro = next((s for s in scenes if s.get("is_intro")), None)
+                if intro:
+                    from ..review_gate import bookend_row_keys
+                    ikeys = [bk for bk, _u, _t in bookend_row_keys(intro, "intro")]
+                    if len(ikeys) > 1 and str(beat) in (ikeys[0], "intro"):
+                        beats_to_remove.update({ikeys[0], "intro"})
+                outro = next((s for s in scenes if s.get("is_outro")), None)
+                if outro:
+                    from ..review_gate import bookend_row_keys
+                    okeys = [bk for bk, _u, _t in bookend_row_keys(outro, "outro")]
+                    if len(okeys) > 1 and str(beat) in (okeys[0], "outro"):
+                        beats_to_remove.update({okeys[0], "outro"})
+            except Exception:
+                pass
+        kept = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) in beats_to_remove)]
         if len(kept) == len(doc["clips"]):
             return False
         doc["clips"] = kept

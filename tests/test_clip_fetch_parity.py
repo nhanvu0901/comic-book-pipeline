@@ -261,3 +261,165 @@ def test_legacy_intro_key_in_fragmented_hook_manifest(tmp_path, monkeypatch):
     clips.apply_clips_to_shots(sl, [("intro", clips.ClipEntry(id="hook_clip", file=str(legacy_file)))],
                                log=lambda m: None)
     assert sl[0].clip_id == "hook_clip"
+
+
+# ─── 4. Review findings regression & negative tests ──────────────────────────
+
+
+def test_clip_fetch_add_with_desc_only(tmp_path, monkeypatch):
+    """[P2 finding 1] CLI add --desc ... resolves best beat without AttributeError on ClipEntry."""
+    root = _setup_project(tmp_path, monkeypatch, hook_frags=2)
+    clips_dir = root / "review" / "clips"
+    src_file = clips_dir / "desc_clip.mp4"
+    src_file.write_bytes(b"data")
+
+    def fake_section(url, out_dir, *, start, beat_duration, end=None, **kw):
+        out = Path(out_dir) / f"sec_{start}_{end}.mp4"
+        out.write_bytes(b"section_data")
+        return out
+
+    def fake_render(sec_path, *, start, beat_duration, out_path, **kw):
+        out = Path(out_path)
+        out.write_bytes(b"preview_data")
+        return out
+
+    monkeypatch.setattr(clip_fetch, "fetch_clip_section", fake_section)
+    monkeypatch.setattr(clips, "render_clip_preview", fake_render)
+
+    rc = clip_fetch.main([
+        "add", "--project", "test_proj",
+        "--file", str(src_file),
+        "--start", "0.0", "--end", "2.0",
+        "--desc", "The cold open hook beat"
+    ])
+    assert rc == 0
+
+    doc = clips.read_manifest_doc(root)
+    assert len(doc["clips"]) == 1
+    # Placed on one of the story/hook beats matching the description
+    assert doc["clips"][0]["beat"] in ("1:0", "1:1", "2:0", "2:1")
+
+
+def test_remove_clip_for_beat_removes_legacy_aliased_bookend(tmp_path, monkeypatch):
+    """[P2 finding 2] Rolling back an aliased bookend clip deletes the legacy entry from clips.json."""
+    root = _setup_project(tmp_path, monkeypatch, hook_frags=2)
+    clips_dir = root / "review" / "clips"
+    legacy_file = clips_dir / "hook_clip.mp4"
+    legacy_file.write_bytes(b"hook_bytes")
+
+    legacy_entry = {
+        "id": "hook_clip",
+        "file": "review/clips/hook_clip.mp4",
+        "beat": "intro",
+        "start": 0.0,
+        "end": 3.0,
+    }
+    (clips_dir / "clips.json").write_text(json.dumps({"clips": [legacy_entry]}), encoding="utf-8")
+
+    # 1. Manifest loader maps legacy "intro" to the first fragment row "1:0"
+    loaded = sg._load_clips_manifest("test_proj")
+    assert "1:0" in loaded
+
+    # 2. Rolling back "1:0" in the review UI drops "intro" from clips.json on disk
+    sg._remove_clip_for_beat("test_proj", "1:0")
+
+    # 3. Reloading manifest shows it is completely gone on disk and in UI
+    on_disk = clips.read_manifest_doc(root)["clips"]
+    assert on_disk == []
+    reloaded = sg._load_clips_manifest("test_proj")
+    assert reloaded == {}
+
+
+def test_remove_clip_for_beat_removes_legacy_aliased_outro(tmp_path, monkeypatch):
+    """[P2 finding 2] Rolling back an aliased outro clip deletes the legacy entry from clips.json."""
+    root = _setup_project(tmp_path, monkeypatch, hook_frags=2, outro_frags=2)
+    clips_dir = root / "review" / "clips"
+    legacy_file = clips_dir / "outro_clip.mp4"
+    legacy_file.write_bytes(b"outro_bytes")
+
+    legacy_entry = {
+        "id": "outro_clip",
+        "file": "review/clips/outro_clip.mp4",
+        "beat": "outro",
+        "start": 0.0,
+        "end": 3.0,
+    }
+    (clips_dir / "clips.json").write_text(json.dumps({"clips": [legacy_entry]}), encoding="utf-8")
+
+    loaded = sg._load_clips_manifest("test_proj")
+    assert "3:0" in loaded
+
+    sg._remove_clip_for_beat("test_proj", "3:0")
+
+    on_disk = clips.read_manifest_doc(root)["clips"]
+    assert on_disk == []
+    reloaded = sg._load_clips_manifest("test_proj")
+    assert reloaded == {}
+
+
+def test_clip_fetch_add_rejects_negative_start(tmp_path, monkeypatch, capsys):
+    """[P2 finding 3] CLI add rejects negative start time."""
+    root = _setup_project(tmp_path, monkeypatch, hook_frags=2)
+    fake_source = root / "review" / "clips" / "source.mp4"
+    fake_source.write_bytes(b"dummy")
+
+    with pytest.raises(SystemExit) as exc:
+        clip_fetch.main([
+            "add", "--project", "test_proj",
+            "--file", str(fake_source),
+            "--start", "-1.5",
+            "--beat", "1:0"
+        ])
+    assert exc.value.code != 0
+    err = (capsys.readouterr().err + capsys.readouterr().out + str(exc.value)).lower()
+    assert "start" in err and "non-negative" in err
+
+
+def test_clip_fetch_add_rejects_inverted_span(tmp_path, monkeypatch, capsys):
+    """[P2 finding 3] CLI add rejects end <= start."""
+    root = _setup_project(tmp_path, monkeypatch, hook_frags=2)
+    fake_source = root / "review" / "clips" / "source.mp4"
+    fake_source.write_bytes(b"dummy")
+
+    with pytest.raises(SystemExit) as exc:
+        clip_fetch.main([
+            "add", "--project", "test_proj",
+            "--file", str(fake_source),
+            "--start", "10.0", "--end", "5.0",
+            "--beat", "1:0"
+        ])
+    assert exc.value.code != 0
+    err = (capsys.readouterr().err + capsys.readouterr().out + str(exc.value)).lower()
+    assert "end" in err and "greater than start" in err
+
+
+def test_clip_fetch_add_rejects_equal_start_and_end(tmp_path, monkeypatch, capsys):
+    """[P2 finding 3] CLI add rejects end == start."""
+    root = _setup_project(tmp_path, monkeypatch, hook_frags=2)
+    fake_source = root / "review" / "clips" / "source.mp4"
+    fake_source.write_bytes(b"dummy")
+
+    with pytest.raises(SystemExit) as exc:
+        clip_fetch.main([
+            "add", "--project", "test_proj",
+            "--file", str(fake_source),
+            "--start", "5.0", "--end", "5.0",
+            "--beat", "1:0"
+        ])
+    assert exc.value.code != 0
+    err = (capsys.readouterr().err + capsys.readouterr().out + str(exc.value)).lower()
+    assert "end" in err and "greater than start" in err
+
+
+def test_process_clip_pick_validates_start_and_end(tmp_path, monkeypatch):
+    """[P2 finding 3] process_clip_pick raises ValueError on invalid start/end."""
+    root = _setup_project(tmp_path, monkeypatch, hook_frags=2)
+    with pytest.raises(ValueError, match="start must be a non-negative number"):
+        clip_fetch.process_clip_pick(root, "1:0", "vid123", start=-1.0, beat_duration=3.0)
+
+    with pytest.raises(ValueError, match="greater than start"):
+        clip_fetch.process_clip_pick(root, "1:0", "vid123", start=10.0, beat_duration=3.0, end=5.0)
+
+    with pytest.raises(ValueError, match="greater than start"):
+        clip_fetch.process_clip_pick(root, "1:0", "vid123", start=5.0, beat_duration=3.0, end=5.0)
+

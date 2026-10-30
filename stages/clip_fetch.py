@@ -923,6 +923,11 @@ def process_clip_pick(
     `commit`, when supplied by a background job, is the short critical section that decides
     whether this completed work is still current before it reaches the durable manifest. Returns
     None when that job was superseded."""
+    if start is None or not math.isfinite(start) or float(start) < 0:
+        raise ValueError("start must be a non-negative number")
+    if end is not None and (not math.isfinite(end) or float(end) <= float(start)):
+        raise ValueError(f"end ({end}) must be greater than start ({start})")
+
     from .stage_5 import clips
     say = on_state or (lambda _s: None)
     clips_dir = project_root / "review" / "clips"
@@ -1140,6 +1145,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("add needs --file or --url")
         if not (a.beat or a.desc):
             raise SystemExit("add needs --beat (or --desc)")
+        if a.start is None or not math.isfinite(a.start) or a.start < 0:
+            sys.stderr.write("Error: start must be a non-negative number\n")
+            raise SystemExit("start must be a non-negative number")
+        if a.end is not None and (not math.isfinite(a.end) or a.end <= a.start):
+            sys.stderr.write(f"Error: end ({a.end}) must be greater than start ({a.start})\n")
+            raise SystemExit(f"end ({a.end}) must be greater than start ({a.start})")
 
         narr_p = root / "narration.json"
         if not narr_p.is_file():
@@ -1154,8 +1165,8 @@ def main(argv: list[str] | None = None) -> int:
                 sys.stderr.write(f"Error: {exc}\n")
                 raise SystemExit(str(exc))
         else:
-            from .stage_5.clips import resolve_clip_assignments
-            assignments = resolve_clip_assignments([{"desc": a.desc, "id": "desc_probe"}], narration)
+            from .stage_5.clips import ClipEntry, resolve_clip_assignments
+            assignments = resolve_clip_assignments([ClipEntry(id="desc_probe", file="", desc=a.desc)], narration)
             if not assignments:
                 sys.stderr.write(f"Error: Could not place clip by description '{a.desc}'\n")
                 raise SystemExit(f"Could not place clip by description '{a.desc}'")

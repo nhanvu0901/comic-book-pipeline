@@ -63,15 +63,19 @@ def _load_clips_manifest(project: str) -> dict[str, dict]:
                 if intro:
                     from stages.review_gate import bookend_row_keys
                     keys = [bk for bk, _u, _t in bookend_row_keys(intro, "intro")]
-                    if len(keys) > 1 and keys[0] not in out:
-                        out[keys[0]] = out["intro"]
+                    if len(keys) > 1:
+                        legacy_intro = out.pop("intro")
+                        if keys[0] not in out:
+                            out[keys[0]] = legacy_intro
             if "outro" in out:
                 outro = next((s for s in scenes if s.get("is_outro")), None)
                 if outro:
                     from stages.review_gate import bookend_row_keys
                     keys = [bk for bk, _u, _t in bookend_row_keys(outro, "outro")]
-                    if len(keys) > 1 and keys[0] not in out:
-                        out[keys[0]] = out["outro"]
+                    if len(keys) > 1:
+                        legacy_outro = out.pop("outro")
+                        if keys[0] not in out:
+                            out[keys[0]] = legacy_outro
         except Exception:
             pass
     return out
