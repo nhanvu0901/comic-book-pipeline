@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Callable
 
 REPO = Path(__file__).resolve().parent.parent
 CLIP_DIR_REL = Path("review") / "clips"
@@ -579,12 +580,17 @@ def fetch_clip_section(
     margin: float = 2.0,
     max_height: int = 1080,
     log=print,
+    source_file: Path | None = None,
 ) -> Path:
     clip_dir = Path(clip_dir)
     src_dir = clip_dir / "src"
     src_dir.mkdir(parents=True, exist_ok=True)
     m = _YT_ID.search(url)
-    vid = m.group(1) if m else "clip"
+    if not m and source_file:
+        m = _YT_ID.search(str(source_file))
+        vid = m.group(1) if m else Path(source_file).stem
+    else:
+        vid = m.group(1) if m else "clip"
     has_end = end is not None and float(end) > start
     if has_end:
         out = clip_dir / f"{vid}_{start:.1f}_to_{float(end):.1f}.mp4"
@@ -596,6 +602,11 @@ def fetch_clip_section(
 
     import config
     dl_end = (float(end) + margin) if has_end else (start + beat_duration * config.CLIP_SPEED_MAX + margin)
+
+    if source_file is not None and Path(source_file).is_file():
+        log(f"[clip] cutting section from local source: {source_file}")
+        normalize(Path(source_file), out, start=start, duration=dl_end - start, log=log)
+        return out
     cmd = ytdlp_section_args(url, src_dir, start=start, beat_duration=beat_duration,
                             end=float(end) if has_end else None,
                             margin=margin, max_height=max_height)
@@ -840,10 +851,167 @@ def add_entry(root: Path, entry: dict) -> dict:
     return entry
 
 
+class ClipPickError(RuntimeError):
+    """Raised when picking or rendering a clip fails."""
+
+
+def resolve_beat_duration(
+    project_root: Path,
+    beat: str,
+    narration: dict | None = None,
+    *,
+    start: float = 0.0,
+    end: float | None = None,
+) -> float:
+    """Determine the target beat duration for clip picking.
+
+    Hierarchy of sources:
+    1. Exact TTS duration measured so far (stages.stage_4.tts_status.beat_duration).
+    2. Heuristic word-count / target-seconds estimate from narration.json
+       (stages.stage_5.screen_beats.estimate_beat_seconds).
+    3. User-supplied clip duration span (end - start) when end > start.
+    4. Safe default duration of 3.0 seconds.
+    """
+    from .stage_4 import tts_status
+    dur = tts_status.beat_duration(project_root, beat)
+    if dur is not None and dur > 0:
+        return float(dur)
+
+    if narration is None:
+        narr_p = project_root / "narration.json"
+        if narr_p.is_file():
+            try:
+                narration = json.loads(narr_p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+    if narration:
+        try:
+            from .stage_5.screen_beats import estimate_beat_seconds
+            estimates = estimate_beat_seconds(narration)
+            if beat in estimates and estimates[beat] > 0:
+                return round(float(estimates[beat]), 3)
+        except Exception:
+            pass
+
+    if end is not None and float(end) > float(start):
+        return round(float(end) - float(start), 3)
+
+    return 3.0
+
+
+def process_clip_pick(
+    project_root: Path,
+    beat: str,
+    video_id: str,
+    start: float,
+    beat_duration: float,
+    url: str | None = None,
+    *,
+    end: float | None = None,
+    crop: dict | None = None,
+    source_file: Path | None = None,
+    entry_id: str | None = None,
+    on_state: Callable[[str], None] | None = None,
+    preview_token: str | None = None,
+    commit: Callable[[dict[str, Any], Path, Path], bool] | None = None,
+) -> dict[str, Any] | None:
+    """Download the section for the picked moment, render its 9:16 preview, and put it in the
+    manifest with a rebased timeline. When `end` (> start) is given, the entire [start, end]
+    span is downloaded and speed-adjusted (`fit_to_beat=True`) to fit `beat_duration` exactly.
+    Raises ClipPickError (with the reason) when the footage after `start` cannot fill the beat.
+    `commit`, when supplied by a background job, is the short critical section that decides
+    whether this completed work is still current before it reaches the durable manifest. Returns
+    None when that job was superseded."""
+    if start is None or not math.isfinite(start) or float(start) < 0:
+        raise ValueError("start must be a non-negative number")
+    if end is not None and (not math.isfinite(end) or float(end) <= float(start)):
+        raise ValueError(f"end ({end}) must be greater than start ({start})")
+
+    from .stage_5 import clips
+    say = on_state or (lambda _s: None)
+    clips_dir = project_root / "review" / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+    video_url = url or (f"https://www.youtube.com/watch?v={video_id}" if video_id else "")
+    has_end = end is not None and float(end) > float(start)
+    end_f = float(end) if has_end else None
+    clip_span = round(end_f - float(start), 3) if end_f is not None else None
+
+    say("downloading")
+    if has_end and end_f is not None:
+        section_path = fetch_clip_section(
+            video_url, clips_dir, start=start, beat_duration=beat_duration, end=end_f,
+            source_file=source_file,
+        )
+    else:
+        section_path = fetch_clip_section(
+            video_url, clips_dir, start=start, beat_duration=beat_duration,
+            source_file=source_file,
+        )
+
+    say("rendering")
+    preview_stem = f"preview_{beat.replace(':', '_')}"
+    canonical_preview = clips_dir / f"{preview_stem}.mp4"
+    # Keep the manifest's long-standing public path stable. Concurrent jobs render to private
+    # generation-scoped staging files; only the current job promotes its artifact at commit time.
+    preview_path = (clips_dir / f"{preview_stem}.pending_{preview_token}.mp4"
+                    if commit is not None and preview_token else canonical_preview)
+    try:
+        if has_end and clip_span is not None:
+            clips.render_clip_preview(
+                section_path, start=0.0, beat_duration=beat_duration,
+                out_path=preview_path, end=clip_span, fit_to_beat=True,
+                crop=crop,
+            )
+        else:
+            clips.render_clip_preview(
+                section_path, start=0.0, beat_duration=beat_duration, out_path=preview_path,
+                crop=crop,
+            )
+    except clips.ClipTooShort as exc:
+        raise ClipPickError(
+            f"Từ mốc {start:.1f}s video chỉ còn quá ít cảnh để lấp beat {beat} ({beat_duration:.1f}s): {exc}. "
+            f"Hãy chọn mốc sớm hơn.") from exc
+    except Exception as exc:
+        raise ClipPickError(f"Không dựng được preview 9:16: {exc}") from exc
+
+    def rel(p: Path) -> str:
+        return p.relative_to(project_root).as_posix()
+
+    entry: dict[str, Any] = {
+        "id": entry_id or video_id,
+        "file": rel(section_path),
+        "beat": beat,
+        "start": 0.0,                 # t=0 of the section file IS the picked moment
+        "source_url": video_url,      # (no "end" when open-ended: Stage 5's fit may extend into the margin)
+        "source_start": start,
+        "beat_duration": beat_duration,
+        "preview_file": rel(canonical_preview),
+    }
+    if has_end and clip_span is not None and end_f is not None:
+        entry["end"] = clip_span
+        entry["fit_to_beat"] = True
+        entry["source_end"] = end_f
+    if crop:
+        entry["crop"] = crop
+
+    if commit is not None:
+        if not commit(entry, preview_path, canonical_preview):
+            if preview_path != canonical_preview:
+                try:
+                    preview_path.unlink()
+                except OSError:
+                    pass
+            return None
+    else:
+        clips.upsert_beat_clip(project_root, entry)
+    return entry
+
+
 def beat_rows(root: Path) -> list[tuple[str, str, list[str]]]:
     """[(beat_key, text, [clip ids targeting it])] for the project's narration."""
+    from .review_gate import review_beat_rows
     from .stage_5.clips import load_manifest
-    from .stage_5.shots import _beat_rows_for_custom
     np_ = root / "narration.json"
     if not np_.exists():
         raise SystemExit(f"{np_} missing — beats come from Stage 3's narration")
@@ -851,7 +1019,7 @@ def beat_rows(root: Path) -> list[tuple[str, str, list[str]]]:
     by_beat: dict[str, list[str]] = {}
     for e in load_manifest(str(root), log=lambda m: None):
         by_beat.setdefault(e.beat or "(desc)", []).append(e.id)
-    rows = [(bk, txt, by_beat.pop(bk, [])) for bk, txt in _beat_rows_for_custom(narration)]
+    rows = [(bk, txt, by_beat.pop(bk, [])) for bk, txt in review_beat_rows(narration)]
     # Keys that are not review rows still resolve at render (a bookend's plain scene id, or a
     # desc-placed entry) — or are stale. List them so nothing in the manifest is invisible.
     texts = {str(s.get("scene_id")): str(s.get("text") or "") for s in narration.get("scenes") or []}
@@ -977,9 +1145,70 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("add needs --file or --url")
         if not (a.beat or a.desc):
             raise SystemExit("add needs --beat (or --desc)")
-        entry = add_entry(root, {"id": a.id, "file": a.file, "source_url": a.source_url,
-                                 "start": a.start, "end": a.end, "beat": a.beat,
-                                 "desc": a.desc, "crop": _parse_crop_args(a)})
+        if a.start is None or not math.isfinite(a.start) or a.start < 0:
+            sys.stderr.write("Error: start must be a non-negative number\n")
+            raise SystemExit("start must be a non-negative number")
+        if a.end is not None and (not math.isfinite(a.end) or a.end <= a.start):
+            sys.stderr.write(f"Error: end ({a.end}) must be greater than start ({a.start})\n")
+            raise SystemExit(f"end ({a.end}) must be greater than start ({a.start})")
+
+        narr_p = root / "narration.json"
+        if not narr_p.is_file():
+            raise SystemExit(f"{narr_p} missing — beats come from Stage 3's narration")
+        narration = json.loads(narr_p.read_text(encoding="utf-8"))
+
+        if a.beat:
+            from .review_gate import validate_project_beat_key
+            try:
+                beat = validate_project_beat_key(narration, a.beat)
+            except ValueError as exc:
+                sys.stderr.write(f"Error: {exc}\n")
+                raise SystemExit(str(exc))
+        else:
+            from .stage_5.clips import ClipEntry, resolve_clip_assignments
+            assignments = resolve_clip_assignments([ClipEntry(id="desc_probe", file="", desc=a.desc)], narration)
+            if not assignments:
+                sys.stderr.write(f"Error: Could not place clip by description '{a.desc}'\n")
+                raise SystemExit(f"Could not place clip by description '{a.desc}'")
+            beat = assignments[0][0]
+
+        crop = _parse_crop_args(a)
+        beat_dur = resolve_beat_duration(root, beat, narration, start=a.start, end=a.end)
+
+        source_url = a.source_url or ""
+        src_file = None
+        vid = None
+        if a.file:
+            p = Path(a.file)
+            src_file = p if p.is_absolute() else (root / p if (root / p).exists() else p.resolve())
+            meta_p = src_file.with_suffix(".json")
+            if not source_url and meta_p.is_file():
+                try:
+                    source_url = json.loads(meta_p.read_text(encoding="utf-8")).get("source_url", "")
+                except Exception:
+                    pass
+            vid = video_id(source_url) or video_id(src_file.name) or src_file.stem
+        elif a.source_url:
+            vid = video_id(a.source_url) or "clip"
+
+        if not vid:
+            vid = a.id or "clip"
+
+        try:
+            entry = process_clip_pick(
+                project_root=root,
+                beat=beat,
+                video_id=vid,
+                start=a.start,
+                beat_duration=beat_dur,
+                url=source_url,
+                end=a.end,
+                crop=crop,
+                source_file=src_file,
+                entry_id=a.id,
+            )
+        except Exception as exc:
+            raise SystemExit(f"Clip pick failed: {exc}")
         print(json.dumps(entry, indent=2, ensure_ascii=False))
         return 0
     if a.cmd == "beats":
