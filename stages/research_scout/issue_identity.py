@@ -241,6 +241,38 @@ def _candidate_identity(value: str) -> IssueIdentity | None:
     return IssueIdentity(series, _normal_issue(match.group(1)), year, volume_year)
 
 
+def _extract_volume_from_text(val: str) -> str:
+    """Extract volume year from a series name or full issue string.
+
+    If the string contains an issue marker (#N), only a year BEFORE #N
+    (or an ongoing qualifier) can count as the volume year. A publication
+    year after #N is never volume evidence.
+    """
+    matches = list(_ISSUE_RE.finditer(val))
+    if matches:
+        match = matches[0]
+        prefix_part = val[:match.start()]
+        ongoing_before = _ONGOING_QUALIFIER_RE.search(prefix_part)
+        if ongoing_before:
+            return ongoing_before.group(1)
+        exact_before = _EXACT_YEAR_QUALIFIER_RE.search(prefix_part)
+        if exact_before:
+            return exact_before.group(1)
+        suffix_part = val[match.end():]
+        ongoing_after = _ONGOING_QUALIFIER_RE.search(suffix_part)
+        if ongoing_after:
+            return ongoing_after.group(1)
+        return ""
+
+    ongoing = _ONGOING_QUALIFIER_RE.search(val)
+    if ongoing:
+        return ongoing.group(1)
+    exact = _EXACT_YEAR_QUALIFIER_RE.search(val)
+    if exact:
+        return exact.group(1)
+    return ""
+
+
 def _candidate_volume_evidence(candidate: Mapping[str, Any], given: IssueIdentity | None) -> str:
     """Extract verified volume start year from candidate identity and metadata."""
     if given and given.volume_year:
@@ -259,14 +291,12 @@ def _candidate_volume_evidence(candidate: Mapping[str, Any], given: IssueIdentit
     for field in ("series", "comic", "source_comic"):
         val = candidate.get(field)
         if val and isinstance(val, str):
-            ongoing = _ONGOING_QUALIFIER_RE.search(val)
-            if ongoing:
-                return ongoing.group(1)
-            exact = _EXACT_YEAR_QUALIFIER_RE.search(val)
-            if exact:
-                return exact.group(1)
+            vol = _extract_volume_from_text(val)
+            if vol:
+                return vol
 
     return ""
+
 
 
 def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:

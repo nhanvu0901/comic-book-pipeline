@@ -371,6 +371,30 @@ def test_title_with_volume_qualifier_does_not_conflict_with_release_year_intent(
     assert micro_issue_rejection_reason(intent, candidate) is None
 
 
+def test_source_comic_with_only_publication_year_is_not_fake_volume_evidence():
+    # Review 6 finding: source_comic carrying a full issue label with publication year after #N
+    # must not be treated as volume evidence.
+    intent = "Batman (2016-) #50"
+    candidate = {
+        "series_issue_year": "Batman #50 (2016)",
+        "source_comic": "Batman #50 (2016)",
+    }
+    reason = micro_issue_rejection_reason(intent, candidate)
+    assert reason is not None
+    assert "volume" in reason.lower()
+
+
+def test_source_comic_with_volume_qualifier_before_issue_is_valid_volume_evidence():
+    # Positive case: source_comic has volume qualifier before #N
+    intent = "Batman (2016-) #50"
+    candidate = {
+        "series_issue_year": "Batman #50 (2018)",
+        "source_comic": "Batman (2016) #50",
+    }
+    assert micro_issue_rejection_reason(intent, candidate) is None
+
+
+
 
 
 
