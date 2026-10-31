@@ -309,3 +309,212 @@ def pick_in_point(
 
     # Fallback: if no drop qualifies within bounds, pick 0.0
     return 0.0, None
+
+
+@dataclass
+class HitPoint:
+    shot_index: int
+    time_seconds: float
+    name: str
+    strength: float = 0.5
+    beat_time: float = 0.0
+    target_cut: float = 0.0
+    offset_from_beat: float = 0.0
+    snapped: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+
+def select_hit_points(shots: list[Any], narration: dict[str, Any] | None = None) -> list[HitPoint]:
+    """Select 3-5 key hit points using general rules (no comic-specific code):
+    1. MP4 clip shots (strength 1.0)
+    2. Hook's reveal cut (cut transitioning out of the cold-open / intro, strength 0.9)
+    3. Climax / highest importance scene start (strength 0.85)
+    4. Final line cut (start of the closing line/outro, strength 0.7)
+    """
+    if not shots or len(shots) < 2:
+        return []
+
+    # Calculate shot start times
+    start_times = [0.0]
+    for s in shots[:-1]:
+        start_times.append(round(start_times[-1] + float(s.duration_seconds), 4))
+
+    candidates: dict[int, HitPoint] = {}
+
+    # 1. Hook reveal cut: boundary after the intro / cold open
+    hook_cut_idx = None
+    if getattr(shots[0], "is_intro", False):
+        for idx in range(1, len(shots)):
+            if not getattr(shots[idx], "is_intro", False):
+                hook_cut_idx = idx
+                break
+    elif len(shots) > 1:
+        # If is_intro is not explicitly set, shot 1 entrance is the opening hook reveal
+        hook_cut_idx = 1
+
+    if hook_cut_idx is not None and 0 < hook_cut_idx < len(shots):
+        candidates[hook_cut_idx] = HitPoint(
+            shot_index=hook_cut_idx,
+            time_seconds=start_times[hook_cut_idx],
+            name="Hook Reveal",
+            strength=0.9,
+        )
+
+    # 2. MP4 clip shots
+    for idx, s in enumerate(shots):
+        if idx == 0:
+            continue
+        clip_path = getattr(s, "clip_path", "")
+        clip_id = getattr(s, "clip_id", "")
+        if clip_path or clip_id:
+            name = f"Video Clip ({clip_id or Path(clip_path).stem})"
+            candidates[idx] = HitPoint(
+                shot_index=idx,
+                time_seconds=start_times[idx],
+                name=name,
+                strength=1.0,
+            )
+
+    # 3. Scene starts with highest importance (e.g. climax)
+    climax_scene_id = None
+    scenes = (narration or {}).get("scenes") or []
+    for sc in scenes:
+        imp = str(sc.get("importance") or "").lower()
+        if "climax" in imp:
+            climax_scene_id = sc.get("scene_id")
+            break
+
+    # If no explicit importance field, choose scene in the dramatic peak region (~70% through narration)
+    if climax_scene_id is None and len(scenes) >= 3:
+        peak_idx = int(len(scenes) * 0.7)
+        climax_scene_id = scenes[peak_idx].get("scene_id")
+
+    if climax_scene_id is not None:
+        for idx, s in enumerate(shots):
+            if idx > 0 and getattr(s, "scene_id", None) == climax_scene_id:
+                if idx not in candidates or candidates[idx].strength < 0.85:
+                    candidates[idx] = HitPoint(
+                        shot_index=idx,
+                        time_seconds=start_times[idx],
+                        name=f"Climax (Scene {climax_scene_id})",
+                        strength=0.85,
+                    )
+                break
+
+    # 4. Final line cut (entrance to last shot / outro)
+    final_idx = len(shots) - 1
+    if final_idx > 0 and (final_idx not in candidates or candidates[final_idx].strength < 0.7):
+        candidates[final_idx] = HitPoint(
+            shot_index=final_idx,
+            time_seconds=start_times[final_idx],
+            name="Final Line",
+            strength=0.7,
+        )
+
+    # Sort by strength descending, take top 5
+    ranked = sorted(candidates.values(), key=lambda hp: hp.strength, reverse=True)
+    selected = ranked[:5]
+
+    # Return in chronological order
+    selected.sort(key=lambda hp: hp.shot_index)
+    return selected
+
+
+def _can_fit_clip(shot: Any, new_duration: float) -> bool:
+    """Check whether a clip shot can satisfy speed [0.8, 1.25] and hold <= 0.3s."""
+    clip_path = getattr(shot, "clip_path", "")
+    if not clip_path:
+        return True
+
+    clip_in = float(getattr(shot, "clip_in", 0.0) or 0.0)
+    clip_out = float(getattr(shot, "clip_out", 0.0) or 0.0)
+    fit_to_beat = bool(getattr(shot, "clip_fit_to_beat", False))
+
+    if clip_out > clip_in:
+        span = clip_out - clip_in
+        if fit_to_beat:
+            speed = span / new_duration
+            return 0.80 <= speed <= 1.25
+        else:
+            ext = min(span, new_duration)
+            speed = max(0.8, min(1.25, ext / new_duration))
+            hold = max(0.0, new_duration - ext / speed)
+            return hold <= 0.30
+
+    return True
+
+
+def snap_shots_to_beats(
+    shots: list[Any],
+    hit_points: list[HitPoint],
+    in_point: float,
+    strong_beats: list[float],
+    fps: float = 30.0,
+    lead_frames: float = 1.5,
+    tolerance: float = 0.20,
+    min_duration: float = 0.40,
+) -> list[HitPoint]:
+    """Snap hit point boundaries to nearest strong beat within +-tolerance (default +-0.20s).
+    Lands 1-2 frames before the beat.
+    Maintains total video duration and never alters narration audio.
+    Respects min_duration (0.40s) and clip-fit limits.
+    """
+    if not shots or not hit_points or not strong_beats:
+        return hit_points
+
+    # Precalculate start times of all shots
+    lead_time = lead_frames / float(fps)
+    video_beats = [round(b - in_point, 4) for b in strong_beats]
+
+    for hp in hit_points:
+        idx = hp.shot_index
+        if idx <= 0 or idx >= len(shots):
+            continue
+
+        prev_shot = shots[idx - 1]
+        cur_shot = shots[idx]
+
+        # Current cut time
+        cut_time = sum(float(shots[j].duration_seconds) for j in range(idx))
+
+        # Find nearest beat in video timeline
+        valid_beats = [vb for vb in video_beats if vb >= 0.0]
+        if not valid_beats:
+            continue
+
+        nearest_beat = min(valid_beats, key=lambda vb: abs(vb - cut_time))
+        target_cut = nearest_beat - lead_time
+        delta = target_cut - cut_time
+
+        if abs(delta) > tolerance:
+            hp.snapped = False
+            hp.beat_time = round(nearest_beat, 3)
+            hp.target_cut = round(cut_time, 3)
+            hp.offset_from_beat = round(cut_time - nearest_beat, 4)
+            continue
+
+        # Check floor and limits
+        dur_prev_new = round(float(prev_shot.duration_seconds) + delta, 4)
+        dur_cur_new = round(float(cur_shot.duration_seconds) - delta, 4)
+
+        if dur_prev_new < min_duration or dur_cur_new < min_duration:
+            hp.snapped = False
+            continue
+
+        if not _can_fit_clip(prev_shot, dur_prev_new) or not _can_fit_clip(cur_shot, dur_cur_new):
+            hp.snapped = False
+            continue
+
+        # Apply snap
+        prev_shot.duration_seconds = dur_prev_new
+        cur_shot.duration_seconds = dur_cur_new
+
+        hp.snapped = True
+        hp.beat_time = round(nearest_beat, 3)
+        hp.target_cut = round(target_cut, 3)
+        hp.offset_from_beat = round(target_cut - nearest_beat, 4)
+
+    return hit_points
+
