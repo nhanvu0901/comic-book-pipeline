@@ -1111,6 +1111,7 @@ def save_capcut_music(
     capcut_entry = {
         **existing_capcut,
         "enabled": True,
+        "bake_into_final": existing_capcut.get("bake_into_final", True),
         "filename": rel_filename,
         "sha256": sha256,
         "bpm": analysis.bpm,
@@ -1120,6 +1121,16 @@ def save_capcut_music(
     doc["capcut_music"] = capcut_entry
     save_music_config(project_name, doc)
     return capcut_entry
+
+
+def toggle_capcut_music_bake_into_final(project_name: str, enabled: bool) -> dict:
+    """Toggle the bake_into_final flag for CapCut reference music."""
+    doc = load_music_config(project_name)
+    existing = doc.get("capcut_music") or {}
+    existing["bake_into_final"] = bool(enabled)
+    doc["capcut_music"] = existing
+    save_music_config(project_name, doc)
+    return existing
 
 
 

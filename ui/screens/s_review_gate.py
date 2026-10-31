@@ -2589,6 +2589,7 @@ def build(
     def _refresh_capcut_info():
         cm = music_doc.get("capcut_music") or {}
         on = bool(cm.get("enabled"))
+        bake_music_cb.visible = on
         pick_music_btn.visible = on
         capcut_info_text.visible = on
         genre_dd.disabled = on
@@ -2648,6 +2649,7 @@ def build(
             status_text.value = f"Nhạc CapCut sẵn sàng: BPM {new_entry.get('bpm', 0):.1f}, In-point {new_entry.get('in_point', 0):.2f}s"
             status_text.color = SUCCESS
             try:
+                bake_music_cb.update()
                 capcut_info_text.update()
                 status_text.update()
                 genre_dd.update()
@@ -2666,6 +2668,8 @@ def build(
         on = bool(capcut_cb.value)
         cm = music_doc.get("capcut_music") or {}
         cm["enabled"] = on
+        if "bake_into_final" not in cm:
+            cm["bake_into_final"] = True
         music_doc["capcut_music"] = cm
         save_music_config(project, music_doc)
         _refresh_capcut_info()
@@ -2673,9 +2677,24 @@ def build(
         status_text.color = SUCCESS if on else TEXT_MUTED
         try:
             capcut_cb.update()
+            bake_music_cb.update()
             pick_music_btn.update()
             capcut_info_text.update()
             genre_dd.update()
+            status_text.update()
+        except Exception:
+            pass
+
+    def _toggle_bake_music(e):
+        on = bool(bake_music_cb.value)
+        cm = music_doc.get("capcut_music") or {}
+        cm["bake_into_final"] = on
+        music_doc["capcut_music"] = cm
+        save_music_config(project, music_doc)
+        status_text.value = f"Trộn sẵn nhạc vào final.mp4: {'BẬT' if on else 'TẮT'}"
+        status_text.color = SUCCESS if on else TEXT_MUTED
+        try:
+            bake_music_cb.update()
             status_text.update()
         except Exception:
             pass
@@ -2684,6 +2703,11 @@ def build(
         label="Dùng nhạc CapCut",
         value=bool(capcut_cfg.get("enabled")),
         on_change=_toggle_capcut_music,
+    )
+    bake_music_cb = ft.Checkbox(
+        label="Trộn sẵn nhạc vào final.mp4",
+        value=bool(capcut_cfg.get("bake_into_final", True)),
+        on_change=_toggle_bake_music,
     )
     pick_music_btn = secondary_button("Chọn file nhạc/video (mp3/wav/m4a/mp4/mov)", _pick_capcut_music, icon=ft.Icons.AUDIO_FILE_OUTLINED)
     _refresh_capcut_info()
@@ -2709,6 +2733,7 @@ def build(
         ft.Container(height=10),
         ft.Text("MUSIC", size=10, color=TEXT_MUTED),
         capcut_cb,
+        bake_music_cb,
         pick_music_btn,
         capcut_info_text,
         ft.Container(height=6),

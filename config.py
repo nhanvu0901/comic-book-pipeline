@@ -568,6 +568,11 @@ CLIP_MAX_HOLD = float(os.getenv("CLIP_MAX_HOLD", "0.3"))
 _chatterbox_seed_env = os.getenv("CHATTERBOX_SEED")
 CHATTERBOX_SEED = (int(_chatterbox_seed_env) if _chatterbox_seed_env is not None else 42) if ENABLE_VIDEO_CLIPS else None
 
+# ─── CapCut Music Sync & Mix ───────────────────────────────────────────────
+CAPCUT_MUSIC_OFFSET_LU = float(os.getenv("CAPCUT_MUSIC_OFFSET_LU", "16.0"))
+CAPCUT_MUSIC_FADE_IN_S = float(os.getenv("CAPCUT_MUSIC_FADE_IN_S", "1.0"))
+CAPCUT_MUSIC_FADE_OUT_S = float(os.getenv("CAPCUT_MUSIC_FADE_OUT_S", "2.0"))
+
 # ─── Comic Scraper ──────────────────────────────────────────────────────────
 # headless=False opens a visible Chrome window — much more reliable against Cloudflare
 

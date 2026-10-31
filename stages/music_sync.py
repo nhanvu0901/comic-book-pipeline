@@ -704,6 +704,11 @@ def build_sync_sheet(
     ducking_db: float = -16.0,
     fade_in: float = 1.0,
     fade_out: float = 2.0,
+    bake_into_final: bool = True,
+    voice_lufs: float | None = None,
+    music_lufs: float | None = None,
+    applied_gain_db: float | None = None,
+    target_offset_lu: float = 16.0,
 ) -> tuple[dict[str, Any], str]:
     """Generate music_sync.json (machine) and music_sync.txt (Vietnamese, for Master)."""
     project_dir = Path(project_dir)
@@ -726,6 +731,12 @@ def build_sync_sheet(
         "suggested_fade_in_seconds": float(fade_in),
         "suggested_fade_out_seconds": float(fade_out),
         "warning": warning,
+        "bake_into_final": bool(bake_into_final),
+        "voice_loudness_lufs": round(voice_lufs, 2) if voice_lufs is not None else None,
+        "music_loudness_lufs": round(music_lufs, 2) if music_lufs is not None else None,
+        "target_offset_lu": float(target_offset_lu),
+        "applied_gain_db": round(applied_gain_db, 2) if applied_gain_db is not None else None,
+        "voice_only_video": "final_voice_only.mp4" if bake_into_final else "final.mp4",
         "snapped_count": snapped_count,
         "kept_count": kept_count,
         "total_hit_points": len(hit_points),
@@ -754,6 +765,15 @@ def build_sync_sheet(
         f"File nhạc tham chiếu: {track_name}",
         f"BPM: {analysis.bpm:.1f}",
         f"Trạng thái đồng bộ: {snapped_count}/{len(hit_points)} hit points đã khớp beat ({kept_count} giữ nguyên nhịp thoại)",
+        f"Trộn sẵn nhạc vào final.mp4: {'CÓ (Bản chỉ giọng đọc: final_voice_only.mp4)' if bake_into_final else 'KHÔNG (final.mp4 chỉ chứa giọng đọc)'}",
+    ]
+    if voice_lufs is not None and music_lufs is not None:
+        gain_str = f"{applied_gain_db:+.1f} dB" if applied_gain_db is not None else "N/A"
+        lines.append(
+            f"Đo âm lượng (Loudness): Giọng đọc = {voice_lufs:.1f} LUFS | Nhạc nền = {music_lufs:.1f} LUFS "
+            f"| Chênh lệch = -{target_offset_lu:.1f} LU | Gain áp dụng = {gain_str}"
+        )
+    lines.extend([
         "",
         "1. CÁCH ĐẶT NHẠC TRÊN TIMELINE CAPCUT:",
         "   - Kéo file nhạc vào timeline, bắt đầu ngay tại mốc: 00:00:00 (đầu video).",
@@ -765,7 +785,7 @@ def build_sync_sheet(
         f"2. CÁC ĐIỂM HIT POINT ĐÃ ĐỒNG BỘ VỚI NHẠC ({snapped_count}/{len(hit_points)} ĐÃ KHỚP BEAT):",
         f"   - Tổng kết: {snapped_count} điểm đã khớp beat (cắt sớm 1-2 frames), {kept_count} điểm giữ nguyên nhịp thoại gốc.",
         "   - Chi tiết từng điểm cắt:",
-    ]
+    ])
 
     for hp in hit_points:
         status_str = "đã khớp beat" if hp.snapped else "giữ nguyên (quá xa beat hoặc giới hạn shot)"
@@ -782,11 +802,15 @@ def build_sync_sheet(
 
     lines.extend([
         "",
-        "3. VIDEO PREVIEW KIỂM TRA:",
-        "   - Đã xuất bản xem thử: preview_with_music.mp4 (đã mix nhạc mẫu ở in-point để kiểm tra sync).",
-        "   - Video chính (final.mp4) chỉ chứa giọng đọc (narration-only) để import vào CapCut.",
-        "=" * 80,
+        "3. VIDEO PREVIEW & XUẤT BẢN:",
+        f"   - final.mp4: {'Đã trộn sẵn giọng đọc + nhạc CapCut (ducking theo thoại)' if bake_into_final else 'Chỉ chứa giọng đọc (narration-only)'}.",
     ])
+    if bake_into_final:
+        lines.append("   - final_voice_only.mp4: Video chỉ chứa giọng đọc để import vào CapCut tạo phụ đề tự động (Auto Captions).")
+        lines.append("   - preview_with_music.mp4: Video xem thử khớp 100% với final.mp4.")
+    else:
+        lines.append("   - preview_with_music.mp4: Video xem thử đã mix nhạc mẫu ở in-point để kiểm tra sync.")
+    lines.append("=" * 80)
 
     txt_content = "\n".join(lines) + "\n"
 
@@ -814,27 +838,98 @@ def _probe_duration(path: Path) -> float:
         return 0.0
 
 
-def render_preview_with_music(
+def measure_loudness(
+    path: Path,
+    in_point: float = 0.0,
+    duration: float = 0.0,
+    ff: str | None = None,
+) -> float | None:
+    """Measure integrated loudness (LUFS) of audio stream using ffmpeg loudnorm filter."""
+    ff_bin = ff or _require_ffmpeg()
+    cmd = [ff_bin, "-hide_banner", "-nostdin"]
+    if in_point > 0.001:
+        cmd.extend(["-ss", f"{in_point:.3f}"])
+    if duration > 0.001:
+        cmd.extend(["-t", f"{duration:.3f}"])
+    cmd.extend([
+        "-i", str(path),
+        "-vn",
+        "-af", "loudnorm=I=-14:TP=-1:LRA=9:print_format=json",
+        "-f", "null", "-",
+    ])
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        import re
+        blob = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", res.stderr or "", re.S)
+        if blob:
+            data = json.loads(blob.group(0))
+            val = float(data.get("input_i", -99.0))
+            if val != val or abs(val) == float("inf") or val <= -70.0:
+                return None
+            return val
+    except Exception:
+        pass
+    return None
+
+
+def build_capcut_music_mix_filter(
+    gain_db: float,
+    duration: float,
+    fade_in: float = 1.0,
+    fade_out: float = 2.0,
+) -> str:
+    """Build ffmpeg filter_complex string for sidechain ducking and loudness mix."""
+    fade_out_start = max(0.0, duration - fade_out)
+    return (
+        f"[0:a]asplit=2[voice_main][voice_sc];"
+        f"[1:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+        f"volume={gain_db:.2f}dB,"
+        f"afade=t=in:st=0:d={fade_in:.1f},"
+        f"afade=t=out:st={fade_out_start:.2f}:d={fade_out:.1f}[music_shaped];"
+        f"[music_shaped][voice_sc]sidechaincompress=threshold=0.08:ratio=3:attack=20:release=250[music_ducked];"
+        f"[voice_main][music_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
+        f"alimiter=limit=0.891:attack=5:release=50[aout]"
+    )
+
+
+def render_capcut_music_mix(
     final_path: Path,
     track_path: Path,
     in_point: float,
     out_path: Path,
-    ducking_db: float = -16.0,
+    offset_lu: float | None = None,
+    fade_in: float | None = None,
+    fade_out: float | None = None,
     log=print,
-) -> Path | None:
-    """Render preview_with_music.mp4: reference track mixed in at in_point, ducked under voice."""
+) -> tuple[Path | None, dict[str, Any]]:
+    """Render mixed video (narration voice + reference music) using loudness-based LUFS targeting,
+    sidechain compression ducking under speech, fade in/out, and peak limiter.
+    """
     ff = _require_ffmpeg()
     duration = _probe_duration(final_path)
     if duration <= 0:
-        return None
+        return None, {}
 
-    fade_out_start = max(0.0, duration - 2.0)
-    af_filter = (
-        f"[1:a]volume={ducking_db}dB,"
-        f"afade=t=in:st=0:d=1.0,"
-        f"afade=t=out:st={fade_out_start:.2f}:d=2.0[music];"
-        f"[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
-    )
+    import config
+    target_offset = offset_lu if offset_lu is not None else getattr(config, "CAPCUT_MUSIC_OFFSET_LU", 16.0)
+    fin = fade_in if fade_in is not None else getattr(config, "CAPCUT_MUSIC_FADE_IN_S", 1.0)
+    fout = fade_out if fade_out is not None else getattr(config, "CAPCUT_MUSIC_FADE_OUT_S", 2.0)
+
+    # 1. Measure voice & music section loudness
+    voice_lufs = measure_loudness(final_path, in_point=0.0, duration=duration, ff=ff)
+    music_lufs = measure_loudness(track_path, in_point=in_point, duration=duration, ff=ff)
+
+    if voice_lufs is not None and music_lufs is not None:
+        target_music = voice_lufs - target_offset
+        gain_db = target_music - music_lufs
+        log(f"[music_sync] loudness targeting: voice={voice_lufs:.1f} LUFS, music={music_lufs:.1f} LUFS "
+            f"→ target={target_music:.1f} LUFS (gain={gain_db:+.1f} dB)")
+    else:
+        gain_db = -16.0
+        log(f"[music_sync] could not measure voice/music LUFS; falling back to default {gain_db:.1f} dB")
+
+    # 2. Build filter and run ffmpeg
+    af_filter = build_capcut_music_mix_filter(gain_db, duration, fade_in=fin, fade_out=fout)
 
     cmd = [
         ff, "-y",
@@ -854,12 +949,30 @@ def render_preview_with_music(
     try:
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
-            log(f"[music_sync] preview render failed: {res.stderr[-500:]}")
-            return None
-        return out_path
+            log(f"[music_sync] mix render failed: {res.stderr[-500:]}")
+            return None, {}
+        return out_path, {
+            "voice_lufs": voice_lufs,
+            "music_lufs": music_lufs,
+            "gain_db": gain_db,
+            "offset_lu": target_offset,
+        }
     except Exception as exc:
-        log(f"[music_sync] preview render exception: {exc}")
-        return None
+        log(f"[music_sync] mix render exception: {exc}")
+        return None, {}
+
+
+def render_preview_with_music(
+    final_path: Path,
+    track_path: Path,
+    in_point: float,
+    out_path: Path,
+    ducking_db: float = -16.0,
+    log=print,
+) -> Path | None:
+    """Render preview_with_music.mp4 using the unified loudness & sidechain mix."""
+    out, _ = render_capcut_music_mix(final_path, track_path, in_point, out_path, log=log)
+    return out
 
 
 # In-memory stash between Stage 5 shot planning and post-encode sync sheet generation
@@ -951,7 +1064,8 @@ def finish_capcut_music_sync(
     final_path: Path,
     log=print,
 ) -> None:
-    """Generate music_sync.json/txt and render preview_with_music.mp4 if CapCut music was active."""
+    """Generate music_sync.json/txt, optionally bake reference music into final.mp4
+    (with narration-only backup saved to final_voice_only.mp4), and render preview_with_music.mp4."""
     state = _STAGE5_SYNC_STATE.pop(project_name, None)
     if not state:
         return
@@ -964,17 +1078,48 @@ def finish_capcut_music_sync(
     warning = state["warning"]
     track_path = state["track_path"]
 
-    # 1. Build and write music_sync.json & music_sync.txt
-    build_sync_sheet(root, analysis, in_point, hit_points, warning=warning)
-    log(f"[music_sync] wrote sync sheet: {root / 'music_sync.txt'}")
+    cfg = get_capcut_music_config(root)
+    bake_into_final = bool(cfg.get("bake_into_final", True))
 
-    # 2. Render preview_with_music.mp4
-    preview_path = root / "preview_with_music.mp4"
-    log(f"[music_sync] rendering preview video → {preview_path.name}...")
-    res = render_preview_with_music(final_path, track_path, in_point, preview_path, log=log)
-    if res:
-        log(f"[music_sync] preview ready: {preview_path}")
+    # 1. Render the unified mix into a temporary video
+    tmp_mixed = root / ".final.music.tmp.mp4"
+    log("[music_sync] rendering music mix (sidechain ducking + loudness targeting)...")
+    out_mixed, mix_info = render_capcut_music_mix(final_path, track_path, in_point, tmp_mixed, log=log)
+
+    if out_mixed and tmp_mixed.exists():
+        # Always output preview_with_music.mp4
+        preview_path = root / "preview_with_music.mp4"
+        shutil.copy2(tmp_mixed, preview_path)
+        log(f"[music_sync] preview video ready: {preview_path.name}")
+
+        if bake_into_final:
+            # Preserve narration-only copy for CapCut auto-captions
+            voice_only_path = root / "final_voice_only.mp4"
+            shutil.copy2(final_path, voice_only_path)
+            log(f"[music_sync] saved narration-only copy to {voice_only_path.name}")
+
+            # Overwrite final.mp4 with baked mix
+            tmp_mixed.replace(final_path)
+            log(f"[music_sync] baked CapCut reference music into {final_path.name}")
+        else:
+            tmp_mixed.unlink(missing_ok=True)
+            log(f"[music_sync] bake_into_final=False: kept {final_path.name} as narration-only")
     else:
-        log("[music_sync] preview video render failed (final.mp4 is unaffected)")
+        log("[music_sync] music mix render failed; keeping final.mp4 intact")
+
+    # 2. Build and write music_sync.json & music_sync.txt
+    build_sync_sheet(
+        root,
+        analysis,
+        in_point,
+        hit_points,
+        warning=warning,
+        bake_into_final=bake_into_final,
+        voice_lufs=mix_info.get("voice_lufs"),
+        music_lufs=mix_info.get("music_lufs"),
+        applied_gain_db=mix_info.get("gain_db"),
+        target_offset_lu=mix_info.get("offset_lu", 16.0),
+    )
+    log(f"[music_sync] wrote sync sheet: {root / 'music_sync.txt'}")
 
 

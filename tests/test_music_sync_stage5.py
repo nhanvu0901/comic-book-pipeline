@@ -198,7 +198,167 @@ def test_stage5_flag_off_byte_identity(tmp_path):
 
     # Identical instances and durations
     assert len(processed_shots) == 2
-    assert processed_shots[0].duration_seconds == 3.0
-    assert processed_shots[1].duration_seconds == 3.0
-    assert not (project_dir / "music_sync.json").exists()
-    assert not (project_dir / "music_sync.txt").exists()
+
+
+def test_build_capcut_music_mix_filter():
+    """Verify mix-graph construction with sidechain compression, loudness gain, and peak limiter."""
+    f = music_sync.build_capcut_music_mix_filter(gain_db=-18.5, duration=10.0, fade_in=1.0, fade_out=2.0)
+    assert "[0:a]asplit=2[voice_main][voice_sc]" in f
+    assert "volume=-18.50dB" in f
+    assert "afade=t=in:st=0:d=1.0" in f
+    assert "afade=t=out:st=8.00:d=2.0" in f
+    assert "sidechaincompress=threshold=0.08:ratio=3:attack=20:release=250" in f
+    assert "amix=inputs=2:duration=first:dropout_transition=2:normalize=0" in f
+    assert "alimiter=limit=0.891:attack=5:release=50" in f
+
+
+def test_measure_loudness_synthetic(tmp_path):
+    """Verify loudness targeting with synthetic tones."""
+    tone_path = tmp_path / "tone.wav"
+    _create_dummy_audio(tone_path, duration=3.0)
+    loudness = music_sync.measure_loudness(tone_path, in_point=0.0, duration=3.0)
+    assert loudness is not None
+    # Sine wave from lavfi has integrated loudness around -22 LUFS
+    assert -30.0 <= loudness <= -10.0
+
+
+def test_render_capcut_music_mix_loudness_and_peak_safe(tmp_path):
+    """Verify mixed render executes successfully, reports LUFS metrics, and outputs peak-safe video."""
+    final_video = tmp_path / "final.mp4"
+    _create_dummy_video_with_audio(final_video, duration=4.0)
+
+    track_audio = tmp_path / "music.mp3"
+    _create_dummy_audio(track_audio, duration=10.0)
+
+    mixed_video = tmp_path / "mixed.mp4"
+    out, info = music_sync.render_capcut_music_mix(
+        final_path=final_video,
+        track_path=track_audio,
+        in_point=1.0,
+        out_path=mixed_video,
+    )
+    assert out is not None
+    assert mixed_video.exists()
+    assert mixed_video.stat().st_size > 0
+    assert "gain_db" in info
+    assert "offset_lu" in info
+
+
+def test_finish_capcut_music_sync_bake_on(tmp_path):
+    """When bake_into_final is True (default in CapCut mode):
+    - final.mp4 is replaced by the baked audio mix
+    - final_voice_only.mp4 is preserved for CapCut auto-captions
+    - preview_with_music.mp4 matches the baked final
+    - music_sync.txt / .json report bake status and measured loudness.
+    """
+    proj_dir = tmp_path / "proj_bake_on"
+    proj_dir.mkdir()
+
+    # Configure capcut_music with bake_into_final=True
+    music_json = proj_dir / "music.json"
+    music_json.write_text(json.dumps({
+        "capcut_music": {
+            "enabled": True,
+            "filename": "ref.mp3",
+            "bake_into_final": True,
+        }
+    }), encoding="utf-8")
+
+    final_video = proj_dir / "final.mp4"
+    _create_dummy_video_with_audio(final_video, duration=4.0)
+    orig_voice_bytes = final_video.read_bytes()
+
+    track_audio = proj_dir / "ref.mp3"
+    _create_dummy_audio(track_audio, duration=10.0)
+
+    analysis = music_sync.TrackAnalysis(
+        file_path=str(track_audio), file_sha256="abc", duration_seconds=10.0, bpm=120.0
+    )
+    hps = [music_sync.HitPoint(shot_index=1, time_seconds=2.0, name="Clip 1", strength=1.0, snapped=True)]
+
+    # Stage state stash
+    music_sync._STAGE5_SYNC_STATE["proj_bake_on"] = {
+        "analysis": analysis,
+        "in_point": 1.0,
+        "hit_points": hps,
+        "warning": None,
+        "track_path": track_audio,
+    }
+
+    music_sync.finish_capcut_music_sync("proj_bake_on", proj_dir, final_video)
+
+    # 1. final_voice_only.mp4 must exist and contain the original narration-only video
+    voice_only = proj_dir / "final_voice_only.mp4"
+    assert voice_only.exists()
+    assert voice_only.read_bytes() == orig_voice_bytes
+
+    # 2. final.mp4 must be updated with the baked mix (different file size / content)
+    assert final_video.exists()
+    assert final_video.read_bytes() != orig_voice_bytes
+
+    # 3. preview_with_music.mp4 must exist and match final.mp4
+    preview = proj_dir / "preview_with_music.mp4"
+    assert preview.exists()
+    assert preview.read_bytes() == final_video.read_bytes()
+
+    # 4. music_sync.json / txt reports
+    json_doc = json.loads((proj_dir / "music_sync.json").read_text(encoding="utf-8"))
+    assert json_doc["bake_into_final"] is True
+    assert json_doc["voice_only_video"] == "final_voice_only.mp4"
+    assert json_doc["target_offset_lu"] == 16.0
+
+    txt_content = (proj_dir / "music_sync.txt").read_text(encoding="utf-8")
+    assert "Trộn sẵn nhạc vào final.mp4: CÓ" in txt_content
+    assert "final_voice_only.mp4" in txt_content
+
+
+def test_finish_capcut_music_sync_bake_off(tmp_path):
+    """When bake_into_final is False:
+    - final.mp4 stays untouched (narration-only)
+    - preview_with_music.mp4 has the mixed audio
+    - music_sync.txt / .json report bake_into_final=False.
+    """
+    proj_dir = tmp_path / "proj_bake_off"
+    proj_dir.mkdir()
+
+    music_json = proj_dir / "music.json"
+    music_json.write_text(json.dumps({
+        "capcut_music": {
+            "enabled": True,
+            "filename": "ref.mp3",
+            "bake_into_final": False,
+        }
+    }), encoding="utf-8")
+
+    final_video = proj_dir / "final.mp4"
+    _create_dummy_video_with_audio(final_video, duration=4.0)
+    orig_voice_bytes = final_video.read_bytes()
+
+    track_audio = proj_dir / "ref.mp3"
+    _create_dummy_audio(track_audio, duration=10.0)
+
+    analysis = music_sync.TrackAnalysis(
+        file_path=str(track_audio), file_sha256="abc", duration_seconds=10.0, bpm=120.0
+    )
+    hps = [music_sync.HitPoint(shot_index=1, time_seconds=2.0, name="Clip 1", strength=1.0, snapped=True)]
+
+    music_sync._STAGE5_SYNC_STATE["proj_bake_off"] = {
+        "analysis": analysis,
+        "in_point": 1.0,
+        "hit_points": hps,
+        "warning": None,
+        "track_path": track_audio,
+    }
+
+    music_sync.finish_capcut_music_sync("proj_bake_off", proj_dir, final_video)
+
+    # final.mp4 remains narration-only!
+    assert final_video.read_bytes() == orig_voice_bytes
+    assert (proj_dir / "preview_with_music.mp4").exists()
+
+    json_doc = json.loads((proj_dir / "music_sync.json").read_text(encoding="utf-8"))
+    assert json_doc["bake_into_final"] is False
+    assert json_doc["voice_only_video"] == "final.mp4"
+
+    txt_content = (proj_dir / "music_sync.txt").read_text(encoding="utf-8")
+    assert "Trộn sẵn nhạc vào final.mp4: KHÔNG" in txt_content

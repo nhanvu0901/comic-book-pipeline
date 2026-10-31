@@ -168,15 +168,20 @@ def test_review_gate_ui_capcut_controls(tmp_path, monkeypatch):
     assert len(capcut_cbs) == 1
     assert capcut_cbs[0].value is False
 
+    bake_cbs = [cb for cb in cbs if "Trộn sẵn" in str(cb.label)]
+    assert len(bake_cbs) == 1
+    assert bake_cbs[0].value is True
+
     # Case 2: CapCut music ON with track
     save_music_config("test_ui_proj", {
         "genre": "cinematic",
         "capcut_music": {
             "enabled": True,
+            "bake_into_final": False,
             "filename": "my_beat.mp3",
             "bpm": 128.0,
             "in_point": 3.5,
-            "in_point_timecode": "00:03.15",
+            "in_point_timecode": "3.50 s (00:00:03:15 @30fps)",
         }
     })
 
@@ -185,6 +190,26 @@ def test_review_gate_ui_capcut_controls(tmp_path, monkeypatch):
     capcut_cbs2 = [cb for cb in cbs2 if "CapCut" in str(cb.label)]
     assert len(capcut_cbs2) == 1
     assert capcut_cbs2[0].value is True
+
+    bake_cbs2 = [cb for cb in cbs2 if "Trộn sẵn" in str(cb.label)]
+    assert len(bake_cbs2) == 1
+    assert bake_cbs2[0].value is False
+
+
+def test_toggle_capcut_music_bake_into_final_bridge(tmp_path, monkeypatch):
+    monkeypatch.setattr("ui.bridge.PROJECTS_ROOT", tmp_path)
+    proj_dir = tmp_path / "proj"
+    proj_dir.mkdir()
+
+    from ui.bridge import toggle_capcut_music_bake_into_final, load_music_config
+    res = toggle_capcut_music_bake_into_final("proj", False)
+    assert res["bake_into_final"] is False
+    assert load_music_config("proj")["capcut_music"]["bake_into_final"] is False
+
+    res2 = toggle_capcut_music_bake_into_final("proj", True)
+    assert res2["bake_into_final"] is True
+    assert load_music_config("proj")["capcut_music"]["bake_into_final"] is True
+
 
 
 def test_s5_video_ui_shows_sync_sheet(tmp_path, monkeypatch):
