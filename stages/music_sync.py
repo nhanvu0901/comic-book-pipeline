@@ -424,27 +424,28 @@ def select_hit_points(shots: list[Any], narration: dict[str, Any] | None = None)
 
 
 def _can_fit_clip(shot: Any, new_duration: float) -> bool:
-    """Check whether a clip shot can satisfy speed [0.8, 1.25] and hold <= 0.3s."""
+    """Check whether a clip shot can satisfy speed [0.8, 1.25] and hold <= 0.3s
+    using the exact same logic as stage_5.clips:plan_clip_shot()."""
     clip_path = getattr(shot, "clip_path", "")
     if not clip_path:
         return True
 
-    clip_in = float(getattr(shot, "clip_in", 0.0) or 0.0)
-    clip_out = float(getattr(shot, "clip_out", 0.0) or 0.0)
-    fit_to_beat = bool(getattr(shot, "clip_fit_to_beat", False))
+    if new_duration < 0.40:
+        return False
 
-    if clip_out > clip_in:
-        span = clip_out - clip_in
-        if fit_to_beat:
-            speed = span / new_duration
-            return 0.80 <= speed <= 1.25
-        else:
-            ext = min(span, new_duration)
-            speed = max(0.8, min(1.25, ext / new_duration))
-            hold = max(0.0, new_duration - ext / speed)
-            return hold <= 0.30
-
-    return True
+    try:
+        import copy
+        from stages.stage_5.clips import plan_clip_shot
+        dummy = copy.copy(shot)
+        dummy.duration_seconds = new_duration
+        _clip_in, fit_ = plan_clip_shot(dummy, src_dur=0.0)
+        if fit_.speed < 0.80 - 1e-4 or fit_.speed > 1.25 + 1e-4:
+            return False
+        if fit_.hold > 0.30 + 1e-4:
+            return False
+        return True
+    except Exception:
+        return False
 
 
 def snap_shots_to_beats(
@@ -513,6 +514,7 @@ def snap_shots_to_beats(
         cur_shot.duration_seconds = dur_cur_new
 
         hp.snapped = True
+        hp.time_seconds = round(target_cut, 3)
         hp.beat_time = round(nearest_beat, 3)
         hp.target_cut = round(target_cut, 3)
         hp.offset_from_beat = round(target_cut - nearest_beat, 4)
@@ -521,13 +523,15 @@ def snap_shots_to_beats(
 
 
 def format_timecode(seconds: float, fps: float = 30.0) -> str:
-    """Format seconds into mm:ss.ff timecode (e.g. 00:04.08)."""
+    """Format seconds into mm:ss.ff timecode (e.g. 00:04.08), carrying rounded frames into seconds and minutes."""
     if seconds < 0:
         seconds = 0.0
-    total_sec = int(seconds)
+    fps_int = int(round(fps))
+    total_frames = int(round(seconds * fps))
+    total_sec = total_frames // fps_int
+    frames = total_frames % fps_int
     minutes = total_sec // 60
     rem_sec = total_sec % 60
-    frames = int(round((seconds - total_sec) * fps)) % int(fps)
     return f"{minutes:02d}:{rem_sec:02d}.{frames:02d}"
 
 
@@ -586,6 +590,7 @@ def build_sync_sheet(
                 "name": hp.name,
                 "time_seconds": round(hp.time_seconds, 3),
                 "timecode": format_timecode(hp.time_seconds),
+                "target_cut": round(hp.target_cut, 3) if hp.snapped else round(hp.time_seconds, 3),
                 "snapped": hp.snapped,
                 "beat_time": round(hp.beat_time, 3),
                 "offset_from_beat": round(hp.offset_from_beat, 4),
@@ -736,11 +741,15 @@ def prepare_capcut_music_sync(
 
     track_path = root / filename
     if not track_path.exists():
-        # Might be absolute
+        # Might be absolute or located in capcut_reference
         track_path = Path(filename)
         if not track_path.exists():
-            log(f"[music_sync] CapCut music track not found: {filename}")
-            return shots
+            cand = root / "capcut_reference" / Path(filename).name
+            if cand.exists():
+                track_path = cand
+            else:
+                log(f"[music_sync] CapCut music track not found: {filename}")
+                return shots
 
     try:
         analysis = analyze_track(track_path, cache_dir=root / ".music_cache")

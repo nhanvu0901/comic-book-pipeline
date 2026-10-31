@@ -1076,16 +1076,18 @@ def save_capcut_music(
     data: bytes | None = None,
     src_path: str | Path | None = None,
 ) -> dict:
-    """Save CapCut reference music file into project dir, analyze it, and update music.json."""
+    """Save CapCut reference music file into project dir (under capcut_reference/ to avoid
+    overwriting pipeline artifacts), analyze it, and update music.json."""
     import hashlib
     import shutil
     from stages import music_sync
 
     proj_dir = PROJECTS_ROOT / project_name
-    proj_dir.mkdir(parents=True, exist_ok=True)
+    ref_dir = proj_dir / "capcut_reference"
+    ref_dir.mkdir(parents=True, exist_ok=True)
 
     name = Path(file_name or (src_path and Path(src_path).name) or "capcut_ref.mp3").name
-    dest_path = proj_dir / name
+    dest_path = ref_dir / name
 
     if data is not None:
         dest_path.write_bytes(data)
@@ -1102,10 +1104,11 @@ def save_capcut_music(
 
     doc = load_music_config(project_name)
     existing_capcut = doc.get("capcut_music") or {}
+    rel_filename = f"capcut_reference/{name}"
     capcut_entry = {
         **existing_capcut,
         "enabled": True,
-        "filename": name,
+        "filename": rel_filename,
         "sha256": sha256,
         "bpm": analysis.bpm,
         "in_point": in_point,
