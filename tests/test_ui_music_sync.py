@@ -248,3 +248,47 @@ def test_s5_video_ui_shows_sync_sheet(tmp_path, monkeypatch):
     assert _find_text(ctl, "Xem Sync Sheet CapCut")
     assert _find_text(ctl, "Preview có nhạc")
 
+
+def test_s5_video_ui_shows_sync_info_json_when_baked(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    from ui.state import AppState
+    from ui.screens import s5_video
+
+    monkeypatch.setattr(s5_video, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr("ui.bridge.PROJECTS_ROOT", tmp_path)
+
+    proj_dir = tmp_path / "test_s5_baked"
+    proj_dir.mkdir()
+    (proj_dir / "final.mp4").write_bytes(b"VIDEO")
+    (proj_dir / "music_sync.json").write_text(json.dumps({
+        "track_name": "song.mp3",
+        "bpm": 120.0,
+        "snapped_count": 2,
+        "total_hit_points": 2,
+        "bake_into_final": True,
+    }))
+
+    page = MagicMock()
+    page.services = []
+    page.overlay = []
+    state = AppState(project_name="test_s5_baked")
+
+    ctl = s5_video.build(page, state, on_go=lambda _: None, on_state_change=lambda: None)
+    assert ctl is not None
+
+    def _find_text(c, search_str):
+        for attr in ("text", "value", "content"):
+            val = getattr(c, attr, None)
+            if val is not None and search_str in str(val):
+                return True
+        if hasattr(c, "controls") and isinstance(c.controls, list):
+            return any(_find_text(child, search_str) for child in c.controls)
+        if hasattr(c, "content") and c.content and not isinstance(c.content, str):
+            return _find_text(c.content, search_str)
+        return False
+
+    assert _find_text(ctl, "Xem thông tin nhạc CapCut")
+    assert not _find_text(ctl, "Xem Sync Sheet CapCut")
+    assert not _find_text(ctl, "Preview có nhạc")
+
+

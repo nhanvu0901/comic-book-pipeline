@@ -704,17 +704,23 @@ def build_sync_sheet(
     ducking_db: float = -16.0,
     fade_in: float = 1.0,
     fade_out: float = 2.0,
-    bake_into_final: bool = True,
+    bake_into_final: bool = False,
     voice_lufs: float | None = None,
     music_lufs: float | None = None,
     applied_gain_db: float | None = None,
     target_offset_lu: float = 16.0,
+    write_txt: bool | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Generate music_sync.json (machine) and music_sync.txt (Vietnamese, for Master)."""
+    """Generate music_sync.json (machine) and optionally music_sync.txt (Vietnamese, for Master).
+    When bake_into_final is True, music_sync.txt is omitted by default and kept only as internal metadata.
+    """
     project_dir = Path(project_dir)
     project_name = project_dir.name
     track_path = Path(analysis.file_path)
     track_name = track_path.name
+
+    if write_txt is None:
+        write_txt = not bake_into_final
 
     snapped_count = sum(1 for hp in hit_points if hp.snapped)
     kept_count = len(hit_points) - snapped_count
@@ -736,7 +742,7 @@ def build_sync_sheet(
         "music_loudness_lufs": round(music_lufs, 2) if music_lufs is not None else None,
         "target_offset_lu": float(target_offset_lu),
         "applied_gain_db": round(applied_gain_db, 2) if applied_gain_db is not None else None,
-        "voice_only_video": "final_voice_only.mp4" if bake_into_final else "final.mp4",
+        "voice_only_video": None if bake_into_final else "final.mp4",
         "snapped_count": snapped_count,
         "kept_count": kept_count,
         "total_hit_points": len(hit_points),
@@ -753,7 +759,7 @@ def build_sync_sheet(
             }
             for hp in hit_points
         ],
-        "preview_video": "preview_with_music.mp4",
+        "preview_video": "final.mp4" if bake_into_final else "preview_with_music.mp4",
     }
 
     # Vietnamese human-readable sync sheet
@@ -765,7 +771,7 @@ def build_sync_sheet(
         f"File nhạc tham chiếu: {track_name}",
         f"BPM: {analysis.bpm:.1f}",
         f"Trạng thái đồng bộ: {snapped_count}/{len(hit_points)} hit points đã khớp beat ({kept_count} giữ nguyên nhịp thoại)",
-        f"Trộn sẵn nhạc vào final.mp4: {'CÓ (Bản chỉ giọng đọc: final_voice_only.mp4)' if bake_into_final else 'KHÔNG (final.mp4 chỉ chứa giọng đọc)'}",
+        f"Trộn sẵn nhạc vào final.mp4: {'CÓ (final.mp4 đã trộn nhạc)' if bake_into_final else 'KHÔNG (final.mp4 chỉ chứa giọng đọc)'}",
     ]
     if voice_lufs is not None and music_lufs is not None:
         gain_str = f"{applied_gain_db:+.1f} dB" if applied_gain_db is not None else "N/A"
@@ -803,12 +809,11 @@ def build_sync_sheet(
     lines.extend([
         "",
         "3. VIDEO PREVIEW & XUẤT BẢN:",
-        f"   - final.mp4: {'Đã trộn sẵn giọng đọc + nhạc CapCut (ducking theo thoại)' if bake_into_final else 'Chỉ chứa giọng đọc (narration-only)'}.",
     ])
     if bake_into_final:
-        lines.append("   - final_voice_only.mp4: Video chỉ chứa giọng đọc để import vào CapCut tạo phụ đề tự động (Auto Captions).")
-        lines.append("   - preview_with_music.mp4: Video xem thử khớp 100% với final.mp4.")
+        lines.append("   - final.mp4: Video duy nhất đã trộn sẵn giọng đọc và nhạc nền CapCut.")
     else:
+        lines.append("   - final.mp4: Video chỉ chứa giọng đọc (narration-only).")
         lines.append("   - preview_with_music.mp4: Video xem thử đã mix nhạc mẫu ở in-point để kiểm tra sync.")
     lines.append("=" * 80)
 
@@ -816,7 +821,10 @@ def build_sync_sheet(
 
     try:
         (project_dir / "music_sync.json").write_text(json.dumps(json_doc, indent=2, ensure_ascii=False), encoding="utf-8")
-        (project_dir / "music_sync.txt").write_text(txt_content, encoding="utf-8")
+        if write_txt:
+            (project_dir / "music_sync.txt").write_text(txt_content, encoding="utf-8")
+        else:
+            (project_dir / "music_sync.txt").unlink(missing_ok=True)
     except OSError as exc:
         logger.warning("Failed to write music sync sheet: %s", exc)
 
@@ -1064,8 +1072,14 @@ def finish_capcut_music_sync(
     final_path: Path,
     log=print,
 ) -> None:
-    """Generate music_sync.json/txt, optionally bake reference music into final.mp4
-    (with narration-only backup saved to final_voice_only.mp4), and render preview_with_music.mp4."""
+    """Generate music_sync.json, optionally bake reference music into final.mp4.
+    When bake_into_final is True:
+      - output only final.mp4 with music baked in
+      - keep music_sync.json as internal metadata for UI summary/cache only
+      - do NOT output music_sync.txt, final_voice_only.mp4, or preview_with_music.mp4
+    When bake_into_final is False:
+      - output narration-only final.mp4, music_sync.txt, music_sync.json, and preview_with_music.mp4
+    """
     state = _STAGE5_SYNC_STATE.pop(project_name, None)
     if not state:
         return
@@ -1087,27 +1101,26 @@ def finish_capcut_music_sync(
     out_mixed, mix_info = render_capcut_music_mix(final_path, track_path, in_point, tmp_mixed, log=log)
 
     if out_mixed and tmp_mixed.exists():
-        # Always output preview_with_music.mp4
-        preview_path = root / "preview_with_music.mp4"
-        shutil.copy2(tmp_mixed, preview_path)
-        log(f"[music_sync] preview video ready: {preview_path.name}")
-
         if bake_into_final:
-            # Preserve narration-only copy for CapCut auto-captions
-            voice_only_path = root / "final_voice_only.mp4"
-            shutil.copy2(final_path, voice_only_path)
-            log(f"[music_sync] saved narration-only copy to {voice_only_path.name}")
-
             # Overwrite final.mp4 with baked mix
             tmp_mixed.replace(final_path)
             log(f"[music_sync] baked CapCut reference music into {final_path.name}")
+
+            # Ensure unwanted files do not exist per Master's decision
+            (root / "final_voice_only.mp4").unlink(missing_ok=True)
+            (root / "preview_with_music.mp4").unlink(missing_ok=True)
+            (root / "music_sync.txt").unlink(missing_ok=True)
         else:
-            tmp_mixed.unlink(missing_ok=True)
-            log(f"[music_sync] bake_into_final=False: kept {final_path.name} as narration-only")
+            # Keep final.mp4 as narration-only, output preview_with_music.mp4
+            preview_path = root / "preview_with_music.mp4"
+            tmp_mixed.replace(preview_path)
+            log(f"[music_sync] bake_into_final=False: kept {final_path.name} as narration-only, preview ready: {preview_path.name}")
+            (root / "final_voice_only.mp4").unlink(missing_ok=True)
     else:
+        tmp_mixed.unlink(missing_ok=True)
         log("[music_sync] music mix render failed; keeping final.mp4 intact")
 
-    # 2. Build and write music_sync.json & music_sync.txt
+    # 2. Build and write music_sync.json (and music_sync.txt only if bake_into_final is False)
     build_sync_sheet(
         root,
         analysis,
@@ -1119,7 +1132,11 @@ def finish_capcut_music_sync(
         music_lufs=mix_info.get("music_lufs"),
         applied_gain_db=mix_info.get("gain_db"),
         target_offset_lu=mix_info.get("offset_lu", 16.0),
+        write_txt=not bake_into_final,
     )
-    log(f"[music_sync] wrote sync sheet: {root / 'music_sync.txt'}")
+    if bake_into_final:
+        log(f"[music_sync] wrote internal metadata: {root / 'music_sync.json'}")
+    else:
+        log(f"[music_sync] wrote sync sheet: {root / 'music_sync.txt'}")
 
 

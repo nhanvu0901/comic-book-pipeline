@@ -247,9 +247,8 @@ def test_render_capcut_music_mix_loudness_and_peak_safe(tmp_path):
 def test_finish_capcut_music_sync_bake_on(tmp_path):
     """When bake_into_final is True (default in CapCut mode):
     - final.mp4 is replaced by the baked audio mix
-    - final_voice_only.mp4 is preserved for CapCut auto-captions
-    - preview_with_music.mp4 matches the baked final
-    - music_sync.txt / .json report bake status and measured loudness.
+    - Master's decision: no final_voice_only.mp4, no preview_with_music.mp4, no music_sync.txt
+    - music_sync.json is preserved as internal metadata for UI summary/cache only
     """
     proj_dir = tmp_path / "proj_bake_on"
     proj_dir.mkdir()
@@ -287,36 +286,30 @@ def test_finish_capcut_music_sync_bake_on(tmp_path):
 
     music_sync.finish_capcut_music_sync("proj_bake_on", proj_dir, final_video)
 
-    # 1. final_voice_only.mp4 must exist and contain the original narration-only video
-    voice_only = proj_dir / "final_voice_only.mp4"
-    assert voice_only.exists()
-    assert voice_only.read_bytes() == orig_voice_bytes
-
-    # 2. final.mp4 must be updated with the baked mix (different file size / content)
+    # 1. final.mp4 must be updated with the baked mix (different file size / content)
     assert final_video.exists()
     assert final_video.read_bytes() != orig_voice_bytes
 
-    # 3. preview_with_music.mp4 must exist and match final.mp4
-    preview = proj_dir / "preview_with_music.mp4"
-    assert preview.exists()
-    assert preview.read_bytes() == final_video.read_bytes()
+    # 2. Master's decision: no final_voice_only.mp4, no preview_with_music.mp4, no music_sync.txt
+    assert not (proj_dir / "final_voice_only.mp4").exists()
+    assert not (proj_dir / "preview_with_music.mp4").exists()
+    assert not (proj_dir / "music_sync.txt").exists()
 
-    # 4. music_sync.json / txt reports
+    # 3. music_sync.json preserved as internal metadata
+    assert (proj_dir / "music_sync.json").exists()
     json_doc = json.loads((proj_dir / "music_sync.json").read_text(encoding="utf-8"))
     assert json_doc["bake_into_final"] is True
-    assert json_doc["voice_only_video"] == "final_voice_only.mp4"
+    assert json_doc["voice_only_video"] is None
+    assert json_doc["preview_video"] == "final.mp4"
     assert json_doc["target_offset_lu"] == 16.0
-
-    txt_content = (proj_dir / "music_sync.txt").read_text(encoding="utf-8")
-    assert "Trộn sẵn nhạc vào final.mp4: CÓ" in txt_content
-    assert "final_voice_only.mp4" in txt_content
 
 
 def test_finish_capcut_music_sync_bake_off(tmp_path):
     """When bake_into_final is False:
     - final.mp4 stays untouched (narration-only)
     - preview_with_music.mp4 has the mixed audio
-    - music_sync.txt / .json report bake_into_final=False.
+    - music_sync.txt and music_sync.json are written
+    - final_voice_only.mp4 does not exist
     """
     proj_dir = tmp_path / "proj_bake_off"
     proj_dir.mkdir()
@@ -355,10 +348,14 @@ def test_finish_capcut_music_sync_bake_off(tmp_path):
     # final.mp4 remains narration-only!
     assert final_video.read_bytes() == orig_voice_bytes
     assert (proj_dir / "preview_with_music.mp4").exists()
+    assert not (proj_dir / "final_voice_only.mp4").exists()
+    assert (proj_dir / "music_sync.txt").exists()
+    assert (proj_dir / "music_sync.json").exists()
 
     json_doc = json.loads((proj_dir / "music_sync.json").read_text(encoding="utf-8"))
     assert json_doc["bake_into_final"] is False
     assert json_doc["voice_only_video"] == "final.mp4"
+    assert json_doc["preview_video"] == "preview_with_music.mp4"
 
     txt_content = (proj_dir / "music_sync.txt").read_text(encoding="utf-8")
     assert "Trộn sẵn nhạc vào final.mp4: KHÔNG" in txt_content
