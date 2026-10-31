@@ -423,6 +423,31 @@ def select_hit_points(shots: list[Any], narration: dict[str, Any] | None = None)
     return selected
 
 
+_CLIP_DUR_CACHE: dict[str, float] = {}
+
+
+def _get_clip_duration(clip_path: str | Path) -> float:
+    """Get the source duration of a clip file in seconds, cached to avoid repeated ffprobe calls."""
+    if not clip_path:
+        return 0.0
+    key = str(clip_path)
+    if key in _CLIP_DUR_CACHE:
+        return _CLIP_DUR_CACHE[key]
+
+    dur = 0.0
+    try:
+        from stages.stage_5.clips import probe_video
+        p = Path(clip_path)
+        if p.is_file():
+            probe = probe_video(p)
+            dur = float(probe.get("duration", 0.0) or 0.0)
+    except Exception:
+        dur = 0.0
+
+    _CLIP_DUR_CACHE[key] = dur
+    return dur
+
+
 def _can_fit_clip(shot: Any, new_duration: float) -> bool:
     """Check whether a clip shot can satisfy speed [0.8, 1.25] and hold <= 0.3s
     using the exact same logic as stage_5.clips:plan_clip_shot()."""
@@ -438,7 +463,10 @@ def _can_fit_clip(shot: Any, new_duration: float) -> bool:
         from stages.stage_5.clips import plan_clip_shot
         dummy = copy.copy(shot)
         dummy.duration_seconds = new_duration
-        _clip_in, fit_ = plan_clip_shot(dummy, src_dur=0.0)
+        src_dur = float(getattr(shot, "src_dur", 0.0) or getattr(shot, "clip_duration", 0.0) or 0.0)
+        if src_dur <= 0.0:
+            src_dur = _get_clip_duration(clip_path)
+        _clip_in, fit_ = plan_clip_shot(dummy, src_dur=src_dur)
         if fit_.speed < 0.80 - 1e-4 or fit_.speed > 1.25 + 1e-4:
             return False
         if fit_.hold > 0.30 + 1e-4:
