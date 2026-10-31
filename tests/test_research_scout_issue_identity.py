@@ -278,10 +278,23 @@ def test_intent_with_ongoing_year_qualifier_enforces_year_constraint(intent):
     assert reason_wrong is not None
     assert "2016" in reason_wrong or "year missing or different" in reason_wrong
 
-    # Candidate matching the publication/volume start year must be accepted
+    # Candidate with verified volume evidence matching volume start year must be accepted
     assert micro_issue_rejection_reason(
-        intent, {"series_issue_year": "Batman #1 (2016)"}
+        intent, {"series_issue_year": "Batman (2016) #1"}
     ) is None
+    assert micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman (2016-) #1"}
+    ) is None
+    assert micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #1 (2016)", "series_start_year": 2016}
+    ) is None
+
+    # Candidate without verified volume evidence must be rejected (cannot assume volume from release year)
+    reason_no_vol = micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #1 (2016)"}
+    )
+    assert reason_no_vol is not None
+    assert "volume" in reason_no_vol.lower()
 
 
 @pytest.mark.parametrize("intent", [
@@ -324,7 +337,6 @@ def test_intent_with_ongoing_qualifier_rejects_later_relaunch_without_volume_evi
     assert "volume" in reason_relaunch_50.lower()
 
 
-
 def test_intent_with_ongoing_qualifier_rejects_issue_from_different_volume():
     intent = "Batman (2016-) #50"
     # Issue from earlier volume published before volume start
@@ -338,6 +350,26 @@ def test_intent_with_ongoing_qualifier_rejects_issue_from_different_volume():
         intent, {"series_issue_year": "Batman (2011) #50 (2016)"}
     )
     assert reason_earlier_vol is not None
+
+    # Issue published in volume start year without volume qualifier must also be rejected
+    # (old volume can still publish in the relaunch year, e.g. Batman #50 (2016))
+    reason_no_vol_start_year = micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #50 (2016)"}
+    )
+    assert reason_no_vol_start_year is not None
+    assert "volume" in reason_no_vol_start_year.lower()
+
+
+def test_title_with_volume_qualifier_does_not_conflict_with_release_year_intent():
+    # User intent names issue and release year; candidate metadata matches both volume and release year;
+    # candidate title only carries series and volume qualifier before #N.
+    intent = "Batman #50 (2018)"
+    candidate = {
+        "series_issue_year": "Batman (2016) #50 (2018)",
+        "title": "Batman (2016) #50",
+    }
+    assert micro_issue_rejection_reason(intent, candidate) is None
+
 
 
 

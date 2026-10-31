@@ -298,9 +298,6 @@ def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
             volume_year = ongoing_before.group(1)
         elif exact_before:
             volume_year = exact_before.group(1)
-            # If no year after #N, exact (YYYY) before #N is also the release year
-            if not exact_after and not ongoing_after:
-                year = exact_before.group(1)
 
         if ongoing_after:
             if not volume_year:
@@ -440,20 +437,10 @@ def micro_issue_rejection_reason(user_intent: str, candidate: Mapping[str, Any])
                     f"(release year before volume start)."
                 )
         else:
-            # Candidate has no verified volume evidence.
-            # If release year matches the volume start year exactly (e.g. #1 published at launch), accept.
-            if given.year == expected.volume_year:
-                pass
-            elif given.year and int(given.year) < int(expected.volume_year):
-                return (
-                    f"Expected {expected.label}; candidate is {given.label} "
-                    f"(release year before volume start)."
-                )
-            else:
-                return (
-                    f"Expected {expected.label}; candidate has no verified volume evidence "
-                    f"confirming volume {expected.volume_year}: {given_text or '(missing)'}."
-                )
+            return (
+                f"Expected {expected.label}; candidate has no verified volume evidence "
+                f"confirming volume {expected.volume_year}: {given_text or '(missing)'}."
+            )
 
     title = str(candidate.get("title") or "").strip()
     title_targets, title_unresolved = _intent_targets(title)
