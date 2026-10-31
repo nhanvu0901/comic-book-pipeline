@@ -33,13 +33,15 @@ def _create_dummy_audio(audio_path: Path, duration: float = 10.0) -> Path:
 
 
 def test_format_timecode():
-    assert music_sync.format_timecode(0.0) == "00:00.00"
-    assert music_sync.format_timecode(4.25, fps=30) == "00:04.08"
-    assert music_sync.format_timecode(65.5, fps=30) == "01:05.15"
-    # P2 carry tests: 4.99s must round to 00:05.00, not 00:04.00; 59.99s to 01:00.00
-    assert music_sync.format_timecode(4.99, fps=30) == "00:05.00"
-    assert music_sync.format_timecode(59.99, fps=30) == "01:00.00"
-    assert music_sync.format_timecode(119.99, fps=30) == "02:00.00"
+    assert music_sync.format_timecode(0.0) == "0.00 s (00:00:00:00 @30fps)"
+    assert music_sync.format_timecode(4.25, fps=30) == "4.25 s (00:00:04:08 @30fps)"
+    assert music_sync.format_timecode(65.5, fps=30) == "65.50 s (00:01:05:15 @30fps)"
+    # P2 carry tests: 4.99s must round to 00:05:00, not 00:04:00; 59.99s to 01:00:00
+    assert music_sync.format_timecode(4.99, fps=30) == "4.99 s (00:00:05:00 @30fps)"
+    assert music_sync.format_timecode(59.99, fps=30) == "59.99 s (00:01:00:00 @30fps)"
+    assert music_sync.format_timecode(119.99, fps=30) == "119.99 s (00:02:00:00 @30fps)"
+    # E2E review bug: 4.651s at 85 BPM must be written with unambiguous seconds and CapCut-style frames
+    assert music_sync.format_timecode(4.651, fps=30) == "4.65 s (00:00:04:20 @30fps)"
 
 
 def test_snapped_hit_point_updates_time_seconds_in_sync_sheet(tmp_path):
@@ -67,7 +69,8 @@ def test_snapped_hit_point_updates_time_seconds_in_sync_sheet(tmp_path):
     json_doc, txt = music_sync.build_sync_sheet(tmp_path, analysis, in_point=0.0, hit_points=snapped)
     assert json_doc["hit_points"][0]["time_seconds"] == pytest.approx(3.97, abs=0.01)
     assert json_doc["hit_points"][0]["timecode"] == music_sync.format_timecode(3.97)
-    assert "00:03.29" in txt
+    assert "3.97 s (00:00:03:29 @30fps)" in txt
+    assert "1/1 hit points đã khớp beat" in txt
 
 
 
@@ -108,16 +111,19 @@ def test_build_sync_sheet(tmp_path):
     assert (project_dir / "music_sync.json").exists()
     assert json_doc["bpm"] == 120.0
     assert json_doc["in_point_seconds"] == 4.25
-    assert json_doc["in_point_timecode"] == "00:04.08"
+    assert json_doc["in_point_timecode"] == "4.25 s (00:00:04:08 @30fps)"
     assert json_doc["suggested_ducking_db"] <= -12.0
     assert json_doc["warning"] == "Track duration warning"
+    assert json_doc["snapped_count"] == 1
+    assert json_doc["kept_count"] == 0
     assert len(json_doc["hit_points"]) == 1
 
     # Verify Vietnamese TXT
     assert (project_dir / "music_sync.txt").exists()
     assert "HƯỚNG DẪN ĐỒNG BỘ NHẠC CAPCUT" in txt_content
-    assert "00:04.08" in txt_content
+    assert "4.25 s (00:00:04:08 @30fps)" in txt_content
     assert "Hook Reveal" in txt_content
+    assert "1/1 hit points đã khớp beat (0 giữ nguyên" in txt_content
     assert "preview_with_music.mp4" in txt_content
 
 

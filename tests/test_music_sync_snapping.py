@@ -262,4 +262,110 @@ def test_open_ended_clip_near_hold_limit_accepts_snap_within_max_hold(tmp_path):
     assert shots[1].duration_seconds == pytest.approx(1.54, abs=1e-3)
 
 
+def test_snap_shots_falls_back_to_regular_beat_when_downbeat_too_far():
+    """E2E feedback round 2: at 85 BPM a bar is ~2.81s so downbeats alone are too sparse.
+    When no downbeat is within +-0.20s tolerance, snap must fall back to the nearest regular beat
+    within +-0.20s (prefer downbeat > strong > any)."""
+    shots = _make_dummy_shots([4.20, 3.0, 3.0])
+    hit_points = [
+        music_sync.HitPoint(
+            shot_index=1,
+            time_seconds=4.20,
+            name="Hook Reveal",
+            strength=0.9,
+        )
+    ]
+
+    # Downbeats are far away: 2.81s (-1.39s) and 5.62s (+1.42s) -> both > 0.20s
+    downbeats = [2.81, 5.62]
+    # Regular beats exist at: 2.81, 3.51, 4.22, 4.93, 5.62
+    # Beat at 4.22s -> target cut = 4.22 - 0.05 = 4.17s (delta = -0.03s <= 0.20s)
+    all_beats = [2.81, 3.51, 4.22, 4.93, 5.62]
+
+    snapped = music_sync.snap_shots_to_beats(
+        shots,
+        hit_points,
+        in_point=0.0,
+        strong_beats=downbeats,
+        all_beats=all_beats,
+        downbeats=downbeats,
+    )
+
+    assert snapped[0].snapped is True
+    assert snapped[0].beat_time == pytest.approx(4.22, abs=0.01)
+    assert snapped[0].target_cut == pytest.approx(4.17, abs=0.01)
+    assert shots[0].duration_seconds == pytest.approx(4.17, abs=0.01)
+
+
+def test_snap_shots_prefers_downbeat_over_regular_beat():
+    """When a downbeat is within tolerance, it must take precedence over a closer regular beat."""
+    shots = _make_dummy_shots([4.00, 3.0, 3.0])
+    hit_points = [
+        music_sync.HitPoint(
+            shot_index=1,
+            time_seconds=4.00,
+            name="Hook Reveal",
+            strength=0.9,
+        )
+    ]
+
+    # Downbeat at 4.15s -> target = 4.10s (delta = +0.10s <= 0.20s)
+    downbeats = [4.15]
+    # Regular beat even closer at 4.07s -> target = 4.02s (delta = +0.02s)
+    all_beats = [3.50, 4.07, 4.15, 4.70]
+
+    snapped = music_sync.snap_shots_to_beats(
+        shots,
+        hit_points,
+        in_point=0.0,
+        strong_beats=downbeats,
+        all_beats=all_beats,
+        downbeats=downbeats,
+    )
+
+    assert snapped[0].snapped is True
+    # Must prefer the downbeat (4.15s) over the regular beat (4.07s)
+    assert snapped[0].beat_time == pytest.approx(4.15, abs=0.01)
+    assert snapped[0].target_cut == pytest.approx(4.10, abs=0.01)
+
+
+def test_pick_in_point_maximises_weighted_snappable_hit_points():
+    """E2E feedback (3): in-point must search full valid range at fine resolution to maximise
+    weighted snappable hit points, rather than only aligning a single drop."""
+    # 5 hit points at 2.0s, 6.0s, 10.0s, 14.0s, 18.0s
+    hps = [
+        music_sync.HitPoint(shot_index=1, time_seconds=2.0, name="Clip 1", strength=1.0),
+        music_sync.HitPoint(shot_index=2, time_seconds=6.0, name="Reveal", strength=0.9),
+        music_sync.HitPoint(shot_index=3, time_seconds=10.0, name="Clip 2", strength=1.0),
+        music_sync.HitPoint(shot_index=4, time_seconds=14.0, name="Climax", strength=0.85),
+        music_sync.HitPoint(shot_index=5, time_seconds=18.0, name="Final Line", strength=0.7),
+    ]
+
+    # Reference track has:
+    # An isolated drop at 15.0s (if aligned to hp[0] at 2.0s, in_point = 13.0s, but at in_point=13.0s no other beats align)
+    # A dense regular beat sequence aligned perfectly at in_point = 1.0s:
+    # beats at in_point + hp.time + lead:
+    # in_point=1.0s -> track times: 3.05, 7.05, 11.05, 15.05, 19.05
+    beats = [1.0, 2.0, 3.05, 5.0, 7.05, 9.0, 11.05, 13.0, 15.05, 17.0, 19.05, 21.0, 25.0, 30.0]
+    downbeats = [3.05, 11.05, 19.05]
+    drops = [{"time": 15.0, "score": 1.0}]
+
+    analysis = music_sync.TrackAnalysis(
+        file_path="dummy.mp3",
+        file_sha256="abc",
+        duration_seconds=30.0,
+        bpm=120.0,
+        beats=beats,
+        downbeats=downbeats,
+        drops=drops,
+    )
+
+    # Video duration = 20.0s -> max_in = 10.0s
+    in_point, warn = music_sync.pick_in_point(analysis, video_duration=20.0, hit_points=hps)
+    assert warn is None
+    # Must choose ~1.00s which aligns all 5 hit points (and 3 downbeats!), scoring far higher than 0.0s
+    assert in_point == pytest.approx(1.00, abs=0.05)
+
+
+
 

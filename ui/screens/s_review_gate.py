@@ -2599,8 +2599,11 @@ def build(
             fn_display = Path(fn).name
             bpm = float(cm.get("bpm") or 0.0)
             in_pt = float(cm.get("in_point") or 0.0)
-            tc = str(cm.get("in_point_timecode") or "00:00.00")
-            capcut_info_text.value = f"Track: {fn_display}\nBPM: {bpm:.1f} | In-point: {in_pt:.2f}s ({tc})"
+            from stages.music_sync import format_timecode
+            tc = cm.get("in_point_timecode")
+            if not tc or "@" not in str(tc):
+                tc = format_timecode(in_pt)
+            capcut_info_text.value = f"Track: {fn_display}\nBPM: {bpm:.1f} | In-point: {tc}"
             capcut_info_text.color = SUCCESS
         else:
             capcut_info_text.value = "Chưa có file nhạc reference — nhấn nút bên dưới để chọn file (mp3/wav/m4a/mp4/mov)."

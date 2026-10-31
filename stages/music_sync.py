@@ -281,8 +281,13 @@ def pick_in_point(
     analysis: TrackAnalysis,
     video_duration: float,
     strongest_hit_time: float = 0.0,
+    hit_points: list[HitPoint] | None = None,
+    fps: float = 30.0,
+    tolerance: float = 0.20,
 ) -> tuple[float, str | None]:
-    """Pick music in-point (>=0) so the strongest drop lands on the strongest hit point.
+    """Pick music in-point (>=0) within [0, track_duration - video_duration] to maximise
+    the snappable weighted hit points over the full valid in-point range at fine resolution.
+    Higher weight for clips and reveal cuts, bonus when strongest drop lands on top hit point.
 
     Returns:
         (in_point_seconds, warning_message_or_None)
@@ -295,21 +300,88 @@ def pick_in_point(
         return 0.0, warn
 
     max_in = max(0.0, analysis.duration_seconds - video_duration)
+    lead = 1.5 / float(fps)
 
-    # Find candidate drops that can align with strongest_hit_time
-    valid_candidates: list[tuple[float, float]] = []
-    for drop in analysis.drops:
-        cand_in = drop["time"] - strongest_hit_time
-        if 0.0 <= cand_in <= max_in + 1e-3:
-            valid_candidates.append((drop["score"], min(max_in, max(0.0, cand_in))))
+    hps = list(hit_points) if hit_points else []
+    if not hps and strongest_hit_time > 0.0:
+        hps = [HitPoint(shot_index=1, time_seconds=strongest_hit_time, name="Strongest Hit", strength=1.0)]
 
-    if valid_candidates:
-        valid_candidates.sort(key=lambda c: c[0], reverse=True)
-        chosen_in = valid_candidates[0][1]
-        return round(float(chosen_in), 3), None
+    all_beats = analysis.beats or []
+    downbeats = analysis.downbeats or []
+    drops = analysis.drops or []
 
-    # Fallback: if no drop qualifies within bounds, pick 0.0
-    return 0.0, None
+    if not hps or not all_beats:
+        valid_candidates: list[tuple[float, float]] = []
+        for drop in drops:
+            cand_in = drop["time"] - strongest_hit_time
+            if 0.0 <= cand_in <= max_in + 1e-3:
+                valid_candidates.append((drop["score"], min(max_in, max(0.0, cand_in))))
+        if valid_candidates:
+            valid_candidates.sort(key=lambda c: c[0], reverse=True)
+            return round(float(valid_candidates[0][1]), 3), None
+        return 0.0, None
+
+    # Search candidates across valid range:
+    # 1. Fine grid with 0.02s step
+    candidates: set[float] = set()
+    grid_points = np.arange(0.0, max_in + 1e-4, 0.02)
+    for g in grid_points:
+        candidates.add(round(float(g), 4))
+
+    # 2. Beat alignments: beat - (hit_point + lead)
+    for b in all_beats:
+        for hp in hps:
+            c = b - (hp.time_seconds + lead)
+            if 0.0 <= c <= max_in:
+                candidates.add(round(float(c), 4))
+
+    # 3. Drop alignments
+    top_hp = max(hps, key=lambda h: h.strength)
+    for d in drops:
+        c = d["time"] - (top_hp.time_seconds + lead)
+        if 0.0 <= c <= max_in:
+            candidates.add(round(float(c), 4))
+
+    candidates.add(0.0)
+    candidates.add(round(max_in, 4))
+
+    beats_arr = np.array(all_beats, dtype=float)
+    downbeats_arr = np.array(downbeats, dtype=float) if downbeats else np.array([], dtype=float)
+    strongest_drop = max(drops, key=lambda d: d.get("score", 0.0)) if drops else None
+
+    best_cand = 0.0
+    best_score = -1e9
+
+    for cand_in in sorted(candidates):
+        score = 0.0
+        for hp in hps:
+            t_track = cand_in + hp.time_seconds + lead
+            dists = np.abs(beats_arr - t_track)
+            idx = int(np.argmin(dists))
+            min_dist = float(dists[idx])
+            b = float(beats_arr[idx])
+            if min_dist <= tolerance:
+                is_downbeat = False
+                if len(downbeats_arr) > 0:
+                    is_downbeat = bool(np.min(np.abs(downbeats_arr - b)) < 0.02)
+                mult = 2.0 if is_downbeat else 1.0
+                closeness = 1.0 - 0.5 * (min_dist / tolerance)
+                score += hp.strength * mult * closeness
+
+        if strongest_drop is not None:
+            t_track_top = cand_in + top_hp.time_seconds + lead
+            drop_dist = abs(strongest_drop.get("time", 0.0) - t_track_top)
+            if drop_dist <= tolerance:
+                drop_score = float(strongest_drop.get("score", 1.0))
+                score += 1.5 * drop_score * (1.0 - 0.5 * (drop_dist / tolerance))
+
+        score -= 1e-4 * (cand_in / (max_in + 1.0))
+
+        if score > best_score:
+            best_score = score
+            best_cand = cand_in
+
+    return round(float(best_cand), 3), None
 
 
 @dataclass
@@ -481,22 +553,30 @@ def snap_shots_to_beats(
     hit_points: list[HitPoint],
     in_point: float,
     strong_beats: list[float],
+    all_beats: list[float] | None = None,
+    downbeats: list[float] | None = None,
     fps: float = 30.0,
     lead_frames: float = 1.5,
     tolerance: float = 0.20,
     min_duration: float = 0.40,
 ) -> list[HitPoint]:
-    """Snap hit point boundaries to nearest strong beat within +-tolerance (default +-0.20s).
+    """Snap hit point boundaries to nearest beat within +-tolerance (default +-0.20s).
+    Priority: downbeat > strong beat > any beat.
     Lands 1-2 frames before the beat.
     Maintains total video duration and never alters narration audio.
     Respects min_duration (0.40s) and clip-fit limits.
     """
-    if not shots or not hit_points or not strong_beats:
+    if not shots or not hit_points:
         return hit_points
 
-    # Precalculate start times of all shots
+    beats_pool_all = list(all_beats) if all_beats is not None else list(strong_beats)
+    beats_pool_strong = list(strong_beats) if strong_beats is not None else beats_pool_all
+    beats_pool_down = list(downbeats) if downbeats is not None else []
+
+    if not beats_pool_all:
+        return hit_points
+
     lead_time = lead_frames / float(fps)
-    video_beats = [round(b - in_point, 4) for b in strong_beats]
 
     for hp in hit_points:
         idx = hp.shot_index
@@ -506,35 +586,63 @@ def snap_shots_to_beats(
         prev_shot = shots[idx - 1]
         cur_shot = shots[idx]
 
-        # Current cut time
+        # Current cut time in video timeline
         cut_time = sum(float(shots[j].duration_seconds) for j in range(idx))
 
-        # Find nearest beat in video timeline
-        valid_beats = [vb for vb in video_beats if vb >= 0.0]
-        if not valid_beats:
-            continue
+        def _find_nearest_in_pool(pool: list[float]) -> tuple[float | None, float]:
+            cand_b = None
+            cand_delta = float("inf")
+            for b in pool:
+                vb = b - in_point
+                if vb < 0.0:
+                    continue
+                target = vb - lead_time
+                d = target - cut_time
+                if abs(d) <= tolerance and abs(d) < abs(cand_delta):
+                    cand_delta = d
+                    cand_b = vb
+            return cand_b, cand_delta
 
-        nearest_beat = min(valid_beats, key=lambda vb: abs(vb - cut_time))
-        target_cut = nearest_beat - lead_time
-        delta = target_cut - cut_time
+        chosen_b = None
+        chosen_delta = 0.0
 
-        if abs(delta) > tolerance:
+        if beats_pool_down:
+            chosen_b, chosen_delta = _find_nearest_in_pool(beats_pool_down)
+
+        if chosen_b is None and beats_pool_strong:
+            chosen_b, chosen_delta = _find_nearest_in_pool(beats_pool_strong)
+
+        if chosen_b is None and beats_pool_all:
+            chosen_b, chosen_delta = _find_nearest_in_pool(beats_pool_all)
+
+        if chosen_b is None:
             hp.snapped = False
-            hp.beat_time = round(nearest_beat, 3)
-            hp.target_cut = round(cut_time, 3)
-            hp.offset_from_beat = round(cut_time - nearest_beat, 4)
+            valid_all = [b - in_point for b in beats_pool_all if b - in_point >= 0.0]
+            if valid_all:
+                nearest = min(valid_all, key=lambda vb: abs(vb - cut_time))
+                hp.beat_time = round(nearest, 3)
+                hp.target_cut = round(cut_time, 3)
+                hp.offset_from_beat = round(cut_time - nearest, 4)
             continue
 
-        # Check floor and limits
+        target_cut = chosen_b - lead_time
+        delta = chosen_delta
+
         dur_prev_new = round(float(prev_shot.duration_seconds) + delta, 4)
         dur_cur_new = round(float(cur_shot.duration_seconds) - delta, 4)
 
         if dur_prev_new < min_duration or dur_cur_new < min_duration:
             hp.snapped = False
+            hp.beat_time = round(chosen_b, 3)
+            hp.target_cut = round(cut_time, 3)
+            hp.offset_from_beat = round(cut_time - chosen_b, 4)
             continue
 
         if not _can_fit_clip(prev_shot, dur_prev_new) or not _can_fit_clip(cur_shot, dur_cur_new):
             hp.snapped = False
+            hp.beat_time = round(chosen_b, 3)
+            hp.target_cut = round(cut_time, 3)
+            hp.offset_from_beat = round(cut_time - chosen_b, 4)
             continue
 
         # Apply snap
@@ -543,24 +651,27 @@ def snap_shots_to_beats(
 
         hp.snapped = True
         hp.time_seconds = round(target_cut, 3)
-        hp.beat_time = round(nearest_beat, 3)
+        hp.beat_time = round(chosen_b, 3)
         hp.target_cut = round(target_cut, 3)
-        hp.offset_from_beat = round(target_cut - nearest_beat, 4)
+        hp.offset_from_beat = round(target_cut - chosen_b, 4)
 
     return hit_points
 
 
 def format_timecode(seconds: float, fps: float = 30.0) -> str:
-    """Format seconds into mm:ss.ff timecode (e.g. 00:04.08), carrying rounded frames into seconds and minutes."""
+    """Format seconds into an unambiguous timecode string:
+    'X.XX s (HH:MM:SS:FF @30fps)', e.g. '4.65 s (00:00:04:20 @30fps)'.
+    """
     if seconds < 0:
         seconds = 0.0
     fps_int = int(round(fps))
     total_frames = int(round(seconds * fps))
     total_sec = total_frames // fps_int
     frames = total_frames % fps_int
-    minutes = total_sec // 60
-    rem_sec = total_sec % 60
-    return f"{minutes:02d}:{rem_sec:02d}.{frames:02d}"
+    hh = total_sec // 3600
+    mm = (total_sec % 3600) // 60
+    ss = total_sec % 60
+    return f"{seconds:.2f} s ({hh:02d}:{mm:02d}:{ss:02d}:{frames:02d} @{fps_int}fps)"
 
 
 def get_capcut_music_config(project_dir: Path) -> dict[str, Any]:
@@ -600,6 +711,9 @@ def build_sync_sheet(
     track_path = Path(analysis.file_path)
     track_name = track_path.name
 
+    snapped_count = sum(1 for hp in hit_points if hp.snapped)
+    kept_count = len(hit_points) - snapped_count
+
     json_doc: dict[str, Any] = {
         "track_name": track_name,
         "track_file": analysis.file_path,
@@ -612,6 +726,9 @@ def build_sync_sheet(
         "suggested_fade_in_seconds": float(fade_in),
         "suggested_fade_out_seconds": float(fade_out),
         "warning": warning,
+        "snapped_count": snapped_count,
+        "kept_count": kept_count,
+        "total_hit_points": len(hit_points),
         "hit_points": [
             {
                 "shot_id": hp.shot_index,
@@ -636,15 +753,18 @@ def build_sync_sheet(
         f"Dự án: {project_name}",
         f"File nhạc tham chiếu: {track_name}",
         f"BPM: {analysis.bpm:.1f}",
+        f"Trạng thái đồng bộ: {snapped_count}/{len(hit_points)} hit points đã khớp beat ({kept_count} giữ nguyên nhịp thoại)",
         "",
         "1. CÁCH ĐẶT NHẠC TRÊN TIMELINE CAPCUT:",
         "   - Kéo file nhạc vào timeline, bắt đầu ngay tại mốc: 00:00:00 (đầu video).",
-        f"   - Điểm cắt đầu track (In-point): {format_timecode(in_point)} ({in_point:.2f}s)",
-        f"     -> Cắt bỏ {in_point:.2f}s đầu của track, hoặc kéo phần đầu track đến mốc {format_timecode(in_point)}.",
+        f"   - Điểm cắt đầu track (In-point): {format_timecode(in_point)}",
+        f"     -> Cắt bỏ {in_point:.2f}s đầu của track (hoặc đặt timeline CapCut tại {format_timecode(in_point)}).",
         f"   - Âm lượng nhạc đề xuất: {ducking_db:.0f} dB so với giọng đọc (giọng đọc là chính, nhạc nền nhẹ).",
         f"   - Fade in: {fade_in:.1f}s ở đầu video | Fade out: {fade_out:.1f}s ở cuối video.",
         "",
-        "2. CÁC ĐIỂM HIT POINT ĐÃ ĐỒNG BỘ VỚI NHẠC (1-2 frames trước beat):",
+        f"2. CÁC ĐIỂM HIT POINT ĐÃ ĐỒNG BỘ VỚI NHẠC ({snapped_count}/{len(hit_points)} ĐÃ KHỚP BEAT):",
+        f"   - Tổng kết: {snapped_count} điểm đã khớp beat (cắt sớm 1-2 frames), {kept_count} điểm giữ nguyên nhịp thoại gốc.",
+        "   - Chi tiết từng điểm cắt:",
     ]
 
     for hp in hit_points:
@@ -789,12 +909,23 @@ def prepare_capcut_music_sync(
             strongest_hp = max(hit_points, key=lambda hp: hp.strength)
             strongest_hit_time = strongest_hp.time_seconds
 
-        in_point, warn = pick_in_point(analysis, total_video_dur, strongest_hit_time=strongest_hit_time)
+        in_point, warn = pick_in_point(
+            analysis,
+            total_video_dur,
+            strongest_hit_time=strongest_hit_time,
+            hit_points=hit_points,
+        )
         if warn:
             log(f"[music_sync] warning: {warn}")
 
-        beats_to_snap = analysis.downbeats if analysis.downbeats else analysis.beats
-        snapped_hits = snap_shots_to_beats(shots, hit_points, in_point, beats_to_snap)
+        snapped_hits = snap_shots_to_beats(
+            shots,
+            hit_points,
+            in_point,
+            strong_beats=analysis.downbeats if analysis.downbeats else analysis.beats,
+            all_beats=analysis.beats,
+            downbeats=analysis.downbeats,
+        )
 
         _STAGE5_SYNC_STATE[project_name] = {
             "analysis": analysis,
@@ -805,8 +936,8 @@ def prepare_capcut_music_sync(
         }
 
         snapped_count = sum(1 for hp in snapped_hits if hp.snapped)
-        log(f"[music_sync] CapCut music aligned: BPM={analysis.bpm:.1f}, in-point={in_point:.2f}s "
-            f"({format_timecode(in_point)}), snapped {snapped_count}/{len(snapped_hits)} hit points")
+        log(f"[music_sync] CapCut music aligned: BPM={analysis.bpm:.1f}, in-point={format_timecode(in_point)}, "
+            f"snapped {snapped_count}/{len(snapped_hits)} hit points")
 
         return shots
     except Exception as exc:
