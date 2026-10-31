@@ -185,3 +185,81 @@ def test_clip_speed_guard_fixed_window_exceeds_renderer_speed_limit():
     assert shots[1].duration_seconds == 1.65
 
 
+def _create_dummy_video(path, duration: float = 1.0):
+    import subprocess
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=c=blue:s=160x120:d={duration}",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        str(path),
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def test_open_ended_clip_near_hold_limit_rejects_snap_when_exceeding_max_hold(tmp_path):
+    """P2 regression (round 2): open-ended clip with clip_out=0.0 must check actual
+    source duration via probe_video().
+    Clip source = 1.00s.
+    Initial shot duration = 1.50s (footage=1.0s, speed=0.8x, hold=1.50 - 1.25 = 0.25s <= 0.30s -> valid).
+    If snap extends shot by +0.15s to 1.65s:
+      footage=1.0s, speed=0.8x, hold=1.65 - 1.25 = 0.40s (> 0.30s CLIP_MAX_HOLD).
+    The guard must query probe_video (cached) and reject the snap, keeping the shot at 1.50s."""
+    clip_file = tmp_path / "clip_1s.mp4"
+    _create_dummy_video(clip_file, duration=1.0)
+
+    shots = _make_dummy_shots([3.0, 1.50, 3.0], clips=[1])
+    shots[1].clip_path = str(clip_file)
+    shots[1].clip_in = 0.0
+    shots[1].clip_out = 0.0  # Open-ended clip!
+
+    # Cut after shot 1 is at 3.0 + 1.50 = 4.50s
+    hit_points = [
+        music_sync.HitPoint(
+            shot_index=2,  # Cut into shot 2: extending shot 1 if delta > 0
+            time_seconds=4.50,
+            name="Cut after Open-ended Clip",
+            strength=0.9,
+        )
+    ]
+
+    # Target cut at 4.65s -> delta = +0.15s
+    # Prev shot (shot 1) duration would become 1.50 + 0.15 = 1.65s
+    # With 1.0s footage: hold = 0.40s > 0.30s max hold -> ClipTooShort!
+    strong_beats = [4.70]  # 4.70 - 0.05 = 4.65s
+
+    snapped = music_sync.snap_shots_to_beats(shots, hit_points, in_point=0.0, strong_beats=strong_beats)
+    assert snapped[0].snapped is False
+    # Shot 1 duration must be protected and preserved at 1.50s
+    assert shots[1].duration_seconds == 1.50
+
+
+def test_open_ended_clip_near_hold_limit_accepts_snap_within_max_hold(tmp_path):
+    """Open-ended clip with 1.00s source allows small extension that stays within hold <= 0.30s.
+    Initial shot duration = 1.50s.
+    Snap extends shot by +0.04s to 1.54s (hold = 1.54 - 1.25 = 0.29s <= 0.30s).
+    The guard must accept the snap."""
+    clip_file = tmp_path / "clip_1s_accept.mp4"
+    _create_dummy_video(clip_file, duration=1.0)
+
+    shots = _make_dummy_shots([3.0, 1.50, 3.0], clips=[1])
+    shots[1].clip_path = str(clip_file)
+    shots[1].clip_in = 0.0
+    shots[1].clip_out = 0.0
+
+    hit_points = [
+        music_sync.HitPoint(
+            shot_index=2,
+            time_seconds=4.50,
+            name="Cut after Open-ended Clip",
+            strength=0.9,
+        )
+    ]
+
+    # Target cut at 4.54s -> delta = +0.04s -> shot 1 duration = 1.54s (hold = 0.29s <= 0.30s)
+    strong_beats = [4.59]  # 4.59 - 0.05 = 4.54s
+
+    snapped = music_sync.snap_shots_to_beats(shots, hit_points, in_point=0.0, strong_beats=strong_beats)
+    assert snapped[0].snapped is True
+    assert shots[1].duration_seconds == pytest.approx(1.54, abs=1e-3)
+
+
+
