@@ -150,3 +150,27 @@ def test_corrupt_cache_reanalyzes(tmp_path):
     analysis = music_sync.analyze_track(wav_path, cache_dir=cache_dir)
     assert analysis.bpm > 0
 
+
+def test_video_container_mp4_input(tmp_path):
+    import subprocess
+    # Generate MP4 file with video stream and synthetic audio stream
+    wav_path = tmp_path / "audio.wav"
+    _generate_synthetic_track(wav_path, bpm=120.0, duration=15.0)
+
+    mp4_path = tmp_path / "1031_test.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "color=c=black:s=320x240:d=15",
+        "-i", str(wav_path),
+        "-c:v", "libx264", "-c:a", "aac",
+        "-shortest", str(mp4_path),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Should decode audio from MP4 and analyze correctly
+    analysis = music_sync.analyze_track(mp4_path, cache_dir=tmp_path / "cache")
+    assert analysis.bpm == pytest.approx(120.0, abs=1.5)
+    assert analysis.duration_seconds == pytest.approx(15.0, abs=0.5)
+    assert len(analysis.beats) > 0
+
+
