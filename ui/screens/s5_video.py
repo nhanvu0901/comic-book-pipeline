@@ -249,6 +249,34 @@ def build(
             ft.Container(height=8),
             secondary_button("Re-assemble Video", assemble_click, icon=ft.Icons.REFRESH),
         ])
+
+        # CapCut Music Sync outputs
+        sync_txt_path = PROJECTS_ROOT / state.project_name / "music_sync.txt" if state.project_name else None
+        preview_path = PROJECTS_ROOT / state.project_name / "preview_with_music.mp4" if state.project_name else None
+        if sync_txt_path and sync_txt_path.exists():
+            def _open_sync_sheet(_e):
+                dialog = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("CapCut Music Sync Sheet"),
+                    content=ft.Container(
+                        content=ft.Text(sync_txt_path.read_text(encoding="utf-8", errors="replace"), size=11, selectable=True),
+                        width=600, height=400,
+                    ),
+                    actions=[ft.TextButton("Đóng", on_click=lambda _e: page.pop_dialog())],
+                )
+                page.show_dialog(dialog)
+
+            right_controls.extend([
+                ft.Container(height=8),
+                secondary_button("Xem Sync Sheet CapCut", _open_sync_sheet, icon=ft.Icons.DESCRIPTION_OUTLINED),
+            ])
+            if preview_path and preview_path.exists():
+                p_url = asset_src(preview_path)
+                p_mb = preview_path.stat().st_size / (1024 * 1024)
+                right_controls.extend([
+                    ft.Container(height=4),
+                    secondary_button(f"Preview có nhạc ({p_mb:.1f} MB)", url=p_url, icon=ft.Icons.PLAY_CIRCLE_OUTLINE),
+                ])
     else:
         right_controls.extend([
             primary_button("Assemble Video", assemble_click, icon=ft.Icons.MOVIE_FILTER),
