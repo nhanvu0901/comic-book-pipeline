@@ -241,6 +241,34 @@ def _candidate_identity(value: str) -> IssueIdentity | None:
     return IssueIdentity(series, _normal_issue(match.group(1)), year, volume_year)
 
 
+def _candidate_volume_evidence(candidate: Mapping[str, Any], given: IssueIdentity | None) -> str:
+    """Extract verified volume start year from candidate identity and metadata."""
+    if given and given.volume_year:
+        return given.volume_year
+
+    # Check explicit volume/series start year metadata fields
+    for field in ("series_start_year", "volume_year", "series_year"):
+        val = candidate.get(field)
+        if val is not None:
+            val_str = str(val).strip()
+            m = _YEAR_RE.search(val_str)
+            if m:
+                return m.group()
+
+    # Check series/comic name fields for volume qualifiers like (2016-) or (2016)
+    for field in ("series", "comic", "source_comic"):
+        val = candidate.get(field)
+        if val and isinstance(val, str):
+            ongoing = _ONGOING_QUALIFIER_RE.search(val)
+            if ongoing:
+                return ongoing.group(1)
+            exact = _EXACT_YEAR_QUALIFIER_RE.search(val)
+            if exact:
+                return exact.group(1)
+
+    return ""
+
+
 def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
     named_targets: list[IssueIdentity] = []
     bare_targets: list[tuple[str, str, str]] = []  # (number, year, volume_year)
@@ -399,15 +427,33 @@ def micro_issue_rejection_reason(user_intent: str, candidate: Mapping[str, Any])
 
     # Volume start year constraint (if user specified an ongoing/volume start year)
     if expected.volume_year:
-        exp_vol = int(expected.volume_year)
-        if given.volume_year:
-            if given.volume_year != expected.volume_year:
-                return f"Expected {expected.label}; candidate is {given.label} (volume start year different)."
-        elif given.year:
-            if int(given.year) < exp_vol:
-                return f"Expected {expected.label}; candidate is {given.label} (release year before volume start)."
+        cand_volume = _candidate_volume_evidence(candidate, given)
+        if cand_volume:
+            if cand_volume != expected.volume_year:
+                return (
+                    f"Expected {expected.label}; candidate is {given.label} "
+                    f"(volume start year different: expected {expected.volume_year}, got {cand_volume})."
+                )
+            if given.year and int(given.year) < int(expected.volume_year):
+                return (
+                    f"Expected {expected.label}; candidate is {given.label} "
+                    f"(release year before volume start)."
+                )
         else:
-            return f"Expected {expected.label}; candidate is {given.label} (volume start year missing)."
+            # Candidate has no verified volume evidence.
+            # If release year matches the volume start year exactly (e.g. #1 published at launch), accept.
+            if given.year == expected.volume_year:
+                pass
+            elif given.year and int(given.year) < int(expected.volume_year):
+                return (
+                    f"Expected {expected.label}; candidate is {given.label} "
+                    f"(release year before volume start)."
+                )
+            else:
+                return (
+                    f"Expected {expected.label}; candidate has no verified volume evidence "
+                    f"confirming volume {expected.volume_year}: {given_text or '(missing)'}."
+                )
 
     title = str(candidate.get("title") or "").strip()
     title_targets, title_unresolved = _intent_targets(title)

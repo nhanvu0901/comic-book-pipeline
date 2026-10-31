@@ -290,15 +290,39 @@ def test_intent_with_ongoing_year_qualifier_enforces_year_constraint(intent):
     "Batman #50 (2016-)",
 ])
 def test_intent_with_ongoing_qualifier_accepts_later_year_issue_in_same_volume(intent):
-    # Candidate with only publication year >= volume start year must be accepted
-    assert micro_issue_rejection_reason(
-        intent, {"series_issue_year": "Batman #50 (2018)"}
-    ) is None
-
-    # Candidate with both volume start year and publication year must be accepted
+    # Candidate with verified volume evidence must be accepted
     assert micro_issue_rejection_reason(
         intent, {"series_issue_year": "Batman (2016) #50 (2018)"}
     ) is None
+    assert micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman (2016-) #50 (2018)"}
+    ) is None
+    assert micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #50 (2018)", "series_start_year": 2016}
+    ) is None
+
+    # Candidate with NO volume evidence must fail closed (cannot assume volume from release year >= start year)
+    reason_unverified = micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #50 (2018)"}
+    )
+    assert reason_unverified is not None
+    assert "volume" in reason_unverified.lower()
+
+
+def test_intent_with_ongoing_qualifier_rejects_later_relaunch_without_volume_evidence():
+    # Negative test from review 4: candidate from later relaunch with only publication year
+    reason_relaunch = micro_issue_rejection_reason(
+        "Batman (2016-) #1", {"series_issue_year": "Batman #1 (2025)"}
+    )
+    assert reason_relaunch is not None
+    assert "volume" in reason_relaunch.lower()
+
+    reason_relaunch_50 = micro_issue_rejection_reason(
+        "Batman (2016-) #50", {"series_issue_year": "Batman #50 (2025)"}
+    )
+    assert reason_relaunch_50 is not None
+    assert "volume" in reason_relaunch_50.lower()
+
 
 
 def test_intent_with_ongoing_qualifier_rejects_issue_from_different_volume():
