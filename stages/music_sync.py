@@ -705,6 +705,10 @@ def build_sync_sheet(
     fade_in: float = 1.0,
     fade_out: float = 2.0,
     bake_into_final: bool = False,
+    bake_requested: bool | None = None,
+    bake_applied: bool | None = None,
+    bake_failed: bool = False,
+    bake_error: str | None = None,
     voice_lufs: float | None = None,
     music_lufs: float | None = None,
     applied_gain_db: float | None = None,
@@ -712,18 +716,34 @@ def build_sync_sheet(
     write_txt: bool | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Generate music_sync.json (machine) and optionally music_sync.txt (Vietnamese, for Master).
-    When bake_into_final is True, music_sync.txt is omitted by default and kept only as internal metadata.
+    When bake is requested and applied, music_sync.txt is omitted by default and kept only as internal metadata.
+    When bake fails or is not applied, music_sync.txt is written and final.mp4 is never presented as music-baked.
     """
     project_dir = Path(project_dir)
     project_name = project_dir.name
     track_path = Path(analysis.file_path)
     track_name = track_path.name
 
+    if bake_requested is None:
+        bake_requested = bool(bake_into_final)
+    if bake_applied is None:
+        bake_applied = bool(bake_into_final) and not bake_failed
+
+    actual_baked = bool(bake_applied)
+
     if write_txt is None:
-        write_txt = not bake_into_final
+        write_txt = not actual_baked
 
     snapped_count = sum(1 for hp in hit_points if hp.snapped)
     kept_count = len(hit_points) - snapped_count
+
+    preview_name: str | None = None
+    if actual_baked:
+        preview_name = "final.mp4"
+    elif not bake_failed:
+        preview_name = "preview_with_music.mp4"
+    elif (project_dir / "preview_with_music.mp4").exists():
+        preview_name = "preview_with_music.mp4"
 
     json_doc: dict[str, Any] = {
         "track_name": track_name,
@@ -737,12 +757,16 @@ def build_sync_sheet(
         "suggested_fade_in_seconds": float(fade_in),
         "suggested_fade_out_seconds": float(fade_out),
         "warning": warning,
-        "bake_into_final": bool(bake_into_final),
+        "bake_into_final": actual_baked,
+        "bake_requested": bool(bake_requested),
+        "bake_applied": actual_baked,
+        "bake_failed": bool(bake_failed),
+        "bake_error": str(bake_error) if bake_error else None,
         "voice_loudness_lufs": round(voice_lufs, 2) if voice_lufs is not None else None,
         "music_loudness_lufs": round(music_lufs, 2) if music_lufs is not None else None,
         "target_offset_lu": float(target_offset_lu),
         "applied_gain_db": round(applied_gain_db, 2) if applied_gain_db is not None else None,
-        "voice_only_video": None if bake_into_final else "final.mp4",
+        "voice_only_video": None if actual_baked else "final.mp4",
         "snapped_count": snapped_count,
         "kept_count": kept_count,
         "total_hit_points": len(hit_points),
@@ -759,10 +783,17 @@ def build_sync_sheet(
             }
             for hp in hit_points
         ],
-        "preview_video": "final.mp4" if bake_into_final else "preview_with_music.mp4",
+        "preview_video": preview_name,
     }
 
     # Vietnamese human-readable sync sheet
+    if bake_failed:
+        bake_status_str = f"THẤT BẠI ({bake_error or 'Lỗi trộn nhạc'} - final.mp4 vẫn là bản chỉ có giọng đọc)"
+    elif actual_baked:
+        bake_status_str = "CÓ (final.mp4 đã trộn nhạc)"
+    else:
+        bake_status_str = "KHÔNG (final.mp4 chỉ chứa giọng đọc)"
+
     lines = [
         "=" * 80,
         "HƯỚNG DẪN ĐỒNG BỘ NHẠC CAPCUT (CAPCUT MUSIC SYNC SHEET)",
@@ -771,7 +802,7 @@ def build_sync_sheet(
         f"File nhạc tham chiếu: {track_name}",
         f"BPM: {analysis.bpm:.1f}",
         f"Trạng thái đồng bộ: {snapped_count}/{len(hit_points)} hit points đã khớp beat ({kept_count} giữ nguyên nhịp thoại)",
-        f"Trộn sẵn nhạc vào final.mp4: {'CÓ (final.mp4 đã trộn nhạc)' if bake_into_final else 'KHÔNG (final.mp4 chỉ chứa giọng đọc)'}",
+        f"Trộn sẵn nhạc vào final.mp4: {bake_status_str}",
     ]
     if voice_lufs is not None and music_lufs is not None:
         gain_str = f"{applied_gain_db:+.1f} dB" if applied_gain_db is not None else "N/A"
@@ -810,11 +841,14 @@ def build_sync_sheet(
         "",
         "3. VIDEO PREVIEW & XUẤT BẢN:",
     ])
-    if bake_into_final:
+    if actual_baked:
         lines.append("   - final.mp4: Video duy nhất đã trộn sẵn giọng đọc và nhạc nền CapCut.")
     else:
         lines.append("   - final.mp4: Video chỉ chứa giọng đọc (narration-only).")
-        lines.append("   - preview_with_music.mp4: Video xem thử đã mix nhạc mẫu ở in-point để kiểm tra sync.")
+        if preview_name:
+            lines.append(f"   - {preview_name}: Video xem thử đã mix nhạc mẫu ở in-point để kiểm tra sync.")
+    if bake_failed:
+        lines.append(f"   - LƯU Ý LỖI TRỘN NHẠC: {bake_error or 'Quá trình trộn nhạc tự động không thành công'}. Vui lòng import nhạc thủ công vào CapCut.")
     lines.append("=" * 80)
 
     txt_content = "\n".join(lines) + "\n"
@@ -916,7 +950,7 @@ def render_capcut_music_mix(
     ff = _require_ffmpeg()
     duration = _probe_duration(final_path)
     if duration <= 0:
-        return None, {}
+        return None, {"error": f"Invalid final video duration: {duration}s"}
 
     import config
     target_offset = offset_lu if offset_lu is not None else getattr(config, "CAPCUT_MUSIC_OFFSET_LU", 16.0)
@@ -957,8 +991,9 @@ def render_capcut_music_mix(
     try:
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
-            log(f"[music_sync] mix render failed: {res.stderr[-500:]}")
-            return None, {}
+            err_msg = (res.stderr or "")[-500:].strip()
+            log(f"[music_sync] mix render failed: {err_msg}")
+            return None, {"error": f"ffmpeg mix failed (exit {res.returncode}): {err_msg}"}
         return out_path, {
             "voice_lufs": voice_lufs,
             "music_lufs": music_lufs,
@@ -967,7 +1002,7 @@ def render_capcut_music_mix(
         }
     except Exception as exc:
         log(f"[music_sync] mix render exception: {exc}")
-        return None, {}
+        return None, {"error": str(exc)}
 
 
 def render_preview_with_music(
@@ -1071,12 +1106,13 @@ def finish_capcut_music_sync(
     root: Path,
     final_path: Path,
     log=print,
+    raise_on_failure: bool = True,
 ) -> None:
     """Generate music_sync.json, optionally bake reference music into final.mp4.
     When bake_into_final is True:
-      - output only final.mp4 with music baked in
-      - keep music_sync.json as internal metadata for UI summary/cache only
-      - do NOT output music_sync.txt, final_voice_only.mp4, or preview_with_music.mp4
+      - on success: output only final.mp4 with music baked in, keep music_sync.json as internal metadata
+      - on failure: fail the render clearly (raises RuntimeError when raise_on_failure is True),
+        record bake_failed and bake_error in metadata, and never present final.mp4 as music-baked
     When bake_into_final is False:
       - output narration-only final.mp4, music_sync.txt, music_sync.json, and preview_with_music.mp4
     """
@@ -1093,17 +1129,22 @@ def finish_capcut_music_sync(
     track_path = state["track_path"]
 
     cfg = get_capcut_music_config(root)
-    bake_into_final = bool(cfg.get("bake_into_final", True))
+    bake_requested = bool(cfg.get("bake_into_final", True))
 
     # 1. Render the unified mix into a temporary video
     tmp_mixed = root / ".final.music.tmp.mp4"
     log("[music_sync] rendering music mix (sidechain ducking + loudness targeting)...")
     out_mixed, mix_info = render_capcut_music_mix(final_path, track_path, in_point, tmp_mixed, log=log)
 
+    bake_applied = False
+    bake_failed = False
+    bake_error: str | None = None
+
     if out_mixed and tmp_mixed.exists():
-        if bake_into_final:
+        if bake_requested:
             # Overwrite final.mp4 with baked mix
             tmp_mixed.replace(final_path)
+            bake_applied = True
             log(f"[music_sync] baked CapCut reference music into {final_path.name}")
 
             # Ensure unwanted files do not exist per Master's decision
@@ -1114,29 +1155,43 @@ def finish_capcut_music_sync(
             # Keep final.mp4 as narration-only, output preview_with_music.mp4
             preview_path = root / "preview_with_music.mp4"
             tmp_mixed.replace(preview_path)
+            bake_applied = False
             log(f"[music_sync] bake_into_final=False: kept {final_path.name} as narration-only, preview ready: {preview_path.name}")
             (root / "final_voice_only.mp4").unlink(missing_ok=True)
     else:
         tmp_mixed.unlink(missing_ok=True)
-        log("[music_sync] music mix render failed; keeping final.mp4 intact")
+        bake_failed = True
+        bake_applied = False
+        bake_error = mix_info.get("error") or "render_capcut_music_mix produced no output file"
+        log(f"[music_sync] CapCut music mix failed ({bake_error}); keeping {final_path.name} as narration-only")
+        (root / "final_voice_only.mp4").unlink(missing_ok=True)
+        (root / "preview_with_music.mp4").unlink(missing_ok=True)
 
-    # 2. Build and write music_sync.json (and music_sync.txt only if bake_into_final is False)
+    # 2. Build and write music_sync.json (and music_sync.txt if not baked or failed)
     build_sync_sheet(
         root,
         analysis,
         in_point,
         hit_points,
         warning=warning,
-        bake_into_final=bake_into_final,
+        bake_into_final=bake_applied,
+        bake_requested=bake_requested,
+        bake_applied=bake_applied,
+        bake_failed=bake_failed,
+        bake_error=bake_error,
         voice_lufs=mix_info.get("voice_lufs"),
         music_lufs=mix_info.get("music_lufs"),
         applied_gain_db=mix_info.get("gain_db"),
         target_offset_lu=mix_info.get("offset_lu", 16.0),
-        write_txt=not bake_into_final,
+        write_txt=not bake_applied,
     )
-    if bake_into_final:
+    if bake_applied:
         log(f"[music_sync] wrote internal metadata: {root / 'music_sync.json'}")
     else:
         log(f"[music_sync] wrote sync sheet: {root / 'music_sync.txt'}")
+
+    # 3. If baking was requested but failed, fail the render clearly (preferred when bake is ON)
+    if bake_requested and bake_failed and raise_on_failure:
+        raise RuntimeError(f"Failed to bake CapCut reference music into {final_path.name}: {bake_error}")
 
 

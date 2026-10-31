@@ -359,3 +359,134 @@ def test_finish_capcut_music_sync_bake_off(tmp_path):
 
     txt_content = (proj_dir / "music_sync.txt").read_text(encoding="utf-8")
     assert "Trộn sẵn nhạc vào final.mp4: KHÔNG" in txt_content
+
+
+def test_finish_capcut_music_sync_mixer_failure_bake_on_fails_clearly(tmp_path, monkeypatch):
+    """When render_capcut_music_mix() returns (None, {}) and bake is ON:
+    - Fails the render clearly (RuntimeError)
+    - Separates bake_requested (True) from bake_applied (False) and bake_into_final (False)
+    - Records bake_failed=True and bake_error
+    - Sets voice_only_video='final.mp4' (never presents final.mp4 as music-baked)
+    - preview_video is None
+    - Writes music_sync.txt with warning so Master can manually sync
+    - Keeps final.mp4 narration-only (untouched)
+    """
+    proj_dir = tmp_path / "proj_mix_fail"
+    proj_dir.mkdir()
+
+    music_json = proj_dir / "music.json"
+    music_json.write_text(json.dumps({
+        "capcut_music": {
+            "enabled": True,
+            "filename": "ref.mp3",
+            "bake_into_final": True,
+        }
+    }), encoding="utf-8")
+
+    final_video = proj_dir / "final.mp4"
+    _create_dummy_video_with_audio(final_video, duration=4.0)
+    orig_voice_bytes = final_video.read_bytes()
+
+    track_audio = proj_dir / "ref.mp3"
+    _create_dummy_audio(track_audio, duration=10.0)
+
+    analysis = music_sync.TrackAnalysis(
+        file_path=str(track_audio), file_sha256="abc", duration_seconds=10.0, bpm=120.0
+    )
+    hps = [music_sync.HitPoint(shot_index=1, time_seconds=2.0, name="Clip 1", strength=1.0, snapped=True)]
+
+    music_sync._STAGE5_SYNC_STATE["proj_mix_fail"] = {
+        "analysis": analysis,
+        "in_point": 1.0,
+        "hit_points": hps,
+        "warning": None,
+        "track_path": track_audio,
+    }
+
+    # Simulate mixer failure
+    monkeypatch.setattr(
+        music_sync,
+        "render_capcut_music_mix",
+        lambda *args, **kwargs: (None, {"error": "ffmpeg audio decode error: invalid header"}),
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to bake CapCut reference music into final.mp4"):
+        music_sync.finish_capcut_music_sync("proj_mix_fail", proj_dir, final_video)
+
+    # final.mp4 stays untouched (narration-only)
+    assert final_video.read_bytes() == orig_voice_bytes
+
+    # No broken preview or voice_only copies
+    assert not (proj_dir / "preview_with_music.mp4").exists()
+    assert not (proj_dir / "final_voice_only.mp4").exists()
+
+    # Metadata must record failure and NEVER present final.mp4 as music-baked
+    json_doc = json.loads((proj_dir / "music_sync.json").read_text(encoding="utf-8"))
+    assert json_doc["bake_requested"] is True
+    assert json_doc["bake_applied"] is False
+    assert json_doc["bake_into_final"] is False
+    assert json_doc["bake_failed"] is True
+    assert "ffmpeg audio decode error" in json_doc["bake_error"]
+    assert json_doc["voice_only_video"] == "final.mp4"
+    assert json_doc["preview_video"] is None
+
+    # Fallback sync sheet is written with warning
+    assert (proj_dir / "music_sync.txt").exists()
+    txt_content = (proj_dir / "music_sync.txt").read_text(encoding="utf-8")
+    assert "THẤT BẠI" in txt_content
+    assert "LƯU Ý LỖI TRỘN NHẠC" in txt_content
+
+
+def test_finish_capcut_music_sync_mixer_failure_suppressed_raise(tmp_path, monkeypatch):
+    """When raise_on_failure=False, mixer failure returns without raising,
+    still recording bake_failed=True and never presenting final.mp4 as music-baked.
+    """
+    proj_dir = tmp_path / "proj_mix_fail_suppressed"
+    proj_dir.mkdir()
+
+    music_json = proj_dir / "music.json"
+    music_json.write_text(json.dumps({
+        "capcut_music": {
+            "enabled": True,
+            "filename": "ref.mp3",
+            "bake_into_final": True,
+        }
+    }), encoding="utf-8")
+
+    final_video = proj_dir / "final.mp4"
+    _create_dummy_video_with_audio(final_video, duration=4.0)
+
+    track_audio = proj_dir / "ref.mp3"
+    _create_dummy_audio(track_audio, duration=10.0)
+
+    analysis = music_sync.TrackAnalysis(
+        file_path=str(track_audio), file_sha256="abc", duration_seconds=10.0, bpm=120.0
+    )
+
+    music_sync._STAGE5_SYNC_STATE["proj_mix_fail_suppressed"] = {
+        "analysis": analysis,
+        "in_point": 1.0,
+        "hit_points": [],
+        "warning": None,
+        "track_path": track_audio,
+    }
+
+    monkeypatch.setattr(
+        music_sync,
+        "render_capcut_music_mix",
+        lambda *args, **kwargs: (None, {}),
+    )
+
+    # Does not raise when raise_on_failure=False
+    music_sync.finish_capcut_music_sync(
+        "proj_mix_fail_suppressed", proj_dir, final_video, raise_on_failure=False
+    )
+
+    json_doc = json.loads((proj_dir / "music_sync.json").read_text(encoding="utf-8"))
+    assert json_doc["bake_requested"] is True
+    assert json_doc["bake_applied"] is False
+    assert json_doc["bake_into_final"] is False
+    assert json_doc["bake_failed"] is True
+    assert json_doc["voice_only_video"] == "final.mp4"
+    assert json_doc["preview_video"] is None
+

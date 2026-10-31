@@ -290,12 +290,22 @@ def build(
                     v_lufs = data.get("voice_loudness_lufs")
                     m_lufs = data.get("music_loudness_lufs")
                     gain = data.get("applied_gain_db")
+                    bake_failed = data.get("bake_failed", False)
+                    bake_error = data.get("bake_error")
+                    bake_applied = data.get("bake_applied", data.get("bake_into_final", False))
+
+                    if bake_failed:
+                        bake_status = f"THẤT BẠI ({bake_error or 'Lỗi trộn nhạc'} - video giữ nguyên giọng đọc)"
+                    elif bake_applied:
+                        bake_status = "Đã bật (final.mp4 đã trộn nhạc)"
+                    else:
+                        bake_status = "Tắt (final.mp4 chỉ chứa giọng đọc)"
 
                     info_lines = [
                         f"🎵 Track: {track} (BPM: {data.get('bpm', 0.0):.1f})",
                         f"⏱ In-point: {in_pt}",
                         f"✨ Hit points đã khớp beat: {snapped}/{total}",
-                        f"🔊 Trộn sẵn vào final.mp4: Đã bật",
+                        f"🔊 Trộn sẵn vào final.mp4: {bake_status}",
                     ]
                     if v_lufs is not None and m_lufs is not None:
                         gain_s = f"{gain:+.1f} dB" if gain is not None else "N/A"
