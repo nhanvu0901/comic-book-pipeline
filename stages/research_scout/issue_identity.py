@@ -35,8 +35,12 @@ _GENERIC_ISSUE_MARKER_RE = re.compile(
     re.I,
 )
 _URL_PREFIX_RE = re.compile(r"https?://\S*$", re.I)
-_BEFORE_YEAR_RE = re.compile(
-    r"\(((?:19|20)\d{2})(?:\s*[-–—]\s*(?:(?:19|20)\d{2}|present)?)?\)\s*$",
+_ONGOING_QUALIFIER_RE = re.compile(
+    r"\(((?:19|20)\d{2})\s*[-–—]\s*(?:(?:19|20)\d{2}|present)?\)",
+    re.I,
+)
+_EXACT_YEAR_QUALIFIER_RE = re.compile(
+    r"\(((?:19|20)\d{2})\)",
     re.I,
 )
 _AFTER_YEAR_RE = re.compile(
@@ -50,10 +54,21 @@ class IssueIdentity:
     series: str
     number: str
     year: str = ""
+    volume_year: str = ""
 
     @property
     def label(self) -> str:
-        return f"{self.series} #{self.number}" + (f" ({self.year})" if self.year else "")
+        vol = (
+            f" ({self.volume_year}-)"
+            if self.volume_year and not self.year
+            else (
+                f" ({self.volume_year})"
+                if self.volume_year and self.year and self.volume_year != self.year
+                else ""
+            )
+        )
+        yr = f" ({self.year})" if self.year else ""
+        return f"{self.series}{vol} #{self.number}{yr}"
 
 
 def _strip_qualifiers(value: str) -> str:
@@ -189,18 +204,46 @@ def _candidate_identity(value: str) -> IssueIdentity | None:
     if len(matches) != 1 or _RANGE_RE.match(value[matches[0].end():]):
         return None
     match = matches[0]
-    series = _strip_qualifiers(value[:match.start()]).strip(" :/&,\"'“”")
+
+    prefix_part = value[:match.start()]
+    suffix_part = value[match.end():]
+
+    # Look for volume year before #N: (YYYY-) or (YYYY)
+    ongoing_before = _ONGOING_QUALIFIER_RE.search(prefix_part)
+    exact_before = _EXACT_YEAR_QUALIFIER_RE.search(prefix_part)
+    volume_year = (
+        ongoing_before.group(1)
+        if ongoing_before
+        else (exact_before.group(1) if exact_before else "")
+    )
+
+    series = _strip_qualifiers(prefix_part).strip(" :/&,\"'“”")
     if not series:
         return None
-    years = set(_YEAR_RE.findall(value))
-    if len(years) > 1:
+
+    # In suffix (after #N): check for multiple years (like 2025/2026)
+    suffix_years = set(_YEAR_RE.findall(suffix_part))
+    if len(suffix_years) > 1:
         return None
-    return IssueIdentity(series, _normal_issue(match.group(1)), next(iter(years), ""))
+
+    ongoing_after = _ONGOING_QUALIFIER_RE.search(suffix_part)
+    exact_after = _EXACT_YEAR_QUALIFIER_RE.search(suffix_part)
+
+    year = ""
+    if ongoing_after:
+        if not volume_year:
+            volume_year = ongoing_after.group(1)
+    elif exact_after:
+        year = exact_after.group(1)
+    elif suffix_years:
+        year = next(iter(suffix_years))
+
+    return IssueIdentity(series, _normal_issue(match.group(1)), year, volume_year)
 
 
 def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
     named_targets: list[IssueIdentity] = []
-    bare_targets: list[tuple[str, str]] = []
+    bare_targets: list[tuple[str, str, str]] = []  # (number, year, volume_year)
     last_end = 0
 
     for match in _ISSUE_RE.finditer(user_intent):
@@ -213,15 +256,37 @@ def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
 
         segment_text = user_intent[last_end:match.start()]
         suffix = user_intent[match.end():]
-        year_match = _AFTER_YEAR_RE.match(suffix)
-        before_year = _BEFORE_YEAR_RE.search(segment_text)
-        year = year_match.group(1) if year_match else (before_year.group(1) if before_year else "")
-        issue_number = _normal_issue(match.group(1))
 
-        if year_match:
-            last_end = match.end() + year_match.end()
+        ongoing_before = _ONGOING_QUALIFIER_RE.search(segment_text)
+        exact_before = _EXACT_YEAR_QUALIFIER_RE.search(segment_text)
+
+        ongoing_after = _ONGOING_QUALIFIER_RE.match(suffix.strip())
+        exact_after = _EXACT_YEAR_QUALIFIER_RE.match(suffix.strip())
+
+        volume_year = ""
+        year = ""
+
+        if ongoing_before:
+            volume_year = ongoing_before.group(1)
+        elif exact_before:
+            volume_year = exact_before.group(1)
+            # If no year after #N, exact (YYYY) before #N is also the release year
+            if not exact_after and not ongoing_after:
+                year = exact_before.group(1)
+
+        if ongoing_after:
+            if not volume_year:
+                volume_year = ongoing_after.group(1)
+            after_match = _AFTER_YEAR_RE.match(suffix)
+            last_end = match.end() + after_match.end() if after_match else match.end()
+        elif exact_after:
+            year = exact_after.group(1)
+            after_match = _AFTER_YEAR_RE.match(suffix)
+            last_end = match.end() + after_match.end() if after_match else match.end()
         else:
             last_end = match.end()
+
+        issue_number = _normal_issue(match.group(1))
 
         # Check for trailing generic issue words directly before #N
         marker = _GENERIC_ISSUE_MARKER_RE.search(segment_text)
@@ -235,9 +300,9 @@ def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
             series = ""
 
         if series:
-            named_targets.append(IssueIdentity(series, issue_number, year))
+            named_targets.append(IssueIdentity(series, issue_number, year, volume_year))
         else:
-            bare_targets.append((issue_number, year))
+            bare_targets.append((issue_number, year, volume_year))
 
     if not named_targets and not bare_targets:
         return [], False
@@ -256,29 +321,47 @@ def _intent_targets(user_intent: str) -> tuple[list[IssueIdentity], bool]:
             return [], True
         # Prefer the more complete title
         if len(other.series) > len(primary.series):
-            primary = IssueIdentity(other.series, primary.number, primary.year)
+            primary = IssueIdentity(other.series, primary.number, primary.year, primary.volume_year)
 
     # Check that all bare mentions agree with the resolved named issue number
-    for bare_num, _ in bare_targets:
+    for bare_num, _, _ in bare_targets:
         if bare_num != primary.number:
             return [], True
 
-    # Collect years across all mentions (both named and bare)
-    all_years: set[str] = set()
+    # Collect release years
+    all_release_years: set[str] = set()
     for target in named_targets:
         if target.year:
-            all_years.add(target.year)
-    for _, bare_yr in bare_targets:
+            all_release_years.add(target.year)
+    for _, bare_yr, _ in bare_targets:
         if bare_yr:
-            all_years.add(bare_yr)
+            all_release_years.add(bare_yr)
 
-    if len(all_years) > 1:
+    if len(all_release_years) > 1:
         return [], True
 
-    resolved_year = next(iter(all_years)) if all_years else ""
-    if primary.year != resolved_year:
-        primary = IssueIdentity(primary.series, primary.number, resolved_year)
+    resolved_year = next(iter(all_release_years)) if all_release_years else ""
 
+    # Collect volume years
+    all_vol_years: set[str] = set()
+    for target in named_targets:
+        if target.volume_year:
+            all_vol_years.add(target.volume_year)
+    for _, _, bare_vol in bare_targets:
+        if bare_vol:
+            all_vol_years.add(bare_vol)
+
+    if len(all_vol_years) > 1:
+        return [], True
+
+    resolved_vol_year = next(iter(all_vol_years)) if all_vol_years else ""
+
+    # If both volume_year and release_year are present, check sanity (release >= volume)
+    if resolved_year and resolved_vol_year:
+        if int(resolved_year) < int(resolved_vol_year):
+            return [], True
+
+    primary = IssueIdentity(primary.series, primary.number, resolved_year, resolved_vol_year)
     return [primary], False
 
 
@@ -302,8 +385,29 @@ def micro_issue_rejection_reason(user_intent: str, candidate: Mapping[str, Any])
         return f"Expected {expected.label}; candidate has no unambiguous series and issue: {given_text or '(missing)'}."
     if given.number != expected.number or not _series_match(expected.series, given.series):
         return f"Expected {expected.label}; candidate is {given.label}."
-    if expected.year and given.year != expected.year:
-        return f"Expected {expected.label}; candidate is {given.label} (year missing or different)."
+
+    # Release year constraint (if user specified an exact release year)
+    if expected.year:
+        if given.year:
+            if given.year != expected.year:
+                return f"Expected {expected.label}; candidate is {given.label} (year missing or different)."
+        elif given.volume_year:
+            if given.volume_year != expected.year:
+                return f"Expected {expected.label}; candidate is {given.label} (year missing or different)."
+        else:
+            return f"Expected {expected.label}; candidate is {given.label} (year missing or different)."
+
+    # Volume start year constraint (if user specified an ongoing/volume start year)
+    if expected.volume_year:
+        exp_vol = int(expected.volume_year)
+        if given.volume_year:
+            if given.volume_year != expected.volume_year:
+                return f"Expected {expected.label}; candidate is {given.label} (volume start year different)."
+        elif given.year:
+            if int(given.year) < exp_vol:
+                return f"Expected {expected.label}; candidate is {given.label} (release year before volume start)."
+        else:
+            return f"Expected {expected.label}; candidate is {given.label} (volume start year missing)."
 
     title = str(candidate.get("title") or "").strip()
     title_targets, title_unresolved = _intent_targets(title)
@@ -315,4 +419,6 @@ def micro_issue_rejection_reason(user_intent: str, candidate: Mapping[str, Any])
             return f"Expected {expected.label}; candidate title names {title_target.label}."
         if expected.year and title_target.year and title_target.year != expected.year:
             return f"Expected {expected.label}; candidate title names a different year: {title}."
+        if expected.volume_year and title_target.volume_year and title_target.volume_year != expected.volume_year:
+            return f"Expected {expected.label}; candidate title names a different volume: {title}."
     return None
