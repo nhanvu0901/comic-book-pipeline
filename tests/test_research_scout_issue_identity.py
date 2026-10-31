@@ -284,4 +284,37 @@ def test_intent_with_ongoing_year_qualifier_enforces_year_constraint(intent):
     ) is None
 
 
+@pytest.mark.parametrize("intent", [
+    "Batman (2016-) #50",
+    "Batman (2016-present) #50",
+    "Batman #50 (2016-)",
+])
+def test_intent_with_ongoing_qualifier_accepts_later_year_issue_in_same_volume(intent):
+    # Candidate with only publication year >= volume start year must be accepted
+    assert micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #50 (2018)"}
+    ) is None
+
+    # Candidate with both volume start year and publication year must be accepted
+    assert micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman (2016) #50 (2018)"}
+    ) is None
+
+
+def test_intent_with_ongoing_qualifier_rejects_issue_from_different_volume():
+    intent = "Batman (2016-) #50"
+    # Issue from earlier volume published before volume start
+    reason_earlier_year = micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman #50 (2011)"}
+    )
+    assert reason_earlier_year is not None
+
+    # Issue from earlier volume (2011) even if published in 2016
+    reason_earlier_vol = micro_issue_rejection_reason(
+        intent, {"series_issue_year": "Batman (2011) #50 (2016)"}
+    )
+    assert reason_earlier_vol is not None
+
+
+
 
