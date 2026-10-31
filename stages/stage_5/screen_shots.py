@@ -549,6 +549,9 @@ def run_screen_qa_pipeline(
     log(f"[screen_qa] planning {len(shots)} shots over {n_scenes} scene(s), "
         f"{total:.2f}s of video for {audio_duration:.2f}s of audio")
 
+    from ..music_sync import prepare_capcut_music_sync
+    shots = prepare_capcut_music_sync(project_name, root, shots, narration, log=log)
+
     if panels_only:
         _write_screen_shots_log(shots, root / "shots.json", log)
         return _result(shots)
@@ -618,4 +621,7 @@ def run_screen_qa_pipeline(
     duration = _probe_duration(final_path)
     log(f"[screen_qa] done: {final_path} ({duration:.2f}s)")
     _write_title_file(root, narration)
+
+    from ..music_sync import finish_capcut_music_sync
+    finish_capcut_music_sync(project_name, root, final_path, log=log)
     return _result(shots, final=str(final_path), dur=duration)

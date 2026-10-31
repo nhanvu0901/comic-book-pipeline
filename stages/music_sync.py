@@ -518,3 +518,294 @@ def snap_shots_to_beats(
 
     return hit_points
 
+
+def format_timecode(seconds: float, fps: float = 30.0) -> str:
+    """Format seconds into mm:ss.ff timecode (e.g. 00:04.08)."""
+    if seconds < 0:
+        seconds = 0.0
+    total_sec = int(seconds)
+    minutes = total_sec // 60
+    rem_sec = total_sec % 60
+    frames = int(round((seconds - total_sec) * fps)) % int(fps)
+    return f"{minutes:02d}:{rem_sec:02d}.{frames:02d}"
+
+
+def get_capcut_music_config(project_dir: Path) -> dict[str, Any]:
+    """Read capcut_music section from project's music.json if present."""
+    p = Path(project_dir) / "music.json"
+    if p.exists():
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(doc, dict):
+                cc = doc.get("capcut_music")
+                if isinstance(cc, dict):
+                    return cc
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {}
+
+
+def is_capcut_music_enabled(project_dir: Path) -> bool:
+    """True if project has CapCut music toggle enabled."""
+    cfg = get_capcut_music_config(project_dir)
+    return bool(cfg.get("enabled", False))
+
+
+def build_sync_sheet(
+    project_dir: Path,
+    analysis: TrackAnalysis,
+    in_point: float,
+    hit_points: list[HitPoint],
+    warning: str | None = None,
+    ducking_db: float = -16.0,
+    fade_in: float = 1.0,
+    fade_out: float = 2.0,
+) -> tuple[dict[str, Any], str]:
+    """Generate music_sync.json (machine) and music_sync.txt (Vietnamese, for Master)."""
+    project_dir = Path(project_dir)
+    project_name = project_dir.name
+    track_path = Path(analysis.file_path)
+    track_name = track_path.name
+
+    json_doc: dict[str, Any] = {
+        "track_name": track_name,
+        "track_file": analysis.file_path,
+        "track_sha256": analysis.file_sha256,
+        "bpm": analysis.bpm,
+        "timeline_placement": "00:00:00",
+        "in_point_seconds": round(in_point, 3),
+        "in_point_timecode": format_timecode(in_point),
+        "suggested_ducking_db": float(ducking_db),
+        "suggested_fade_in_seconds": float(fade_in),
+        "suggested_fade_out_seconds": float(fade_out),
+        "warning": warning,
+        "hit_points": [
+            {
+                "shot_id": hp.shot_index,
+                "name": hp.name,
+                "time_seconds": round(hp.time_seconds, 3),
+                "timecode": format_timecode(hp.time_seconds),
+                "snapped": hp.snapped,
+                "beat_time": round(hp.beat_time, 3),
+                "offset_from_beat": round(hp.offset_from_beat, 4),
+            }
+            for hp in hit_points
+        ],
+        "preview_video": "preview_with_music.mp4",
+    }
+
+    # Vietnamese human-readable sync sheet
+    lines = [
+        "=" * 80,
+        "HƯỚNG DẪN ĐỒNG BỘ NHẠC CAPCUT (CAPCUT MUSIC SYNC SHEET)",
+        "=" * 80,
+        f"Dự án: {project_name}",
+        f"File nhạc tham chiếu: {track_name}",
+        f"BPM: {analysis.bpm:.1f}",
+        "",
+        "1. CÁCH ĐẶT NHẠC TRÊN TIMELINE CAPCUT:",
+        "   - Kéo file nhạc vào timeline, bắt đầu ngay tại mốc: 00:00:00 (đầu video).",
+        f"   - Điểm cắt đầu track (In-point): {format_timecode(in_point)} ({in_point:.2f}s)",
+        f"     -> Cắt bỏ {in_point:.2f}s đầu của track, hoặc kéo phần đầu track đến mốc {format_timecode(in_point)}.",
+        f"   - Âm lượng nhạc đề xuất: {ducking_db:.0f} dB so với giọng đọc (giọng đọc là chính, nhạc nền nhẹ).",
+        f"   - Fade in: {fade_in:.1f}s ở đầu video | Fade out: {fade_out:.1f}s ở cuối video.",
+        "",
+        "2. CÁC ĐIỂM HIT POINT ĐÃ ĐỒNG BỘ VỚI NHẠC (1-2 frames trước beat):",
+    ]
+
+    for hp in hit_points:
+        status_str = "đã khớp beat" if hp.snapped else "giữ nguyên (quá xa beat hoặc giới hạn shot)"
+        lines.append(
+            f"   - [{format_timecode(hp.time_seconds)}] Shot {hp.shot_index}: {hp.name} "
+            f"(Beat: {hp.beat_time:.2f}s, lệch: {hp.offset_from_beat:+.3f}s, {status_str})"
+        )
+
+    if warning:
+        lines.extend([
+            "",
+            f"LƯU Ý: {warning}",
+        ])
+
+    lines.extend([
+        "",
+        "3. VIDEO PREVIEW KIỂM TRA:",
+        "   - Đã xuất bản xem thử: preview_with_music.mp4 (đã mix nhạc mẫu ở in-point để kiểm tra sync).",
+        "   - Video chính (final.mp4) chỉ chứa giọng đọc (narration-only) để import vào CapCut.",
+        "=" * 80,
+    ])
+
+    txt_content = "\n".join(lines) + "\n"
+
+    try:
+        (project_dir / "music_sync.json").write_text(json.dumps(json_doc, indent=2, ensure_ascii=False), encoding="utf-8")
+        (project_dir / "music_sync.txt").write_text(txt_content, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to write music sync sheet: %s", exc)
+
+    return json_doc, txt_content
+
+
+def _probe_duration(path: Path) -> float:
+    ff = shutil.which("ffprobe")
+    if not ff:
+        return 0.0
+    res = subprocess.run(
+        [ff, "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True,
+    )
+    try:
+        return float((res.stdout or "0").strip())
+    except ValueError:
+        return 0.0
+
+
+def render_preview_with_music(
+    final_path: Path,
+    track_path: Path,
+    in_point: float,
+    out_path: Path,
+    ducking_db: float = -16.0,
+    log=print,
+) -> Path | None:
+    """Render preview_with_music.mp4: reference track mixed in at in_point, ducked under voice."""
+    ff = _require_ffmpeg()
+    duration = _probe_duration(final_path)
+    if duration <= 0:
+        return None
+
+    fade_out_start = max(0.0, duration - 2.0)
+    af_filter = (
+        f"[1:a]volume={ducking_db}dB,"
+        f"afade=t=in:st=0:d=1.0,"
+        f"afade=t=out:st={fade_out_start:.2f}:d=2.0[music];"
+        f"[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+    )
+
+    cmd = [
+        ff, "-y",
+        "-i", str(final_path),
+        "-ss", f"{in_point:.3f}",
+        "-t", f"{duration:.3f}",
+        "-i", str(track_path),
+        "-filter_complex", af_filter,
+        "-map", "0:v",
+        "-map", "[aout]",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        str(out_path),
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            log(f"[music_sync] preview render failed: {res.stderr[-500:]}")
+            return None
+        return out_path
+    except Exception as exc:
+        log(f"[music_sync] preview render exception: {exc}")
+        return None
+
+
+# In-memory stash between Stage 5 shot planning and post-encode sync sheet generation
+_STAGE5_SYNC_STATE: dict[str, dict[str, Any]] = {}
+
+
+def prepare_capcut_music_sync(
+    project_name: str,
+    root: Path,
+    shots: list[Any],
+    narration: dict[str, Any],
+    log=print,
+) -> list[Any]:
+    """If CapCut music is enabled, analyze track, pick in-point, and snap hit points to beats.
+    If disabled (default), returns shots unmodified (byte-identity).
+    """
+    root = Path(root)
+    cfg = get_capcut_music_config(root)
+    if not cfg.get("enabled"):
+        _STAGE5_SYNC_STATE.pop(project_name, None)
+        return shots
+
+    filename = cfg.get("filename") or cfg.get("file")
+    if not filename:
+        log("[music_sync] CapCut music enabled but no track filename configured")
+        return shots
+
+    track_path = root / filename
+    if not track_path.exists():
+        # Might be absolute
+        track_path = Path(filename)
+        if not track_path.exists():
+            log(f"[music_sync] CapCut music track not found: {filename}")
+            return shots
+
+    try:
+        analysis = analyze_track(track_path, cache_dir=root / ".music_cache")
+        hit_points = select_hit_points(shots, narration)
+
+        total_video_dur = sum(float(s.duration_seconds) for s in shots)
+        strongest_hit_time = 0.0
+        if hit_points:
+            strongest_hp = max(hit_points, key=lambda hp: hp.strength)
+            strongest_hit_time = strongest_hp.time_seconds
+
+        in_point, warn = pick_in_point(analysis, total_video_dur, strongest_hit_time=strongest_hit_time)
+        if warn:
+            log(f"[music_sync] warning: {warn}")
+
+        beats_to_snap = analysis.downbeats if analysis.downbeats else analysis.beats
+        snapped_hits = snap_shots_to_beats(shots, hit_points, in_point, beats_to_snap)
+
+        _STAGE5_SYNC_STATE[project_name] = {
+            "analysis": analysis,
+            "in_point": in_point,
+            "hit_points": snapped_hits,
+            "warning": warn,
+            "track_path": track_path,
+        }
+
+        snapped_count = sum(1 for hp in snapped_hits if hp.snapped)
+        log(f"[music_sync] CapCut music aligned: BPM={analysis.bpm:.1f}, in-point={in_point:.2f}s "
+            f"({format_timecode(in_point)}), snapped {snapped_count}/{len(snapped_hits)} hit points")
+
+        return shots
+    except Exception as exc:
+        log(f"[music_sync] CapCut music planning failed ({exc}); falling back to standard shots")
+        return shots
+
+
+def finish_capcut_music_sync(
+    project_name: str,
+    root: Path,
+    final_path: Path,
+    log=print,
+) -> None:
+    """Generate music_sync.json/txt and render preview_with_music.mp4 if CapCut music was active."""
+    state = _STAGE5_SYNC_STATE.pop(project_name, None)
+    if not state:
+        return
+
+    root = Path(root)
+    final_path = Path(final_path)
+    analysis = state["analysis"]
+    in_point = state["in_point"]
+    hit_points = state["hit_points"]
+    warning = state["warning"]
+    track_path = state["track_path"]
+
+    # 1. Build and write music_sync.json & music_sync.txt
+    build_sync_sheet(root, analysis, in_point, hit_points, warning=warning)
+    log(f"[music_sync] wrote sync sheet: {root / 'music_sync.txt'}")
+
+    # 2. Render preview_with_music.mp4
+    preview_path = root / "preview_with_music.mp4"
+    log(f"[music_sync] rendering preview video → {preview_path.name}...")
+    res = render_preview_with_music(final_path, track_path, in_point, preview_path, log=log)
+    if res:
+        log(f"[music_sync] preview ready: {preview_path}")
+    else:
+        log("[music_sync] preview video render failed (final.mp4 is unaffected)")
+
+
