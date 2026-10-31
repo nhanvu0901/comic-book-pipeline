@@ -34,9 +34,9 @@ def test_save_capcut_music_web_bytes(tmp_path, monkeypatch):
     res = save_capcut_music("proj", file_name="capcut_ref.wav", data=wav_data, src_path=None)
 
     assert res["enabled"] is True
-    assert res["filename"] == "capcut_ref.wav"
-    assert (proj_dir / "capcut_ref.wav").exists()
-    assert (proj_dir / "capcut_ref.wav").stat().st_size == len(wav_data)
+    assert res["filename"] == "capcut_reference/capcut_ref.wav"
+    assert (proj_dir / "capcut_reference" / "capcut_ref.wav").exists()
+    assert (proj_dir / "capcut_reference" / "capcut_ref.wav").stat().st_size == len(wav_data)
     assert len(res["sha256"]) == 64
     assert res["bpm"] > 0
     assert "in_point" in res
@@ -60,10 +60,48 @@ def test_save_capcut_music_desktop_path(tmp_path, monkeypatch):
     res = save_capcut_music("proj", file_name="song.wav", data=None, src_path=desktop_src)
 
     assert res["enabled"] is True
-    assert res["filename"] == "song.wav"
-    assert (proj_dir / "song.wav").exists()
-    assert (proj_dir / "song.wav").read_bytes() == desktop_src.read_bytes()
+    assert res["filename"] == "capcut_reference/song.wav"
+    assert (proj_dir / "capcut_reference" / "song.wav").exists()
+    assert (proj_dir / "capcut_reference" / "song.wav").read_bytes() == desktop_src.read_bytes()
     assert res["bpm"] > 0
+
+
+def test_save_capcut_music_does_not_overwrite_pipeline_artifacts(tmp_path, monkeypatch):
+    """P1 regression: uploading a track named audio.wav or final.mp4 must NEVER overwrite
+    the project's narration audio or final rendered video."""
+    monkeypatch.setattr("ui.bridge.PROJECTS_ROOT", tmp_path)
+    proj_dir = tmp_path / "proj"
+    proj_dir.mkdir()
+
+    orig_audio = b"ORIGINAL_STAGE4_TTS_AUDIO"
+    orig_final = b"ORIGINAL_STAGE5_FINAL_VIDEO"
+    (proj_dir / "audio.wav").write_bytes(orig_audio)
+    (proj_dir / "final.mp4").write_bytes(orig_final)
+
+    # 1. Upload reference named audio.wav
+    wav_data = _make_wav_bytes(duration=3.0)
+    res_wav = save_capcut_music("proj", file_name="audio.wav", data=wav_data, src_path=None)
+    assert res_wav["filename"] == "capcut_reference/audio.wav"
+    assert (proj_dir / "audio.wav").read_bytes() == orig_audio
+    assert (proj_dir / "capcut_reference" / "audio.wav").read_bytes() == wav_data
+
+    # 2. Upload reference named final.mp4
+    import subprocess
+    mp4_temp = tmp_path / "src_track.mp4"
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "color=c=blue:s=160x120:d=2",
+        "-f", "lavfi", "-i", "sine=frequency=330:duration=2",
+        "-c:v", "libx264", "-c:a", "aac",
+        "-shortest", str(mp4_temp),
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    mp4_data = mp4_temp.read_bytes()
+
+    res_mp4 = save_capcut_music("proj", file_name="final.mp4", data=mp4_data, src_path=None)
+    assert res_mp4["filename"] == "capcut_reference/final.mp4"
+    assert (proj_dir / "final.mp4").read_bytes() == orig_final
+    assert (proj_dir / "capcut_reference" / "final.mp4").read_bytes() == mp4_data
+
 
 
 def test_toggle_capcut_music_preserves_genre_and_track(tmp_path, monkeypatch):

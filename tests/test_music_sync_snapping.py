@@ -153,3 +153,35 @@ def test_snap_shots_respects_clip_fit_speed_limit():
     assert snapped[0].snapped is False
     assert shots[1].duration_seconds == 1.2
 
+
+def test_clip_speed_guard_fixed_window_exceeds_renderer_speed_limit():
+    """P2 regression: fixed window with clip_fit_to_beat=False when span > dur
+    is planned as fit_to_beat by plan_clip_shot().
+    span = 2.0s, initial dur = 1.65s.
+    If snapped to dur = 1.50s, speed = 2.0 / 1.50 = 1.33x (> 1.25x CLIP_SPEED_MAX).
+    The guard must reject the snap."""
+    shots = _make_dummy_shots([3.0, 1.65, 3.0], clips=[1])
+    shots[1].clip_in = 0.0
+    shots[1].clip_out = 2.0
+    shots[1].clip_fit_to_beat = False
+
+    hit_points = [
+        music_sync.HitPoint(
+            shot_index=2, # Cut into shot 2: shrinking shot 1 duration
+            time_seconds=4.65,
+            name="Cut after Clip",
+            strength=0.9,
+        )
+    ]
+
+    # Target cut at 4.50s -> delta = 4.50 - 4.65 = -0.15s
+    # Prev shot (shot 1) duration would become 1.65 + (-0.15) = 1.50s
+    # speed would be 2.0 / 1.50 = 1.333x > 1.25x!
+    strong_beats = [4.55] # 4.55 - 0.05 = 4.50s
+
+    snapped = music_sync.snap_shots_to_beats(shots, hit_points, in_point=0.0, strong_beats=strong_beats)
+    assert snapped[0].snapped is False
+    # Shot 1 duration must stay untouched at 1.65s
+    assert shots[1].duration_seconds == 1.65
+
+

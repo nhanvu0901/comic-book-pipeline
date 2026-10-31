@@ -36,6 +36,39 @@ def test_format_timecode():
     assert music_sync.format_timecode(0.0) == "00:00.00"
     assert music_sync.format_timecode(4.25, fps=30) == "00:04.08"
     assert music_sync.format_timecode(65.5, fps=30) == "01:05.15"
+    # P2 carry tests: 4.99s must round to 00:05.00, not 00:04.00; 59.99s to 01:00.00
+    assert music_sync.format_timecode(4.99, fps=30) == "00:05.00"
+    assert music_sync.format_timecode(59.99, fps=30) == "01:00.00"
+    assert music_sync.format_timecode(119.99, fps=30) == "02:00.00"
+
+
+def test_snapped_hit_point_updates_time_seconds_in_sync_sheet(tmp_path):
+    """P2: snapping a hit point from 4.00s to 3.97s must update hp.time_seconds so
+    build_sync_sheet outputs 3.97s (not the pre-snap 4.00s)."""
+    shots = [
+        Shot(shot_id=0, scene_id=1, duration_seconds=4.0, panel_bbox={}, source_image="", motion="", is_intro=True),
+        Shot(shot_id=1, scene_id=2, duration_seconds=4.0, panel_bbox={}, source_image="", motion=""),
+    ]
+    hit_points = [
+        music_sync.HitPoint(shot_index=1, time_seconds=4.0, name="Hook Reveal", strength=0.9)
+    ]
+    # Beat at 4.02s -> target_cut = 4.02 - 0.05 = 3.97s (delta = -0.03s)
+    strong_beats = [4.02]
+    snapped = music_sync.snap_shots_to_beats(shots, hit_points, in_point=0.0, strong_beats=strong_beats)
+
+    assert snapped[0].snapped is True
+    # Crucial: time_seconds must be updated to the snapped cut time!
+    assert snapped[0].time_seconds == pytest.approx(3.97, abs=0.01)
+    assert snapped[0].target_cut == pytest.approx(3.97, abs=0.01)
+
+    analysis = music_sync.TrackAnalysis(
+        file_path="track.mp3", file_sha256="123", duration_seconds=30.0, bpm=120.0
+    )
+    json_doc, txt = music_sync.build_sync_sheet(tmp_path, analysis, in_point=0.0, hit_points=snapped)
+    assert json_doc["hit_points"][0]["time_seconds"] == pytest.approx(3.97, abs=0.01)
+    assert json_doc["hit_points"][0]["timecode"] == music_sync.format_timecode(3.97)
+    assert "00:03.29" in txt
+
 
 
 def test_build_sync_sheet(tmp_path):
