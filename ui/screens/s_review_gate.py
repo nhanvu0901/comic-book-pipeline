@@ -107,7 +107,7 @@ def _narration_fingerprint(doc: dict | None) -> str:
 from ..bridge import (
     asset_src, image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
     load_preprocessed, load_review_candidates, load_review_locks, list_review_projects,
-    narration_sha1, review_thumb_path, run_blocking, save_hidden_panels,
+    narration_sha1, review_thumb_path, run_blocking, save_capcut_music, save_hidden_panels,
     save_music_config, save_narration_edits, save_review_candidates, save_review_locks,
 )
 from ..custom_image import (
@@ -961,9 +961,11 @@ def build(
     intro_list_col = ft.Column(spacing=8)
     file_picker = ft.FilePicker()
     custom_file_picker = ft.FilePicker()
+    music_file_picker = ft.FilePicker()
     try:
         page.services.append(file_picker)
         page.services.append(custom_file_picker)
+        page.services.append(music_file_picker)
     except Exception:
         pass
 
@@ -2541,6 +2543,108 @@ def build(
         text_size=12,
     )
 
+    # ─── CapCut reference music toggle & picker ────────────────────────────
+    capcut_cfg = music_doc.get("capcut_music") or {}
+    capcut_info_text = ft.Text(size=11, color=TEXT_MUTED)
+
+    def _refresh_capcut_info():
+        cm = music_doc.get("capcut_music") or {}
+        on = bool(cm.get("enabled"))
+        pick_music_btn.visible = on
+        capcut_info_text.visible = on
+        genre_dd.disabled = on
+        if not on:
+            return
+        fn = cm.get("filename")
+        if fn:
+            bpm = float(cm.get("bpm") or 0.0)
+            in_pt = float(cm.get("in_point") or 0.0)
+            tc = str(cm.get("in_point_timecode") or "00:00.00")
+            capcut_info_text.value = f"Track: {fn}\nBPM: {bpm:.1f} | In-point: {in_pt:.2f}s ({tc})"
+            capcut_info_text.color = SUCCESS
+        else:
+            capcut_info_text.value = "Chưa có file nhạc reference — nhấn nút bên dưới để chọn file (mp3/wav/m4a)."
+            capcut_info_text.color = TEXT_MUTED
+
+    async def _pick_capcut_music(_e=None):
+        try:
+            files = await music_file_picker.pick_files(
+                dialog_title="Chọn file nhạc CapCut reference (mp3, wav, m4a)",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["mp3", "wav", "m4a"],
+                allow_multiple=False,
+                with_data=True,
+            )
+        except Exception as exc:
+            _show_snack(f"File picker failed: {exc}")
+            return
+        if not files:
+            return
+        f = files[0]
+        if f.bytes is None and not f.path:
+            _show_snack("File picker returned no data — try again.")
+            return
+
+        status_text.value = f"Đang phân tích nhạc reference {f.name}..."
+        status_text.color = TEXT_MUTED
+        try:
+            status_text.update()
+        except Exception:
+            pass
+
+        try:
+            new_entry = await run_blocking(
+                save_capcut_music,
+                project,
+                file_name=f.name or (Path(f.path).name if f.path else "capcut_ref.mp3"),
+                data=f.bytes,
+                src_path=f.path,
+            )
+            music_doc["capcut_music"] = new_entry
+            _refresh_capcut_info()
+            status_text.value = f"Nhạc CapCut sẵn sàng: BPM {new_entry.get('bpm', 0):.1f}, In-point {new_entry.get('in_point', 0):.2f}s"
+            status_text.color = SUCCESS
+            try:
+                capcut_info_text.update()
+                status_text.update()
+                genre_dd.update()
+                pick_music_btn.update()
+            except Exception:
+                pass
+        except Exception as exc:
+            status_text.value = f"Phân tích nhạc thất bại: {exc}"
+            status_text.color = DANGER
+            try:
+                status_text.update()
+            except Exception:
+                pass
+
+    def _toggle_capcut_music(e):
+        on = bool(capcut_cb.value)
+        cm = music_doc.get("capcut_music") or {}
+        cm["enabled"] = on
+        music_doc["capcut_music"] = cm
+        save_music_config(project, music_doc)
+        _refresh_capcut_info()
+        status_text.value = f"Dùng nhạc CapCut: {'BẬT' if on else 'TẮT'}"
+        status_text.color = SUCCESS if on else TEXT_MUTED
+        try:
+            capcut_cb.update()
+            pick_music_btn.update()
+            capcut_info_text.update()
+            genre_dd.update()
+            status_text.update()
+        except Exception:
+            pass
+
+    capcut_cb = ft.Checkbox(
+        label="Dùng nhạc CapCut",
+        value=bool(capcut_cfg.get("enabled")),
+        on_change=_toggle_capcut_music,
+    )
+    pick_music_btn = secondary_button("Chọn file nhạc (mp3/wav/m4a)", _pick_capcut_music, icon=ft.Icons.AUDIO_FILE_OUTLINED)
+    _refresh_capcut_info()
+
     right = ft.Column([
         ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
@@ -2561,11 +2665,12 @@ def build(
         ft.Divider(height=1, color=BORDER),
         ft.Container(height=10),
         ft.Text("MUSIC", size=10, color=TEXT_MUTED),
+        capcut_cb,
+        pick_music_btn,
+        capcut_info_text,
+        ft.Container(height=6),
         genre_dd,
-        ft.Text("Style brief for the score. Editable — type anything the generator "
-                "understands. Sparse styles are heard under narration; dense ones are not.\n"
-                "Stage 5 analyzes the final narration and generates the score after its "
-                "narration-only video render is complete.",
+        ft.Text("Style brief cho MiniMax score (tự động bỏ qua khi BẬT 'Dùng nhạc CapCut').",
                 size=11, color=TEXT_MUTED),
     ], spacing=8, expand=True)
 
