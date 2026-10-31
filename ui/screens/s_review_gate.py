@@ -2563,15 +2563,15 @@ def build(
             capcut_info_text.value = f"Track: {fn}\nBPM: {bpm:.1f} | In-point: {in_pt:.2f}s ({tc})"
             capcut_info_text.color = SUCCESS
         else:
-            capcut_info_text.value = "Chưa có file nhạc reference — nhấn nút bên dưới để chọn file (mp3/wav/m4a)."
+            capcut_info_text.value = "Chưa có file nhạc reference — nhấn nút bên dưới để chọn file (mp3/wav/m4a/mp4/mov)."
             capcut_info_text.color = TEXT_MUTED
 
     async def _pick_capcut_music(_e=None):
         try:
             files = await music_file_picker.pick_files(
-                dialog_title="Chọn file nhạc CapCut reference (mp3, wav, m4a)",
+                dialog_title="Chọn file nhạc/video CapCut reference (mp3, wav, m4a, mp4, mov)",
                 file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["mp3", "wav", "m4a"],
+                allowed_extensions=["mp3", "wav", "m4a", "mp4", "mov"],
                 allow_multiple=False,
                 with_data=True,
             )
@@ -2642,7 +2642,7 @@ def build(
         value=bool(capcut_cfg.get("enabled")),
         on_change=_toggle_capcut_music,
     )
-    pick_music_btn = secondary_button("Chọn file nhạc (mp3/wav/m4a)", _pick_capcut_music, icon=ft.Icons.AUDIO_FILE_OUTLINED)
+    pick_music_btn = secondary_button("Chọn file nhạc/video (mp3/wav/m4a/mp4/mov)", _pick_capcut_music, icon=ft.Icons.AUDIO_FILE_OUTLINED)
     _refresh_capcut_info()
 
     right = ft.Column([

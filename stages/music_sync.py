@@ -67,10 +67,11 @@ def _require_ffmpeg() -> str:
 
 
 def decode_audio_pcm(audio_path: Path, sample_rate: int = 22050) -> tuple[np.ndarray, float]:
-    """Decode audio file to 1D float32 mono array in range [-1.0, 1.0]."""
+    """Decode audio file or video container (mp3, wav, m4a, mp4, mov) to 1D float32 mono array in range [-1.0, 1.0]."""
     ff = _require_ffmpeg()
     cmd = [
         ff, "-y", "-i", str(audio_path),
+        "-vn",
         "-f", "s16le", "-acodec", "pcm_s16le",
         "-ac", "1", "-ar", str(sample_rate),
         "-"
