@@ -1073,6 +1073,67 @@ def save_music_config(project_name: str, doc: dict) -> None:
     write_json_atomic(PROJECTS_ROOT / project_name / "music.json", doc)
 
 
+def save_capcut_music(
+    project_name: str,
+    file_name: str | None = None,
+    data: bytes | None = None,
+    src_path: str | Path | None = None,
+) -> dict:
+    """Save CapCut reference music file into project dir (under capcut_reference/ to avoid
+    overwriting pipeline artifacts), analyze it, and update music.json."""
+    import hashlib
+    import shutil
+    from stages import music_sync
+
+    proj_dir = PROJECTS_ROOT / project_name
+    ref_dir = proj_dir / "capcut_reference"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+
+    name = Path(file_name or (src_path and Path(src_path).name) or "capcut_ref.mp3").name
+    dest_path = ref_dir / name
+
+    if data is not None:
+        dest_path.write_bytes(data)
+    elif src_path is not None:
+        shutil.copy2(src_path, dest_path)
+    else:
+        raise ValueError("Either data or src_path must be provided")
+
+    sha256 = hashlib.sha256(dest_path.read_bytes()).hexdigest()
+
+    # Analyze track
+    analysis = music_sync.analyze_track(dest_path, cache_dir=proj_dir / ".music_cache")
+    in_point, _warn = music_sync.pick_in_point(analysis, video_duration=30.0, strongest_hit_time=0.0)
+
+    doc = load_music_config(project_name)
+    existing_capcut = doc.get("capcut_music") or {}
+    rel_filename = f"capcut_reference/{name}"
+    capcut_entry = {
+        **existing_capcut,
+        "enabled": True,
+        "bake_into_final": existing_capcut.get("bake_into_final", True),
+        "filename": rel_filename,
+        "sha256": sha256,
+        "bpm": analysis.bpm,
+        "in_point": in_point,
+        "in_point_timecode": music_sync.format_timecode(in_point),
+    }
+    doc["capcut_music"] = capcut_entry
+    save_music_config(project_name, doc)
+    return capcut_entry
+
+
+def toggle_capcut_music_bake_into_final(project_name: str, enabled: bool) -> dict:
+    """Toggle the bake_into_final flag for CapCut reference music."""
+    doc = load_music_config(project_name)
+    existing = doc.get("capcut_music") or {}
+    existing["bake_into_final"] = bool(enabled)
+    doc["capcut_music"] = existing
+    save_music_config(project_name, doc)
+    return existing
+
+
+
 def narration_sha1(project_name: str) -> str | None:
     p = PROJECTS_ROOT / project_name / "narration.json"
     if not p.exists():

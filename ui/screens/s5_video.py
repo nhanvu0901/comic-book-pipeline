@@ -6,6 +6,7 @@ player, lets the user open the output folder or re-run.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -249,6 +250,90 @@ def build(
             ft.Container(height=8),
             secondary_button("Re-assemble Video", assemble_click, icon=ft.Icons.REFRESH),
         ])
+
+        # CapCut Music Sync outputs
+        sync_txt_path = PROJECTS_ROOT / state.project_name / "music_sync.txt" if state.project_name else None
+        preview_path = PROJECTS_ROOT / state.project_name / "preview_with_music.mp4" if state.project_name else None
+        sync_json_path = PROJECTS_ROOT / state.project_name / "music_sync.json" if state.project_name else None
+        if sync_txt_path and sync_txt_path.exists():
+            def _open_sync_sheet(_e):
+                dialog = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("CapCut Music Sync Sheet"),
+                    content=ft.Container(
+                        content=ft.Text(sync_txt_path.read_text(encoding="utf-8", errors="replace"), size=11, selectable=True),
+                        width=600, height=400,
+                    ),
+                    actions=[ft.TextButton("Đóng", on_click=lambda _e: page.pop_dialog())],
+                )
+                page.show_dialog(dialog)
+
+            right_controls.extend([
+                ft.Container(height=8),
+                secondary_button("Xem Sync Sheet CapCut", _open_sync_sheet, icon=ft.Icons.DESCRIPTION_OUTLINED),
+            ])
+            if preview_path and preview_path.exists():
+                p_url = asset_src(preview_path)
+                p_mb = preview_path.stat().st_size / (1024 * 1024)
+                right_controls.extend([
+                    ft.Container(height=4),
+                    secondary_button(f"Preview có nhạc ({p_mb:.1f} MB)", url=p_url, icon=ft.Icons.PLAY_CIRCLE_OUTLINE),
+                ])
+        elif sync_json_path and sync_json_path.exists():
+            def _open_sync_info(_e):
+                try:
+                    data = json.loads(sync_json_path.read_text(encoding="utf-8"))
+                    snapped = data.get("snapped_count", 0)
+                    total = data.get("total_hit_points", len(data.get("hit_points", [])))
+                    track = data.get("track_name", "N/A")
+                    in_pt = data.get("in_point_timecode", f"{data.get('in_point_seconds', 0.0)}s")
+                    v_lufs = data.get("voice_loudness_lufs")
+                    m_lufs = data.get("music_loudness_lufs")
+                    gain = data.get("applied_gain_db")
+                    bake_failed = data.get("bake_failed", False)
+                    bake_error = data.get("bake_error")
+                    bake_applied = data.get("bake_applied", data.get("bake_into_final", False))
+
+                    if bake_failed:
+                        bake_status = f"THẤT BẠI ({bake_error or 'Lỗi trộn nhạc'} - video giữ nguyên giọng đọc)"
+                    elif bake_applied:
+                        bake_status = "Đã bật (final.mp4 đã trộn nhạc)"
+                    else:
+                        bake_status = "Tắt (final.mp4 chỉ chứa giọng đọc)"
+
+                    info_lines = [
+                        f"🎵 Track: {track} (BPM: {data.get('bpm', 0.0):.1f})",
+                        f"⏱ In-point: {in_pt}",
+                        f"✨ Hit points đã khớp beat: {snapped}/{total}",
+                        f"🔊 Trộn sẵn vào final.mp4: {bake_status}",
+                    ]
+                    if v_lufs is not None and m_lufs is not None:
+                        gain_s = f"{gain:+.1f} dB" if gain is not None else "N/A"
+                        info_lines.append(f"🎚 Âm lượng: Thoại {v_lufs:.1f} LUFS | Nhạc {m_lufs:.1f} LUFS (Gain: {gain_s})")
+                    info_lines.append("\nChi tiết các điểm cắt:")
+                    for hp in data.get("hit_points", []):
+                        st = "khớp beat" if hp.get("snapped") else "giữ nguyên"
+                        info_lines.append(f"  • [{hp.get('timecode')}] Shot {hp.get('shot_id')}: {hp.get('name')} ({st})")
+
+                    content_text = "\n".join(info_lines)
+                except Exception as ex:
+                    content_text = f"Không thể đọc music_sync.json: {ex}"
+
+                dialog = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("Thông tin đồng bộ nhạc CapCut"),
+                    content=ft.Container(
+                        content=ft.Text(content_text, size=11, selectable=True),
+                        width=600, height=400,
+                    ),
+                    actions=[ft.TextButton("Đóng", on_click=lambda _e: page.pop_dialog())],
+                )
+                page.show_dialog(dialog)
+
+            right_controls.extend([
+                ft.Container(height=8),
+                secondary_button("Xem thông tin nhạc CapCut", _open_sync_info, icon=ft.Icons.MUSIC_NOTE),
+            ])
     else:
         right_controls.extend([
             primary_button("Assemble Video", assemble_click, icon=ft.Icons.MOVIE_FILTER),
