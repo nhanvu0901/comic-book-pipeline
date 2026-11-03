@@ -41,7 +41,7 @@ def test_rendered_format_respects_explicit_choice_and_question(tmp_path, monkeyp
     assert "For DIRECT format" in prompt
     assert "For LIST format" in prompt
     assert "MULTIPLE items, each hook must tell the listener this is a list" not in prompt
-    assert "final answer" in prompt.lower()
+    assert "supported overall answer" in prompt.lower()
 
 
 @pytest.mark.parametrize("count", [1, 4, 8])
@@ -66,3 +66,48 @@ def test_general_answer_card_does_not_assume_an_object_is_used(tmp_path, monkeyp
     assert "the character use it" not in prompt
     assert "exact construct or thing" not in prompt
     assert "person, action, mechanism, decision, limitation, or result" in prompt
+
+
+def test_direct_landing_combines_supported_answer_and_final_result(tmp_path, monkeypatch):
+    prompt = render(tmp_path, monkeypatch, "Why did the hero leave?", 2)
+    assert "integrate the supported overall answer" in prompt
+    assert "final item's verified result" in prompt
+
+
+@pytest.mark.parametrize("project,title,expected,fmt", [
+    ("case", "How many heroes escaped?", "How many heroes escaped?", "list"),
+    ("why_did_the_hero_leave", None, "Why Did The Hero Leave", "direct"),
+])
+def test_missing_question_uses_same_fallback_for_display_and_format(tmp_path, monkeypatch, project, title, expected, fmt):
+    monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(__import__("config"), "RESEARCH_SESSIONS_ROOT", tmp_path / "no-sessions")
+    root = tmp_path / project
+    root.mkdir()
+    (root / "answer_context.json").write_text(json.dumps({"items": [{"entity": "Hero"}]}))
+    if title:
+        (root / "comic_context.json").write_text(json.dumps({"title": title}))
+    prompt, _ = gp.generate_gemini_writer_prompt(project)
+    assert f"THE QUESTION:\n{expected}\n" in prompt
+    assert f"- Format: {fmt} (" in prompt
+
+
+@pytest.mark.parametrize("project_format,session_format,expected", [
+    (None, "direct", "direct"),
+    ("list", "direct", "list"),
+])
+def test_session_format_enrichment_and_project_precedence(tmp_path, monkeypatch, project_format, session_format, expected):
+    monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(__import__("config"), "RESEARCH_SESSIONS_ROOT", sessions)
+    root = tmp_path / "case"
+    root.mkdir()
+    context = {"question": "How many heroes escaped?", "items": [{"entity": "Hero"}]}
+    if project_format:
+        context["format"] = project_format
+    (root / "answer_context.json").write_text(json.dumps(context))
+    session = sessions / "one"
+    session.mkdir(parents=True)
+    (session / "session.json").write_text(json.dumps({"created_project": "case", "format": session_format}))
+    prompt, _ = gp.generate_gemini_writer_prompt("case")
+    assert f"- Format: {expected} (" in prompt
+    assert json.loads((root / "answer_context.json").read_text())["format"] == expected

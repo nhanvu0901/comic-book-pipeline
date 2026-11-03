@@ -140,8 +140,10 @@ question, even when it spans multiple items or issues; do not promise a list.
 Use a sourced concrete detail from item 1 without claiming an unsupported answer.
 Try distinct supported openings: a direct question, a plain fact, or a short
 "After..." situation when the sheet supports it. For direct format, develop one
-explanation across the ordered items and state the final answer plainly in the
-final paragraph, using only supported connections and facts.
+explanation across the ordered items. In the final paragraph, integrate the supported overall answer
+with the final item's verified result: state the answer plainly as part of that
+paragraph and end on the result, without adding a separate recap. Use only
+supported connections and facts.
 Reject a hook built from an imaginary alternative ("instead of fighting",
 "when he could have made a shield") or an assumed comic rule the sheet
 does not verify. Choose the one a stranger understands quickly and that
