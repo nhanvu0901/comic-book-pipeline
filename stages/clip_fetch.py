@@ -570,6 +570,26 @@ SECTION_TIMEOUT = float(os.getenv("CLIP_SECTION_TIMEOUT", "180"))
 DOWNLOAD_TIMEOUT = float(os.getenv("CLIP_DOWNLOAD_TIMEOUT", "900"))
 
 
+def _usable_cached_video(path: Path, *, log=print) -> bool:
+    """Keep unusable cached files for inspection and let the caller download a replacement."""
+    from .stage_5.clips import probe_video
+    try:
+        info = probe_video(path)
+        if info["duration"] <= 0:
+            raise ValueError(f"no positive video duration in {path}")
+    except (ValueError, RuntimeError) as exc:
+        fd, name = tempfile.mkstemp(prefix=path.name + ".invalid-", dir=path.parent)
+        os.close(fd)
+        try:
+            os.replace(path, name)
+        except OSError:
+            Path(name).unlink(missing_ok=True)
+            raise
+        log(f"[clip] unusable cached video preserved at {name}: {exc}")
+        return False
+    return True
+
+
 def fetch_clip_section(
     url: str,
     clip_dir: Path,
@@ -596,7 +616,7 @@ def fetch_clip_section(
         out = clip_dir / f"{vid}_{start:.1f}_to_{float(end):.1f}.mp4"
     else:
         out = clip_dir / f"{vid}_{start:.1f}_{beat_duration:.1f}.mp4"
-    if out.is_file():
+    if out.is_file() and _usable_cached_video(out, log=log):
         log(f"[clip] cached section: {out}")
         return out
 
@@ -607,6 +627,15 @@ def fetch_clip_section(
         log(f"[clip] cutting section from local source: {source_file}")
         normalize(Path(source_file), out, start=start, duration=dl_end - start, log=log)
         return out
+    whole = src_dir / f"{vid}.mp4"
+    if whole.is_file() and _usable_cached_video(whole, log=log):
+        try:
+            normalize(whole, out, start=start, duration=dl_end - start, log=log)
+            if not _usable_cached_video(out, log=log):
+                raise ValueError("normalized cached source has no usable video")
+            return out
+        except (ValueError, RuntimeError) as exc:
+            log(f"[clip] cached whole-video cut failed ({exc}) — trying section download")
     cmd = ytdlp_section_args(url, src_dir, start=start, beat_duration=beat_duration,
                             end=float(end) if has_end else None,
                             margin=margin, max_height=max_height)
@@ -618,18 +647,26 @@ def fetch_clip_section(
         lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
         raw = Path(lines[-1]) if lines else None
         if res.returncode == 0 and raw is not None and raw.is_file():
-            normalize(raw, out, log=log)
-            return out
-        reason = _ytdlp_error(res)
+            try:
+                normalize(raw, out, log=log)
+                if not _usable_cached_video(out, log=log):
+                    raise ValueError("normalized section has no usable video")
+                return out
+            except (ValueError, RuntimeError) as exc:
+                reason = f"section normalization failed: {exc}"
+        else:
+            reason = _ytdlp_error(res)
     log(f"[clip] section download failed ({reason}) — falling back to the whole video, cut locally")
     # An outdated yt-dlp gets HTTP 403 from googlevideo when ffmpeg pulls a section (seen on the Windows
     # server: yt-dlp 2026.07.04 failed, 2026.08.19 worked). The native downloader still works, so take the
     # whole video (cached per id in src/) and cut the very same [start, dl_end] window out of it.
     try:
         whole = src_dir / f"{vid}.mp4"
-        if not whole.is_file():
+        if not whole.is_file() or not _usable_cached_video(whole, log=log):
             whole = download(url, src_dir, max_height=max_height, log=log)
         normalize(whole, out, start=start, duration=dl_end - start, log=log)
+        if not _usable_cached_video(out, log=log):
+            raise ValueError("normalized fallback has no usable video")
     except Exception as exc:
         raise RuntimeError(f"yt-dlp section download failed for {url}: {reason}; "
                            f"whole-video fallback failed too: {exc}") from exc
