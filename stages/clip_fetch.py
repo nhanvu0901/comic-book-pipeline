@@ -628,7 +628,16 @@ def fetch_clip_section(
         normalize(Path(source_file), out, start=start, duration=dl_end - start, log=log)
         return out
     whole = src_dir / f"{vid}.mp4"
-    if whole.is_file() and _usable_cached_video(whole, log=log):
+    whole_usable = whole.is_file() and _usable_cached_video(whole, log=log)
+    if whole_usable:
+        from .stage_5.clips import probe_video
+        # The margin is optional near EOF. Open-ended clips may slow down and hold a frame;
+        # explicit selections instead need their chosen span, regardless of beat duration.
+        needed = (float(end) - start) if has_end else max(0.0, (beat_duration - config.CLIP_MAX_HOLD) * config.CLIP_SPEED_MIN)
+        whole_usable = probe_video(whole)["duration"] - start + 0.05 >= needed
+        if not whole_usable:
+            log(f"[clip] cached whole video does not cover the requested window: {whole}")
+    if whole_usable:
         try:
             normalize(whole, out, start=start, duration=dl_end - start, log=log)
             if not _usable_cached_video(out, log=log):
@@ -661,10 +670,16 @@ def fetch_clip_section(
     # server: yt-dlp 2026.07.04 failed, 2026.08.19 worked). The native downloader still works, so take the
     # whole video (cached per id in src/) and cut the very same [start, dl_end] window out of it.
     try:
-        whole = src_dir / f"{vid}.mp4"
-        if not whole.is_file() or not _usable_cached_video(whole, log=log):
-            whole = download(url, src_dir, max_height=max_height, log=log)
-        normalize(whole, out, start=start, duration=dl_end - start, log=log)
+        if whole_usable:
+            normalize(whole, out, start=start, duration=dl_end - start, log=log)
+        elif whole.is_file():
+            # Preserve a valid but too-short source; do not let yt-dlp reuse or overwrite it.
+            with tempfile.TemporaryDirectory(prefix="clip-whole-", dir=src_dir) as fresh_dir:
+                fresh = download(url, Path(fresh_dir), max_height=max_height, log=log)
+                normalize(fresh, out, start=start, duration=dl_end - start, log=log)
+        else:
+            fresh = download(url, src_dir, max_height=max_height, log=log)
+            normalize(fresh, out, start=start, duration=dl_end - start, log=log)
         if not _usable_cached_video(out, log=log):
             raise ValueError("normalized fallback has no usable video")
     except Exception as exc:

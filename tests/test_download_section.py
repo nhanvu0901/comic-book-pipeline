@@ -253,3 +253,29 @@ def test_valid_whole_cache_avoids_section_network(tmp_path, monkeypatch):
     out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
                                         start=2.0, beat_duration=3.0, log=lambda m: None)
     assert clips.probe_video(out)["duration"] == pytest.approx(5.75, abs=0.2)
+
+
+def test_truncated_whole_cache_does_not_hide_available_section(tmp_path, monkeypatch):
+    short = _source(tmp_path, 3.0)
+    src = tmp_path / "clips" / "src"
+    src.mkdir(parents=True)
+    cached = src / "abcDEF12345.mp4"
+    cached.write_bytes(short.read_bytes())
+    section = _source(tmp_path, 6.0)
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=True, src_for_section=section, calls=calls)
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert calls == ["section"] and clips.probe_video(out)["duration"] == pytest.approx(6.0, abs=0.2)
+    assert cached.is_file() and clips.probe_video(cached)["duration"] == pytest.approx(3.0, abs=0.2)
+
+
+def test_whole_cache_near_eof_can_still_fill_open_ended_beat(tmp_path, monkeypatch):
+    whole = _source(tmp_path, 5.0)
+    src = tmp_path / "clips" / "src"
+    src.mkdir(parents=True)
+    (src / "abcDEF12345.mp4").write_bytes(whole.read_bytes())
+    monkeypatch.setattr(clip_fetch, "_run_capture", lambda *a, **k: pytest.fail("network not needed"))
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert clips.probe_video(out)["duration"] == pytest.approx(3.0, abs=0.2)
