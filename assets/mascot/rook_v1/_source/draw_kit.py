@@ -1,10 +1,11 @@
 """Generator for the placeholder Rook kit (rook_v1).
 
-    python3 assets/mascot/rook_v1/_source/draw_kit.py [--out DIR] [--no-sheets]
+    python3 assets/mascot/rook_v1/_source/draw_kit.py [--out DIR] [--sheets DIR]
 
-Rewrites kit.json, bodies/, faces/, accessories/ and the two review sheets. Drawing helpers are
-adapted from todo/avatar-narrator/demo/rook.py (4x supersampling, ink outline, flat colours).
-The sticker outline / drop shadow are NOT baked into parts; the contact sheets add a simple one.
+Rewrites kit.json, bodies/, faces/ and accessories/. --sheets also writes two review sheets
+(every body x face, and the presets) into DIR; they are not part of the kit. Drawn at 4x and
+downsampled (ink outline, flat colours). The sticker outline / drop shadow are NOT baked into
+parts; the review sheets add a simple one.
 """
 from __future__ import annotations
 
@@ -373,7 +374,8 @@ def sheets(out, parts):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--no-sheets", action="store_true")
+    ap.add_argument("--sheets", type=Path, default=None,
+                    help="also write the review sheets into this folder")
     args = ap.parse_args()
     out = args.out
     for d in ("bodies", "faces", "accessories"):
@@ -411,8 +413,9 @@ def main():
         kit["presets"][pn] = {"body": bn, "face": fn, "label": lab}
     kit["default"] = {"body": "stand", "face": "happy"}
     (out / "kit.json").write_text(json.dumps(kit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    if not args.no_sheets:
-        sheets(out, parts)
+    if args.sheets:
+        args.sheets.mkdir(parents=True, exist_ok=True)
+        sheets(args.sheets, parts)
     print("ok", out)
 
 

@@ -80,7 +80,7 @@ def test_faces_fit_inside_every_head(kit):
 
 
 def test_generator_is_deterministic(kit, tmp_path):
-    subprocess.run([sys.executable, str(GEN), "--out", str(tmp_path), "--no-sheets"], check=True,
+    subprocess.run([sys.executable, str(GEN), "--out", str(tmp_path)], check=True,
                    cwd=ROOT, capture_output=True)
     for rel in _files(kit) + ["kit.json"]:
         assert (tmp_path / rel).read_bytes() == (KIT_DIR / rel).read_bytes(), rel

@@ -42,7 +42,7 @@ import os
 import tempfile
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageFilter

@@ -1,6 +1,6 @@
 # Đề xuất: bước "Mascot" cuối pipeline — chọn vị trí, ghép face + body, chỉnh chuyển động — 2026-11-05
 
-**Trạng thái:** đề xuất, chưa code. Dựa trên demo ở `todo/avatar-narrator/demo/`.
+**Trạng thái:** đã code (`stages/mascot/`, `ui/screens/s9_mascot.py`, kit `assets/mascot/rook_v1/`). Mục 8 là bản chốt; mục 1–7 là đề xuất ban đầu, chỗ nào khác mục 8 thì theo mục 8.
 
 ## 1. Ý tưởng chính
 
@@ -89,7 +89,7 @@ Tách nhân vật thành các lớp **thay thế cho nhau**, vẽ trên cùng m�
 
 ## 5. Render
 
-- Giải mã `final.mp4`, vẽ mascot lên từng frame bằng Python (body + face + phụ kiện tại điểm neo, rồi biến đổi cả hình), encode H.264, copy âm thanh. Đây chính là `overlay_current.py` của demo, chỉ đổi phần đọc cấu hình từ `mascot.json`.
+- Giải mã `final.mp4`, vẽ mascot lên từng frame bằng Python (body + face + phụ kiện tại điểm neo, rồi biến đổi cả hình), encode H.264, copy âm thanh. Code: `stages/mascot/render.py`, cấu hình đọc từ `mascot.json`.
 - **Nhún theo giọng:** đọc file giọng đọc riêng (`audio.wav`, không có nhạc) để mascot chỉ nhún khi narrator nói. Không có file đó thì dùng bản mix.
 - **Chạy nền:** render chạy như job nền (giống Stage 5 trên server), báo tiến độ lên UI.
 
@@ -120,7 +120,7 @@ Tách nhân vật thành các lớp **thay thế cho nhau**, vẽ trên cùng m�
 | 4 | File xuất | **Ghi thẳng vào `final.mp4`** | Lần đầu bật mascot, bản sạch được chuyển thành `mascot/final_clean.mp4` (không để trong `_stage5/` vì nút "Delete _stage5 scratch" sẽ xoá nó). Mọi lần render mascot đều đọc từ bản sạch (không chồng 2 lớp). Tắt mascot thì khôi phục bản sạch về `final.mp4`. Render lại Stage 5 thì tạo bản sạch mới |
 
 ### 8.1 Danh sách nhân vật để chọn
-`todo/avatar-narrator/demo/characters_sheet.jpg`: 9 nhân vật gốc cùng một style (nét mực đậm, màu phẳng, viền sticker). Đây là bản phác bằng code, artist sẽ vẽ lại nhân vật được chọn.
+Đã phác 9 nhân vật gốc cùng một style (nét mực đậm, màu phẳng, viền sticker); Master chọn **Rook**, các bản phác khác đã xoá. Kit hiện tại là bản vẽ bằng code (`assets/mascot/rook_v1/_source/draw_kit.py`), artist có thể vẽ lại thành `rook_v2` cùng cấu trúc.
 1. Rook — quạ đeo kính một tròng
 2. Gutter — bé đầu lâu áo choàng
 3. Inky — giọt mực sống

@@ -1,7 +1,7 @@
 """Whole-sprite motion: cues → per-frame transform (no skeletal animation).
 
-Ported from the approved demo (todo/avatar-narrator/demo/demo.py: mascot_state, the easing
-helpers, enter/exit/accents/pose-swap pop, idle float + breathe, talk bounce).
+Motion approved in the 2026-11-05 demo: easing helpers, enter/exit/accents, pose-swap pop,
+idle float + breathe, talk bounce.
 
 Rules (see config.MOVES_*):
   * The mascot is hidden until the first ENTER (or the first non-EXIT cue, which then acts as
