@@ -214,3 +214,52 @@ def test_envelope_prefers_audio_wav_when_lengths_match(proj):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=300:duration=5",
                     str(proj / "audio.wav")], check=True)
     assert render._envelope_for(proj, proj / "final.mp4", info).max() > 0.9
+
+
+def test_identity_survives_a_folder_copy_no_stacking(proj, tmp_path):
+    render.render_final(proj, cfg_of())
+    clean_sha = _sha(proj / "mascot" / "final_clean.mp4")
+    dup = tmp_path / "copy" / "demo"
+    shutil.copytree(proj, dup, copy_function=shutil.copy)          # mtimes change
+    assert (dup / "final.mp4").stat().st_mtime_ns != (proj / "final.mp4").stat().st_mtime_ns
+    assert render.has_mascot_output(dup)
+    assert render.source_video(dup) == dup / "mascot" / "final_clean.mp4"
+    render.render_final(dup, cfg_of(position=Position.from_preset("bottom_right")))
+    assert _sha(dup / "mascot" / "final_clean.mp4") == clean_sha
+    clean_f = _grab(dup / "mascot" / "final_clean.mp4", 1.0)
+    assert np.abs(_grab(dup / "final.mp4", 1.0) - clean_f)[LEFT].mean() < 6
+
+
+def test_tag_without_fingerprint_or_clean_copy_is_never_drawn_on(proj):
+    render.render_final(proj, cfg_of())
+    tagged = _sha(proj / "final.mp4")
+    (proj / "mascot" / "render_state.json").unlink()                # fingerprint gone: the tag still says so
+    assert render.has_mascot_output(proj)
+    (proj / "mascot" / "final_clean.mp4").unlink()
+    assert render.source_video(proj) is None
+    for call in (lambda: render.render_final(proj, cfg_of()), lambda: render.render_preview(proj, cfg_of(), 1.0),
+                 lambda: render.frame_at(proj, 1.0)):
+        with pytest.raises(RuntimeError, match="đã có mascot nhưng không thấy bản sạch"):
+            call()
+    assert _sha(proj / "final.mp4") == tagged
+
+
+def test_new_stage5_file_with_different_content_becomes_the_clean_copy(proj, tmp_path):
+    render.render_final(proj, cfg_of())
+    new = tmp_path / "new.mp4"
+    _synth(new, pattern="smptebars")
+    shutil.copyfile(new, proj / "final.mp4")
+    assert not render.has_mascot_output(proj)
+    render.render_final(proj, cfg_of())
+    assert _sha(proj / "mascot" / "final_clean.mp4") == _sha(new)
+
+
+def test_old_format_render_state_still_works(proj):
+    render.render_final(proj, cfg_of())
+    st = proj / "final.mp4"
+    (proj / "mascot" / "render_state.json").write_text(
+        json.dumps({"final": [st.stat().st_size, st.stat().st_mtime_ns]}))
+    assert render.has_mascot_output(proj)                           # the tag carries it
+    clean_sha = _sha(proj / "mascot" / "final_clean.mp4")
+    render.render_final(proj, cfg_of())
+    assert _sha(proj / "mascot" / "final_clean.mp4") == clean_sha

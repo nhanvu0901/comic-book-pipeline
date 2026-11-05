@@ -70,9 +70,58 @@ def _state_path(project_dir: Path) -> Path:
     return mascot_dir(project_dir) / "render_state.json"
 
 
-def _sig(path: Path) -> list[int]:
-    st = Path(path).stat()
-    return [st.st_size, st.st_mtime_ns]
+MISSING_CLEAN_MSG = ("final.mp4 đã có mascot nhưng không thấy bản sạch (mascot/final_clean.mp4) "
+                     "— hãy render lại bước 8")
+TAG_PREFIX = "mascot_render:"
+_FP_CHUNK = 1 << 20
+
+
+def _sig(path: Path) -> list:
+    """Content fingerprint [size, sha1(first MiB + last MiB)]: survives copies and syncs
+    (mtime does not)."""
+    path = Path(path)
+    size = path.stat().st_size
+    h = hashlib.sha1()
+    with open(path, "rb") as fh:
+        h.update(fh.read(_FP_CHUNK))
+        if size > _FP_CHUNK:
+            fh.seek(max(_FP_CHUNK, size - _FP_CHUNK))
+            h.update(fh.read(_FP_CHUNK))
+    return [size, h.hexdigest()]
+
+
+_TAG_CACHE: dict = {}
+
+
+def _has_tag(path: Path) -> bool:
+    """Container tag check, memoised per (path, size, mtime) so lookups stay cheap."""
+    path = Path(path)
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    if key not in _TAG_CACHE:
+        if len(_TAG_CACHE) > 64:
+            _TAG_CACHE.clear()
+        _TAG_CACHE[key] = _read_tag(path)
+    return _TAG_CACHE[key]
+
+
+def _read_tag(path: Path) -> bool:
+    try:
+        out = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format_tags", "-of", "json",
+                              str(path)], capture_output=True, text=True, check=True).stdout
+        tags = (json.loads(out).get("format") or {}).get("tags") or {}
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        return False
+    return any(str(v).startswith(TAG_PREFIX) for v in tags.values())
+
+
+def _missing_clean(project_dir: Path) -> Exception:
+    if _final(project_dir).is_file() and has_mascot_output(project_dir):
+        return RuntimeError(MISSING_CLEAN_MSG)
+    return FileNotFoundError(f"no video in {project_dir}")
 
 
 # ── final.mp4 / clean copy bookkeeping ───────────────────────────────────────────────────
@@ -82,12 +131,13 @@ def has_mascot_output(project_dir: Path) -> bool:
     if not final.is_file():
         return False
     state = _read_json(_state_path(project_dir))
-    if not isinstance(state, dict):
-        return False
-    try:
-        return list(state.get("final")) == _sig(final)
-    except TypeError:
-        return False
+    if isinstance(state, dict) and isinstance(state.get("final"), list):
+        try:
+            if state["final"] == _sig(final):       # old [size, mtime_ns] states never match
+                return True
+        except OSError:
+            return False
+    return _has_tag(final)                          # container tag: belt and braces
 
 
 def source_video(project_dir: Path) -> Path | None:
@@ -123,8 +173,7 @@ def ensure_clean_copy(project_dir: Path) -> Path:
     final, clean = _final(project_dir), _clean(project_dir)
     if has_mascot_output(project_dir):
         if not clean.is_file():
-            raise FileNotFoundError(f"final.mp4 is a mascot render but {clean} is missing; "
-                                    "re-run Stage 5 to get a clean video")
+            raise RuntimeError(MISSING_CLEAN_MSG)
         return clean
     if final.is_file():
         _copy_atomic(final, clean)          # fresh Stage-5 render → the new clean copy
@@ -327,7 +376,8 @@ def _readinto(stream, mv: memoryview) -> int:
 def _overlay_pass(src: Path, dst: Path, *, w: int, h: int, fps: Fraction, t_start: float,
                   t_len: float | None, cfg: MascotConfig, kit, track: Track, env: np.ndarray,
                   info: dict, video_args: list[str], audio_args: list[str], scale_to: bool,
-                  est_frames: int, progress: Progress | None, log: Log | None, p_hi: float) -> int:
+                  est_frames: int, progress: Progress | None, log: Log | None, p_hi: float,
+                  metadata: str | None = None) -> int:
     """decode → composite → encode. Kills every subprocess on any exception."""
     window = [] if t_start <= 0 and t_len is None else ["-ss", f"{t_start:.3f}"] + (
         ["-t", f"{t_len:.3f}"] if t_len is not None else [])
@@ -340,6 +390,8 @@ def _overlay_pass(src: Path, dst: Path, *, w: int, h: int, fps: Fraction, t_star
     if info.get("colorspace") == "bt709":
         enc_cmd += ["-vf", "scale=out_color_matrix=bt709:out_range=tv", "-colorspace", "bt709",
                     "-color_primaries", "bt709", "-color_trc", "bt709"]
+    if metadata:
+        enc_cmd += ["-metadata", f"comment={metadata}"]
     enc_cmd += video_args + audio_args + ["-movflags", "+faststart", str(dst)]
 
     painter = _Painter(kit, cfg, w, h)
@@ -416,7 +468,7 @@ def frame_at(project_dir: Path, t: float, *, width: int = 540) -> Path:
     mascot/cache/frames/ keyed by (source signature, t rounded to 1/30 s, width)."""
     src = source_video(project_dir)
     if src is None:
-        raise FileNotFoundError(f"no video in {project_dir}")
+        raise _missing_clean(project_dir)
     t = max(0.0, float(t))
     key = json.dumps([_sig(src), round(t * 30), int(width)])
     out = mascot_dir(project_dir) / "cache" / "frames" / f"{hashlib.sha1(key.encode()).hexdigest()[:20]}.jpg"
@@ -451,7 +503,7 @@ def render_preview(project_dir: Path, cfg: MascotConfig, t_center: float, *, spa
     project_dir = Path(project_dir)
     src = source_video(project_dir)
     if src is None:
-        raise FileNotFoundError(f"no video in {project_dir}")
+        raise _missing_clean(project_dir)
     info = _probe(src)
     if not info["has_video"] or info["w"] <= 0:
         raise RuntimeError(f"{src} has no video stream")
@@ -518,9 +570,11 @@ def render_final(project_dir: Path, cfg: MascotConfig, *, progress: Progress | N
                       cfg=cfg, kit=kit, track=track, env=env, info=info, video_args=VIDEO_CODEC_ARGS,
                       audio_args=["-c:a", "copy"], scale_to=False,
                       est_frames=max(1, int(info["duration"] * float(info["fps"]))),
-                      progress=progress, log=log, p_hi=0.97)
+                      progress=progress, log=log, p_hi=0.97, metadata=TAG_PREFIX + cfg.kit)
         _verify(tmp, info)
-        # os.replace keeps size + mtime, so the signature recorded now is final.mp4's afterwards
+        if not _has_tag(tmp):
+            raise RuntimeError("verification failed: mascot tag missing in the new file")
+        # os.replace keeps the bytes, so the fingerprint recorded now is final.mp4's afterwards
         _write_json_atomic(_state_path(project_dir), {"final": _sig(tmp), "clean": _sig(clean)})
         os.replace(tmp, final)
     except BaseException:
