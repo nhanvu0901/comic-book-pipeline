@@ -151,6 +151,7 @@ def test_failed_encoder_leaves_final_untouched(proj, monkeypatch):
     assert render.has_mascot_output(proj) and not list(proj.glob("*.tmp.mp4"))
 
 
+@pytest.mark.skipif(shutil.which("pgrep") is None, reason="lists processes with pgrep (POSIX only)")
 def test_no_leftover_ffmpeg_after_failure(proj, monkeypatch):
     monkeypatch.setattr(render, "VIDEO_CODEC_ARGS", ["-c:v", "no_such_codec"])
     with pytest.raises(RuntimeError):

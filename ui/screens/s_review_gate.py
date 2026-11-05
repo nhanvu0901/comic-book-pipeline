@@ -879,11 +879,14 @@ def build(
                 if payload.get("state") == "error":
                     _show_snack(f"Beat {bk}: {payload.get('message') or 'không chọn được clip'}")
                     return
-                # The completed pick writes clips.json before broadcasting. Read that entry so
-                # the preview and source survive a screen rebuild (legacy payloads still work).
-                clips_by_beat[bk] = _load_clips_manifest(project).get(bk) or payload
+                # The manifest is authoritative, even if a ready event arrives after deletion.
+                current = _load_clips_manifest(project).get(bk)
+                if current:
+                    clips_by_beat[bk] = current
+                else:
+                    clips_by_beat.pop(bk, None)
                 _withdraw_approval()
-                _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
+                _rebuild(f"Đã cập nhật MP4 cho beat {bk}", dirty=frozenset({bk}))
             # keyed by this page + project: a screen that rebuilds replaces its listener, not stacks one
             add_moment_picked_listener(_on_moment_picked, key=(id(page), project))
         except Exception as exc:
@@ -1809,13 +1812,26 @@ def build(
                 ))
             if has_clip:
                 def _rollback_mp4(_e, bk=beat_key):
-                    _remove_clip_for_beat(project, bk)
-                    clips_by_beat.pop(bk, None)
-                    _withdraw_approval()
-                    _rebuild(f"Beat {bk}: quay lại dùng comic panel", dirty=frozenset({bk}))
+                    def _confirm(_event):
+                        page.pop_dialog()
+                        try:
+                            _remove_clip_for_beat(project, bk)
+                        except (OSError, ValueError) as exc:
+                            _withdraw_approval()
+                            _show_snack(f"Không xóa sạch MP4: {exc}. Đóng video rồi thử lại.")
+                            return
+                        clips_by_beat.pop(bk, None)
+                        _withdraw_approval()
+                        _rebuild(f"Beat {bk}: đã xóa MP4, có thể chọn lại", dirty=frozenset({bk}))
+                    page.show_dialog(ft.AlertDialog(
+                        title=ft.Text(f"Xóa MP4 của beat {bk}?"),
+                        content=ft.Text("Xóa clip và bản xem thử riêng của beat này. Giữ lời thoại, TTS và file dùng chung."),
+                        actions=[secondary_button("Giữ lại", lambda _ev: page.pop_dialog()),
+                                 primary_button("Xóa MP4", _confirm, icon=ft.Icons.DELETE_OUTLINE)],
+                    ))
                 header_icons.append(ft.IconButton(
-                    ft.Icons.UNDO, icon_size=16, icon_color=WARN,
-                    tooltip="Hủy MP4 (quay lại dùng comic panel)",
+                    ft.Icons.DELETE_OUTLINE, icon_size=18, icon_color=WARN,
+                    tooltip="Hủy MP4 — Xóa clip và chọn lại",
                     on_click=_rollback_mp4,
                     style=ft.ButtonStyle(padding=ft.padding.all(0)),
                 ))

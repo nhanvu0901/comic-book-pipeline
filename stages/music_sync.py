@@ -1031,17 +1031,35 @@ def prepare_capcut_music_sync(
 ) -> list[Any]:
     """If CapCut music is enabled, analyze track, pick in-point, and snap hit points to beats.
     If disabled (default), returns shots unmodified (byte-identity).
+    Required bake planning failures are passed to finish_capcut_music_sync so it can
+    record failure metadata and respect raise_on_failure.
     """
     root = Path(root)
+    # Every attempt replaces the previous plan, including failed/disabled retries.
+    _STAGE5_SYNC_STATE.pop(project_name, None)
     cfg = get_capcut_music_config(root)
     if not cfg.get("enabled"):
-        _STAGE5_SYNC_STATE.pop(project_name, None)
+        return shots
+
+    def planning_failed(error: str, track_path: Path | None = None) -> list[Any]:
+        log(f"[music_sync] CapCut music planning failed ({error}); falling back to standard shots")
+        if cfg.get("bake_into_final", True):
+            _STAGE5_SYNC_STATE[project_name] = {
+                "analysis": TrackAnalysis(
+                    file_path=str(track_path) if track_path is not None else "",
+                    file_sha256="", duration_seconds=0.0, bpm=0.0,
+                ),
+                "in_point": 0.0,
+                "hit_points": [],
+                "warning": error,
+                "track_path": track_path,
+                "planning_error": error,
+            }
         return shots
 
     filename = cfg.get("filename") or cfg.get("file")
     if not filename:
-        log("[music_sync] CapCut music enabled but no track filename configured")
-        return shots
+        return planning_failed("CapCut music enabled but no track filename configured")
 
     track_path = root / filename
     if not track_path.exists():
@@ -1052,8 +1070,7 @@ def prepare_capcut_music_sync(
             if cand.exists():
                 track_path = cand
             else:
-                log(f"[music_sync] CapCut music track not found: {filename}")
-                return shots
+                return planning_failed(f"CapCut music track not found: {filename}", root / filename)
 
     try:
         analysis = analyze_track(track_path, cache_dir=root / ".music_cache")
@@ -1097,8 +1114,7 @@ def prepare_capcut_music_sync(
 
         return shots
     except Exception as exc:
-        log(f"[music_sync] CapCut music planning failed ({exc}); falling back to standard shots")
-        return shots
+        return planning_failed(str(exc), track_path)
 
 
 def finish_capcut_music_sync(
@@ -1133,8 +1149,11 @@ def finish_capcut_music_sync(
 
     # 1. Render the unified mix into a temporary video
     tmp_mixed = root / ".final.music.tmp.mp4"
-    log("[music_sync] rendering music mix (sidechain ducking + loudness targeting)...")
-    out_mixed, mix_info = render_capcut_music_mix(final_path, track_path, in_point, tmp_mixed, log=log)
+    if state.get("planning_error"):
+        out_mixed, mix_info = None, {"error": state["planning_error"]}
+    else:
+        log("[music_sync] rendering music mix (sidechain ducking + loudness targeting)...")
+        out_mixed, mix_info = render_capcut_music_mix(final_path, track_path, in_point, tmp_mixed, log=log)
 
     bake_applied = False
     bake_failed = False

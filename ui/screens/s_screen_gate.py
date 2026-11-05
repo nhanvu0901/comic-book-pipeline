@@ -264,10 +264,33 @@ def build(
         _refresh_cards(f"Đã thêm ảnh cho beat {key}.")
 
     def _use_card(key: str) -> None:
+        if key in clips:
+            _delete_clip(key, use_card=True)
+            return
         sel.clear_beat(root, key)
         clips.pop(key, None)
         stills.pop(key, None)
         _refresh_cards(f"Beat {key}: dùng thẻ chữ.")
+
+    def _delete_clip(key: str, *, use_card: bool = False) -> None:
+        def _confirm(_e):
+            page.pop_dialog()
+            try:
+                sel.remove_clip(root, key)
+                if use_card:
+                    sel.unlock_still(root, key)
+            except (OSError, ValueError) as exc:
+                _refresh_approval()
+                _snack(f"Không xóa sạch MP4: {exc}. Đóng video rồi thử lại.")
+                return
+            _reload()
+            _refresh_cards(f"Beat {key}: đã xóa MP4, có thể chọn lại.")
+        page.show_dialog(ft.AlertDialog(
+            title=ft.Text(f"Xóa MP4 của beat {key}?"),
+            content=ft.Text("Xóa clip và bản xem thử riêng của beat này. Giữ lời thoại, TTS và file dùng chung."),
+            actions=[secondary_button("Giữ lại", lambda _e: page.pop_dialog()),
+                     primary_button("Xóa MP4", _confirm, icon=ft.Icons.DELETE_OUTLINE)],
+        ))
 
     def _reload() -> None:
         clips.clear()
@@ -315,6 +338,9 @@ def build(
             secondary_button("Thẻ chữ", lambda _e, k=key: _use_card(k),
                              icon=ft.Icons.TEXT_FIELDS, disabled=not (has_clip or has_still)),
         ]
+        if has_clip:
+            actions.append(secondary_button("Xóa MP4", lambda _e, k=key: _delete_clip(k),
+                                            icon=ft.Icons.DELETE_OUTLINE))
         sec = secs.get(key)
         return ft.Container(
             content=ft.Column([
@@ -412,14 +438,14 @@ def build(
                 _snack(msg)
             _dispatch(_fail)
             return
-        if state_ not in (None, "ready"):         # progress, not a pick
+        if state_ not in (None, "ready", "deleted"):         # progress, not a pick
             return
 
         async def _apply():
             sel.withdraw_approval(root)          # a pick made after Approve → approve again
             _reload()
-            _refresh_cards(f"Đã chọn clip MP4 cho beat {key} — cần approve lại.")
-            if clips_on and config_auto_backup():
+            _refresh_cards(f"Đã cập nhật MP4 cho beat {key} — cần approve lại.")
+            if key in clips and clips_on and config_auto_backup():
                 _kick_backup(key)
         _dispatch(_apply)
 
