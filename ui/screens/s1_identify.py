@@ -15,7 +15,7 @@ import flet as ft
 from config import PipelineMode, PROJECTS_ROOT, MAX_PHASE_RETRIES
 from ..bridge import PhaseApprovalBridge, format_exception, run_blocking, run_stage_1
 from ..layout import primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS,
     TEXT_MUTED, TEXT_PRIMARY, WARN,
@@ -632,7 +632,7 @@ def build(
         on_state_change()
 
     right = ft.Column([
-        ft.Text("STEP 1 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 1 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Identify Comic", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Interactive agent — approve or revise each phase. "

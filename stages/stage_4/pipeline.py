@@ -374,7 +374,11 @@ _TTS_REPLACEMENTS = {
 
 
 def _normalize_for_tts(text: str) -> str:
-    """Strip chars that Cartesia interprets as long pauses or rendering glitches."""
+    """Strip chars that Cartesia interprets as long pauses or rendering glitches.
+    Starts with the spoken-form pass (numbers, #N, symbols, acronyms) — idempotent, so it is
+    harmless on narration already stored in spoken form and covers UI edits / old projects."""
+    from utils.spoken_text import to_spoken
+    text = to_spoken(text)
     for ch, rep in _TTS_REPLACEMENTS.items():
         text = text.replace(ch, rep)
     # Collapse repeated commas / spaces (em-dash → comma can create ", ," sequences)

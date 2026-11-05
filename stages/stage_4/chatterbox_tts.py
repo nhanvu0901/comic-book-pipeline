@@ -70,7 +70,10 @@ CHATTERBOX_VOICE_WAV = (os.getenv("CHATTERBOX_VOICE_WAV", "").strip()
                         or (str(_DEFAULT_VOICE_WAV) if _DEFAULT_VOICE_WAV.exists() else ""))
 CHATTERBOX_DEVICE = os.getenv("CHATTERBOX_DEVICE", "").strip()
 # A chunk much longer than this reads unevenly and risks the model losing the thread.
-_MAX_CHUNK_CHARS = int(os.getenv("CHATTERBOX_MAX_CHARS", "320"))
+_MAX_CHUNK_CHARS = int(os.getenv("CHATTERBOX_MAX_CHARS", "280"))
+# A sentence shorter than this is merged into its neighbour: very short inputs make
+# Chatterbox hallucinate or babble (resemble-ai/chatterbox #97).
+_MIN_CHUNK_CHARS = int(os.getenv("CHATTERBOX_MIN_CHARS", "40"))
 
 _SENT_END = re.compile(r'(?<=[.!?])["”\')]*\s+(?=["“(\[]?[A-Z0-9])')
 
@@ -89,9 +92,30 @@ def available() -> bool:
 
 
 def _chunks(text: str) -> list[str]:
-    """One chunk per sentence; a sentence over the char cap splits again at a comma."""
+    """One chunk per sentence; a sentence under _MIN_CHUNK_CHARS merges into the NEXT one
+    (the previous one when it is last) while the result stays within _MAX_CHUNK_CHARS; a
+    sentence over the char cap splits again at a comma."""
+    sents = [s.strip() for s in _SENT_END.split(" ".join(str(text or "").split())) if s.strip()]
+    merged: list[str] = []
+    pending = ""
+    for sent in sents:
+        if pending:
+            if len(pending) + 1 + len(sent) <= _MAX_CHUNK_CHARS:
+                sent = f"{pending} {sent}"
+            else:
+                merged.append(pending)
+            pending = ""
+        if len(sent) < _MIN_CHUNK_CHARS:
+            pending = sent
+        else:
+            merged.append(sent)
+    if pending:
+        if merged and len(merged[-1]) + 1 + len(pending) <= _MAX_CHUNK_CHARS:
+            merged[-1] = f"{merged[-1]} {pending}"
+        else:
+            merged.append(pending)
     out: list[str] = []
-    for sent in [s.strip() for s in _SENT_END.split(" ".join(str(text or "").split())) if s.strip()]:
+    for sent in merged:
         if len(sent) <= _MAX_CHUNK_CHARS:
             out.append(sent)
             continue

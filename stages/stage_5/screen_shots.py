@@ -621,6 +621,7 @@ def run_screen_qa_pipeline(
     duration = _probe_duration(final_path)
     log(f"[screen_qa] done: {final_path} ({duration:.2f}s)")
     _write_title_file(root, narration)
+
     from ..music_sync import finish_capcut_music_sync
     finish_capcut_music_sync(project_name, root, final_path, log=log)
     return _result(shots, final=str(final_path), dur=duration)

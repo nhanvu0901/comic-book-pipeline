@@ -36,6 +36,7 @@ from ..question_archetype import question_archetype
 from ._llm import call_with_chain
 from .beat_split import split_hook_fragments
 from .schema import Beat, Narration, Scene
+from .spoken_rules import with_spoken_rules, year_words
 
 # Narration mode key. Deliberately NOT a config.PipelineMode member and NOT a stage_3.modes.MODES
 # entry: the first would break the Stage-1 mode dropdown (it iterates the enum), the second would
@@ -55,11 +56,11 @@ _TOKEN_HEADROOM = 1500
 
 # ─── prompts ────────────────────────────────────────────────────────────────
 
-_SHARED_RULES = """HARD RULES:
+_SHARED_RULES_RAW = """HARD RULES:
   - YOU ARE TRIMMING, NOT RESEARCHING. Every fact you need is already in the items below, verified against real sources. Your whole job is to COMPRESS that into spoken lines: keep the meaning, drop the words. Never add a fact the item does not state, never soften or hedge one it does, and never re-explain something it already says plainly.
   - THE ITEM NOTES ARE SOURCE, NOT STYLE. They were written to be READ. A listener hears the line once and cannot re-read it, so take the fact and throw away the shape it arrived in.
   - TRIMMING IS NOT VAGUENESS. The CONCRETE part stays: the name, the act, the consequence. What goes is qualifiers, background clauses and anything an earlier scene already established.
-  - CITE THE FILM / SERIES AND ITS YEAR in the spoken line, naturally inside the sentence: "In <Title> (<Year>), ..." or "In the <Year> film <Title>, ...". Do this the FIRST time each new title appears (on that item's CONTEXT scene). When the next item comes from the SAME title and year, do not repeat it. NEVER cite an issue number and never write "#" — this is screen media, not a comic.
+  - CITE THE FILM / SERIES AND ITS YEAR in the spoken line, naturally inside the sentence, with the year spoken in words: "In the twenty nineteen film <Title>, ..." or "In <Title>, from twenty nineteen, ...". Never digits and never parentheses around the year. Do this the FIRST time each new title appears (on that item's CONTEXT scene). When the next item comes from the SAME title and year, do not repeat it. NEVER cite an issue number and never write "#" — this is screen media, not a comic.
   - Plain B2 English. Concrete, no purple prose, no riddles. ONE EVENT PER SENTENCE — do not chain clauses with em-dashes into a run-on.
   - TELL THE STORY, NOT THE FILMMAKING. Say what HAPPENS and WHY. Never narrate camera work, editing, cast or the screen itself ("we see", "the camera", "in this scene").
   - WEAVE THE WHY. State who the entity is to the others and why the moment lands, in the SAME sentence(s), so a viewer who has never seen the title understands it.
@@ -71,7 +72,7 @@ _SHARED_RULES = """HARD RULES:
   - NEVER speak a countdown or rank number ("number five", "third place" — all banned).
   - Each scene is a short lead-in + one or two plain sentences; keep it under {cap} words. The FIRST scene is item 1's CONTEXT scene — do not write a premise or definition scene before it.
   - Total words across ALL scenes must land inside the WORD BUDGET given.
-  - VISUAL BEATS (every scene): split the scene into the separate MOMENTS it contains so the video can cut to a fresh clip on each. ONE fragment = ONE showable moment of ~8-14 words; a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, a short single-event scene (<=12 words) stays ONE fragment. A citation head that opens a scene ("In <Title> (<Year>),") is its OWN short fragment — the establishing shot. "visual_beats" is a LIST OF OBJECTS {{"text": "<verbatim fragment>", "query": "<clip search phrase>"}}. "text" is VERBATIM: the fragments' exact words, in order, must concatenate back to the scene "text" (you may only drop a comma or dash at a split point) — never drop, reword, add or reorder a word. "query" is 3-8 words a video search would match: the film/series title, the character, and what is on screen.
+  - VISUAL BEATS (every scene): split the scene into the separate MOMENTS it contains so the video can cut to a fresh clip on each. ONE fragment = ONE showable moment of ~8-14 words; a scene of 35+ words gives 4-5 fragments, ~20-34 words gives 3, a short single-event scene (<=12 words) stays ONE fragment. A citation head that opens a scene ("In the twenty nineteen film <Title>,") is its OWN short fragment — the establishing shot. "visual_beats" is a LIST OF OBJECTS {{"text": "<verbatim fragment>", "query": "<clip search phrase>"}}. "text" is VERBATIM: the fragments' exact words, in order, must concatenate back to the scene "text" (you may only drop a comma or dash at a split point) — never drop, reword, add or reorder a word. "query" is 3-8 words a video search would match: the film/series title, the character, and what is on screen.
   - FIDELITY IS ABSOLUTE — do not invert, do not invent. The research is the source of truth and someone else wrote it on purpose. Never swap which side an event happened to, and never add a belief or motive the research does not state. If the research is thin on a point, write LESS.
   - WRITE THE TITLE, THE HOOK AND THE OUTRO TOO:
       * "title" — 4-8 words, a statement. No question mark, no emoji, no hashtag, no issue number, no series name.
@@ -82,6 +83,8 @@ _SHARED_RULES = """HARD RULES:
 
 Return shape:
 {{"title": "...", "hook": "...", "outro": "...", "scenes": [{{"text": "...", "visual_beats": [{{"text": "<verbatim fragment 1>", "query": "<clip search phrase>"}}, {{"text": "<verbatim fragment 2>", "query": "<clip search phrase>"}}]}}, ...]}}"""
+
+_SHARED_RULES = with_spoken_rules(_SHARED_RULES_RAW, "Return shape:")
 
 _SYSTEM_LIST_HEAD = """You are QAWriter for a screen-trivia YouTube Short. The video answers ONE question by walking through several real moments from films, TV series or animated adaptations (the ITEMS below), given in order from LEAST surprising to MOST surprising (the biggest payoff is the LAST item) — never re-rank them.
 
@@ -171,7 +174,11 @@ def _mentions_title(text: str, title: str) -> bool:
 
 
 def _cites(text: str, title: str, year: Any) -> bool:
-    return _mentions_title(text, title) and str(year).strip() in _tokens(text)
+    """Title named AND its year said, as spoken words ("twenty nineteen") or, leniently, digits."""
+    toks = _tokens(text)
+    year_ok = (str(year).strip() in toks
+               or _contains_run(toks, _tokens(year_words(year))))
+    return _mentions_title(text, title) and year_ok
 
 
 _ARTICLES = frozenset({"the", "a", "an"})
@@ -310,8 +317,8 @@ def _validate_screen_scenes(
         total += wc
         if wc > scene_max:
             issues.append(f"scene {i + 1} is {wc}w (max {scene_max})")
-        if "#" in text:
-            issues.append(f"scene {i + 1} contains '#' — screen Q&A never cites comic issue numbers")
+        # A leftover "#" is no longer a hard failure: the save-time spoken-text normaliser
+        # cleans it, and the writer prompt already forbids it.
         item_idx = i // per
         if i % per == 0 and item_idx < len(items):                # CONTEXT scene names its entity
             entity = str(items[item_idx].get("entity", "")).strip()
@@ -330,7 +337,7 @@ def _validate_screen_scenes(
         title, year = str(items[idx].get("adaptation_title", "")), items[idx].get("year", "")
         if item_text and not _cites(item_text, title, year):
             issues.append(f"item {idx + 1} scenes never cites its title and year ({title!r}, {year}) — "
-                          f"say \"In <Title> ({year}), ...\" on the CONTEXT scene")
+                          f"say \"In the {year_words(year)} film <Title>, ...\" on the CONTEXT scene")
     if archetype == "explain" and texts and not (
             ea._CAUSAL_MARKER_RE.search(texts[-1])
             or re.search(_SPELLED_ANSWER_MARKER, texts[-1], re.IGNORECASE)):
@@ -419,7 +426,7 @@ def _deterministic_script(question: str, items: list[dict[str, Any]], archetype:
         title, year = str(it.get("adaptation_title", "")).strip(), it.get("year", "")
         event = _lower_first(str(it.get("event", "")))
         summary = str(it.get("summary", "")).strip()
-        scenes.append({"text": f"In {title} ({year}), {entity} {event}".rstrip(" .") + "."})
+        scenes.append({"text": f"In {title}, from {year_words(year)}, {entity} {event}".rstrip(" .") + "."})
         scenes.append({"text": summary or f"{entity} {event}".rstrip(" .") + "."})
     last = str(items[-1].get("entity", "")).strip()
     return {
@@ -443,7 +450,7 @@ def _repair_citations(body: list[dict[str, Any]], items: list[dict[str, Any]], p
         joined = " ".join(str(s.get("text", "")) for s in body[scene_ix: scene_ix + per])
         if _cites(joined, title, year):
             continue
-        head = f"{title} ({year})."
+        head = f"In {title}, from {year_words(year)}."
         scene = body[scene_ix]
         raw = _normalize_visual_beats(scene.get("visual_beats") or [])
         scene["visual_beats"] = [{"text": head, "query": ""}, *raw]
@@ -629,6 +636,8 @@ def save_screen_narration(
     out_path = root / "narration.json"
     from .ending import ensure_subscribe_cta
     data = narration.to_dict()
+    from utils.spoken_text import spoken_narration_dict
+    spoken_narration_dict(data)
     ensure_subscribe_cta(data)
     write_json_atomic(out_path, data)
     log(f"[screen_qa] saved narration → {out_path}")

@@ -172,6 +172,7 @@ def rank_candidates(candidates: Sequence[Mapping[str, Any]], *,
         candidate["source_material_coverage"] = source_material_coverage(candidate)
         candidate["editorial_quality"] = quality
         candidate["ranking"] = {"status": quality["status"], "direct_demand_observations": direct,
+            "ranking_direct_count": direct,
             "reason": ("Explicit editorial assessment plus direct, source-linked demand; not a view prediction."
                        if quality["status"] == "assessed" else "No grounded editorial assessment: stable fallback order.")}
         annotated.append((index, candidate))

@@ -6,6 +6,7 @@ from typing import Callable
 from config import PIPELINE_MODE, PipelineMode
 from .modes import MODES_BY_KEY, describe_catalog
 from .schema import ProposedMode
+from .spoken_rules import with_spoken_rules
 from ._llm import call_with_chain
 
 
@@ -14,6 +15,7 @@ _SYSTEM = """You are PanelNarrator, a script writer for short-form YouTube Short
 Given a comic's context and its actual page content (panels, dialog, summary), you pick the 3 narration angles that would make the BEST short from this specific story — not generic picks. For each, you provide a candidate hook line (the opening sentence of the narration) that demonstrates the angle.
 
 Return ONLY JSON. No prose, no markdown fences."""
+_SYSTEM = with_spoken_rules(_SYSTEM)
 
 
 _CATALOG = describe_catalog()

@@ -31,6 +31,7 @@ from config import FIDELITY_LLM_MODELS, PROJECTS_ROOT
 from ._llm import call_with_chain
 from .beat_split import _verbatim_ok
 from .schema import Narration
+from .spoken_rules import SPOKEN_TEXT_RULES
 from .write_script import _extract_json
 from .._arc import issue_index_of_page
 
@@ -181,6 +182,7 @@ HARD RULES:
 concatenated verbatim they must equal "text" exactly (drop only a comma/dash at a split). A short \
 scene may be ONE fragment = the whole text.
 - Return JSON ONLY, no markdown: {"text":"...","visual_beats":["...","..."]}."""
+_REWRITE_SYSTEM = _REWRITE_SYSTEM + "\n\n" + SPOKEN_TEXT_RULES
 
 
 def _rewrite_scene(

@@ -154,7 +154,7 @@ situation, cause, or mechanism while naturally identifying the comic and issue; 
 Aim for 7–18 words; 20 is the hard
 maximum for the Stage 3 importer. The hook DOES NOT need to mention the comic
 issue; instead, every hook is written with the assumption that the next spoken
-sentence will identify the comic and issue (`[HOOK]` followed by `In [Comic] #[Issue], ...`).
+sentence will identify the comic and issue (`[HOOK]` followed by `In [Comic] issue [issue number in words], ...`).
 Do not claim an unsourced general rule or
 call anything "insane", "epic", or "unbelievable" in place of detail.
 If the character's name is unfamiliar, include the power or object that
@@ -163,7 +163,7 @@ makes the odd action intelligible; a surname alone is a weak anchor.
 SCRIPT
 The hook is its own line. Start item 1 immediately on the next paragraph.
 The sentence immediately after the chosen hook MUST naturally identify item 1's
-comic and issue (`In [Comic Title] #[Issue], ...` or `This happens in [Comic Title] #[Issue], where ...`)
+comic and issue (`In [Comic Title] issue [issue number in words], ...` or `This happens in [Comic Title] issue [issue number in words], where ...`)
 while beginning the setup or active situation. For each subsequent item paragraph,
 also naturally identify its comic and issue while introducing its setup, answer, or
 transition.
@@ -244,7 +244,7 @@ When two or more verified beats naturally belong together, combine them into one
 
 ### Short sentences are emphasis, not the default
 
-A very short sentence or fragment is allowed when it lands an important result, creates a natural spoken pause, the previous sentence already provides enough context, and it does not make the narration sound like a list. Use them sparingly. Do not write several short declarative sentences in a row unless the scene genuinely benefits from that rhythm.
+A very short sentence is allowed (never under four words; fold anything shorter into its neighbour with a comma) when it lands an important result, creates a natural spoken pause, the previous sentence already provides enough context, and it does not make the narration sound like a list. Use them sparingly. Do not write several short declarative sentences in a row unless the scene genuinely benefits from that rhythm.
 
 ## PURPOSE AND CAUSAL LANGUAGE
 
@@ -252,10 +252,16 @@ Natural narration often explains why someone does something (`She uses X to stop
 
 ## COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK
 
-The sentence immediately after the chosen hook must identify the comic and issue using a natural spoken construction (`In Ultimate Wolverine #15, ...`, `This happens in Ultimate Wolverine #15, where ...`, `In Batman #125, ...`). Do not make the issue identification sound like metadata being read aloud (`Comic: Ultimate Wolverine, Issue 15, 2026.`).
+The sentence immediately after the chosen hook must identify the comic and issue using a natural spoken construction (`In Ultimate Wolverine issue fifteen, ...`, `This happens in Ultimate Wolverine issue fifteen, where ...`, `In Batman issue one twenty-five, ...`). Do not make the issue identification sound like metadata being read aloud (`Comic: Ultimate Wolverine, Issue 15, 2026.`).
 The required opening order is:
 **HOOK → COMIC + ISSUE → STORY FRAME / FIRST HIGHLIGHT MOVEMENT**
 Combine the issue identification with useful setup whenever possible.
+
+## SPOKEN TEXT RULES — REQUIRED FOR EVERY SPOKEN LINE
+
+{{SPOKEN_TEXT_RULES}}
+
+---
 
 ## CONNECT EVERY IDEA, NOT EVERY SENTENCE
 
@@ -313,7 +319,7 @@ Flag any sentence as FLAT if it is unusually short without a deliberate reason, 
 ## BEFORE OUTPUT — ADD THESE CHECKS
 
 In addition to the existing audit, ask:
-16. Does the sentence immediately after the hook naturally mention the comic title and issue number?
+16. Does the sentence immediately after the hook naturally mention the comic title and issue number, with the issue number spoken as words ("issue fifteen"), no digits and no hash sign?
 17. Are there two or more unnecessarily short declarative sentences in a row?
 18. Did I mistake "one important beat at a time" for "one tiny sentence per beat"?
 19. Can any neighboring verified beats be connected into more natural spoken English without inventing a causal relationship?
@@ -337,7 +343,7 @@ S1 | <first few words> | Item <n>, Beat <n> [and additional IDs if needed]
 S2 | ...
 <one row per spoken sentence; REACTION only for a fact-free opinion>
 UNSUPPORTED FACTS: none
-OPENING CHAIN: <hook promise> -> <In [Series] #[Issue] + new item 1 fact and Beat ID> -> <next item 1 movement and Beat ID>
+OPENING CHAIN: <hook promise> -> <In [Series] issue [issue number in words] + new item 1 fact and Beat ID> -> <next item 1 movement and Beat ID>
 ISSUE MENTION CHECK: <quote the first body sentence and confirm that it naturally identifies the comic series and issue immediately after the hook>
 FLOW CHECK: <identify any intentionally short sentences and explain why they remain short; confirm there is no accidental chain of caption-like subject-verb sentences>
 

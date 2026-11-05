@@ -1,0 +1,19 @@
+{
+  "kit": "rook_v1",
+  "enabled": true,
+  "position": {
+    "preset": "bottom_left",
+    "x": 0.2,
+    "y": 1.0
+  },
+  "size_pct": 23.0,
+  "accessories": [
+    "monocle"
+  ],
+  "outline": true,
+  "shadow": true,
+  "motion": "normal",
+  "talk_bounce": true,
+  "show_caption_guide": false,
+  "show_shorts_ui_guide": true
+}

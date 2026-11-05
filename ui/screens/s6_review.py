@@ -20,7 +20,7 @@ from ..bridge import (asset_src,
     run_stage6_render, save_narration_edits,
 )
 from ..layout import log_list, primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED,
     TEXT_PRIMARY, WARN,
@@ -71,7 +71,7 @@ def build(
             alignment=ft.Alignment.CENTER, expand=True,
         )
         right = ft.Column([
-            ft.Text("STEP 7 OF 8", size=10, color=TEXT_MUTED),
+            ft.Text(f"STEP 7 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
             ft.Text("Review & Edit", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
             ft.Text("Nothing to review — generate a narration first.",
                     size=12, color=TEXT_MUTED),
@@ -352,7 +352,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 7 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 7 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Review & Edit", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Each card is the panel shown while that line is spoken. Edit any line, or "
@@ -451,7 +451,7 @@ def _skipped_for_qa(
     )
 
     right = ft.Column([
-        ft.Text("STEP 7 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 7 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Review & Edit (Q&A)", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Q&A projects render multiple panels per scene (sub-shots), which were "

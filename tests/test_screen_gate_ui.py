@@ -294,6 +294,7 @@ def test_choosing_a_card_clears_the_beat_and_withdraws_the_approval(project):
     ctl, page, state, _ = _build(project)
     sel.set_approved(project, True)
     _buttons(ctl, "Thẻ chữ")[0].on_click(None)
+    _confirm_dialog(page)
     assert sel.load_clips(project) == {}
     assert not sel.is_approved(project)
 
@@ -373,3 +374,8 @@ def test_the_comic_review_gate_hands_a_screen_project_to_this_screen(project, mo
     state = AppState(project_name=project.name)
     ctl = s_review_gate.build(_page(), state, on_go=lambda s: None, on_state_change=lambda: None)
     assert any("[1:0]" in t for t in _texts(ctl))                  # the screen's own beat cards
+
+
+def _confirm_dialog(page):
+    """Deleting a clip now asks first ("Xóa MP4?"): press the dialog's confirm action."""
+    page.dialogs[-1].actions[-1].on_click(None)

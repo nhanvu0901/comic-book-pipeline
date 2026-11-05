@@ -14,7 +14,7 @@ from stages.user_errors import NothingToDeleteError
 
 from .screens import (
     s1_identify, s1_research_scout, s2_download, s2_preprocess, s3_narrate, s4_tts, s5_video,
-    s6_review, s_review_gate,
+    s6_review, s_review_gate, s9_mascot,
 )
 from .bridge import (
     delete_project,
@@ -39,6 +39,7 @@ STAGE_BUILDERS = {
     6: s4_tts.build,
     7: s6_review.build,
     8: s5_video.build,
+    9: s9_mascot.build,
 }
 
 
@@ -53,6 +54,8 @@ async def main(page: ft.Page):
     state = _bootstrap_state()
 
     def render_current():
+        if state.current_stage not in STAGE_BUILDERS:   # a stale/foreign state.json
+            state.current_stage = 1
         _show_view(page, f"/s{state.current_stage}", [STAGE_BUILDERS[state.current_stage](
             page, state,
             on_go=goto_stage,
@@ -68,7 +71,7 @@ async def main(page: ft.Page):
             # Reached mid-flow (a stage screen), not at launch — so offer a way out.
             _show_project_picker(page, state, render_current, can_cancel=True)
             return
-        if stage < 1 or stage > 8:
+        if stage not in STAGE_BUILDERS:
             return
         state.current_stage = stage
         save_state(state)

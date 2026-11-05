@@ -1278,22 +1278,8 @@ def _beat_rows_for_custom(narration: dict) -> list[tuple[str, str]]:
     """[(beat_key, text), ...] for every beat Master can lock a custom image to, in the SAME
     beat_key scheme review_gate writes to locks.json — so a lock written by the review
     UI and the argmax pool here always agree on identity."""
-    scenes = narration.get("scenes") or []
-    intro_rows, outro_rows = _bookend_rows_for_custom(narration)
-    rows: list[tuple[str, str]] = list(intro_rows)
-    for s in scenes:
-        if s.get("is_intro") or s.get("is_outro"):
-            continue
-        sid = int(s.get("scene_id") or 0)
-        raw_beats = s.get("visual_beats") or []
-        frags = [b for b in raw_beats if _vb_text(b)]
-        if frags:
-            for fi, b in enumerate(frags):
-                rows.append((f"{sid}:{fi}", _vb_text(b)))
-        else:
-            rows.append((str(sid), str(s.get("text", "") or "")))
-    rows.extend(outro_rows)
-    return rows
+    from ..review_gate import review_beat_rows
+    return review_beat_rows(narration)
 
 
 def _resolve_custom_images(project: str | None, narration: dict) -> dict[str, str]:

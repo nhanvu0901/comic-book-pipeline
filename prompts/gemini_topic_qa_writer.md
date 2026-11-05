@@ -90,7 +90,7 @@ Aim for 7–18 spoken words (20 is the hard maximum for the Stage 3 importer)
 and make sure it sounds natural out loud. The hook DOES NOT need to mention
 the comic issue; instead, write every hook assuming the next spoken sentence
 will identify the comic and issue. When evaluating a hook, read the first two
-lines together (`[HOOK]` + `In [Comic] #[Issue], ...`) so they sound like one
+lines together (`[HOOK]` + `In [Comic] issue [issue number in words], ...`) so they sound like one
 continuous introduction rather than a headline followed by metadata. Do not
 claim an unsourced general rule or call anything "insane", "epic", or
 "unbelievable" in place of detail. If the character's name is unfamiliar,
@@ -171,7 +171,7 @@ For example, instead of `A attacks B. B falls. A escapes.`, prefer `A attacks B,
 
 ### Short sentences are emphasis, not the default
 
-A very short sentence or fragment is allowed when:
+A very short sentence is allowed (never under four words; fold anything shorter into its neighbour with a comma) when:
 - it lands an important result;
 - it creates a natural spoken pause;
 - the previous sentence already provides enough context;
@@ -194,17 +194,34 @@ However, natural prose must never become an excuse to invent motivation. If Phas
 
 The sentence immediately after the chosen hook must identify the comic and issue.
 Use a natural spoken construction such as:
-- `In Ultimate Wolverine #15, ...`
-- `This happens in Ultimate Wolverine #15, where ...`
-- `In Batman #125, ...`
+- `In Ultimate Wolverine issue fifteen, ...`
+- `This happens in Ultimate Wolverine issue fifteen, where ...`
+- `In Batman issue one twenty-five, ...`
 
 Do not make the issue identification sound like metadata being read aloud (`Comic: Ultimate Wolverine, Issue 15, 2026.`).
 Mention the issue ONCE near the beginning (or once per item in multi-issue lists) unless repeating it later is necessary for clarity.
 The required opening order is:
 **HOOK → COMIC + ISSUE + FRAME → HIGHLIGHT DEVELOPMENT**
 Combine the issue identification with useful setup whenever possible:
-- BAD: `This happens in Ultimate Wolverine #15. Logan is hunting someone.`
-- BETTER: `In Ultimate Wolverine #15, Logan is hunting for the missing mutants when the situation turns on him.`
+- BAD: `This happens in Ultimate Wolverine issue fifteen. Logan is hunting someone.`
+- BETTER: `In Ultimate Wolverine issue fifteen, Logan is hunting for the missing mutants when the situation turns on him.`
+
+---
+
+## SPOKEN TEXT RULES — REQUIRED FOR EVERY SPOKEN LINE
+
+SPOKEN TEXT RULES (the narration is read aloud by a text-to-speech voice; these bind every spoken line):
+- Write for the ear: every word exactly as the narrator says it.
+- Numbers in words, never digits. Issue numbers as "issue fifteen" or "issue one twenty-five", never "#15". Years as spoken: "twenty nineteen", "nineteen eighty-four".
+- No symbols (# % & $ / + @ * =) and no abbreviations (Mr., Dr., vs., No., Vol.): write the full words.
+- No ALL-CAPS words, no emoji, no parentheses or brackets, no colons, semicolons, ellipses or em dashes. A real initialism is spaced out ("F. B. I."). Pace ONLY with commas and periods.
+- Sentences are mostly 8 to 22 words, one clear idea each. Never a standalone fragment under 4 words ("Silence." / "He's gone."): fold it into the neighbouring sentence with a comma.
+- Flow: link sentences with natural spoken connectives (then, but, so, until, when, which means) instead of stacked fragments. Vary the rhythm, a longer sentence then a shorter one. Each sentence picks up from the last.
+- Commas where a narrator would breathe; no run-on chains of "and".
+- Do not stack several unusual proper names in one sentence. Name a character the same way each time (respect the glossary).
+- A quoted line of dialogue is fine when introduced naturally ("he says, ..."); keep it short.
+- Read every sentence silently aloud; if you would stumble, rewrite it.
+- Where this rules block conflicts with an older word-budget, hook or punchiness rule, the shape here wins; the word budgets still hold.
 
 ---
 
@@ -243,7 +260,7 @@ Read FINAL SCRIPT aloud as if recording voiceover:
 - Would a listener hear one continuous story rather than stitched notes?
 
 Before output, also verify:
-16. The sentence immediately after the hook naturally names the comic series and issue number.
+16. The sentence immediately after the hook naturally names the comic series and the issue number, spoken as words ("issue fifteen"), no digits and no hash sign.
 17. The issue mention is integrated into the setup, not written like a citation or metadata tag.
 18. Neighboring beats are connected into natural spoken sentences when their sequence or relationship is verified.
 19. The script does not fall into a chain of tiny "X does Y" sentences.

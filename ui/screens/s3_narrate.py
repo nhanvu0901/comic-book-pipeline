@@ -22,7 +22,7 @@ import flet as ft
 from config import PROJECTS_ROOT
 from ..bridge import format_exception, run_blocking
 from ..layout import log_list, primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BORDER, DANGER, SUCCESS, TEXT_MUTED,
     TEXT_PRIMARY, WARN,
@@ -418,7 +418,7 @@ def build(
                 pass
 
     right = ft.Column([
-        ft.Text("STEP 2 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 2 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Narration Script", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Gemini-First Narration (0% Claude):\n"

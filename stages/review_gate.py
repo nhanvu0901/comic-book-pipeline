@@ -138,6 +138,77 @@ def bookend_row_keys(scene: dict, unit: str) -> list[tuple[str, str, str]]:
     return [(f"{sid}:{i}", "fragment", _vb_text(b)) for i, b in enumerate(frags)]
 
 
+def review_beat_rows(narration: dict) -> list[tuple[str, str]]:
+    """(beat_key, text) for each review row narration produces, in review order.
+
+    The single canonical row-key derivation shared across review_gate, Stage 5 custom images,
+    and clip_fetch (CLI + UI).
+    - Intro/outro with 2+ fragments derive '<sid>:<fi>' via bookend_row_keys.
+    - Intro/outro with <2 fragments keep 'intro'/'outro'.
+    - Story scenes with visual_beats derive '<sid>:<fi>', else '<sid>'.
+    """
+    from stages.stage_5.shots import _vb_text
+    scenes = narration.get("scenes") or []
+    intro = next((s for s in scenes if s.get("is_intro")), None)
+    outro = next((s for s in scenes if s.get("is_outro")), None)
+
+    rows: list[tuple[str, str]] = []
+    if intro is not None:
+        rows.extend((bk, txt) for bk, _unit, txt in bookend_row_keys(intro, "intro"))
+    for s in scenes:
+        if s.get("is_intro") or s.get("is_outro"):
+            continue
+        sid = int(s.get("scene_id") or 0)
+        raw_beats = s.get("visual_beats") or []
+        frags = [b for b in raw_beats if _vb_text(b)]
+        if frags:
+            for fi, b in enumerate(frags):
+                rows.append((f"{sid}:{fi}", _vb_text(b)))
+        else:
+            rows.append((str(sid), str(s.get("text", "") or "")))
+    if outro is not None:
+        rows.extend((bk, txt) for bk, _unit, txt in bookend_row_keys(outro, "outro"))
+    return rows
+
+
+def validate_project_beat_key(narration: dict, beat: str) -> str:
+    """Validate that `beat` corresponds to an actual review row in `narration`.
+
+    If the user passed 'intro' or 'outro' and that bookend is fragmented into 2+ visual beats,
+    raises ValueError with a clear message explaining that it is fragmented and listing valid keys.
+    If the key matches no current row, raises ValueError listing valid keys.
+    Returns the validated beat key.
+    """
+    valid_rows = review_beat_rows(narration)
+    valid_keys = [bk for bk, _txt in valid_rows]
+    if beat in valid_keys:
+        return beat
+
+    scenes = narration.get("scenes") or []
+    if beat == "intro":
+        intro = next((s for s in scenes if s.get("is_intro")), None)
+        if intro is not None:
+            intro_keys = [bk for bk, _u, _t in bookend_row_keys(intro, "intro")]
+            if len(intro_keys) > 1:
+                raise ValueError(
+                    f"Beat 'intro' is fragmented into multiple beats: {', '.join(intro_keys)}. "
+                    f"Please specify which beat to target (e.g. --beat {intro_keys[0]}). "
+                    f"Valid beats: {', '.join(valid_keys)}"
+                )
+    elif beat == "outro":
+        outro = next((s for s in scenes if s.get("is_outro")), None)
+        if outro is not None:
+            outro_keys = [bk for bk, _u, _t in bookend_row_keys(outro, "outro")]
+            if len(outro_keys) > 1:
+                raise ValueError(
+                    f"Beat 'outro' is fragmented into multiple beats: {', '.join(outro_keys)}. "
+                    f"Please specify which beat to target (e.g. --beat {outro_keys[0]}). "
+                    f"Valid beats: {', '.join(valid_keys)}"
+                )
+
+    raise ValueError(f"Unknown beat '{beat}'. Valid beats: {', '.join(valid_keys)}")
+
+
 def lock_panels(lock: dict | None) -> list[dict]:
     """A scene's locks.json entry as a normalised list of {"page","panel"} dicts, handling
     BOTH the v2 multi-panel shape ({"panels": [{"page","panel"}, ...]}) and the old v1 single

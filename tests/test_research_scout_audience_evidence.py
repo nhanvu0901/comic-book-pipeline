@@ -276,3 +276,171 @@ def test_session_free_partial_entries_keep_duplicate_ids_and_accept_link_url(tmp
     assert [entry["id"] for entry in annotated] == ["candidate-2"] * 3
     assert updated["audience_evidence"]["signals"]["saturation"]["videos"][0]["current_views"] == 3
     assert parse_public_video_id("https://youtu.be/PsoefS94HSY") == "PsoefS94HSY"
+
+
+def test_demand_evidence_freshness_fresh_vs_stale_vs_boundary(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    now = datetime.now(timezone.utc)
+    max_age_seconds = 30 * 86400.0
+
+    # 1. Fresh evidence (1 day old)
+    fresh_time = (now - timedelta(days=1)).isoformat()
+    store.add_demand_evidence(
+        candidate_key="hero|fresh", query="q_fresh", url="https://forum.example/fresh",
+        quote="fresh quote", source_type="community", confidence="direct", checked_at=fresh_time,
+    )
+    signal_fresh = store.signals_for("hero|fresh", stale_after_seconds=max_age_seconds)["demand"]
+    assert signal_fresh["status"] == "observed"
+    assert signal_fresh["direct_count"] == 1
+    assert signal_fresh["checked_at"] == fresh_time
+
+    # 2. Stale evidence (45 days old)
+    stale_time = (now - timedelta(days=45)).isoformat()
+    store.add_demand_evidence(
+        candidate_key="hero|stale", query="q_stale", url="https://forum.example/stale",
+        quote="stale quote", source_type="community", confidence="direct", checked_at=stale_time,
+    )
+    signal_stale = store.signals_for("hero|stale", stale_after_seconds=max_age_seconds)["demand"]
+    assert signal_stale["status"] == "stale"
+    assert signal_stale["direct_count"] == 0
+    assert signal_stale["checked_at"] == stale_time  # provenance date preserved
+
+    # 3. Boundary: exact boundary (age == max_age_seconds) -> fresh
+    boundary_exact = (now - timedelta(seconds=max_age_seconds)).isoformat()
+    store.add_demand_evidence(
+        candidate_key="hero|boundary_exact", query="q_bound", url="https://forum.example/bound",
+        quote="bound quote", source_type="community", confidence="direct", checked_at=boundary_exact,
+    )
+    signal_bound = store.signals_for("hero|boundary_exact", stale_after_seconds=max_age_seconds, now=now)["demand"]
+    assert signal_bound["status"] == "observed"
+    assert signal_bound["direct_count"] == 1
+
+    # 4. Boundary: just over boundary (age == max_age_seconds + 1s) -> stale
+    boundary_over = (now - timedelta(seconds=max_age_seconds + 1)).isoformat()
+    store.add_demand_evidence(
+        candidate_key="hero|boundary_over", query="q_over", url="https://forum.example/over",
+        quote="over quote", source_type="community", confidence="direct", checked_at=boundary_over,
+    )
+    signal_over = store.signals_for("hero|boundary_over", stale_after_seconds=max_age_seconds, now=now)["demand"]
+    assert signal_over["status"] == "stale"
+    assert signal_over["direct_count"] == 0
+    assert signal_over["checked_at"] == boundary_over
+
+
+def test_demand_evidence_naive_timestamp_treated_as_stale_without_crashing(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    # Direct insert into sqlite simulating legacy / pre-validation data
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS demand_evidence (id INTEGER PRIMARY KEY, candidate_key TEXT, "
+            "query_text TEXT, url TEXT, quote TEXT, source_type TEXT, confidence TEXT, checked_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO demand_evidence(candidate_key, query_text, url, quote, source_type, confidence, checked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("hero|naive", "legacy q", "https://forum.example/legacy", "legacy quote", "community", "direct", "2026-01-01T00:00:00"),
+        )
+
+    # Must not raise TypeError, must be treated as stale with provenance preserved
+    signal = store.signals_for("hero|naive")["demand"]
+    assert signal["status"] == "stale"
+    assert signal["direct_count"] == 0
+    assert signal["checked_at"] == "2026-01-01T00:00:00"
+
+
+def test_manual_import_and_add_rejects_naive_timestamp_in_demand_evidence(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    with pytest.raises(ValueError, match="checked_at must be ISO 8601 with an explicit timezone offset or Z"):
+        store.add_demand_evidence(
+            candidate_key="hero|k", query="q", url="https://example.test", quote="quote",
+            source_type="community", confidence="direct", checked_at="2026-01-01T00:00:00",
+        )
+
+    sessions = tmp_path / "research_sessions"
+    session_store = SessionStore(sessions)
+    session = session_store.create(mode="qa", user_intent="Why?")
+    candidate = {
+        "id": "c_naive", "title": "Hero", "question": "Why?",
+        "canonical_anchor": "Hero", "concept_key": "why",
+        "claim_citation": {"url": "https://example.test", "quote": "Hero."},
+    }
+    session_store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [candidate]})
+
+    with pytest.raises(ValueError, match="timezone"):
+        update_scout_audience(session.id, "c_naive", root=sessions, manual_import={
+            "demand": [{"query": "q", "url": "https://example.test", "quote": "quote",
+                        "source_type": "community", "confidence": "direct", "checked_at": "2026-01-01T00:00:00"}],
+            "videos": [],
+        })
+
+
+def test_demand_evidence_mixed_fresh_and_stale_only_counts_fresh_direct(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    now = datetime.now(timezone.utc)
+    fresh_time = (now - timedelta(days=2)).isoformat()
+    stale_time = (now - timedelta(days=60)).isoformat()
+
+    # Add 1 fresh direct demand and 1 stale direct demand
+    store.add_demand_evidence(
+        candidate_key="hero|mixed", query="fresh_q", url="https://forum.example/fresh",
+        quote="fresh quote", source_type="community", confidence="direct", checked_at=fresh_time,
+    )
+    store.add_demand_evidence(
+        candidate_key="hero|mixed", query="stale_q", url="https://forum.example/stale",
+        quote="stale quote", source_type="community", confidence="direct", checked_at=stale_time,
+    )
+
+    demand = store.signals_for("hero|mixed", stale_after_seconds=30 * 86400)["demand"]
+    assert demand["status"] == "observed"
+    assert demand["direct_count"] == 1  # only the fresh direct observation counts!
+    assert demand["checked_at"] == fresh_time
+
+
+def test_normalize_checked_at_and_manual_import_rejects_future_timestamp(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    future_time = "2099-01-01T00:00:00+00:00"
+
+    with pytest.raises(ValueError, match="future"):
+        store.add_demand_evidence(
+            candidate_key="hero|future", query="q", url="https://example.test", quote="quote",
+            source_type="community", confidence="direct", checked_at=future_time,
+        )
+
+    sessions = tmp_path / "research_sessions"
+    session_store = SessionStore(sessions)
+    session = session_store.create(mode="qa", user_intent="Why?")
+    candidate = {
+        "id": "c_future", "title": "Hero", "question": "Why?",
+        "canonical_anchor": "Hero", "concept_key": "why",
+        "claim_citation": {"url": "https://example.test", "quote": "Hero."},
+    }
+    session_store.write_artifact(session.id, "general/candidates.v1.json", {"candidates": [candidate]})
+
+    with pytest.raises(ValueError, match="future"):
+        update_scout_audience(session.id, "c_future", root=sessions, manual_import={
+            "demand": [{"query": "q", "url": "https://example.test", "quote": "quote",
+                        "source_type": "community", "confidence": "direct", "checked_at": future_time}],
+            "videos": [],
+        })
+
+
+def test_persisted_future_timestamp_treated_as_stale_without_crashing(tmp_path):
+    store = AudienceEvidenceStore(tmp_path)
+    # Direct insert into sqlite simulating corrupt/future legacy data
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS demand_evidence (id INTEGER PRIMARY KEY, candidate_key TEXT, "
+            "query_text TEXT, url TEXT, quote TEXT, source_type TEXT, confidence TEXT, checked_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO demand_evidence(candidate_key, query_text, url, quote, source_type, confidence, checked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("hero|future_row", "future q", "https://forum.example/future", "future quote", "community", "direct", "2099-01-01T00:00:00+00:00"),
+        )
+
+    signal = store.signals_for("hero|future_row")["demand"]
+    assert signal["status"] == "stale"
+    assert signal["direct_count"] == 0
+    assert signal["checked_at"] == "2099-01-01T00:00:00+00:00"
+
+

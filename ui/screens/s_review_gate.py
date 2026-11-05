@@ -48,11 +48,37 @@ def _project_dir(project: str) -> Path:
 def _load_clips_manifest(project: str) -> dict[str, dict]:
     """{beat_key: clip entry} of the project's enabled clip entries (review/clips/clips.json)."""
     from stages.stage_5.clips import read_manifest_doc
-    return {
+    out = {
         str(c.get("beat")): c
         for c in read_manifest_doc(_project_dir(project)).get("clips", [])
         if isinstance(c, dict) and c.get("beat") and c.get("enabled", True) is not False
     }
+    narr_p = _project_dir(project) / "narration.json"
+    if narr_p.is_file():
+        try:
+            narr = json.loads(narr_p.read_text(encoding="utf-8"))
+            scenes = narr.get("scenes") or []
+            if "intro" in out:
+                intro = next((s for s in scenes if s.get("is_intro")), None)
+                if intro:
+                    from stages.review_gate import bookend_row_keys
+                    keys = [bk for bk, _u, _t in bookend_row_keys(intro, "intro")]
+                    if len(keys) > 1:
+                        legacy_intro = out.pop("intro")
+                        if keys[0] not in out:
+                            out[keys[0]] = legacy_intro
+            if "outro" in out:
+                outro = next((s for s in scenes if s.get("is_outro")), None)
+                if outro:
+                    from stages.review_gate import bookend_row_keys
+                    keys = [bk for bk, _u, _t in bookend_row_keys(outro, "outro")]
+                    if len(keys) > 1:
+                        legacy_outro = out.pop("outro")
+                        if keys[0] not in out:
+                            out[keys[0]] = legacy_outro
+        except Exception:
+            pass
+    return out
 
 
 def _remove_clip_for_beat(project: str, beat_key: str) -> None:
@@ -116,7 +142,7 @@ from ..custom_image import (
 )
 from ..intro_import import import_intro_image, remove_intro_image
 from ..layout import primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
@@ -1489,7 +1515,7 @@ def build(
                 root = _project_dir(project).resolve()
                 media_path = (root / rel).resolve() if rel else root
                 resource = asset_src(media_path)
-                if bridge.WEB_MODE and entry.get("preview_file") and media_path.is_file():
+                if bridge.WEB_MODE and (entry.get("preview_file") or entry.get("file")) and media_path.is_file():
                     resource = "/api/clip_preview?" + urlencode({
                         "project": project, "beat": beat_key, "t": media_path.stat().st_mtime_ns})
                 media = (Video(playlist=[VideoMedia(resource=resource)],
@@ -1754,23 +1780,36 @@ def build(
                           style=ft.ButtonStyle(padding=ft.padding.all(0))),
         ]
         if config.ENABLE_VIDEO_CLIPS:
-            def _open_mp4_review(_e, bk=beat_key):
-                try:
-                    from stages.stage_4.background_tts import bump_priority_beat
-                    bump_priority_beat(project, bk)
-                except Exception as exc:
-                    logger.warning("Failed to bump priority beat: %s", exc)
-                async def _go():
-                    await page.launch_url(f"/moments_review?project={project}&beat={bk}")
-                page.run_task(_go)
+            if bridge.WEB_MODE:
+                def _open_mp4_review(_e, bk=beat_key):
+                    try:
+                        from stages.stage_4.background_tts import bump_priority_beat
+                        bump_priority_beat(project, bk)
+                    except Exception as exc:
+                        logger.warning("Failed to bump priority beat: %s", exc)
+                    async def _go():
+                        await page.launch_url(f"/moments_review?project={project}&beat={bk}")
+                    page.run_task(_go)
 
-            header_icons.append(ft.IconButton(
-                ft.Icons.VIDEO_FILE_OUTLINED, icon_size=18,
-                icon_color=SUCCESS if has_clip else None,
-                tooltip="Dùng MP4 (Chọn khoảnh khắc từ YouTube)",
-                on_click=_open_mp4_review,
-                style=ft.ButtonStyle(padding=ft.padding.all(0)),
-            ))
+                header_icons.append(ft.IconButton(
+                    ft.Icons.VIDEO_FILE_OUTLINED, icon_size=18,
+                    icon_color=SUCCESS if has_clip else None,
+                    tooltip="Dùng MP4 (Chọn khoảnh khắc từ YouTube)",
+                    on_click=_open_mp4_review,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                ))
+            else:
+                def _show_desktop_mp4_disabled(_e):
+                    _show_snack("MP4 picker cần chạy UI với --lan")
+
+                header_icons.append(ft.IconButton(
+                    ft.Icons.VIDEO_FILE_OUTLINED, icon_size=18,
+                    icon_color=SUCCESS if has_clip else None,
+                    tooltip="MP4 picker cần chạy UI với --lan",
+                    disabled=True,
+                    on_click=_show_desktop_mp4_disabled,
+                    style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                ))
             if has_clip:
                 def _rollback_mp4(_e, bk=beat_key):
                     def _confirm(_event):
@@ -2690,7 +2729,7 @@ def build(
     _refresh_capcut_info()
 
     right = ft.Column([
-        ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 5 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Check each line's research source and select 2-5 of the best panels "
@@ -2713,11 +2752,9 @@ def build(
         bake_music_cb,
         pick_music_btn,
         capcut_info_text,
+        ft.Container(height=6),
         genre_dd,
-        ft.Text("Dùng nhạc CapCut sẽ bỏ qua score tự động. Style brief for the score. Editable — type anything the generator "
-                "understands. Sparse styles are heard under narration; dense ones are not.\n"
-                "Stage 5 analyzes the final narration and generates the score after its "
-                "narration-only video render is complete.",
+        ft.Text("Style brief cho MiniMax score (tự động bỏ qua khi BẬT 'Dùng nhạc CapCut').",
                 size=11, color=TEXT_MUTED),
     ], spacing=8, expand=True)
 
@@ -2830,7 +2867,7 @@ def _empty_state(page: ft.Page, state: AppState, on_go, on_state_change) -> ft.C
         alignment=ft.Alignment.CENTER, expand=True,
     )
     right = ft.Column([
-        ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 5 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Nothing to review — generate review/candidates.json first.",
                 size=12, color=TEXT_MUTED),

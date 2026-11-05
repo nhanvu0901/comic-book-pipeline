@@ -63,6 +63,15 @@ def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int
 # The scout may make at most one top-up call; set to 0 to disable it.
 SCOUT_TOPUP_ROUNDS = _bounded_int_env("SCOUT_TOPUP_ROUNDS", 1, 0, 1)
 
+# Audience / fan-demand evidence freshness window for Stage 1 Scout ranking.
+# Fan interest and forum discussions around comic arcs and questions operate on a monthly
+# publication cycle (standard comic books are released monthly). Evidence older than 30 days
+# must be re-verified so historical chatter from past years/spikes does not permanently bias
+# Scout quality tie-breaking. Older observations are marked 'stale' with provenance preserved.
+SCOUT_DEMAND_MAX_AGE_DAYS = float(os.getenv("SCOUT_DEMAND_MAX_AGE_DAYS", "30"))
+SCOUT_DEMAND_STALE_AFTER_SECONDS = float(os.getenv("SCOUT_DEMAND_STALE_AFTER_SECONDS", str(int(SCOUT_DEMAND_MAX_AGE_DAYS * 86400))))
+
+
 _DEFAULT_LLM_CHAIN = (
     "minimax/minimax-m2.5:free,"
     "deepseek/deepseek-chat-v3.1:free,"
@@ -563,7 +572,6 @@ CHATTERBOX_SEED = (int(_chatterbox_seed_env) if _chatterbox_seed_env is not None
 CAPCUT_MUSIC_OFFSET_LU = float(os.getenv("CAPCUT_MUSIC_OFFSET_LU", "16.0"))
 CAPCUT_MUSIC_FADE_IN_S = float(os.getenv("CAPCUT_MUSIC_FADE_IN_S", "1.0"))
 CAPCUT_MUSIC_FADE_OUT_S = float(os.getenv("CAPCUT_MUSIC_FADE_OUT_S", "2.0"))
-
 
 # ─── Comic Scraper ──────────────────────────────────────────────────────────
 # headless=False opens a visible Chrome window — much more reliable against Cloudflare

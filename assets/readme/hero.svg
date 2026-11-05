@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="t d">
+  <title id="t">Grimframe — Comic Book Video Pipeline</title>
+  <desc id="d">Comic panels slide into a vertical phone frame while the title inks in.</desc>
+  <defs>
+    <pattern id="dots" width="14" height="14" patternUnits="userSpaceOnUse">
+      <circle cx="7" cy="7" r="1.6" fill="#ffffff" fill-opacity="0.07"/>
+    </pattern>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d0d12"/>
+      <stop offset="1" stop-color="#1a1220"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff3d3d"/>
+      <stop offset="1" stop-color="#ffb300"/>
+    </linearGradient>
+    <clipPath id="screen"><rect x="905" y="52" width="158" height="276" rx="14"/></clipPath>
+  </defs>
+  <style>
+    .ink   { stroke-dasharray: 1400; animation: ink 1.6s ease-out .2s both; }
+    .fill  { animation: fade .6s ease-out 1.4s both; }
+    .sub   { animation: rise .7s ease-out 1.9s both; }
+    .tag   { animation: rise .6s ease-out both; }
+    .t1 { animation-delay: 2.3s; } .t2 { animation-delay: 2.5s; } .t3 { animation-delay: 2.7s; } .t4 { animation-delay: 2.9s; }
+    .p     { animation: slide .7s cubic-bezier(.2,.8,.2,1) both; }
+    .p1 { animation-delay: .4s; } .p2 { animation-delay: .7s; } .p3 { animation-delay: 1s; }
+    .kb    { transform-origin: 984px 190px; animation: kenburns 6s ease-in-out infinite alternate; }
+    .cap   { animation: blink 4s steps(1) infinite; } .c2, .c3 { opacity: 0; }
+    .c2 { animation-delay: -2.666s; } .c3 { animation-delay: -1.333s; }
+    .pulse { transform-origin: 984px 300px; animation: pulse 1.8s ease-in-out infinite; }
+    .bang  { transform-origin: 760px 92px; animation: pop 3.2s ease-in-out infinite; }
+    @keyframes ink   { from { stroke-dashoffset: 1400; } to { stroke-dashoffset: 0; } }
+    @keyframes fade  { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes rise  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes slide { from { opacity: 0; transform: translate(-40px, 18px) rotate(-6deg); } to { opacity: 1; transform: none; } }
+    @keyframes kenburns { from { transform: scale(1); } to { transform: scale(1.18) translate(-6px, -8px); } }
+    @keyframes blink { 0% { opacity: 1; } 33%, 100% { opacity: 0; } }
+    @keyframes pulse { 0%,100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.12); opacity: 1; } }
+    @keyframes pop   { 0%,70%,100% { transform: scale(1) rotate(-8deg); } 80% { transform: scale(1.15) rotate(-4deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; }
+    }
+  </style>
+
+  <rect width="1200" height="380" rx="18" fill="url(#bg)"/>
+  <rect width="1200" height="380" rx="18" fill="url(#dots)"/>
+
+  <!-- title -->
+  <g font-family="'Bangers','Impact','Arial Black',system-ui,sans-serif" font-weight="900">
+    <text x="60" y="150" font-size="96" letter-spacing="4" fill="none" stroke="#ff3d3d" stroke-width="2.5" class="ink">GRIMFRAME</text>
+    <text x="60" y="150" font-size="96" letter-spacing="4" fill="url(#accent)" class="fill">GRIMFRAME</text>
+  </g>
+  <text x="64" y="198" font-family="system-ui,-apple-system,'Segoe UI',sans-serif" font-size="22" fill="#e8e6f0" class="sub">Comic books → narrated YouTube Shorts, end to end.</text>
+
+  <!-- feature tags -->
+  <g font-family="system-ui,-apple-system,'Segoe UI',sans-serif" font-size="15" fill="#e8e6f0">
+    <g class="tag t1"><rect x="62" y="232" width="132" height="38" rx="19" fill="#ffffff" fill-opacity=".08" stroke="#ff3d3d" stroke-opacity=".6"/><text x="128" y="257" text-anchor="middle">Research scout</text></g>
+    <g class="tag t2"><rect x="204" y="232" width="132" height="38" rx="19" fill="#ffffff" fill-opacity=".08" stroke="#ff7a2e" stroke-opacity=".6"/><text x="270" y="257" text-anchor="middle">Panel detection</text></g>
+    <g class="tag t3"><rect x="346" y="232" width="132" height="38" rx="19" fill="#ffffff" fill-opacity=".08" stroke="#ff9f1a" stroke-opacity=".6"/><text x="412" y="257" text-anchor="middle">Script + voice</text></g>
+    <g class="tag t4"><rect x="488" y="232" width="132" height="38" rx="19" fill="#ffffff" fill-opacity=".08" stroke="#ffb300" stroke-opacity=".6"/><text x="554" y="257" text-anchor="middle">9:16 render</text></g>
+  </g>
+
+  <!-- comic panels flying in -->
+  <g transform="translate(112 30) scale(0.88)">
+  <g class="p p1"><rect x="600" y="40" width="190" height="120" rx="6" fill="#26203a" stroke="#f4f1ea" stroke-width="4" transform="rotate(-5 695 100)"/>
+    <path d="M612 140 L660 86 L700 118 L742 70 L780 140 Z" fill="#3b2f5c" transform="rotate(-5 695 100)"/></g>
+  <g class="p p2"><rect x="640" y="176" width="150" height="150" rx="6" fill="#3a1d24" stroke="#f4f1ea" stroke-width="4" transform="rotate(4 715 251)"/>
+    <circle cx="715" cy="240" r="34" fill="#ff3d3d" fill-opacity=".85" transform="rotate(4 715 251)"/></g>
+  <g class="p p3"><rect x="800" y="210" width="80" height="110" rx="6" fill="#1f2b33" stroke="#f4f1ea" stroke-width="4" transform="rotate(-3 840 265)"/></g>
+  <g class="bang"><polygon points="760,62 772,82 796,74 786,96 806,110 782,112 784,136 766,120 750,138 746,114 722,112 740,98 728,78 752,82" fill="#ffb300" stroke="#0d0d12" stroke-width="3"/>
+    <text x="764" y="104" text-anchor="middle" font-family="'Bangers','Impact',sans-serif" font-size="20" fill="#0d0d12">POW</text></g>
+  </g>
+
+  <!-- phone frame with ken-burns shot + captions -->
+  <rect x="895" y="40" width="178" height="300" rx="24" fill="#08080b" stroke="#3a3a46" stroke-width="3"/>
+  <g clip-path="url(#screen)">
+    <g class="kb">
+      <rect x="905" y="52" width="158" height="276" fill="#2a2140"/>
+      <path d="M905 270 L955 190 L995 230 L1035 160 L1063 210 L1063 328 L905 328 Z" fill="#3e2f63"/>
+      <circle cx="1015" cy="120" r="26" fill="#ff3d3d" fill-opacity=".8"/>
+      <rect x="930" y="205" width="28" height="70" rx="10" fill="#f4f1ea" fill-opacity=".85"/>
+    </g>
+    <g font-family="'Arial Black',system-ui,sans-serif" font-size="17" text-anchor="middle" fill="#ffffff" stroke="#000000" stroke-width="3" paint-order="stroke">
+      <text x="984" y="250" class="cap c1">HE WASN'T</text>
+      <text x="984" y="250" class="cap c2">SUPPOSED</text>
+      <text x="984" y="250" class="cap c3">TO SURVIVE</text>
+    </g>
+  </g>
+  <g class="pulse"><circle cx="984" cy="300" r="15" fill="#ff3d3d"/><polygon points="979,292 979,308 992,300" fill="#ffffff"/></g>
+</svg>

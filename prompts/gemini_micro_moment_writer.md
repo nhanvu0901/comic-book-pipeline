@@ -291,7 +291,7 @@ words when the fact supports it, and stay under about 24. A shorter concrete
 hook is fine. The hook DOES NOT need to mention the comic issue; instead,
 every hook is written with the assumption that the next spoken sentence will
 identify the comic and issue. When evaluating a hook, read the first two
-lines together (`[HOOK]` followed by `In [Comic] #[Issue], ...`): they should
+lines together (`[HOOK]` followed by `In [Comic] issue [issue number in words], ...`): they should
 sound like one continuous introduction rather than a headline followed by
 metadata. Trace every factual clause in the chosen hook.
 
@@ -310,7 +310,7 @@ STORY
 Open on the chosen hook. The hook line is spoken once: the story's first
 sentence is the one after it, never the hook again in other words. That
 first body sentence immediately after the hook MUST naturally identify the
-comic and issue (for example, `In [Series] #[Issue], ...` or `This happens in [Series] #[Issue], where ...`)
+comic and issue (for example, `In [Series] issue [issue number in words], ...` or `This happens in [Series] issue [issue number in words], where ...`)
 while beginning the active setup. When the
 sheet has a useful STORY FRAME, give it one short sentence or clause combined
 with the comic + issue identification before expanding the tactic or mechanism.
@@ -410,7 +410,7 @@ Again, the relationship must be sourced.
 
 ### Short sentences are emphasis, not the default
 
-A very short sentence or fragment is allowed when:
+A very short sentence is allowed (never under four words; fold anything shorter into its neighbour with a comma) when:
 - it lands an important result;
 - it creates a natural spoken pause;
 - the previous sentence already provides enough context;
@@ -433,17 +433,23 @@ When purpose is unknown, describe the verified action and result without guessin
 
 The sentence immediately after the chosen hook must identify the comic and issue.
 Use a natural spoken construction such as:
-- `In Ultimate Wolverine #15, ...`
-- `This happens in Ultimate Wolverine #15, where ...`
-- `In Batman #125, ...`
+- `In Ultimate Wolverine issue fifteen, ...`
+- `This happens in Ultimate Wolverine issue fifteen, where ...`
+- `In Batman issue one twenty-five, ...`
 
-Do not make the issue identification sound like metadata being read aloud (BAD: `Comic: Ultimate Wolverine, Issue 15, 2026.`; GOOD: `In Ultimate Wolverine #15, Logan and Jean are...`).
+Do not make the issue identification sound like metadata being read aloud (BAD: `Comic: Ultimate Wolverine, Issue 15, 2026.`; GOOD: `In Ultimate Wolverine issue fifteen, Logan and Jean are...`).
 Mention the issue ONCE near the beginning unless repeating it later is necessary for clarity.
 The hook itself does NOT need to contain the issue name.
 The required opening order is:
 **HOOK → COMIC + ISSUE → STORY FRAME / FIRST HIGHLIGHT MOVEMENT**
 
-Combine the issue identification with useful setup whenever possible (BAD: `This happens in Ultimate Wolverine #15. Logan is hunting someone.`; BETTER: `In Ultimate Wolverine #15, Logan is hunting for the missing mutants when the situation turns on him.`). The factual content of the setup must still come entirely from verified beats.
+Combine the issue identification with useful setup whenever possible (BAD: `This happens in Ultimate Wolverine issue fifteen. Logan is hunting someone.`; BETTER: `In Ultimate Wolverine issue fifteen, Logan is hunting for the missing mutants when the situation turns on him.`). The factual content of the setup must still come entirely from verified beats.
+
+## SPOKEN TEXT RULES — REQUIRED FOR EVERY SPOKEN LINE
+
+{{SPOKEN_TEXT_RULES}}
+
+---
 
 ## CONNECT EVERY IDEA, NOT EVERY SENTENCE
 
@@ -534,7 +540,7 @@ story: the hook's concrete promise must be explained or resolved by verified
 events in the script. If the sheet cannot support that promise, narrow the
 hook; do not leave the promised moment offscreen or only imply its outcome.
 In addition to the existing audit, ask:
-16. Does the sentence immediately after the hook naturally mention the comic title and issue number?
+16. Does the sentence immediately after the hook naturally mention the comic title and issue number, with the issue number spoken as words ("issue fifteen"), no digits and no hash sign?
 17. Are there two or more unnecessarily short declarative sentences in a row?
 18. Did I mistake "one important beat at a time" for "one tiny sentence per beat"?
 19. Can any neighboring verified beats be connected into more natural spoken English without inventing a causal relationship?

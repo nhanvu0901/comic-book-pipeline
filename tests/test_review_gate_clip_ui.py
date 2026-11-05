@@ -359,7 +359,8 @@ def test_with_the_flag_off_an_edit_keeps_the_stable_behaviour(screen, monkeypatc
     assert not any(isinstance(c, ft.IconButton) and "Dùng MP4" in str(c.tooltip or "") for c in _walk(root))
 
 
-def test_mp4_chip_duration_chip_and_use_mp4_button(screen):
+def test_mp4_chip_duration_chip_and_use_mp4_button(screen, monkeypatch):
+    monkeypatch.setattr(bridge, "WEB_MODE", True)
     root = screen.build()
     assert screen.c["start"] == ["qa"], "the screen starts the background TTS"
     texts = _texts(root)
@@ -372,11 +373,50 @@ def test_mp4_chip_duration_chip_and_use_mp4_button(screen):
     assert screen.c["bump"] == [("qa", "2:0")], "opening the picker moves that beat to the front of the TTS queue"
 
 
+def test_desktop_mode_disables_mp4_button_with_tooltip_and_snack_and_keeps_rollback(screen):
+    """In desktop mode (WEB_MODE=False), the MP4 button is disabled with a clear tooltip/snack,
+    while existing clips still show their MP4 badge and functional rollback."""
+    page = FakePage()
+    root = screen.build(page)
+
+    # 1. MP4 picker button is disabled on all beats with tooltip and snack
+    buttons = [c for c in _walk(root) if isinstance(c, ft.IconButton) and c.icon == ft.Icons.VIDEO_FILE_OUTLINED]
+    assert len(buttons) == 6
+    for btn in buttons:
+        assert btn.disabled is True
+        assert btn.tooltip == "MP4 picker cần chạy UI với --lan"
+
+    # Clicking the disabled button does NOT bump TTS and displays the snack
+    buttons[1].on_click(None)
+    assert screen.c["bump"] == [], "desktop MP4 button must not bump TTS queue"
+    assert len(page.overlay) > 0, "desktop MP4 click must show a snackbar"
+    assert getattr(page.overlay[-1], "open", False) is True
+    assert page.overlay[-1].content.value == "MP4 picker cần chạy UI với --lan"
+
+    # 2. Existing clips still show their MP4 badge
+    texts = _texts(root)
+    assert texts.count("MP4") == 2
+
+    # 3. Existing clips still offer functional rollback (UNDO button)
+    undo_buttons = [c for c in _walk(root) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
+    assert len(undo_buttons) == 2
+    for u in undo_buttons:
+        assert not u.disabled
+
+    undo_buttons[0].on_click(None)
+
+    _confirm_dialog(page)
+    assert [c["beat"] for c in screen.clips()] == ["3:0"], "rollback still removes clip in desktop mode"
+    assert "2:0" in screen.locks()["locks"], "panel lock restored"
+
+
+
 def test_rollback_removes_only_that_beats_clip(screen):
     root = screen.build()
     undo = [c for c in _walk(root) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     assert len(undo) == 2
     undo[0].on_click(None)
+    _confirm_dialog(page)
     assert [c["beat"] for c in screen.clips()] == ["3:0"]
     assert "2:0" in screen.locks()["locks"]                          # the panel locks are untouched
     undo_left = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
@@ -404,6 +444,7 @@ def test_selected_area_shows_picked_mp4_then_restores_comic_panel(screen):
             if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     # The first rollback belongs to the newly picked 2:0 beat in video order.
     undo[0].on_click(None)
+    _confirm_dialog(page)
     assert not any(isinstance(c, Video) for c in _walk_visible(screen.root_ctrl))
     assert "p01·0" in _texts(screen.root_ctrl)
 
@@ -476,6 +517,7 @@ def test_a_pick_or_a_rollback_after_approve_withdraws_the_approval(screen):
     screen.build()
     undo = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     undo[0].on_click(None)
+    _confirm_dialog(page)
     assert screen.locks()["approved"] is False
 
 
@@ -526,3 +568,7 @@ def test_insert_between_same_scene_fragments_adds_fragment_and_shifts_clips(scre
     assert screen.locks()["locks"]["2:0"] == {"panels": [{"page": 1, "panel": 0}]}
     assert {c["beat"] for c in screen.clips()} == {"2:2", "3:0"}
 
+
+def _confirm_dialog(page):
+    """Deleting a clip now asks first ("Xóa MP4?"): press the dialog's confirm action."""
+    page.dialogs[-1].actions[-1].on_click(None)
