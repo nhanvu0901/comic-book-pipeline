@@ -23,7 +23,7 @@ from ..bridge import (asset_src,
 from ..clipboard import BLOCKED_HINT, copy_text
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..project_log import stage_log_path
-from ..state import AppState, load_state, save_state
+from ..state import STAGE_NAMES, AppState, load_state, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS,
     TEXT_MUTED, TEXT_PRIMARY, WARN,
@@ -710,7 +710,7 @@ def build(
     return_button.key = "return-to-stage1"
 
     right = ft.Column([
-        ft.Text("STEP 3 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 3 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Download Comic", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Downloads comic pages from batcave.biz using the URL found in Stage 1. "

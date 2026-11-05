@@ -63,7 +63,7 @@ from ..bridge import (
     verify_scout_selection,
 )
 from ..layout import primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
@@ -2095,7 +2095,7 @@ def build(
     def _build_right_rail_controls(*, key_prefix: str = "") -> list[ft.Control]:
         session = session_holder[0]
         controls: list[ft.Control] = [
-            ft.Text("STEP 1 OF 8", size=10, color=TEXT_MUTED, selectable=True),
+            ft.Text(f"STEP 1 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED, selectable=True),
             ft.Text("Research Scout", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY, selectable=True),
             ft.Text(
                 "Collect source-backed comic candidates, review evidence, "

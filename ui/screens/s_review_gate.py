@@ -142,7 +142,7 @@ from ..custom_image import (
 )
 from ..intro_import import import_intro_image, remove_intro_image
 from ..layout import primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
@@ -2713,7 +2713,7 @@ def build(
     _refresh_capcut_info()
 
     right = ft.Column([
-        ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 5 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Check each line's research source and select 2-5 of the best panels "
@@ -2851,7 +2851,7 @@ def _empty_state(page: ft.Page, state: AppState, on_go, on_state_change) -> ft.C
         alignment=ft.Alignment.CENTER, expand=True,
     )
     right = ft.Column([
-        ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 5 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Nothing to review — generate review/candidates.json first.",
                 size=12, color=TEXT_MUTED),

@@ -1,0 +1,230 @@
+{
+  "name": "rook_v1",
+  "label": "Rook — quạ đeo kính một tròng",
+  "version": 1,
+  "canvas": [
+    640,
+    640
+  ],
+  "bodies": {
+    "stand": {
+      "file": "bodies/stand.png",
+      "front": null,
+      "head_anchor": [
+        320,
+        237
+      ],
+      "feet_y": 620,
+      "center_x": 320,
+      "label": "Đứng"
+    },
+    "point": {
+      "file": "bodies/point.png",
+      "front": null,
+      "head_anchor": [
+        320,
+        237
+      ],
+      "feet_y": 620,
+      "center_x": 320,
+      "label": "Chỉ tay"
+    },
+    "arms_up": {
+      "file": "bodies/arms_up.png",
+      "front": null,
+      "head_anchor": [
+        320,
+        237
+      ],
+      "feet_y": 620,
+      "center_x": 320,
+      "label": "Giơ hai tay"
+    },
+    "chin": {
+      "file": "bodies/chin.png",
+      "front": "bodies/chin_front.png",
+      "head_anchor": [
+        320,
+        237
+      ],
+      "feet_y": 620,
+      "center_x": 320,
+      "label": "Chống cằm"
+    },
+    "book": {
+      "file": "bodies/book.png",
+      "front": null,
+      "head_anchor": [
+        320,
+        237
+      ],
+      "feet_y": 620,
+      "center_x": 320,
+      "label": "Cầm truyện"
+    },
+    "shrug": {
+      "file": "bodies/shrug.png",
+      "front": null,
+      "head_anchor": [
+        320,
+        247
+      ],
+      "feet_y": 620,
+      "center_x": 320,
+      "label": "Nhún vai"
+    },
+    "arms_crossed": {
+      "file": "bodies/arms_crossed.png",
+      "front": null,
+      "head_anchor": [
+        320,
+        237
+      ],
+      "feet_y": 620,
+      "center_x": 320,
+      "label": "Khoanh tay"
+    }
+  },
+  "faces": {
+    "happy": {
+      "file": "faces/happy.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Cười híp"
+    },
+    "shock": {
+      "file": "faces/shock.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Giật mình"
+    },
+    "suspicious": {
+      "file": "faces/suspicious.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Nghi ngờ"
+    },
+    "sleepy": {
+      "file": "faces/sleepy.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Buồn ngủ"
+    },
+    "sly": {
+      "file": "faces/sly.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Cười khẩy"
+    },
+    "angry": {
+      "file": "faces/angry.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Tức giận"
+    },
+    "sad": {
+      "file": "faces/sad.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Buồn"
+    },
+    "shout": {
+      "file": "faces/shout.png",
+      "anchor": [
+        180,
+        130
+      ],
+      "label": "Hét"
+    }
+  },
+  "accessories": {
+    "monocle": {
+      "file": "accessories/monocle.png",
+      "anchor": [
+        30,
+        90
+      ],
+      "label": "Kính một tròng",
+      "default": true
+    },
+    "hat": {
+      "file": "accessories/hat.png",
+      "anchor": [
+        180,
+        210
+      ],
+      "label": "Mũ phớt",
+      "default": false
+    }
+  },
+  "presets": {
+    "neutral": {
+      "body": "stand",
+      "face": "happy",
+      "label": "Bình thường"
+    },
+    "point": {
+      "body": "point",
+      "face": "happy",
+      "label": "Chỉ vào tranh"
+    },
+    "shock": {
+      "body": "arms_up",
+      "face": "shock",
+      "label": "Giật mình"
+    },
+    "think": {
+      "body": "chin",
+      "face": "suspicious",
+      "label": "Suy nghĩ"
+    },
+    "sly": {
+      "body": "arms_crossed",
+      "face": "sly",
+      "label": "Cười khẩy"
+    },
+    "explain": {
+      "body": "book",
+      "face": "happy",
+      "label": "Giải thích"
+    },
+    "shrug": {
+      "body": "shrug",
+      "face": "sad",
+      "label": "Nhún vai"
+    },
+    "angry": {
+      "body": "arms_crossed",
+      "face": "angry",
+      "label": "Tức giận"
+    },
+    "sleepy": {
+      "body": "stand",
+      "face": "sleepy",
+      "label": "Buồn ngủ"
+    },
+    "shout": {
+      "body": "arms_up",
+      "face": "shout",
+      "label": "Hét"
+    }
+  },
+  "default": {
+    "body": "stand",
+    "face": "happy"
+  }
+}

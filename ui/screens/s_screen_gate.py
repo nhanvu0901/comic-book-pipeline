@@ -33,7 +33,7 @@ from stages.stage_5.screen_beats import ScreenBeat, screen_beat_rows
 from ..bridge import run_blocking
 from ..custom_image import add_custom_image
 from ..layout import primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
@@ -461,7 +461,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 5 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats (Screen)", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text("Không có panel truyện ở mode này. Chọn clip MP4 / ảnh cho từng beat, rồi Approve.",
                 size=12, color=TEXT_MUTED),
