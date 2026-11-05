@@ -12,7 +12,7 @@
 
 **Grimframe** turns a comic-book idea into a finished vertical Short: it scouts a story worth telling,
 downloads the issue, finds every panel, writes a fact-grounded script, voices it, and renders a
-captioned 9:16 video with music. A desktop/LAN UI walks each stage; every stage also runs from the CLI.
+9:16 video with music, ready for captions in CapCut. A desktop/LAN UI walks each stage; every stage also runs from the CLI.
 
 ---
 
@@ -29,7 +29,8 @@ captioned 9:16 video with music. A desktop/LAN UI walks each stage; every stage 
 | **3 · Script** | Splits the story into beats and writes the narration for the chosen format, grounded on the beats' page/panel refs. | `stages/stage_3/` |
 | **✓ · Review** | Master hand-picks the panel (or a custom image / clip) for every beat before anything renders. | `stages/review_gate.py`, `ui/screens/s_review_gate.py` |
 | **4 · Voice** | Synthesizes the narration — local Chatterbox voice clone by default, Cartesia or Resemble on request — and times every beat. Narration is saved in spoken form (`issue fifteen`, never `#15`) so the voice never trips on digits or symbols. | `stages/stage_4/` |
-| **5 · Render** | Builds Ken Burns shots per beat, word-by-word captions, optional video clips, music bed / CapCut music sync, and writes `final.mp4`. | `stages/stage_5/`, `stages/music_sync.py` |
+| **5 · Render** | Builds Ken Burns shots per beat, optional video clips, music bed / CapCut music sync, and writes `final.mp4`. No burned-in captions — those are added later in CapCut. | `stages/stage_5/`, `stages/music_sync.py` |
+| **+ · Mascot** | Optional last step (UI step 9): places the Rook sticker narrator on a still preview, cues its poses and moves on a timeline, and redraws `final.mp4` from a kept clean copy. | `stages/mascot/`, `ui/screens/s9_mascot.py` |
 
 ## Formats
 
@@ -103,7 +104,7 @@ comic-book-pipeline/
 │   ├── stage_2/            # download, Magi panel detection, OCR/VLM
 │   ├── stage_3/            # beats + narration per format
 │   ├── stage_4/            # TTS (Chatterbox / Cartesia / Resemble) + beat timing
-│   ├── stage_5/            # shots, captions, clips, audio mix, final render
+│   ├── stage_5/            # shots, clips, audio mix, final render
 │   ├── review_gate.py      # per-beat panel locks
 │   └── music_sync.py       # CapCut reference-track beat sync
 ├── ui/                     # Flet app (screens per stage, review gate)
