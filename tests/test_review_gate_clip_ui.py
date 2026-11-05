@@ -405,7 +405,7 @@ def test_desktop_mode_disables_mp4_button_with_tooltip_and_snack_and_keeps_rollb
 
     undo_buttons[0].on_click(None)
 
-    _confirm_dialog(page)
+    _confirm_dialog(screen.page)
     assert [c["beat"] for c in screen.clips()] == ["3:0"], "rollback still removes clip in desktop mode"
     assert "2:0" in screen.locks()["locks"], "panel lock restored"
 
@@ -416,7 +416,7 @@ def test_rollback_removes_only_that_beats_clip(screen):
     undo = [c for c in _walk(root) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     assert len(undo) == 2
     undo[0].on_click(None)
-    _confirm_dialog(page)
+    _confirm_dialog(screen.page)
     assert [c["beat"] for c in screen.clips()] == ["3:0"]
     assert "2:0" in screen.locks()["locks"]                          # the panel locks are untouched
     undo_left = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
@@ -444,7 +444,7 @@ def test_selected_area_shows_picked_mp4_then_restores_comic_panel(screen):
             if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     # The first rollback belongs to the newly picked 2:0 beat in video order.
     undo[0].on_click(None)
-    _confirm_dialog(page)
+    _confirm_dialog(screen.page)
     assert not any(isinstance(c, Video) for c in _walk_visible(screen.root_ctrl))
     assert "p01·0" in _texts(screen.root_ctrl)
 
@@ -483,7 +483,13 @@ def test_the_pick_listener_repaints_the_card_and_is_not_stacked(screen):
     screen.build(other)
     assert web_routes.listener_count() == 2                          # a second browser tab is its own
 
-    # a finished pick for this project paints the MP4 chip on its card (payload carries "project")
+    # a finished pick for this project paints the MP4 chip on its card (payload carries "project").
+    # The manifest is authoritative (a late "ready" after a delete must not resurrect the chip),
+    # so the pick lands in clips.json first, exactly as a real pick job commits it.
+    manifest = screen.root / "review" / "clips" / "clips.json"
+    doc = json.loads(manifest.read_text())
+    doc["clips"].append({"id": "ccccccccccc", "beat": "3:1", "file": "review/clips/c.mp4", "start": 0.0})
+    manifest.write_text(json.dumps(doc))
     web_routes._broadcast_moment_picked({"project": "qa", "state": "ready", "beat": "3:1",
                                          "id": "ccccccccccc", "file": "review/clips/c.mp4",
                                          "start": 0.0})
@@ -517,7 +523,7 @@ def test_a_pick_or_a_rollback_after_approve_withdraws_the_approval(screen):
     screen.build()
     undo = [c for c in _walk(screen.root_ctrl) if isinstance(c, ft.IconButton) and "Hủy MP4" in str(c.tooltip or "")]
     undo[0].on_click(None)
-    _confirm_dialog(page)
+    _confirm_dialog(screen.page)
     assert screen.locks()["approved"] is False
 
 

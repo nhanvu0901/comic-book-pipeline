@@ -377,5 +377,6 @@ def test_the_comic_review_gate_hands_a_screen_project_to_this_screen(project, mo
 
 
 def _confirm_dialog(page):
-    """Deleting a clip now asks first ("Xóa MP4?"): press the dialog's confirm action."""
-    page.dialogs[-1].actions[-1].on_click(None)
+    """Deleting a clip now asks first ("Xóa MP4?"): press the dialog's confirm action.
+    This file's page is a MagicMock, so the dialog is the last show_dialog argument."""
+    page.show_dialog.call_args.args[0].actions[-1].on_click(None)
