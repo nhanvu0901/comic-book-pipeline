@@ -148,8 +148,8 @@ def test_missing_citation_is_repaired_deterministically(proj, monkeypatch):
     nar, _ = _run(proj, monkeypatch, [bad, bad])
     first = " ".join(s.text for s in nar.scenes if s.beat_id == 1)
     second = " ".join(s.text for s in nar.scenes if s.beat_id == 2)
-    assert "Deep Station" in first and "2011" in first
-    assert "Cold Orbit" in second and "2016" in second
+    assert "Deep Station" in first and "twenty eleven" in first
+    assert "Cold Orbit" in second and "twenty sixteen" in second
     # the repaired scene keeps verbatim beats that cover its whole text
     for s in nar.scenes:
         assert _tokens(" ".join(b["text"] for b in s.visual_beats)) == _tokens(s.text)
@@ -266,10 +266,11 @@ def test_validator_accepts_title_without_colon_or_with_spoken_subtitle():
                 if "cite" in i]
 
 
-def test_validator_flags_issue_numbers():
+def test_validator_does_not_hard_fail_on_a_leftover_hash():
+    # The save-time spoken-text normaliser cleans a stray "#"; the validator must not burn a retry on it.
     scenes = [_scene("Alice Park in Deep Station (2011) #5."), _scene("a"),
               _scene("Bob Chen in Cold Orbit (2016)."), _scene("b")]
-    assert any("#" in i for i in sq._validate_screen_scenes(scenes, _items(), "list", band=(1, 999), scene_max=42))
+    assert not any("#" in i for i in sq._validate_screen_scenes(scenes, _items(), "list", band=(1, 999), scene_max=42))
 
 
 def test_explain_final_scene_must_state_the_answer_and_list_language_is_banned():
@@ -316,7 +317,7 @@ def test_llm_failure_uses_the_deterministic_script_with_citations(proj, monkeypa
     assert nar.scenes[0].is_intro and nar.scenes[-1].is_outro
     assert len(nar.scenes) == 1 + 2 * 2 + 1
     body = " ".join(s.text for s in nar.scenes)
-    for needle in ("Deep Station", "2011", "Cold Orbit", "2016"):
+    for needle in ("Deep Station", "twenty eleven", "Cold Orbit", "twenty sixteen"):
         assert needle in body
     for s in nar.scenes:
         assert _tokens(" ".join(b["text"] for b in s.visual_beats)) == _tokens(s.text)

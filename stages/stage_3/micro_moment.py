@@ -36,6 +36,7 @@ from typing import Callable
 from config import (CREATIVE_LLM_MODELS, ENABLE_TITLE_BANNER, FIDELITY_LLM_MODELS,
                     OPENROUTER_MODEL)
 from .schema import Beat, Glossary, Narration
+from .spoken_rules import with_spoken_rules
 from ._llm import call_with_chain
 from .beat_split import _verbatim_ok, split_hook_fragments
 from .write_script import (
@@ -683,7 +684,8 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
         ✓ "Peter screams at his own reflection."
         ✓ "Eddie shouts a mocking goodbye as he leaps."
         ✗ any quotation marks around a character's own words, however short or dramatic.
-      Keep the narration 100% narrator-voice.
+      Keep the narration 100% narrator-voice. (This overrides the spoken-text rules' allowance for a
+      short quoted line: in this mode there are no quotation marks at all.)
     - Scene 1 adds a NEW sourced fact after the hook: the necessary setup, the
       first reaction to the odd event, or its mechanism. Never paraphrase the hook
       or start a separate lore lecture. A setup-led hook can leave the result for
@@ -697,7 +699,7 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
   Pick ONE style for the LAST scene and declare it in "ending_style":
     - "thesis": ONE sentence stating what the verified moment MEANS, when the
       story sources support that interpretation.
-    - "hardcut": the last scene IS the payoff/mic-drop line itself — your own
+    - "hardcut": the last scene IS the payoff/mic-drop line itself (never under four words) — your own
       narration line, never a character's quoted words — no separate meaning
       line, no landing, the video cuts off right on it.
     - "question": ONE specific question raised by the verified result (never a
@@ -726,6 +728,7 @@ HARD RULES:
 
 Return shape:
 {"hook": "<specific source-backed opening>", "ending_style": "thesis|hardcut|question", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>"], "connective": null, "beat_id": <id>}, ...]}"""
+_MICRO_WRITE_SYSTEM = with_spoken_rules(_MICRO_WRITE_SYSTEM, "Return shape:")
 
 
 def _window_block(window: list[Beat], peak_idx: int) -> str:

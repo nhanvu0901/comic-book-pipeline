@@ -44,6 +44,7 @@ from config import PROJECTS_ROOT
 from stages.user_errors import MissingInputError
 from ..stage_3._llm import call_with_chain
 from ..stage_3.schema import Narration, Scene
+from ..stage_3.spoken_rules import with_spoken_rules
 
 # ── Longform's own constants. Source: @griefspeaking measurement, 2026-07-29. ────────────────
 # NOTHING here is shared with the Short modes; see the ISOLATION note above.
@@ -107,7 +108,7 @@ HOW TO WRITE
    {short_pct}% of your sentences at 8 words or fewer, and {long_pct}% at 25 or more. A long
    sentence packs two or three events into one breath; a short one lands a turn. Do not write
    every sentence the same size — that flatness is the single most common failure here.
-4) About every {op_every} sentences, add ONE short sentence of YOUR OWN reaction to what just
+4) About every {op_every} sentences, add ONE short sentence (at least four words) of YOUR OWN reaction to what just
    happened. It must be its OWN sentence. Do NOT tack an opinion onto a story sentence as a
    trailing clause like ", which is unsettling" — that is the wrong shape.
 5) Use characters' names. Re-name the lead roughly every {name_every} words so the listener never
@@ -129,6 +130,7 @@ that takes.
 
 Return ONLY JSON:
 {{"sentences": ["...", "..."], "gist": "one plain line saying what changed on this page"}}"""
+_SYSTEM = with_spoken_rules(_SYSTEM)
 
 
 _COLD_OPEN_SYSTEM = """You write the cold open of a long-form comic-story video.
@@ -139,7 +141,7 @@ that plays before the story starts.
 Follow this shape — it is the shape the reference channel uses in every single video:
 1) Name the version of this story or these characters that everyone already knows. One sentence.
 2) Turn it over. In quick successive clauses, say what those familiar figures are in THIS version
-   instead. Three to five of them, each short, stacked.
+   instead. Three to five of them, each short but a full clause, linked with commas, never bare fragments.
 3) One sentence stating the premise of this world.
 4) A title-drop sentence: this is <TITLE> like you have not seen it.
 5) Say plainly that you are about to tell it from start to finish, then stop.
@@ -153,6 +155,7 @@ RULES
 - Do not mention panels, pages, or the artwork.
 
 Return ONLY JSON: {{"lines": ["...", "..."]}} — one entry per spoken sentence."""
+_COLD_OPEN_SYSTEM = with_spoken_rules(_COLD_OPEN_SYSTEM)
 
 
 _OUTRO_SYSTEM = """You write the closing of a long-form comic-story video.
@@ -172,6 +175,7 @@ RULES
 - Do not summarise the plot again. It just finished.
 
 Return ONLY JSON: {{"lines": ["...", "..."]}} — one entry per spoken sentence."""
+_OUTRO_SYSTEM = with_spoken_rules(_OUTRO_SYSTEM)
 
 # Cold open 124s/396 words on their single-work video (the format closest to ours); the
 # anthology videos run 53-73s. We target the shorter half so the story starts sooner.

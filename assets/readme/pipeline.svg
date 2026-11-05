@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="270" viewBox="0 0 1200 270" role="img" aria-labelledby="t d">
+  <title id="t">Pipeline stages</title>
+  <desc id="d">Scout, panels, script, review, voice and render light up in turn while a spark travels along the line.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0f0f15"/>
+      <stop offset="1" stop-color="#171226"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff3d3d"/>
+      <stop offset="1" stop-color="#ffb300"/>
+    </linearGradient>
+    <radialGradient id="spark">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".4" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff3d3d" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <style>
+    .card  { fill: #1d1a2b; stroke: #3b3650; stroke-width: 2; animation: glow 6s ease-in-out infinite; }
+    .n2 { animation-delay: 1s; } .n3 { animation-delay: 2s; } .n4 { animation-delay: 3s; } .n5 { animation-delay: 4s; } .n6 { animation-delay: 5s; }
+    .flow  { stroke-dasharray: 8 10; animation: dash 1.2s linear infinite; }
+    .spark { animation: travel 6s linear infinite; }
+    .label { font-family: system-ui,-apple-system,'Segoe UI',sans-serif; fill: #f2f0f8; font-size: 18px; font-weight: 700; }
+    .small { font-family: system-ui,-apple-system,'Segoe UI',sans-serif; fill: #a9a4bd; font-size: 13px; }
+    .num   { font-family: 'Arial Black',system-ui,sans-serif; font-size: 13px; fill: #0f0f15; }
+    @keyframes glow { 0%,100% { stroke: #3b3650; fill: #1d1a2b; } 8%,16% { stroke: #ffb300; fill: #2c2338; } 26% { stroke: #3b3650; fill: #1d1a2b; } }
+    @keyframes dash { to { stroke-dashoffset: -18; } }
+    @keyframes travel { from { transform: translateX(0px); } to { transform: translateX(960px); } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+
+  <rect width="1200" height="270" rx="18" fill="url(#bg)"/>
+
+  <line x1="120" y1="70" x2="1080" y2="70" stroke="#2a2638" stroke-width="6" stroke-linecap="round"/>
+  <line x1="120" y1="70" x2="1080" y2="70" stroke="url(#line)" stroke-width="3" class="flow"/>
+  <circle cx="120" cy="70" r="13" fill="url(#spark)" class="spark"/>
+
+  <g>
+    <rect class="card n1" x="40"  y="104" width="160" height="130" rx="14"/>
+    <rect class="card n2" x="232" y="104" width="160" height="130" rx="14"/>
+    <rect class="card n3" x="424" y="104" width="160" height="130" rx="14"/>
+    <rect class="card n4" x="616" y="104" width="160" height="130" rx="14"/>
+    <rect class="card n5" x="808" y="104" width="160" height="130" rx="14"/>
+    <rect class="card n6" x="1000" y="104" width="160" height="130" rx="14"/>
+  </g>
+
+  <g>
+    <circle cx="120" cy="70" r="16" fill="#ff3d3d"/><text class="num" x="120" y="75" text-anchor="middle">1</text>
+    <circle cx="312" cy="70" r="16" fill="#ff5a33"/><text class="num" x="312" y="75" text-anchor="middle">2</text>
+    <circle cx="504" cy="70" r="16" fill="#ff7a2e"/><text class="num" x="504" y="75" text-anchor="middle">3</text>
+    <circle cx="696" cy="70" r="16" fill="#ff9124"/><text class="num" x="696" y="75" text-anchor="middle">✓</text>
+    <circle cx="888" cy="70" r="16" fill="#ffa31a"/><text class="num" x="888" y="75" text-anchor="middle">4</text>
+    <circle cx="1080" cy="70" r="16" fill="#ffb300"/><text class="num" x="1080" y="75" text-anchor="middle">5</text>
+  </g>
+
+  <g text-anchor="middle">
+    <text class="label" x="120" y="142">Scout</text>
+    <text class="small" x="120" y="166">You.com research</text>
+    <text class="small" x="120" y="184">issue verification</text>
+    <text class="small" x="120" y="202">done-ledger dedup</text>
+
+    <text class="label" x="312" y="142">Panels</text>
+    <text class="small" x="312" y="166">batcave download</text>
+    <text class="small" x="312" y="184">Magi panel detection</text>
+    <text class="small" x="312" y="202">OCR + VLM notes</text>
+
+    <text class="label" x="504" y="142">Script</text>
+    <text class="small" x="504" y="166">beats → narration</text>
+    <text class="small" x="504" y="184">recap · micro · Q&amp;A</text>
+    <text class="small" x="504" y="202">fact-grounded</text>
+
+    <text class="label" x="696" y="142">Review</text>
+    <text class="small" x="696" y="166">hand-pick panels</text>
+    <text class="small" x="696" y="184">lock clips / images</text>
+    <text class="small" x="696" y="202">per beat</text>
+
+    <text class="label" x="888" y="142">Voice</text>
+    <text class="small" x="888" y="166">Chatterbox (local)</text>
+    <text class="small" x="888" y="184">Cartesia · Resemble</text>
+    <text class="small" x="888" y="202">beat timing</text>
+
+    <text class="label" x="1080" y="142">Render</text>
+    <text class="small" x="1080" y="166">9:16 Ken Burns shots</text>
+    <text class="small" x="1080" y="184">captions · music sync</text>
+    <text class="small" x="1080" y="202">final.mp4</text>
+  </g>
+</svg>

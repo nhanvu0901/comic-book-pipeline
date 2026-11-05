@@ -203,6 +203,9 @@ def save_narration(
     root = get_project_dirs(project_name)["root"]
     path = root / "narration.json"
     data = narration.to_dict()
+    # text = speech: store the spoken form so Stage 4 timing/word counts match what is said.
+    from utils.spoken_text import spoken_narration_dict
+    spoken_narration_dict(data)
     from .ending import ensure_subscribe_cta
     ensure_subscribe_cta(data)
     _enrich_scenes_with_panel_metadata(data, root, log)

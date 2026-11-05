@@ -27,6 +27,17 @@ from stages.user_errors import ScriptMappingError
 from .beat_split import split_hook_fragments, _verbatim_ok
 from .pipeline import load_inputs, filter_story_pages
 from .provided_narration import split_sentences
+from .spoken_rules import SPOKEN_TEXT_RULES
+
+SPOKEN_RULES_PLACEHOLDER = "{{SPOKEN_TEXT_RULES}}"
+
+
+def fill_spoken_rules(rendered: str) -> str:
+    """Put the shared SPOKEN_TEXT_RULES block into a rendered writer prompt: at the template's
+    {{SPOKEN_TEXT_RULES}} placeholder, or appended when a (fallback) template has none."""
+    if SPOKEN_RULES_PLACEHOLDER in rendered:
+        return rendered.replace(SPOKEN_RULES_PLACEHOLDER, SPOKEN_TEXT_RULES)
+    return rendered.rstrip("\n") + "\n\n" + SPOKEN_TEXT_RULES + "\n"
 
 
 QA_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_qa_writer_template.md"
@@ -518,6 +529,8 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
             rendered = rendered.replace("{{STORY_CONTEXT}}", f"{story_context_block}\n")
         else:
             rendered = rendered.replace("{{STORY_CONTEXT}}\n", "").replace("{{STORY_CONTEXT}}", "")
+
+    rendered = fill_spoken_rules(rendered)
 
     # Save to project folder as <project_name>_writer_prompt.md
     out_path = root / f"{project_name}_writer_prompt.md"

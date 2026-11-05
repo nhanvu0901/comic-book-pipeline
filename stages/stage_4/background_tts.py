@@ -6,7 +6,7 @@ chunk, so (a) every beat can show its exact length — the length a picked clip 
 
 It reproduces Stage 4's Chatterbox path, not an approximation of it:
   * NORMALISE  stages.stage_4.pipeline._normalize_for_tts over the whole narration text,
-  * CHUNK      chatterbox_tts._chunks (one chunk per sentence, <= 320 chars) over that text,
+  * CHUNK      chatterbox_tts._chunks (one chunk per sentence, <= 280 chars, short ones merged) over that text,
   * ATEMPO     config.POST_ATEMPO (POST_ATEMPO_LONGFORM for longform modes), applied to each chunk
                before it is cached — the atempo is part of the cache key,
   * WORDS      chatterbox_tts._even_words spreads each chunk's words over its measured length.
