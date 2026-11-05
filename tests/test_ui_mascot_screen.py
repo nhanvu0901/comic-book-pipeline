@@ -28,6 +28,13 @@ from ui.state import STAGE_NAMES, AppState
 
 ROOT = Path(__file__).resolve().parents[1]
 DURATION = 10.0
+# the real engine functions, captured before any fixture swaps them for fakes
+_REAL = {
+    mkit: {n: getattr(mkit, n) for n in ("list_kits", "load_kit", "resolve_pose",
+                                         "sprite_metrics", "sprite_png")},
+    msuggest: {"suggest_cues": msuggest.suggest_cues},
+    mmotion: {n: getattr(mmotion, n) for n in ("build_track", "visible_intervals")},
+}
 
 
 def _walk(control, depth: int = 0):
@@ -419,3 +426,66 @@ def test_save_channel_defaults_writes_no_cues(env, tmp_path):
     _button(root, "Lưu làm mặc định cho kênh").on_click(None)
     data = json.loads((tmp_path / "channel_defaults.json").read_text(encoding="utf-8"))
     assert "cues" not in data
+
+
+# ── follow-ups from the live web test ────────────────────────────────────────────────────
+def test_exit_cue_ghost_uses_the_position_before_it(env):
+    cfg = mcfg.MascotConfig(position=mcfg.Position("bottom_left", 0.2, 1.0))
+    cfg.cues = [mcfg.Cue(t=1.0, move="rise", position=mcfg.Position("custom", 0.7, 0.9)),
+                mcfg.Cue(t=4.0, move="sink"),
+                mcfg.Cue(t=6.0, move="rise")]
+    plan = s9.preview_plan(cfg, env.kit, 2.0)             # active = rise, ghost = sink
+    sink_ghost = plan["ghosts"][0]
+    assert (sink_ghost["x"], sink_ghost["y"]) == (0.7, 0.9)   # not the global 0.2 / 1.0
+    plan = s9.preview_plan(cfg, env.kit, 4.5)             # the active cue is the exit itself
+    assert (plan["active"]["x"], plan["active"]["y"]) == (0.7, 0.9)
+
+
+def test_close_cues_get_separate_chip_rows(env):
+    root = _build(env)
+    for t in (5.2, 5.3):                           # with the sink at 5 s: 3 cues inside one chip width
+        _by_key(root, "timeline-detector").on_tap_down(_tap(t / DURATION * s9.TL_W))
+        _button(root, "+ Cue tại đây").on_click(None)
+    chips = [c for c in _walk(root) if str(getattr(c, "key", "")).startswith("chip-")]
+    by_row = {}
+    for c in chips:
+        by_row.setdefault(c.top, []).append(c.left)
+    assert len(by_row) >= 3
+    for lefts in by_row.values():
+        lefts.sort()
+        assert all(b - a >= s9.CHIP_W for a, b in zip(lefts, lefts[1:]))
+
+
+def test_a_closed_session_is_ignored(env):
+    root = _build(env)
+
+    def dead(*a, **k):
+        raise AttributeError("'NoneType' object has no attribute 'loop'")
+    env.page.run_task = dead
+    slider = _by_key(root, "cfg-size")
+    slider.on_change(SimpleNamespace())            # schedules a save + preview: must not raise
+    _by_key(root, "timeline-detector").on_tap_down(_tap(100))
+
+
+def test_layout_constants_fit_a_900px_window():
+    assert (s9.PREVIEW_W, s9.PREVIEW_H) == (315, 560)
+
+
+def test_the_screen_works_with_the_real_engine(env, monkeypatch):
+    """Real kit, sprites, motion and suggester; only the ffmpeg-backed calls stay faked."""
+    for mod, names in _REAL.items():
+        for n, fn in names.items():
+            monkeypatch.setattr(mod, n, fn)
+    monkeypatch.setattr(mrender, "frame_at", lambda p, t, *, width=540: _png(
+        Path(p) / "mascot" / "cache" / "frames" / f"{t:.3f}.png"))
+    monkeypatch.setattr(mtimeline, "timeline_data", lambda p: {
+        "duration": 20.0, "cuts": [4.0, 9.0], "scenes": [],
+        "beats": [{"id": "b", "function": "HOOK", "name": "h", "t": 0.5}], "words": []})
+    monkeypatch.setattr(mtimeline, "thumb_strip_png", lambda p, w, h: _png(
+        Path(p) / "mascot" / "cache" / "t.png"))
+    monkeypatch.setattr(mtimeline, "waveform_png", lambda p, w, h: _png(
+        Path(p) / "mascot" / "cache" / "w.png"))
+    root = _build(env)
+    assert _by_key(root, "sprite-active").visible
+    assert _saved(env)["cues"]
+    assert (env.pdir / "mascot" / "cache" / "sprites").glob("*.png")

@@ -40,16 +40,18 @@ from ..theme import (
 )
 
 # ── geometry ─────────────────────────────────────────────────────────────────────────────
-PREVIEW_W, PREVIEW_H = 405, 720            # 9:16 still preview
+PREVIEW_W, PREVIEW_H = 315, 560            # 9:16 still preview (fits a 900 px window)
 FRAME_W = 540                              # width asked from render.frame_at
-TL_W, TL_H = 760, 130                      # timeline
+TL_W = 760                                 # timeline
+CHIP_TOP, CHIP_ROW_H, CHIP_ROWS = 90, 22, 3     # chips are packed greedily into up to 3 rows
+TL_H = CHIP_TOP + CHIP_ROWS * CHIP_ROW_H        # tallest the timeline gets
 FPS = 30.0
 SNAP_Y = 0.02                              # feet within 2 % of the bottom edge → y = 1.0
 SNAP_X = 0.03                              # within 3 % of a preset x → that x
 GHOST_OPACITY = 0.3
 PREVIEW_DEBOUNCE = 0.12                    # seconds; module level so tests can zero them
 SAVE_DEBOUNCE = 0.4
-CHIP_W, CHIP_H = 84, 26
+CHIP_W, CHIP_H = 84, 20
 HANDLE = 16
 
 _MOVE_ICON = {"rise": "▲", "peek": "◂", "pop": "✦", "hop": "↑", "tilt": "∠", "shake": "≈",
@@ -126,7 +128,16 @@ def pose_after(kit, cues: list, idx: int) -> tuple[str, str]:
     return mkit.resolve_pose(kit, body, face)
 
 
-def cue_position(cfg: mcfg.MascotConfig, cue) -> mcfg.Position:
+def cue_position(cfg: mcfg.MascotConfig, cue, cues: list | None = None) -> mcfg.Position:
+    """Where the sprite stands at `cue`. An EXIT cue (sink / slide_out) leaves from where the
+    mascot already is (the engine ignores the exit cue's own position), so it takes the
+    position in effect just before it."""
+    if cue is not None and cue.move in mcfg.MOVES_EXIT and cues is not None:
+        i = next((k for k, c in enumerate(cues) if c.id == cue.id), 0)
+        for prev in reversed(cues[:i]):
+            if prev.move not in mcfg.MOVES_EXIT:
+                return cue_position(cfg, prev, cues)
+        return cfg.position
     return cue.position if (cue is not None and cue.position is not None) else cfg.position
 
 
@@ -138,7 +149,7 @@ def preview_plan(cfg: mcfg.MascotConfig, kit, t: float) -> dict:
 
     def item(i: int) -> dict:
         body, face = pose_after(kit, cues, i)
-        pos = cue_position(cfg, cues[i])
+        pos = cue_position(cfg, cues[i], cues)
         return {"body": body, "face": face, "x": pos.x, "y": pos.y, "cue": cues[i].id}
 
     if idx >= 0:
@@ -237,7 +248,7 @@ def build(
         t=0.0, selected=None, tdata={"duration": 0.0, "cuts": [], "scenes": [], "beats": [],
                                       "words": []},
         intervals=[], token=0, save_token=0, gtoken=0, busy=False, drag=None, resize=None,
-        cdrag=None, cur=None, thumb="", wave="", static=[], tap_t=0.0,
+        cdrag=None, cur=None, closed=False, thumb="", wave="", static=[], tap_t=0.0,
     )
 
     # ── small utilities ──────────────────────────────────────────────────────────────────
@@ -283,6 +294,17 @@ def build(
         except Exception as ex:                               # noqa: BLE001
             fail("Lưu mascot.json lỗi", ex)
 
+    def spawn(fn, *args) -> bool:
+        """page.run_task that stays quiet when the browser session has already closed."""
+        if S.closed:
+            return False
+        try:
+            page.run_task(fn, *args)
+            return True
+        except Exception:                                     # noqa: BLE001
+            S.closed = True
+            return False
+
     async def _save_task(tok: int) -> None:
         await asyncio.sleep(SAVE_DEBOUNCE)
         if tok == S.save_token:
@@ -290,7 +312,7 @@ def build(
 
     def schedule_save() -> None:
         S.save_token += 1
-        page.run_task(_save_task, S.save_token)
+        spawn(_save_task, S.save_token)
 
     def rebuild_track() -> None:
         try:
@@ -413,7 +435,7 @@ def build(
 
     def schedule_preview() -> None:
         S.token += 1
-        page.run_task(_preview_task, S.token)
+        spawn(_preview_task, S.token)
 
     # ── sprite drag / resize ─────────────────────────────────────────────────────────────
     def _set_target_position(pos: mcfg.Position) -> None:
@@ -553,28 +575,28 @@ def build(
     def build_static() -> list[ft.Control]:
         ctl: list[ft.Control] = [ft.Container(width=TL_W, height=TL_H, bgcolor="#0e0e10")]
         if S.thumb:
-            ctl.append(ft.Image(src=asset_src(S.thumb), width=TL_W, height=40, left=0, top=0,
+            ctl.append(ft.Image(src=asset_src(S.thumb), width=TL_W, height=36, left=0, top=0,
                                 fit=ft.BoxFit.FILL))
         if S.wave:
-            ctl.append(ft.Image(src=asset_src(S.wave), width=TL_W, height=34, left=0, top=42,
+            ctl.append(ft.Image(src=asset_src(S.wave), width=TL_W, height=28, left=0, top=38,
                                 fit=ft.BoxFit.FILL))
         for t in S.tdata.get("cuts", []):
-            ctl.append(ft.Container(width=1, height=98, left=t_to_x(t), top=0,
+            ctl.append(ft.Container(width=1, height=87, left=t_to_x(t), top=0,
                                     bgcolor=ft.Colors.with_opacity(0.8, ft.Colors.WHITE)))
         for b in S.tdata.get("beats", []):
             ctl.append(ft.Container(
                 content=ft.Text(str(b.get("function") or b.get("name") or ""), size=8,
                                 color="#000000", no_wrap=True),
-                left=t_to_x(b.get("t", 0.0)), top=86, height=12, bgcolor=WARN,
+                left=t_to_x(b.get("t", 0.0)), top=75, height=12, bgcolor=WARN,
                 padding=ft.padding.symmetric(horizontal=3, vertical=0),
                 border_radius=2, tooltip=str(b.get("name") or "")))
         if words_cb.value:
             for w in S.tdata.get("words", []):
-                ctl.append(ft.Container(width=1, height=8, left=t_to_x(w.get("t", 0.0)), top=76,
+                ctl.append(ft.Container(width=1, height=8, left=t_to_x(w.get("t", 0.0)), top=66,
                                         bgcolor=TEXT_MUTED))
         return ctl
 
-    def _chip(cue) -> ft.Control:
+    def _chip(cue, row: int = 0) -> ft.Control:
         kit = K.kit
         face_part = kit.faces.get(cue.face) if cue.face else None
         face_txt = (face_part.label if face_part else cue.face) if cue.face else "="
@@ -592,7 +614,7 @@ def build(
             bgcolor=ACCENT if selected else BG_ELEVATED,
             border=ft.border.all(2 if cue.locked else 1, DANGER if cue.locked else BORDER),
         )
-        gd = ft.GestureDetector(content=box, left=min(t_to_x(cue.t), TL_W - CHIP_W), top=102,
+        gd = ft.GestureDetector(content=box, left=min(t_to_x(cue.t), TL_W - CHIP_W), top=CHIP_TOP + row * CHIP_ROW_H,
                                 key=f"chip-{cue.id}")
         cid = cue.id
 
@@ -645,10 +667,21 @@ def build(
 
     def rebuild_timeline() -> None:
         band[:] = [ft.Container(width=max(2.0, t_to_x(b) - t_to_x(a)), height=6, left=t_to_x(a),
-                                top=78, bgcolor=SUCCESS, border_radius=2)
+                                top=68, bgcolor=SUCCESS, border_radius=2)
                    for a, b in S.intervals]
         inner.controls = [*S.static, *band]
-        chips[:] = [_chip(c) for c in cfg.sorted_cues()]
+        # greedy rows: a chip goes in the first row whose last chip ends before it starts, so
+        # close cues never sit on top of each other (the last row takes any overflow)
+        row_end = [-1.0] * CHIP_ROWS
+        chips[:] = []
+        for c in cfg.sorted_cues():
+            left = min(t_to_x(c.t), TL_W - CHIP_W)
+            row = next((r for r in range(CHIP_ROWS) if left >= row_end[r] + 2), CHIP_ROWS - 1)
+            row_end[row] = left + CHIP_W
+            chips.append(_chip(c, row))
+        used = 1 + max((r for r in range(CHIP_ROWS) if row_end[r] >= 0), default=0)
+        h = CHIP_TOP + used * CHIP_ROW_H
+        tl_outer.height = inner.height = playhead.height = h
         tl_outer.controls = [tl_detector, *chips, playhead]
         update_time_labels()
 
@@ -839,7 +872,7 @@ def build(
 
     def schedule_grids() -> None:
         S.gtoken += 1
-        page.run_task(_grids_task, S.gtoken)
+        spawn(_grids_task, S.gtoken)
 
     def refresh_cue_panel() -> None:
         cue = selected_cue()
@@ -1035,7 +1068,7 @@ def build(
             fail("Gợi ý lỗi", ex)
 
     def on_suggest(_e):
-        page.run_task(_suggest_task)
+        spawn(_suggest_task)
 
     @safe("Xoá gợi ý lỗi")
     def on_clear_suggest(_e):
@@ -1077,7 +1110,7 @@ def build(
             fail("Xem thử lỗi", ex)
 
     def on_preview_clip(_e):
-        page.run_task(_preview_clip_task)
+        spawn(_preview_clip_task)
 
     def refresh_downloads() -> None:
         dl_box.controls = []
@@ -1122,10 +1155,10 @@ def build(
             fail("Render lỗi", ex)
 
     def on_render(_e):
-        page.run_task(_render_task, False)
+        spawn(_render_task, False)
 
     def on_disable(_e):
-        page.run_task(_render_task, True)
+        spawn(_render_task, True)
 
     # ── layout ───────────────────────────────────────────────────────────────────────────
     def section(title: str, *items: ft.Control) -> ft.Control:
@@ -1180,7 +1213,10 @@ def build(
         secondary_button("◀ frame", step(-1.0 / FPS)),
         secondary_button("frame ▶", step(1.0 / FPS)),
         secondary_button("+1 s", step(1.0)),
-    ], spacing=6, alignment=ft.MainAxisAlignment.CENTER)
+        time_text,
+        apply_all,
+    ], spacing=6, alignment=ft.MainAxisAlignment.CENTER,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER)
     tl_tools = ft.Row([
         secondary_button("+ Cue tại đây", on_add_cue, icon=ft.Icons.ADD),
         snap_cb, words_cb,
@@ -1191,14 +1227,12 @@ def build(
             ft.Container(
                 content=ft.Column([
                     ft.Row([stack], alignment=ft.MainAxisAlignment.CENTER),
-                    ft.Row([time_text], alignment=ft.MainAxisAlignment.CENTER),
                     nav_row,
-                    ft.Row([apply_all], alignment=ft.MainAxisAlignment.CENTER),
                     tl_tools,
                     ft.Row([tl_outer], scroll=ft.ScrollMode.AUTO),
                     video_slot,
-                ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=ft.padding.symmetric(horizontal=28, vertical=16),
+                ], spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.symmetric(horizontal=20, vertical=6),
             ),
         ],
         spacing=0, expand=True, scroll=ft.ScrollMode.AUTO,
@@ -1214,11 +1248,11 @@ def build(
     def _timeline_images() -> tuple[str, str]:
         thumb = wave = ""
         try:
-            thumb = str(mtimeline.thumb_strip_png(project_dir, TL_W, 40))
+            thumb = str(mtimeline.thumb_strip_png(project_dir, TL_W, 36))
         except Exception as ex:                               # noqa: BLE001
             push_log(f"Dải thumbnail lỗi: {format_exception(ex)}")
         try:
-            wave = str(mtimeline.waveform_png(project_dir, TL_W, 34))
+            wave = str(mtimeline.waveform_png(project_dir, TL_W, 28))
         except Exception as ex:                               # noqa: BLE001
             push_log(f"Sóng âm lỗi: {format_exception(ex)}")
         return thumb, wave
@@ -1257,7 +1291,7 @@ def build(
         page.update()
 
     words_cb.on_change = on_words_toggle
-    page.run_task(_init_task)
+    spawn(_init_task)
 
     return three_col(
         center, right, state=state, on_go=on_go,
