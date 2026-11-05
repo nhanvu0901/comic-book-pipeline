@@ -16,6 +16,7 @@ from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 from .story_architect import render_story_map_block, _tokens
 from .beat_split import _verbatim_ok, split_hook_fragments
+from .spoken_rules import with_spoken_rules
 
 
 # CALIBRATED FROM 3 REAL RENDERS (Resemble Carl voice + the default --atempo 1.35,
@@ -369,6 +370,7 @@ HARD RULES:
   - Prefer plain verbs and everyday words. Say it out loud before returning it.
 
 Return ONLY JSON, no markdown: {"archetype": "<one allowed archetype>", "intro_line": "..."}"""
+_INTRO_SYSTEM = with_spoken_rules(_INTRO_SYSTEM)
 
 
 def _fallback_hero(comic_context: dict) -> str:
@@ -570,6 +572,7 @@ HARD RULES:
     is rejected.
 
 Return ONLY JSON, no markdown: {"outro_line": "..."}"""
+_OUTRO_SYSTEM = with_spoken_rules(_OUTRO_SYSTEM)
 
 
 def generate_outro(
@@ -696,7 +699,7 @@ def _append_loop_tease(closure_text: str, tease: str) -> str:
 _LOOP_TEASE_SYSTEM = """You are LoopWriter. You write ONE short final clause for a YouTube Short retelling of a comic — spoken AFTER the closing line — that makes the viewer want to watch again.
 
 HARD RULES:
-  - 3-14 words, exactly ONE sentence.
+  - 5-14 words, exactly ONE sentence.
   - It POINTS FORWARD at the story's aftermath, irony, or unanswered weight — phrased as intrigue.
   - It MUST NOT state a NEW fact that the plot below does not support (no invented sequel, no made-up detail). It teases what was ALREADY implied.
   - NOT a question. No meta talk, no hashtags, no "subscribe", no comic title.
@@ -712,6 +715,7 @@ Examples (for OTHER comics — match the TONE, not the words):
   - "Some doors, once opened, never close."
 
 Return ONLY JSON, no markdown: {"loop_tease": "..."}"""
+_LOOP_TEASE_SYSTEM = with_spoken_rules(_LOOP_TEASE_SYSTEM)
 
 
 def generate_loop_tease(
@@ -753,7 +757,7 @@ def generate_loop_tease(
         except Exception:
             return False
         n = len(line.split())
-        return 3 <= n <= 14 and "?" not in line and "subscribe" not in line.lower()
+        return 4 <= n <= 14 and "?" not in line and "subscribe" not in line.lower()
 
     try:
         content, used = call_with_chain(
@@ -2336,7 +2340,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
         blindness over the risk of killing someone else ever again." (22w)
    - Short-line example (use sparingly, for the landing):
      ✓ "Even he can't control what material something changes into." (9w)
-     ✓ "Warda was furious." (3w)
+     ✓ "Warda was furious, and she let everyone know it." (9w)
    - **NO redundant consecutive scenes.** Each scene advances to a NEW moment —
      never restate the previous scene's action with a later frame.
    - Chain forward, never sideways: every clause must move the story ON. A chain that
@@ -2439,7 +2443,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
      ✓ "But Ben resented Reed, the friend whose accident had made him the Thing,
         for forgetting the anniversary."  (the turn + its grounded cause)
      ✗ "Then the symbiote abandoned the Lizard and rebonded with Ben."  (why Ben?)
-     ✓ "Then the symbiote abandoned the Lizard and reclaimed Ben — the broken host
+     ✓ "Then the symbiote abandoned the Lizard and reclaimed Ben, the broken host
         it had wanted all along."  (pays off the early 'perfect host' setup)
    SET UP a motive before it pays off: if a later turn relies on an earlier motive
    (the symbiote choosing Ben as its perfect host), PLANT that motive in the
@@ -2539,7 +2543,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - MIRROR: the FINAL story line (just before the outro credit) ties the twist back
      to the protagonist's defining trait or wound from the setup — "went looking for
      X, and found Y" shape, plain words, still what the final panel shows:
-       ✓ "Doom had gone looking for the face of creation, and found his own — a
+       ✓ "Doom had gone looking for the face of creation, and found his own, a
           universe masked, self-contained, and unknowable, made in his image."
    - LOOP-ECHO (do this): the final story line must REUSE, VERBATIM, at least one
      meaningful word from your HOOK (scene 1) — the same word, its meaning now flipped by
@@ -2603,7 +2607,8 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
    - No spelled-out ACRONYM names with periods (e.g. "M.Y.T.H.O.S."): read aloud they
      become letters one-by-one. Use the character's common, familiar name instead
      (e.g. "MODOK"). If a villain adopts an in-story acronym/title, still call them by
-     the recognizable name.
+     the recognizable name. The one exception is a short, familiar initialism the narrator
+     would say letter by letter: write it spaced out, like "F. B. I.".
 
 11) VOICE & RHYTHM — channel-calibrated from 219 reference Shorts
 
@@ -2684,7 +2689,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
    11i. SEED OF CURIOSITY — leave a small open loop in the MIDDLE
         In 2-3 of the MIDDLE scenes (not the hook, not the last two lines), END the scene
-        with a SHORT separate sentence (≤6 words) that dangles an unanswered thread — who,
+        with a SHORT separate sentence (4-6 words) that dangles an unanswered thread — who,
         why, or what's coming — so the viewer keeps watching to resolve it.
           ✓ "He had no idea who was watching."
           ✓ "The worst was still coming."
@@ -2695,9 +2700,9 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
    11j. BEAT-COMMENT — 1-2 deadpan narrator asides (NO MORE THAN TWO)
         Once or twice — at the midpoint turn and/or right before the big reveal — drop a
-        very short (≤6 words) standalone narrator aside with dry, confident attitude. It
+        very short (4-6 words) standalone narrator aside with dry, confident attitude. It
         comments on what just happened; it does NOT hedge and adds no new event.
-          ✓ "It doesn't." (after "he thought that would stop it")
+          ✓ "It did not work, of course." (after "he thought that would stop it")
           ✓ "And that's when everything went wrong."
         Plain words (rule 0). Use it AT MOST twice in the whole script — more and it turns
         into a gimmick. Like a seed, it is a second sentence on an existing beat's scene,
@@ -2723,6 +2728,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
         - The closing line needs no split — one fragment = its whole text.
 
 Return ONLY JSON. No prose, no markdown fences."""
+_WRITE_SYSTEM = with_spoken_rules(_WRITE_SYSTEM)
 
 
 def _saga_clarity_block(comic_context: dict) -> str:

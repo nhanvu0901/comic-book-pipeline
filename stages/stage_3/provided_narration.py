@@ -34,6 +34,7 @@ from config import PROJECTS_ROOT
 from ._llm import call_with_chain
 from .beat_split import _verbatim_ok, split_hook_fragments, split_visual_beats
 from .schema import Beat, Glossary, Narration
+from .spoken_rules import with_spoken_rules
 
 # Master drops the spoken body here. Checked for every mode except explore_answer, which
 # already has its own minimal writer (this path was modelled on it).
@@ -165,6 +166,7 @@ motive, a consequence, or an event — if the body does not say it, you may not 
 
 Return ONLY JSON, no markdown fences:
 {"title": "...", "hook": "...", "outro": "..."}"""
+_FRAME_SYSTEM = with_spoken_rules(_FRAME_SYSTEM)
 
 
 _KEEPWORD_RE = re.compile(r"\b(?:[A-Z][\w''-]+|\d[\d,.]*)\b")
