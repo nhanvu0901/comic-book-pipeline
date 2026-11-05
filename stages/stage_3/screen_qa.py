@@ -636,6 +636,8 @@ def save_screen_narration(
     out_path = root / "narration.json"
     from .ending import ensure_subscribe_cta
     data = narration.to_dict()
+    from utils.spoken_text import spoken_narration_dict
+    spoken_narration_dict(data)
     ensure_subscribe_cta(data)
     write_json_atomic(out_path, data)
     log(f"[screen_qa] saved narration → {out_path}")

@@ -35,6 +35,8 @@ def tts_env(tmp_path, monkeypatch):
     monkeypatch.setattr(p4, "POST_ATEMPO", 1.0)
     monkeypatch.setattr(chatterbox_tts, "_venv_python", lambda venv_dir=None: Path(sys.executable))
     monkeypatch.setattr(chatterbox_tts, "_WORKER", FAKE_WORKER)
+    # these fixtures use tiny sentences to test the cache/scheduler, not the short-sentence merge
+    monkeypatch.setattr(chatterbox_tts, "_MIN_CHUNK_CHARS", 0)
     log = tmp_path / "worker_launches.jsonl"
     monkeypatch.setenv("FAKE_WORKER_LOG", str(log))
     monkeypatch.delenv("FAKE_WORKER_DELAY", raising=False)
@@ -210,7 +212,7 @@ def test_a_bump_while_a_batch_runs_restarts_it_reordered(tts_env, monkeypatch):
     launches = tts_env.launches()
     assert len(launches) == 2, "the bump ended the first batch; one re-ordered batch finished the rest"
     second = [c["text"] for c in launches[1]["job"]["chunks"]]
-    assert second[0] == "Sentence number 7 is here."
+    assert second[0] == "Sentence number seven is here."  # spoken form: digits are words now
     st = tts_status.read_status(tts_env.root / "qa")
     assert st["completed"] is True and st["chunks_done"] == 7
 

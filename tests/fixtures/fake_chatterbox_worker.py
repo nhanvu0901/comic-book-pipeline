@@ -1,7 +1,7 @@
 """Stand-in for stages/stage_4/_chatterbox_worker.py in tests: same job-file protocol, no torch.
 
 For each chunk it writes out_dir/chunk_<i>.wav (24 kHz mono 16-bit, 0.1s per word of silence) and
-prints {"i","sec","sr"}; a chunk whose text contains "FAIL" prints an error line instead. It also
+prints {"i","sec","sr"}; a chunk whose text contains "fail" (any case) prints an error line instead. It also
 appends the job (plus this process's pid) to $FAKE_WORKER_LOG, one JSON line per invocation, so a
 test can count worker launches and read the per-chunk seeds. $FAKE_WORKER_DELAY seconds are slept
 before each chunk (lets a test act while a batch is in flight)."""
@@ -31,7 +31,7 @@ def main() -> int:
     for i, ch in enumerate(job["chunks"]):
         if delay:
             time.sleep(delay)
-        if "FAIL" in ch["text"]:
+        if "fail" in ch["text"].lower():  # the runner now title-cases ALL-CAPS words
             print(json.dumps({"i": i, "error": "RuntimeError('boom')"}), flush=True)
             continue
         sec = 0.1 * max(1, len(ch["text"].split()))
