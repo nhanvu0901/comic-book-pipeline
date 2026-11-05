@@ -32,34 +32,10 @@ def with_spoken_rules(prompt: str, marker: str = "Return ONLY JSON") -> str:
     return prompt[:idx] + SPOKEN_TEXT_RULES + "\n\n" + prompt[idx:]
 
 
-_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen "
-         "fourteen fifteen sixteen seventeen eighteen nineteen").split()
-_TENS = {2: "twenty", 3: "thirty", 4: "forty", 5: "fifty", 6: "sixty", 7: "seventy",
-         8: "eighty", 9: "ninety"}
-
-
-def _below_hundred(n: int) -> str:
-    if n < 20:
-        return _ONES[n]
-    tens, ones = divmod(n, 10)
-    return _TENS[tens] + (f"-{_ONES[ones]}" if ones else "")
-
-
 def year_words(year) -> str:
-    """A four-digit year as a narrator says it: 2019 -> "twenty nineteen",
-    1984 -> "nineteen eighty-four", 2005 -> "two thousand five", 1900 -> "nineteen
-    hundred". Anything that is not a four-digit year comes back unchanged (as text)."""
+    """A four-digit year as a narrator says it (2019 -> "twenty nineteen"); anything that
+    is not a four-digit year comes back unchanged, as text. The number wording itself lives
+    in utils.spoken_text, which also normalises saved narration."""
+    from utils.spoken_text import year_words as _year_words
     s = str(year).strip()
-    if not (s.isdigit() and len(s) == 4):
-        return s
-    n = int(s)
-    hi, lo = divmod(n, 100)
-    if n % 1000 == 0:
-        return f"{_ONES[n // 1000]} thousand"
-    if 2000 < n < 2010:
-        return f"two thousand {_ONES[lo]}"
-    if lo == 0:
-        return f"{_below_hundred(hi)} hundred"
-    if lo < 10:
-        return f"{_below_hundred(hi)} oh {_ONES[lo]}"
-    return f"{_below_hundred(hi)} {_below_hundred(lo)}"
+    return _year_words(int(s)) if s.isdigit() and len(s) == 4 else s

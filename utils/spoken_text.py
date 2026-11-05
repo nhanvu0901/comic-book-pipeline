@@ -303,6 +303,28 @@ def _parens(t: str) -> str:
     return re.sub(r",(?=[^\s\d])", ", ", t)
 
 
+_TIME = re.compile(r"(?<![\w.:])([01]?\d|2[0-3]):([0-5]\d)(?:\s*([AaPp])\.?[Mm]\.?(?![\w]))?")
+_HYPHEN_ID = re.compile(r"(?<=[A-Za-z])-(\d{3,})(?!\w)")
+
+
+def _time_sub(m: re.Match) -> str:
+    """9:30 -> nine thirty, 9:05 -> nine oh five, 9:00 -> nine o'clock; pm -> P. M."""
+    h, mm, ap = int(m.group(1)), int(m.group(2)), m.group(3)
+    words = cardinal(h) + (" o'clock" if mm == 0 and not ap else
+                           "" if mm == 0 else
+                           f" oh {_ONES[mm]}" if mm < 10 else f" {_below_100(mm)}")
+    return words + (f" {ap.upper()}. M." if ap else "")
+
+
+def _hyphen_id_sub(m: re.Match) -> str:
+    """A number glued to a name by a hyphen is a designation, read digit by digit
+    (Earth-616 -> Earth six one six); round thousands stay cardinal (T-1000)."""
+    n = m.group(1)
+    if int(n) % 1000 == 0:
+        return f" {cardinal(int(n))}"
+    return " " + " ".join(_ONES[int(d)] for d in n)
+
+
 def to_spoken(text: str) -> str:
     """Rewrite narration into spoken-form English. Deterministic and idempotent."""
     t = str(text or "")
@@ -314,6 +336,8 @@ def to_spoken(text: str) -> str:
     t = _NO.sub(lambda m: f"number {_num_words(m.group(1), year_ok=False)}", t)  # 4. No. 5
     t = _VOL.sub(lambda m: f"volume {_num_words(m.group(1), year_ok=False)}", t)  # Vol. 2
     t = _PT.sub(lambda m: f"part {_num_words(m.group(1), year_ok=False)}", t)  # Pt. 2
+    t = _TIME.sub(_time_sub, t)  # 4b. 9:30 pm -> nine thirty P. M. (before ":" or numbers)
+    t = _HYPHEN_ID.sub(_hyphen_id_sub, t)  # 4c. Earth-616 -> Earth six one six
     t = _ROMAN_RX.sub(lambda m: f"{m.group(1)} {cardinal(_ROMAN[m.group(2)])}", t)  # 5. War II
     t = _symbols(t)  # 6. & + @ = / and markdown noise
     t = _parens(t)  # 7. (x) -> , x,

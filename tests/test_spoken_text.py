@@ -26,6 +26,12 @@ CASES = [
     ("Vol. 2", "volume two"),
     ("vol 2", "volume two"),
     ("Pt. 2", "part two"),
+    # clock times and hyphenated designations
+    ("He turned 30 at 9:30 pm.", "He turned thirty at nine thirty P. M."),
+    ("Meet at 9:05.", "Meet at nine oh five."),
+    ("At 12:00 it ended.", "At twelve o'clock it ended."),
+    ("They fight on Earth-616.", "They fight on Earth six one six."),
+    ("The T-1000 walks in.", "The T one thousand walks in."),
     # years / decades
     ("in 1984", "in nineteen eighty-four"),
     ("in 2008", "in two thousand eight"),
