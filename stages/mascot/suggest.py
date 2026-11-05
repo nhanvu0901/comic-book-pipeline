@@ -57,6 +57,19 @@ HOOK_MIN_T = 0.2             # earliest first entrance
 END_MARGIN = 0.5             # final exit this long before the end
 VISIBLE_BAND = (0.45, 0.65)  # share of the video the mascot should be on screen
 VISIBLE_TARGET = 0.55
+# pose changes while visible: no single pose is held longer than POSE_MAX_HOLD seconds
+POSE_MAX_HOLD = 6.0
+POSE_MIN_HOLD = 2.0          # a pose change is never placed sooner than this after the last one
+POSE_POOLS: dict[str, tuple[str, ...]] = {     # role of the beat in force → presets, rotated
+    "hook":    ("explain", "point", "neutral"),
+    "other":   ("explain", "neutral", "point"),
+    "build":   ("point", "think", "explain"),
+    "peak":    ("shock",),
+    "landing": ("sly", "think", "shrug"),
+}
+POSE_FALLBACK = ("neutral", "explain", "think", "point", "shrug", "sly")   # when the pool is spent
+ACCENT_EVERY = 3             # every Nth pose change also gets a hop / tilt
+ACCENT_MOVES = ("hop", "tilt")
 HOLD_GRID = [1.5 + 0.5 * i for i in range(80)] + [math.inf]   # s a highlight keeps the mascot up
 
 
@@ -187,6 +200,93 @@ def _build(events: list[dict], locked: list[Cue], data: dict, kit: Kit, hold: fl
     return out
 
 
+def _pose_pairs(kit: Kit, names: tuple[str, ...]) -> list[tuple[str, str]]:
+    out = []
+    for n in names:
+        p = kit.presets.get(n)
+        if p and (not kit.bodies or p.body in kit.bodies) and (not kit.faces or p.face in kit.faces):
+            out.append((p.body, p.face))
+    return out
+
+
+def _add_pose_changes(fresh: list[Cue], locked: list[Cue], data: dict, kit: Kit) -> list[Cue]:
+    """Break up long visible stretches: a "pop" pose change at beat starts first, then cuts,
+    so no pose is held longer than POSE_MAX_HOLD. Never touches locked cues or visibility."""
+    duration = float(data.get("duration") or 0.0)
+    beats = sorted(data.get("beats") or [], key=lambda b: b["t"])
+    beat_ts = [float(b["t"]) for b in beats]
+    cut_ts = [float(c) for c in data.get("cuts") or []]
+    added: list[Cue] = []
+    n_changes = 0
+
+    def role_at(t: float) -> str:
+        r = "other"
+        for i, b in enumerate(beats):
+            if b["t"] <= t:
+                r = "hook" if i == 0 else _role(b.get("function"))
+        return "other" if r == "other" else r
+
+    def all_cues() -> list[Cue]:
+        return sorted(fresh + locked + added, key=lambda c: c.t)
+
+    def ok(t: float) -> bool:
+        return (all(abs(t - c.t) >= LOCK_GAP for c in locked)
+                and all(abs(t - c.t) >= MIN_GAP for c in fresh + added))
+
+    # visible stretches: (start, end, [pose-change times inside])
+    stretches, cur = [], None
+    for c in all_cues():
+        if c.move in MOVES_EXIT:
+            if cur:
+                stretches.append((cur[0], c.t, cur[1]))
+            cur = None
+        elif cur is None:
+            cur = (c.t, [c.t])
+        elif c.body or c.face:
+            cur[1].append(c.t)
+    if cur:
+        stretches.append((cur[0], duration if duration > 0 else cur[1][-1], cur[1]))
+
+    for start, end, pts in stretches:
+        marks = sorted(set(pts)) + [end]
+        for a, b in zip(marks[:-1], marks[1:]):
+            while b - a > POSE_MAX_HOLD:
+                lo, hi = a + POSE_MIN_HOLD, a + POSE_MAX_HOLD
+                pick = None
+                for pool in (beat_ts, cut_ts):                  # beats first, then cuts
+                    cands = [c for c in pool if lo <= c <= hi and c <= b - MIN_GAP and ok(c)]
+                    if cands:
+                        pick = max(cands)
+                        break
+                if pick is None:
+                    raw = round(snap_time(hi, data), 3)
+                    for t in (raw, round(hi, 3)):
+                        if lo <= t <= b - MIN_GAP and ok(t):
+                            pick = t
+                            break
+                if pick is None:
+                    break
+                role = role_at(pick)
+                before = [c for c in all_cues() if c.t < pick and (c.body or c.face)]
+                after = [c for c in all_cues() if c.t > pick and (c.body or c.face)]
+                prev = (before[-1].body, before[-1].face) if before else None
+                nxt = (after[0].body, after[0].face) if after and after[0].t < b + 1e-9 else None
+                pool_names = POSE_POOLS.get(role, POSE_POOLS["other"])
+                cands = _pose_pairs(kit, pool_names[n_changes % len(pool_names):] + pool_names[:n_changes % len(pool_names)])
+                cands += _pose_pairs(kit, POSE_FALLBACK)
+                choice = next((p for p in cands if p != prev and p != nxt), None) \
+                    or next((p for p in cands if p != prev), None)
+                if choice is None:
+                    break
+                n_changes += 1
+                move = "shake" if role == "peak" else (
+                    ACCENT_MOVES[(n_changes // ACCENT_EVERY) % len(ACCENT_MOVES)]
+                    if n_changes % ACCENT_EVERY == 0 else "pop")
+                added.append(Cue(t=pick, move=move, body=choice[0], face=choice[1]))
+                a = pick
+    return fresh + added
+
+
 def suggest_cues(project_dir: Path, cfg: MascotConfig, kit: Kit, data: dict | None = None) -> list[Cue]:
     """The full new cue list (locked cues + fresh suggestions), sorted by t. `data` is
     timeline.timeline_data(project_dir) when the caller already has it."""
@@ -213,6 +313,7 @@ def suggest_cues(project_dir: Path, cfg: MascotConfig, kit: Kit, data: dict | No
                abs(ratio - VISIBLE_TARGET), tier, hold)
         if best_key is None or key < best_key:
             best_key, best = key, fresh
+    best = _add_pose_changes(best or [], locked, data, kit)
     return sorted(locked + (best or []), key=lambda c: c.t)
 
 

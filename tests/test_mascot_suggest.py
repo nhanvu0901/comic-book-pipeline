@@ -105,7 +105,8 @@ def test_empty_project_enter_at_0_2_and_exit_at_the_end(tmp_path, monkeypatch):
     assert [c.move for c in cues] == ["rise", "slide_out"] and cues[0].t == 0.2 and cues[1].t > cues[0].t
     data = {"duration": 30.0, "cuts": [0.0, 30.0], "scenes": [], "beats": [], "words": []}
     cues = suggest_for(data)
-    assert [(c.t, c.move) for c in cues] == [(0.2, "rise"), (29.5, "slide_out")]
+    assert (cues[0].t, cues[0].move) == (0.2, "rise") and (cues[-1].t, cues[-1].move) == (29.5, "slide_out")
+    assert all(c.move not in suggest.MOVES_EXIT for c in cues[:-1])      # only pose changes between
 
 
 def test_project_dir_path_reads_the_timeline(tmp_path, monkeypatch):
@@ -164,3 +165,59 @@ def test_deterministic():
 def test_clear_suggestions_keeps_only_locked():
     cfg = MascotConfig(cues=[Cue(t=1, locked=True), Cue(t=2), Cue(t=3, locked=True)])
     assert [c.t for c in suggest.clear_suggestions(cfg)] == [1, 3]
+
+
+# ── pose changes inside visible stretches ────────────────────────────────────────────────
+ALL_PRESETS = {n: Preset(n, f"body_{n}", f"face_{n}", n) for n in
+               ("neutral", "point", "shock", "think", "sly", "explain", "shrug")}
+
+
+def _stretches(cues, duration):
+    """[(start, end, [(t, pose)...])] per visible stretch, carrying the pose across cues."""
+    out, cur, pose = [], None, None
+    for c in sorted(cues, key=lambda c: c.t):
+        if c.move in MOVES_EXIT:
+            if cur:
+                out.append((cur[0], c.t, cur[1]))
+            cur = None
+            continue
+        if c.body or c.face:
+            pose = (c.body or pose[0], c.face or pose[1]) if pose else (c.body, c.face)
+        if cur is None:
+            cur = (c.t, [])
+        if c.body or c.face:
+            cur[1].append((c.t, pose))
+    if cur:
+        out.append((cur[0], duration, cur[1]))
+    return out
+
+
+@pytest.mark.parametrize("fns", [
+    ("COLD_OPEN", "SETUP", "ESCALATION", "MIDPOINT", "CLIMAX", "LANDING"),
+    ("COLD_OPEN", "SETUP", "SETUP", "SETUP", "SETUP", "LANDING")])
+def test_no_pose_held_longer_than_max_and_consecutive_poses_differ(fns):
+    data = sample_data(50.0, fns)
+    cues = suggest_for(data, kit=make_kit(ALL_PRESETS))
+    for start, end, poses in _stretches(cues, 50.0):
+        times = [start] + [t for t, _ in poses[1:]] + [end]
+        assert all(b - a <= suggest.POSE_MAX_HOLD + 1e-6 for a, b in zip(times, times[1:])), (start, end, times)
+        assert all(a[1] != b[1] for a, b in zip(poses, poses[1:])), poses
+    assert sum(1 for c in cues if c.move in ("pop", "hop", "tilt", "shake")) >= 3
+    assert any(c.move in suggest.ACCENT_MOVES for c in cues)       # now and then, not never
+    assert all(b.t - a.t >= suggest.MIN_GAP - 1e-6 for a, b in zip(cues, cues[1:]))
+    assert suggest.VISIBLE_BAND[0] <= ratio(cues, data) <= suggest.VISIBLE_BAND[1]
+
+
+def test_pose_changes_respect_locks_and_are_deterministic():
+    data = sample_data(50.0)
+    cfg = MascotConfig(cues=[Cue(t=12.0, move="hold", body="body_shrug", face="face_shrug", locked=True)])
+    kit = make_kit(ALL_PRESETS)
+    a, b = suggest_for(data, cfg, kit), suggest_for(data, cfg, kit)
+    assert key(a) == key(b)
+    assert [c for c in a if c.locked] == cfg.cues
+    assert all(abs(c.t - 12.0) >= suggest.LOCK_GAP for c in a if not c.locked)
+
+
+def test_pose_changes_without_presets_do_not_crash():
+    cues = suggest_for(sample_data(50.0), kit=make_kit({}))
+    assert cues[0].move == "rise" and cues[-1].move == "slide_out"
