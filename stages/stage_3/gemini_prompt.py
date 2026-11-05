@@ -35,7 +35,7 @@ TOPIC_QA_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompt
 TEMPLATE_PATH = QA_TEMPLATE_PATH  # backward compatibility
 
 # A hook (template: <=14 words) or closing line is at most this long; an item paragraph
-# (template: 40-60 words) is longer. Used only to tell those two apart at the ends.
+# (template: over 20 words) is longer. Used only to tell those two apart at the ends.
 _SHORT_WORDS = 20
 # Below this a body paragraph is a transition line ("Now the worst one."), not an item.
 _MIN_ITEM_WORDS = 8
@@ -148,6 +148,7 @@ def _enrich_qa_context(
     root: Path,
     answer_ctx: dict,
     state_data: dict,
+    question_fallback: str = "",
 ) -> tuple[list[dict], str]:
     """Enrich Q&A items with causal/context fields and verification evidence from
     the project's research session so Stage 2's writer prompt receives full context.
@@ -420,17 +421,18 @@ def _enrich_qa_context(
     # Build optional STORY / ARC CONTEXT block for the template
     ctx_lines: list[str] = []
     fmt = str(answer_ctx.get("format") or "").strip()
-    question = str(answer_ctx.get("question") or "").strip()
+    question = str(answer_ctx.get("question") or question_fallback).strip()
     summary = str(answer_ctx.get("answer_summary") or "").strip()
     viewer_ctx = str(answer_ctx.get("viewer_context") or "").strip()
     constant_broken = str(answer_ctx.get("constant_broken") or "").strip()
-    if fmt:
-        fmt_desc = (
-            "direct (connected multi-beat causal progression answering the question)"
-            if fmt == "direct"
-            else "list (distinct examples answering the question in item_number order)"
-        )
-        ctx_lines.append(f"- Format: {fmt_desc}")
+    from stages.question_archetype import is_direct_format, question_archetype
+    selected_format = fmt or str(question_archetype(question))
+    fmt_desc = (
+        "direct (one explanation developed through the supplied items)"
+        if is_direct_format(selected_format)
+        else "list (distinct examples answering the question in item_number order)"
+    )
+    ctx_lines.append(f"- Format: {fmt_desc}")
     if summary and summary != question:
         ctx_lines.append(f"- Overarching Thesis / Answer Summary: {summary}")
     if viewer_ctx:
@@ -494,7 +496,7 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
         ).strip()
 
         numbered, story_context_block = _enrich_qa_context(
-            project_name, root, answer_ctx, state_data
+            project_name, root, answer_ctx, state_data, question
         )
         if numbered:
             scout_json_str = json.dumps(numbered, indent=2, ensure_ascii=False)

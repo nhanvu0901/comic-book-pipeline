@@ -147,14 +147,13 @@ class ClipPickError(RuntimeError):
     """A pick that cannot succeed, with the reason shown to Master."""
 
 
-_PICKS: dict[tuple[str, str], dict[str, Any]] = {}
-_PICKS_LOCK = threading.Lock()
+from stages.clip_cleanup import PICK_STATES as _PICKS, PICK_LOCK as _PICKS_LOCK
 
 
 def _set_pick(project: str, beat: str, gen: int | None = None, **fields: Any) -> int:
     with _PICKS_LOCK:
         cur = _PICKS.get((project, beat))
-        if gen is not None and cur is not None and cur.get("gen") != gen:
+        if gen is not None and (cur is None or cur.get("gen") != gen):
             return -1                                           # superseded by a newer pick
         new_gen = (cur.get("gen", 0) + 1) if gen is None and cur else (gen or 1)
         _PICKS[(project, beat)] = {**(cur or {}), **fields, "gen": new_gen, "t": time.time()}
@@ -183,6 +182,25 @@ class PickMomentRequest(BaseModel):
     video_id: str
     start: float
     end: float | None = None
+
+
+class DeleteBeatClipRequest(BaseModel):
+    project: str
+    beat: str
+
+
+@router.post("/api/delete_beat_clip")
+async def delete_beat_clip(req: DeleteBeatClipRequest) -> dict[str, Any]:
+    root = get_safe_project_dir(req.project)
+    beat = validate_beat_key(req.beat)
+    try:
+        removed = await run_in_threadpool(clips.remove_beat_clip, root, beat)
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail=f"Không xóa sạch MP4: {exc}") from exc
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _broadcast_moment_picked({"project": req.project, "beat": beat, "state": "deleted"})
+    return {"status": "ok", "removed": removed, "state": "none"}
 
 
 def process_clip_pick(
@@ -308,12 +326,22 @@ def _run_pick_job(
         beat_dur = tts_status.beat_duration(project_root, beat)
         if beat_dur is None:
             state("waiting_tts", message="Đang chờ TTS tính thời lượng chính xác của beat…")
+            runner = None
             try:
-                bump_priority_beat(project, beat)
+                runner = bump_priority_beat(project, beat)
             except Exception as exc:
                 logger.warning("could not bump the TTS queue for %s/%s: %s", project, beat, exc)
             deadline = time.time() + WAIT_TTS_SECONDS
             while beat_dur is None and time.time() < deadline:
+                # An older error can remain on disk while a new worker is starting or retrying.
+                # Only inspect terminal status after the runner has stopped, then re-read it.
+                if runner is not None and not runner.is_running():
+                    status = tts_status.read_status(project_root)
+                    beat_dur = tts_status.beat_duration(project_root, beat)
+                    if beat_dur is not None:
+                        break
+                    if status.get("error") and not status.get("running"):
+                        raise ClipPickError(f"TTS không thể tính thời lượng beat: {status['error']}")
                 time.sleep(1.0)
                 beat_dur = tts_status.beat_duration(project_root, beat)
                 if _PICKS.get((project, beat), {}).get("gen") != gen:
@@ -523,7 +551,9 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
   <div class="dur">Thời lượng beat (TTS): <b id="beat-dur">đang tính…</b></div>
 
   <div id="cards">{''.join(cards_html)}</div>
-  <div id="pick-box"><div id="pick-msg"></div><video id="pick-preview" controls muted playsinline></video></div>
+  <div id="pick-box"><div id="pick-msg"></div><video id="pick-preview" controls muted playsinline></video>
+    <button id="delete-pick" class="mini-btn" style="display:none" onclick="deletePickedClip()">Xóa MP4</button>
+  </div>
 
   <script>
     const PROJECT = {_js(project)};
@@ -690,21 +720,51 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     }}
 
     let pollTimer = null;
+    let pickEpoch = 0;
     async function pollPick() {{
+      const epoch = pickEpoch;
       try {{
         const r = await fetch('/api/pick_status?project=' + encodeURIComponent(PROJECT) + '&beat=' + encodeURIComponent(BEAT));
         const j = await r.json();
+        if (epoch !== pickEpoch) return;
         if (j.state === 'ready') {{
+          document.getElementById('delete-pick').style.display = 'inline-block';
           showPick(j.message || '✓ Đã chọn clip cho beat.', false);
           const v = document.getElementById('pick-preview');
           v.src = '/api/clip_preview?project=' + encodeURIComponent(PROJECT) + '&beat=' + encodeURIComponent(BEAT) + '&t=' + Date.now();
           v.style.display = 'block';
           return;
         }}
+        if (j.state === 'none') {{
+          document.getElementById('delete-pick').style.display = 'none';
+          showPick('Chưa có MP4 cho beat này. Bạn có thể chọn clip bên trên.', false);
+          return;
+        }}
         if (j.state === 'error') {{ showPick(j.message || 'Lỗi', true); return; }}
         showPick(j.message || j.state, false);
       }} catch (err) {{ showPick('Mất kết nối khi hỏi trạng thái: ' + err, true); return; }}
       pollTimer = setTimeout(pollPick, 1000);
+    }}
+
+    async function deletePickedClip() {{
+      if (!confirm('Xóa MP4 của beat này? Giữ lời thoại, TTS và file dùng chung.')) return;
+      ++pickEpoch;
+      clearTimeout(pollTimer);
+      const button = document.getElementById('delete-pick');
+      button.disabled = true;
+      const video = document.getElementById('pick-preview');
+      video.pause(); video.removeAttribute('src'); video.load(); video.style.display = 'none';
+      try {{
+        const response = await fetch('/api/delete_beat_clip', {{
+          method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{project: PROJECT, beat: BEAT}})
+        }});
+        const result = await response.json();
+        if (!response.ok) {{ showPick(result.detail || 'Không xóa sạch MP4. Đóng video rồi thử lại.', true); return; }}
+        button.style.display = 'none';
+        showPick('Đã xóa MP4. Bạn có thể chọn lại clip cho beat này.', false);
+      }} catch (err) {{ showPick('Không xóa được MP4: ' + err, true); }}
+      finally {{ button.disabled = false; }}
     }}
 
     async function pickMoment(vid) {{
@@ -743,10 +803,12 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
       }}
 
       try {{
+        const epoch = ++pickEpoch;
         const resp = await fetch('/api/pick_moment', {{
           method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
           body: JSON.stringify(payload)
         }});
+        if (epoch !== pickEpoch) return;
         if (!resp.ok) {{ showPick('Lỗi gửi lựa chọn: ' + resp.status + ' ' + (await resp.text()), true); return; }}
         clearTimeout(pollTimer);
         pollPick();
@@ -767,6 +829,7 @@ async def moments_review(project: str = "", beat: str = "", q: str = "") -> str:
     fetch('/api/bump_beat_tts', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ project: PROJECT, beat: BEAT }}) }}).catch(() => {{}});
     pollDuration();
+    pollPick();
   </script>
   <script src="https://www.youtube.com/iframe_api"></script>
 </body>

@@ -129,17 +129,9 @@ def upsert_beat_clip(project_root: Path, entry: dict) -> None:
 
 
 def remove_beat_clip(project_root: Path, beat: str) -> bool:
-    """Roll a beat back to its panel: drop its clip entry. True when there was one."""
-    with _MANIFEST_LOCK:
-        if not manifest_path(project_root).exists():
-            return False
-        doc = read_manifest_doc(project_root)
-        kept = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) == str(beat))]
-        if len(kept) == len(doc["clips"]):
-            return False
-        doc["clips"] = kept
-        _write_manifest_doc(project_root, doc)
-        return True
+    """Remove a beat's MP4 and unshared artifacts, invalidating pending pick jobs."""
+    from stages.clip_cleanup import remove_beat_clip as clean_remove
+    return clean_remove(project_root, beat)
 
 
 def _rebind_entry_beat(project_root: Path, entry: dict, new_beat: str,

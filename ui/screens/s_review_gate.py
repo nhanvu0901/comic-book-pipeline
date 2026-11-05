@@ -107,7 +107,7 @@ def _narration_fingerprint(doc: dict | None) -> str:
 from ..bridge import (
     asset_src, image_b64, is_answer_project, load_hidden_panels, load_music_config, load_narration,
     load_preprocessed, load_review_candidates, load_review_locks, list_review_projects,
-    narration_sha1, review_thumb_path, run_blocking, save_hidden_panels,
+    narration_sha1, review_thumb_path, run_blocking, save_capcut_music, save_hidden_panels,
     save_music_config, save_narration_edits, save_review_candidates, save_review_locks,
 )
 from ..custom_image import (
@@ -853,11 +853,14 @@ def build(
                 if payload.get("state") == "error":
                     _show_snack(f"Beat {bk}: {payload.get('message') or 'không chọn được clip'}")
                     return
-                # The completed pick writes clips.json before broadcasting. Read that entry so
-                # the preview and source survive a screen rebuild (legacy payloads still work).
-                clips_by_beat[bk] = _load_clips_manifest(project).get(bk) or payload
+                # The manifest is authoritative, even if a ready event arrives after deletion.
+                current = _load_clips_manifest(project).get(bk)
+                if current:
+                    clips_by_beat[bk] = current
+                else:
+                    clips_by_beat.pop(bk, None)
                 _withdraw_approval()
-                _rebuild(f"Đã chọn clip MP4 cho beat {bk}", dirty=frozenset({bk}))
+                _rebuild(f"Đã cập nhật MP4 cho beat {bk}", dirty=frozenset({bk}))
             # keyed by this page + project: a screen that rebuilds replaces its listener, not stacks one
             add_moment_picked_listener(_on_moment_picked, key=(id(page), project))
         except Exception as exc:
@@ -961,9 +964,11 @@ def build(
     intro_list_col = ft.Column(spacing=8)
     file_picker = ft.FilePicker()
     custom_file_picker = ft.FilePicker()
+    music_file_picker = ft.FilePicker()
     try:
         page.services.append(file_picker)
         page.services.append(custom_file_picker)
+        page.services.append(music_file_picker)
     except Exception:
         pass
 
@@ -1768,13 +1773,26 @@ def build(
             ))
             if has_clip:
                 def _rollback_mp4(_e, bk=beat_key):
-                    _remove_clip_for_beat(project, bk)
-                    clips_by_beat.pop(bk, None)
-                    _withdraw_approval()
-                    _rebuild(f"Beat {bk}: quay lại dùng comic panel", dirty=frozenset({bk}))
+                    def _confirm(_event):
+                        page.pop_dialog()
+                        try:
+                            _remove_clip_for_beat(project, bk)
+                        except (OSError, ValueError) as exc:
+                            _withdraw_approval()
+                            _show_snack(f"Không xóa sạch MP4: {exc}. Đóng video rồi thử lại.")
+                            return
+                        clips_by_beat.pop(bk, None)
+                        _withdraw_approval()
+                        _rebuild(f"Beat {bk}: đã xóa MP4, có thể chọn lại", dirty=frozenset({bk}))
+                    page.show_dialog(ft.AlertDialog(
+                        title=ft.Text(f"Xóa MP4 của beat {bk}?"),
+                        content=ft.Text("Xóa clip và bản xem thử riêng của beat này. Giữ lời thoại, TTS và file dùng chung."),
+                        actions=[secondary_button("Giữ lại", lambda _ev: page.pop_dialog()),
+                                 primary_button("Xóa MP4", _confirm, icon=ft.Icons.DELETE_OUTLINE)],
+                    ))
                 header_icons.append(ft.IconButton(
-                    ft.Icons.UNDO, icon_size=16, icon_color=WARN,
-                    tooltip="Hủy MP4 (quay lại dùng comic panel)",
+                    ft.Icons.DELETE_OUTLINE, icon_size=18, icon_color=WARN,
+                    tooltip="Hủy MP4 — Xóa clip và chọn lại",
                     on_click=_rollback_mp4,
                     style=ft.ButtonStyle(padding=ft.padding.all(0)),
                 ))
@@ -2541,6 +2559,136 @@ def build(
         text_size=12,
     )
 
+    # ─── CapCut reference music toggle & picker ────────────────────────────
+    capcut_cfg = music_doc.get("capcut_music") or {}
+    capcut_info_text = ft.Text(size=11, color=TEXT_MUTED)
+
+    def _refresh_capcut_info():
+        cm = music_doc.get("capcut_music") or {}
+        on = bool(cm.get("enabled"))
+        bake_music_cb.visible = on
+        pick_music_btn.visible = on
+        capcut_info_text.visible = on
+        genre_dd.disabled = on
+        if not on:
+            return
+        fn = cm.get("filename")
+        if fn:
+            fn_display = Path(fn).name
+            bpm = float(cm.get("bpm") or 0.0)
+            in_pt = float(cm.get("in_point") or 0.0)
+            from stages.music_sync import format_timecode
+            tc = cm.get("in_point_timecode")
+            if not tc or "@" not in str(tc):
+                tc = format_timecode(in_pt)
+            capcut_info_text.value = f"Track: {fn_display}\nBPM: {bpm:.1f} | In-point: {tc}"
+            capcut_info_text.color = SUCCESS
+        else:
+            capcut_info_text.value = "Chưa có file nhạc reference — nhấn nút bên dưới để chọn file (mp3/wav/m4a/mp4/mov)."
+            capcut_info_text.color = TEXT_MUTED
+
+    async def _pick_capcut_music(_e=None):
+        try:
+            files = await music_file_picker.pick_files(
+                dialog_title="Chọn file nhạc/video CapCut reference (mp3, wav, m4a, mp4, mov)",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["mp3", "wav", "m4a", "mp4", "mov"],
+                allow_multiple=False,
+                with_data=True,
+            )
+        except Exception as exc:
+            _show_snack(f"File picker failed: {exc}")
+            return
+        if not files:
+            return
+        f = files[0]
+        if f.bytes is None and not f.path:
+            _show_snack("File picker returned no data — try again.")
+            return
+
+        status_text.value = f"Đang phân tích nhạc reference {f.name}..."
+        status_text.color = TEXT_MUTED
+        try:
+            status_text.update()
+        except Exception:
+            pass
+
+        try:
+            new_entry = await run_blocking(
+                save_capcut_music,
+                project,
+                file_name=f.name or (Path(f.path).name if f.path else "capcut_ref.mp3"),
+                data=f.bytes,
+                src_path=f.path,
+            )
+            music_doc["capcut_music"] = new_entry
+            _refresh_capcut_info()
+            status_text.value = f"Nhạc CapCut sẵn sàng: BPM {new_entry.get('bpm', 0):.1f}, In-point {new_entry.get('in_point', 0):.2f}s"
+            status_text.color = SUCCESS
+            try:
+                bake_music_cb.update()
+                capcut_info_text.update()
+                status_text.update()
+                genre_dd.update()
+                pick_music_btn.update()
+            except Exception:
+                pass
+        except Exception as exc:
+            status_text.value = f"Phân tích nhạc thất bại: {exc}"
+            status_text.color = DANGER
+            try:
+                status_text.update()
+            except Exception:
+                pass
+
+    def _toggle_capcut_music(e):
+        on = bool(capcut_cb.value)
+        cm = music_doc.get("capcut_music") or {}
+        cm["enabled"] = on
+        if "bake_into_final" not in cm:
+            cm["bake_into_final"] = True
+        music_doc["capcut_music"] = cm
+        save_music_config(project, music_doc)
+        _refresh_capcut_info()
+        status_text.value = f"Dùng nhạc CapCut: {'BẬT' if on else 'TẮT'}"
+        status_text.color = SUCCESS if on else TEXT_MUTED
+        try:
+            capcut_cb.update()
+            bake_music_cb.update()
+            pick_music_btn.update()
+            capcut_info_text.update()
+            genre_dd.update()
+            status_text.update()
+        except Exception:
+            pass
+
+    def _toggle_bake_music(e):
+        on = bool(bake_music_cb.value)
+        cm = music_doc.get("capcut_music") or {}
+        cm["bake_into_final"] = on
+        music_doc["capcut_music"] = cm
+        save_music_config(project, music_doc)
+        status_text.value = f"Trộn sẵn nhạc vào final.mp4: {'BẬT' if on else 'TẮT'}"
+        status_text.color = SUCCESS if on else TEXT_MUTED
+        try:
+            bake_music_cb.update()
+            status_text.update()
+        except Exception:
+            pass
+
+    capcut_cb = ft.Checkbox(
+        label="Dùng nhạc CapCut",
+        value=bool(capcut_cfg.get("enabled")),
+        on_change=_toggle_capcut_music,
+    )
+    bake_music_cb = ft.Checkbox(
+        label="Trộn sẵn nhạc vào final.mp4",
+        value=bool(capcut_cfg.get("bake_into_final", True)),
+        on_change=_toggle_bake_music,
+    )
+    pick_music_btn = secondary_button("Chọn file nhạc/video (mp3/wav/m4a/mp4/mov)", _pick_capcut_music, icon=ft.Icons.AUDIO_FILE_OUTLINED)
+    _refresh_capcut_info()
+
     right = ft.Column([
         ft.Text("STEP 5 OF 8", size=10, color=TEXT_MUTED),
         ft.Text("Review Beats", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
@@ -2561,8 +2709,12 @@ def build(
         ft.Divider(height=1, color=BORDER),
         ft.Container(height=10),
         ft.Text("MUSIC", size=10, color=TEXT_MUTED),
+        capcut_cb,
+        bake_music_cb,
+        pick_music_btn,
+        capcut_info_text,
         genre_dd,
-        ft.Text("Style brief for the score. Editable — type anything the generator "
+        ft.Text("Dùng nhạc CapCut sẽ bỏ qua score tự động. Style brief for the score. Editable — type anything the generator "
                 "understands. Sparse styles are heard under narration; dense ones are not.\n"
                 "Stage 5 analyzes the final narration and generates the score after its "
                 "narration-only video render is complete.",

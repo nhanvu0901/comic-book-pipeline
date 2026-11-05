@@ -460,3 +460,58 @@ def test_a_pick_with_start_and_end_range_downloads_span_and_fits_to_beat(web, mo
     assert f'id="in_{VID}"' in html and f'id="out_{VID}"' in html
     assert "parseTimeStr" in html and "setInFromPlayer" in html and "setOutFromPlayer" in html
 
+
+
+def test_pick_reports_terminal_tts_error_promptly(web, monkeypatch):
+    from stages.stage_4 import background_tts
+    class Finished:
+        def is_running(self):
+            return False
+    tts_status.write_status(web.root, {"running": False, "error": "OSError 1455: paging file too small", "beat_durations": {}})
+    monkeypatch.setattr(background_tts, "bump_priority_beat", lambda *_: Finished())
+    monkeypatch.setattr(web_routes, "WAIT_TTS_SECONDS", 0.01)
+    res = _pick(web)
+    assert res.json()["status"] == "error"
+    assert "OSError 1455" in res.json()["data"]["message"]
+
+
+def test_pick_ignores_stale_tts_error_while_retry_running(web, monkeypatch):
+    from stages.stage_4 import background_tts
+    class Running:
+        def is_running(self):
+            return True
+    tts_status.write_status(web.root, {"running": False, "error": "old failure", "beat_durations": {}})
+    monkeypatch.setattr(background_tts, "bump_priority_beat", lambda *_: Running())
+    monkeypatch.setattr(web_routes.time, "sleep", lambda _: web.status({"2:0": 3.33}))
+    web.fake_download()
+    assert _pick(web).json()["status"] == "ok"
+
+
+def test_pick_reports_new_failure_after_retry_finishes(web, monkeypatch):
+    from stages.stage_4 import background_tts
+    class Runner:
+        running = True
+        def is_running(self):
+            return self.running
+    runner = Runner()
+    tts_status.write_status(web.root, {"running": False, "error": "old failure", "beat_durations": {}})
+    monkeypatch.setattr(background_tts, "bump_priority_beat", lambda *_: runner)
+    def finish(_):
+        tts_status.write_status(web.root, {"running": False, "error": "new failure", "beat_durations": {}})
+        runner.running = False
+    monkeypatch.setattr(web_routes.time, "sleep", finish)
+    assert "new failure" in _pick(web).json()["data"]["message"]
+
+
+def test_pick_waits_for_new_narration_after_old_tts_error(web, monkeypatch):
+    from stages.stage_4 import background_tts
+    class Runner:
+        def is_running(self):
+            return True
+    tts_status.write_status(web.root, {"running": False, "error": "old narration failed", "narration_sha": "old", "beat_durations": {}})
+    monkeypatch.setattr(background_tts, "bump_priority_beat", lambda *_: Runner())
+    def finish(_):
+        tts_status.write_status(web.root, {"running": False, "error": None, "narration_sha": "new", "beat_durations": {"2:0": 4.0}})
+    monkeypatch.setattr(web_routes.time, "sleep", finish)
+    web.fake_download()
+    assert _pick(web).json()["status"] == "ok"

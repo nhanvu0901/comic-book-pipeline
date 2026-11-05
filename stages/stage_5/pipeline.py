@@ -149,6 +149,9 @@ def assemble_project(
     silence_aligned = "silence-aligned" if scene_timings and word_timestamps else "even-split"
     log(f"[stage5] planning {len(shots)} shots across {len(narration.get('scenes') or [])} scenes ({silence_aligned} cuts)")
 
+    from ..music_sync import prepare_capcut_music_sync
+    shots = prepare_capcut_music_sync(project_name, root, shots, narration, log=log)
+
     # RULE (Master): a contact sheet of every panel the render will use, built from
     # the shot list BEFORE any ffmpeg render starts, for all 3 narration modes — a
     # wrong/blurry panel pick should be caught here, not after a full encode.
@@ -254,6 +257,9 @@ def assemble_project(
     duration = _probe_duration(final_path)
     log(f"[stage5] done: {final_path} ({duration:.2f}s)")
     _write_title_file(root, narration)
+
+    from ..music_sync import finish_capcut_music_sync
+    finish_capcut_music_sync(project_name, root, final_path, log=log)
 
     # Stage 5.5: spot-check the rendered frames against the narration (see
     # verify_frames.py). A checker bug must never fail an otherwise-good render.
@@ -1103,6 +1109,14 @@ def _remux_audio(video_path: Path, audio_path: Path, out_path: Path) -> Path:
 def _score_final_video(project_name: str, root: Path, silent_video_path: Path,
                        narration_path: Path, narration_only_final: Path, *, log=print) -> Path | None:
     """Score an existing narration-only final MP4, preserving it intact on every failure."""
+    try:
+        from ..music_sync import is_capcut_music_enabled
+        if is_capcut_music_enabled(root):
+            log("[stage5] CapCut music mode active — skipping generated score; final.mp4 is narration-only")
+            return None
+    except Exception:
+        pass
+
     from config import AUTO_GENERATE_BG_MUSIC, ENABLE_BG_MUSIC
     if not (AUTO_GENERATE_BG_MUSIC and ENABLE_BG_MUSIC):
         return None

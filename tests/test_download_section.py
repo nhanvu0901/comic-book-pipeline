@@ -179,3 +179,103 @@ def test_a_section_that_times_out_falls_back_to_the_whole_video(tmp_path, monkey
                                         start=2.0, beat_duration=3.0, log=logs.append)
     assert calls == ["section", "whole"] and out.is_file()
     assert any("no result after 180s" in m for m in logs)
+
+
+def _audio_only(tmp_path):
+    import shutil
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        pytest.skip("ffmpeg required")
+    p = tmp_path / "audio.mp4"
+    _sp.run([ff, "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "2",
+             "-c:a", "aac", str(p)], check=True, capture_output=True)
+    return p
+
+
+def test_audio_only_section_with_success_exit_falls_back(tmp_path, monkeypatch):
+    audio = _audio_only(tmp_path)
+    whole = _source(tmp_path, 15.0)
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=True, src_for_section=audio, calls=calls)
+    monkeypatch.setattr(clip_fetch, "download", lambda *a, **k: calls.append("whole") or whole)
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert calls == ["section", "whole"]
+    assert clips.probe_video(out)["duration"] == pytest.approx(5.75, abs=0.2)
+
+
+def test_invalid_cached_section_is_preserved_and_replaced(tmp_path, monkeypatch):
+    audio = _audio_only(tmp_path)
+    section = _source(tmp_path, 7.0)
+    clip_dir = tmp_path / "clips"
+    clip_dir.mkdir()
+    poisoned = clip_dir / "abcDEF12345_3.0_4.0.mp4"
+    poisoned.write_bytes(audio.read_bytes())
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=True, src_for_section=section, calls=calls)
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", clip_dir,
+                                        start=3.0, beat_duration=4.0, log=lambda m: None)
+    assert calls == ["section"] and clips.probe_video(out)["duration"] > 0
+    assert any(p.read_bytes() == audio.read_bytes() for p in clip_dir.iterdir() if p != out and p.is_file())
+
+
+def test_invalid_cached_whole_is_preserved_and_downloaded_again(tmp_path, monkeypatch):
+    audio = _audio_only(tmp_path)
+    whole = _source(tmp_path, 15.0)
+    src = tmp_path / "clips" / "src"
+    src.mkdir(parents=True)
+    (src / "abcDEF12345.mp4").write_bytes(audio.read_bytes())
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=False, calls=calls)
+    monkeypatch.setattr(clip_fetch, "download", lambda *a, **k: calls.append("whole") or whole)
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert calls == ["section", "whole"] and clips.probe_video(out)["duration"] > 0
+    assert any(p.read_bytes() == audio.read_bytes() for p in src.iterdir() if p.is_file())
+
+
+def test_audio_only_section_and_fallback_failure_report_both_reasons(tmp_path, monkeypatch):
+    audio = _audio_only(tmp_path)
+    _fake_run_factory(monkeypatch, section_ok=True, src_for_section=audio, calls=[])
+    monkeypatch.setattr(clip_fetch, "download", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("network unavailable")))
+    with pytest.raises(RuntimeError) as exc:
+        clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                      start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert "no video stream" in str(exc.value) and "network unavailable" in str(exc.value)
+
+
+def test_valid_whole_cache_avoids_section_network(tmp_path, monkeypatch):
+    whole = _source(tmp_path, 15.0)
+    src = tmp_path / "clips" / "src"
+    src.mkdir(parents=True)
+    (src / "abcDEF12345.mp4").write_bytes(whole.read_bytes())
+    monkeypatch.setattr(clip_fetch, "_run_capture", lambda *a, **k: pytest.fail("network not needed"))
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert clips.probe_video(out)["duration"] == pytest.approx(5.75, abs=0.2)
+
+
+def test_truncated_whole_cache_does_not_hide_available_section(tmp_path, monkeypatch):
+    short = _source(tmp_path, 3.0)
+    src = tmp_path / "clips" / "src"
+    src.mkdir(parents=True)
+    cached = src / "abcDEF12345.mp4"
+    cached.write_bytes(short.read_bytes())
+    section = _source(tmp_path, 6.0)
+    calls = []
+    _fake_run_factory(monkeypatch, section_ok=True, src_for_section=section, calls=calls)
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert calls == ["section"] and clips.probe_video(out)["duration"] == pytest.approx(6.0, abs=0.2)
+    assert cached.is_file() and clips.probe_video(cached)["duration"] == pytest.approx(3.0, abs=0.2)
+
+
+def test_whole_cache_near_eof_can_still_fill_open_ended_beat(tmp_path, monkeypatch):
+    whole = _source(tmp_path, 5.0)
+    src = tmp_path / "clips" / "src"
+    src.mkdir(parents=True)
+    (src / "abcDEF12345.mp4").write_bytes(whole.read_bytes())
+    monkeypatch.setattr(clip_fetch, "_run_capture", lambda *a, **k: pytest.fail("network not needed"))
+    out = clip_fetch.fetch_clip_section("https://www.youtube.com/watch?v=abcDEF12345", tmp_path / "clips",
+                                        start=2.0, beat_duration=3.0, log=lambda m: None)
+    assert clips.probe_video(out)["duration"] == pytest.approx(3.0, abs=0.2)

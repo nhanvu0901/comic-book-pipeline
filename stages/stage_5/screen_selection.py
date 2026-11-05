@@ -123,34 +123,33 @@ def load_clips(project_root) -> dict[str, dict]:
 
 
 def remove_clip(project_root, beat: str) -> bool:
-    root = _root(project_root)
-    doc = _manifest(root)
-    keep = [c for c in doc["clips"] if not (isinstance(c, dict) and str(c.get("beat")) == beat)]
-    if len(keep) == len(doc["clips"]):
-        return False
-    doc["clips"] = keep
-    _write_manifest(root, doc)
-    _unapprove(root)
-    return True
+    from .clips import remove_beat_clip
+    return remove_beat_clip(_root(project_root), beat)
 
 
 def set_backup(project_root, beat: str, backup: dict | None, *,
-               only_if_clip_id: str | None = None) -> bool:
+               only_if_clip_id: str | None = None, only_if_pick_gen: int | None = None) -> bool:
     """Attach (or drop, with None) the backup clip of the entry on `beat`. `only_if_clip_id`
     guards a slow background fetch against the primary having been replaced meanwhile."""
     root = _root(project_root)
-    doc = _manifest(root)
-    for c in doc["clips"]:
-        if isinstance(c, dict) and str(c.get("beat")) == beat:
-            if only_if_clip_id is not None and str(c.get("id")) != only_if_clip_id:
-                return False
-            if backup:
-                c["backup"] = backup
-            else:
-                c.pop("backup", None)
-            _write_manifest(root, doc)
-            return True
-    return False
+    from stages.clip_cleanup import PICK_LOCK, PICK_STATES, project_key
+    from .clips import _MANIFEST_LOCK
+    with PICK_LOCK, _MANIFEST_LOCK:
+        current_gen = PICK_STATES.get((project_key(root), beat), {}).get("gen", 0)
+        if only_if_pick_gen is not None and current_gen != only_if_pick_gen:
+            return False
+        doc = _manifest(root)
+        for c in doc["clips"]:
+            if isinstance(c, dict) and str(c.get("beat")) == beat:
+                if only_if_clip_id is not None and str(c.get("id")) != only_if_clip_id:
+                    return False
+                if backup:
+                    c["backup"] = backup
+                else:
+                    c.pop("backup", None)
+                _write_manifest(root, doc)
+                return True
+        return False
 
 
 # ─── stills (locks.json + custom-image sidecar) ─────────────────────────────────
@@ -321,7 +320,10 @@ def suggest_backup(
     of the never-crash chain plays it when the primary will not render. Best effort — any
     failure returns None and the chain simply has one level fewer."""
     from .. import clip_fetch
+    from stages.clip_cleanup import PICK_LOCK, PICK_STATES, project_key
     root = _root(project_root)
+    with PICK_LOCK:
+        pick_gen = PICK_STATES.get((project_key(root), beat), {}).get("gen", 0)
     primary = load_clips(root).get(beat)
     if not primary:
         return None
@@ -353,7 +355,7 @@ def suggest_backup(
             rel = str(section)
         backup = {"id": f"{vid}-backup", "file": rel, "start": 0.0, "end": round(float(seconds), 3),
                   "source_url": url, "source_start": start}
-        if set_backup(root, beat, backup, only_if_clip_id=primary_id):
+        if set_backup(root, beat, backup, only_if_clip_id=primary_id, only_if_pick_gen=pick_gen):
             return backup
         return None                                  # the primary changed under us
     return None
