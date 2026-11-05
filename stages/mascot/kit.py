@@ -91,6 +91,13 @@ class Kit:
 PAD_FRAC = 0.04
 
 
+def sprite_height_px(size_pct: float, frame_h: int) -> int:
+    """compose() height for a frame `frame_h` px high: size_pct is the KIT CANVAS height as a
+    % of the frame, and compose() adds PAD_FRAC above and below. The renderer and the UI
+    preview both call this, so the preview matches the render at any size."""
+    return max(8, round(size_pct / 100.0 * frame_h * (1 + 2 * PAD_FRAC)))
+
+
 def kits_root() -> Path:
     return MASCOT_ASSETS
 
