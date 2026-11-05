@@ -19,10 +19,11 @@ from flet_video import Video, VideoMedia
 from config import PROJECTS_ROOT
 from ..bridge import asset_src, format_exception, run_blocking, run_stage_5
 from ..layout import log_list, primary_button, secondary_button, three_col
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
+from stages.mascot import render as mascot_render
 from utils.clear_stage import clear_stage_5
 
 
@@ -215,7 +216,7 @@ def build(
     ], spacing=0, expand=True)
 
     right_controls = [
-        ft.Text("STEP 8 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 8 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Final Video", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "1080×1920 9:16 H.264 MP4 with Ken Burns on panels and Chatterbox narration audio.",
@@ -249,7 +250,18 @@ def build(
             ),
             ft.Container(height=8),
             secondary_button("Re-assemble Video", assemble_click, icon=ft.Icons.REFRESH),
+            ft.Container(height=8),
+            secondary_button("Tiếp: Mascot →", lambda _e: on_go(9), icon=ft.Icons.PETS),
         ])
+        try:
+            has_mascot = bool(mascot_render.has_mascot_output(PROJECTS_ROOT / state.project_name))
+        except Exception:
+            has_mascot = False      # never let the optional step break the Final Video screen
+        if has_mascot:
+            right_controls.append(ft.Text(
+                "final.mp4 đang có mascot — vào bước 9 để chỉnh hoặc tắt",
+                size=11, color=TEXT_MUTED,
+            ))
 
         # CapCut Music Sync outputs
         sync_txt_path = PROJECTS_ROOT / state.project_name / "music_sync.txt" if state.project_name else None

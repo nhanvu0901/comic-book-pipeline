@@ -15,7 +15,7 @@ import flet as ft
 from ..bridge import asset_src, format_exception, load_preprocessed, run_blocking, run_stage_2
 from ..layout import log_list, primary_button, secondary_button, three_col
 from ..project_log import stage_log_path
-from ..state import AppState, save_state
+from ..state import STAGE_NAMES, AppState, save_state
 from ..theme import (
     ACCENT, BG_ELEVATED, BG_PANEL, BORDER, DANGER, STATUS_DONE, STATUS_PENDING,
     SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
@@ -222,7 +222,7 @@ def build(
     ], spacing=0, expand=True)
 
     right = ft.Column([
-        ft.Text("STEP 4 OF 8", size=10, color=TEXT_MUTED),
+        ft.Text(f"STEP 4 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("Preprocess Pages", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
         ft.Text(
             "Detects panels with Magi and asks the vision LLM to extract text, "
