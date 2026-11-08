@@ -118,3 +118,5 @@ comic-book-pipeline/
 ```
 
 <sub>README graphics are animated SVGs in <code>assets/readme/</code>; they respect <code>prefers-reduced-motion</code>.</sub>
+
+<!-- last sync: 2026-11-08 -->
