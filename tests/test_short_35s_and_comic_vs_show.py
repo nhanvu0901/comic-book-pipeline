@@ -377,3 +377,50 @@ def test_interactive_ui_toggle_research_scout(tmp_path, monkeypatch):
 
     cvs_cb.on_change(_FakeEvent(False))
     assert state.comic_vs_show is False
+
+
+def test_full_9_stage_ui_boot_and_prompt_dialog_with_new_modes(tmp_path, monkeypatch):
+    import asyncio
+    from unittest.mock import MagicMock
+    import ui.app as app
+    import ui.screens.s3_narrate as s3_narr
+    import ui.state as ui_state
+
+    monkeypatch.setattr(s3_narr, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(ui_state, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
+
+    proj_name = "test_full_boot"
+    proj_dir = tmp_path / proj_name
+    proj_dir.mkdir(parents=True)
+    (proj_dir / "comic_context.json").write_text(
+        json.dumps(
+            {
+                "title": "The Boys #40",
+                "characters": ["Billy Butcher", "Homelander"],
+                "pipeline_mode": "micro_moment",
+                "target_moment": "Billy Butcher confronts Homelander in the Oval Office.",
+                "short_35s": True,
+                "comic_vs_show": True,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    page = FakePage()
+    page.window = MagicMock()
+    page.services = []
+    page.overlay = []
+    asyncio.run(app.main(page))
+    assert page.views
+
+    state = AppState(
+        project_name=proj_name,
+        current_stage=2,
+        short_35s=True,
+        comic_vs_show=True,
+    )
+    for stage_num, builder in app.STAGE_BUILDERS.items():
+        ctl = builder(page, state, on_go=lambda _s: None, on_state_change=lambda: None)
+        assert ctl is not None, f"Stage {stage_num} failed to build"
