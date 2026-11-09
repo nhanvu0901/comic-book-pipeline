@@ -248,9 +248,9 @@ When two or more verified beats naturally belong together, combine them into one
 
 A very short sentence is allowed (never under four words; fold anything shorter into its neighbour with a comma) when it lands an important result, creates a natural spoken pause, the previous sentence already provides enough context, and it does not make the narration sound like a list. Use them sparingly. Do not write several short declarative sentences in a row unless the scene genuinely benefits from that rhythm.
 
-### HARD SENTENCE LENGTH CAP (12–18 WORD TARGET, 24-WORD MAXIMUM, MAX 2 CLAUSES)
+### HARD SENTENCE LENGTH CAP (15–26 WORD TARGET, 32-WORD MAXIMUM)
 
-Target **12–18 spoken words per sentence** so each sentence lands in 4–6 seconds and splits cleanly into 2–3 fast visual beats (5–11 words / ~2–3 seconds per beat). **Never exceed 24 words or 2 clauses in a single sentence.** Never chain 3 or 4 separate actions into a 35–47 word marathon sentence with multiple `and`, `because`, `before`, or `while` clauses; break multi-step sequences into separate 12–18 word sentences instead.
+Target **15–26 spoken words per sentence** so each sentence flows naturally like a real storyteller and connects related actions or famous character appearances smoothly without sounding choppy. **Never exceed 32 words in a single sentence.** Avoid 38–47 word marathon run-on sentences; our visual beat splitter automatically breaks 15–32 word sentences into fast 2–3 second visual beats, so prioritize smooth, natural, plain-English storytelling over artificially short fragments.
 
 ## PURPOSE AND CAUSAL LANGUAGE
 
@@ -334,7 +334,7 @@ In addition to the existing audit, ask:
 22. Did I keep ONLY household character names (plus the main item entity when needed) and replace every obscure side-character, henchman, captive, or sub-team name with a simple everyday role (`the wounded cyborg`, `two hunters`, `their boss`, `the young mutant girl`)?
 23. Is every single word in HOOK OPTIONS and FINAL SCRIPT simple everyday English at an **IELTS 6.5 (CEFR B2)** maximum — with zero C1/C2, literary, or technical words (`cybernetics`, `gutted`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`, `recaptures`)?
 24. Does the hook avoid spoiling the final ending/twist prematurely when the story builds to it, and does the body NEVER circle back in Scene 2, 3, or 4 to repeat the hook's action a second time?
-25. Is every spoken sentence in HOOK OPTIONS and FINAL SCRIPT **at most 24 words and at most 2 clauses** (targeting **12–18 words per sentence** for crisp 2–3 second visual beats), with zero 30–47 word run-on sentences?
+25. Is every spoken sentence in HOOK OPTIONS and FINAL SCRIPT **at most 32 words** (targeting **15–26 words per sentence** for natural storytelling flow), with zero 38–47 word run-on sentences?
 If any check fails, revise before output.
 
 OUTPUT EXACTLY IN ENGLISH, WITH NO PREFACE

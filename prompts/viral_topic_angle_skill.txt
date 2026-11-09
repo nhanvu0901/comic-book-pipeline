@@ -10,11 +10,13 @@ PART 1: FOCUS STRICTLY ON TOPICS 1, 2, 3, 4 (BANNED: #5 PLAIN "A vs B" FIGHTS)
 When scouting or selecting a comic story/question, you MUST ONLY pick topics
 that fall into one of the top 4 viral categories below.
 
-1. TOPIC #1 — EVERYDAY / EMOTIONAL CONTRAST (Tương phản Đời thường / Cảm xúc nghịch lý)
-   - Benchmark: #1 highest-performing category (Avg 500K – 2.6M+ views).
-   - Formula: Place a cosmic, terrifying, or god-tier character into a mundane,
-     deeply human, tragic, or darkly ironic everyday situation.
+1. TOPIC #1 — EVERYDAY / EMOTIONAL CONTRAST & "WHAT IF" MCU-BRIDGE PREMISE
+   (Tương phản Đời thường / Giả định "What If..." bẻ lái sự kiện phim MCU đại chúng)
+   - Benchmark: #1 highest-performing category (Avg 500K – 2.6M+ views, proven top-performer on our channel with What If...? Captain America #1 2099).
+   - Formula A (The "What If" MCU Bridge — PROVEN WINNER): Take an iconic event every casual movie viewer knows (e.g., Captain America frozen in the ice after WWII, Spider-Man's bite, Tony Stark's cave) and twist it with a massive time jump or alternate premise ("What if Captain America stayed frozen in the ice until the year 2099?"), then tell the complete story linearly with famous character cameos (Spider-Man 2099, Wolverine, Ghost Rider 2099) and a late plot twist (e.g., the US President is the Red Skull) at the 70% mark.
+   - Formula B (Everyday / Emotional Contrast): Place a cosmic, terrifying, or god-tier character into a mundane, deeply human, tragic, or darkly ironic everyday situation.
    - Examples:
+     * What if Captain America stayed frozen in the ice until the year 2099?
      * Thanos takes time every year to ruin or help one ordinary person's life.
      * Deadpool accepts a $7 assassination contract from a little kid.
      * The day Hulk and Bruce Banner finally sat down and made peace.
@@ -105,8 +107,9 @@ At the emotional or dramatic climax of the script (the Turning Point / Payoff
 sentence), you MUST weave in 1 short, unforgettable character line (direct or
 tight indirect quote from the source comic):
 
-1. LENGTH CAP: Exactly 5 to 8 words inside the quote (embedded inside a crisp
-   12–18 word sentence). Never quote a long paragraph or multi-sentence speech.
+1. LENGTH CAP: 5 to 8 words inside the quote (embedded inside a natural
+   15–26 word sentence, max 32 words). Never quote a long paragraph or multi-sentence speech.
+   (Note: For full-issue "What If" recaps where the plot twist itself is the climax — such as revealing the President is the Red Skull — a direct character quote is optional if the twist reveal lands stronger in plain narration.)
 2. PLACEMENT: Place it right at the climax reveal — the exact moment the table
    turns, the secret is spoken, or the final blow lands — right before the
    closing consequence/aftermath sentence.

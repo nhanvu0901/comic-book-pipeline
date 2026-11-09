@@ -695,7 +695,7 @@ def test_writer_templates_include_natural_storytelling_and_issue_identification_
         assert "READING LEVEL & VOCABULARY — STRICT IELTS 6.5 (CEFR B2) CAP" in flat, path.name
         assert "HOUSEHOLD NAMES ONLY — DO NOT DROP OBSCURE CHARACTER NAMES" in flat, path.name
         assert "NO FINAL-TWIST SPOILER IN THE HOOK & NO MID-BODY HOOK ECHO" in flat, path.name
-        assert "HARD SENTENCE LENGTH CAP (12–18 WORD TARGET, 24-WORD MAXIMUM, MAX 2 CLAUSES)" in flat, path.name
+        assert "HARD SENTENCE LENGTH CAP (15–26 WORD TARGET, 32-WORD MAXIMUM)" in flat, path.name
         # Old contradictory rule forbidding issue numbers must be gone
         assert "Do not read issue numbers" not in flat, path.name
         assert "page or issue numbers" not in flat, path.name
