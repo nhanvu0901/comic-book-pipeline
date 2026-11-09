@@ -549,8 +549,6 @@ def build(
         state.project_name = project_name
         state.last_prompt = prompt
         state.pipeline_mode = mode_dropdown.value or "narrate_1_comic"
-        if state.comic_vs_show:
-            state.pipeline_mode = "comic_vs_show"
         _persist_options_to_context()
         state.mark_approved(1)
         state.current_stage = max(state.current_stage, 2)
@@ -604,9 +602,9 @@ def build(
                 except Exception:
                     cdata = {}
                 cdata["short_35s"] = bool(state.short_35s)
-                if state.comic_vs_show:
-                    cdata["comic_vs_show"] = True
-                    cdata["pipeline_mode"] = "comic_vs_show"
+                cdata["comic_vs_show"] = bool(state.comic_vs_show)
+                if not state.comic_vs_show and cdata.get("pipeline_mode") == "comic_vs_show":
+                    cdata["pipeline_mode"] = mode_dropdown.value or "narrate_1_comic"
                 from ui.bridge import write_json_atomic
                 write_json_atomic(p_ctx, cdata)
 
@@ -616,8 +614,6 @@ def build(
 
     def _on_comic_vs_show_change(e):
         state.comic_vs_show = bool(e.control.value)
-        if state.comic_vs_show:
-            state.pipeline_mode = "comic_vs_show"
         _persist_options_to_context()
 
     short_35s_cb = ft.Checkbox(

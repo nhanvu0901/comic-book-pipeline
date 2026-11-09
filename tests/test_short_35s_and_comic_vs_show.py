@@ -19,7 +19,17 @@ from stages.stage_3.spoken_rules import SPOKEN_TEXT_RULES
 from stages.stage_3.schema import Beat
 from ui.state import AppState
 from tests.ui_test_doubles import StrictFakePage as FakePage
-from stages.research_scout.models import ResearchSession, SessionState
+from stages.research_scout.models import ResearchSession, SessionState, ScoutMode
+
+
+class _FakeControl:
+    def __init__(self, value):
+        self.value = value
+
+
+class _FakeEvent:
+    def __init__(self, value):
+        self.control = _FakeControl(value)
 
 
 def _walk(control):
@@ -37,6 +47,13 @@ def _walk(control):
 def _find_by_key(control, key):
     for node in _walk(control):
         if getattr(node, "key", None) == key:
+            return node
+    return None
+
+
+def _find_counter(control):
+    for node in _walk(control):
+        if isinstance(node, ft.Text) and "word" in str(node.value):
             return node
     return None
 
@@ -61,7 +78,12 @@ def test_is_short_35s_active():
 def test_is_comic_vs_show():
     assert is_comic_vs_show({}, {}) is False
     assert is_comic_vs_show({}, {}, mode_override="comic_vs_show") is True
+    assert is_comic_vs_show({"comic_vs_show": True}, {}, mode_override="micro_moment") is False
     assert is_comic_vs_show({"comic_vs_show": True}, {}) is True
+    assert is_comic_vs_show({"comic_vs_show": False}, {}) is False
+    # Explicit false in comic_ctx takes precedence over stale pipeline_mode
+    assert is_comic_vs_show({"comic_vs_show": False, "pipeline_mode": "comic_vs_show"}, {}) is False
+    assert is_comic_vs_show({}, {"comic_vs_show": False, "pipeline_mode": "comic_vs_show"}) is False
     assert is_comic_vs_show({"pipeline_mode": "comic_vs_show"}, {}) is True
     assert is_comic_vs_show({}, {"comic_vs_show": True}) is True
     assert "The Boys" in BLUE_OCEAN_FRANCHISES
@@ -178,7 +200,7 @@ def test_generate_gemini_prompt_comic_vs_show(tmp_path, monkeypatch):
     assert "GEMINI PROMPT — COMIC VS SHOW / MOVIE COMPARISON WRITER" in prompt_short
 
 
-def test_ui_controls_presence(tmp_path):
+def test_ui_controls_presence(tmp_path, monkeypatch):
     import ui.screens.s1_research_scout as s1_scout
     import ui.screens.s1_identify as s1_ident
     import ui.screens.s3_narrate as s3_narr
@@ -197,8 +219,7 @@ def test_ui_controls_presence(tmp_path):
     assert _find_by_key(c_narr, "comic-vs-show-narrate") is not None
 
     # 3. s1_research_scout has controls rendered in production gates bubble
-    s1_scout.RESEARCH_SESSIONS_ROOT = tmp_path / "sessions"
-    from stages.research_scout.models import ScoutMode
+    monkeypatch.setattr(s1_scout, "RESEARCH_SESSIONS_ROOT", tmp_path / "sessions")
     session = ResearchSession(
         id="test-session",
         mode=ScoutMode.QA,
@@ -213,3 +234,146 @@ def test_ui_controls_presence(tmp_path):
     c_scout = s1_scout.build(page, state, on_go=lambda _: None, on_state_change=lambda: None)
     assert _find_by_key(c_scout, "short-35s") is not None
     assert _find_by_key(c_scout, "comic-vs-show") is not None
+
+
+def test_interactive_ui_toggle_narrate(tmp_path, monkeypatch):
+    import ui.screens.s3_narrate as s3_narr
+    import ui.state as ui_state
+    monkeypatch.setattr(s3_narr, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(ui_state, "PROJECTS_ROOT", tmp_path)
+    monkeypatch.setattr(gp, "PROJECTS_ROOT", tmp_path)
+
+    proj_name = "test_narrate_toggle"
+    proj_dir = tmp_path / proj_name
+    proj_dir.mkdir(parents=True)
+    comic_ctx = {
+        "title": "Invincible #1",
+        "characters": ["Invincible", "Omni-Man"],
+        "pipeline_mode": "micro_moment",
+        "short_35s": False,
+        "comic_vs_show": False,
+    }
+    ctx_path = proj_dir / "comic_context.json"
+    ctx_path.write_text(json.dumps(comic_ctx, indent=2), encoding="utf-8")
+
+    page = FakePage()
+    state = AppState(project_name=proj_name)
+
+    control = s3_narr.build(page, state, on_go=lambda _: None, on_state_change=lambda: None)
+    short_cb = _find_by_key(control, "short-35s-narrate")
+    cvs_cb = _find_by_key(control, "comic-vs-show-narrate")
+    counter = _find_counter(control)
+    assert counter is not None
+
+    # 1. Toggle short_35s ON
+    short_cb.on_change(_FakeEvent(True))
+    assert state.short_35s is True
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["short_35s"] is True
+    assert "(<35s mode)" in counter.value
+    prompt, _ = gp.generate_gemini_writer_prompt(proj_name)
+    assert gp.FAST_SHORT_35S_OVERRIDE_BLOCK in prompt
+
+    # 2. Toggle short_35s OFF
+    short_cb.on_change(_FakeEvent(False))
+    assert state.short_35s is False
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["short_35s"] is False
+    assert "(<35s mode)" not in counter.value
+    prompt, _ = gp.generate_gemini_writer_prompt(proj_name)
+    assert gp.FAST_SHORT_35S_OVERRIDE_BLOCK not in prompt
+
+    # 3. Toggle comic_vs_show ON
+    cvs_cb.on_change(_FakeEvent(True))
+    assert state.comic_vs_show is True
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["comic_vs_show"] is True
+    prompt, _ = gp.generate_gemini_writer_prompt(proj_name)
+    assert "GEMINI PROMPT — COMIC VS SHOW / MOVIE COMPARISON WRITER" in prompt
+
+    # 4. Toggle comic_vs_show OFF
+    cvs_cb.on_change(_FakeEvent(False))
+    assert state.comic_vs_show is False
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["comic_vs_show"] is False
+    prompt, _ = gp.generate_gemini_writer_prompt(proj_name)
+    assert "GEMINI PROMPT — COMIC VS SHOW / MOVIE COMPARISON WRITER" not in prompt
+
+
+def test_interactive_ui_toggle_identify(tmp_path, monkeypatch):
+    import ui.screens.s1_identify as s1_ident
+    monkeypatch.setattr(s1_ident, "PROJECTS_ROOT", tmp_path)
+
+    proj_name = "test_ident_toggle"
+    proj_dir = tmp_path / proj_name
+    proj_dir.mkdir(parents=True)
+    comic_ctx = {
+        "title": "Invincible #1",
+        "pipeline_mode": "micro_moment",
+        "short_35s": False,
+        "comic_vs_show": False,
+    }
+    ctx_path = proj_dir / "comic_context.json"
+    ctx_path.write_text(json.dumps(comic_ctx, indent=2), encoding="utf-8")
+
+    page = FakePage()
+    state = AppState(project_name=proj_name)
+
+    control = s1_ident.build(page, state, on_go=lambda _: None, on_state_change=lambda: None)
+    short_cb = _find_by_key(control, "short-35s-identify")
+    cvs_cb = _find_by_key(control, "comic-vs-show-identify")
+
+    # Toggle short_35s ON and OFF
+    short_cb.on_change(_FakeEvent(True))
+    assert state.short_35s is True
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["short_35s"] is True
+
+    short_cb.on_change(_FakeEvent(False))
+    assert state.short_35s is False
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["short_35s"] is False
+
+    # Toggle comic_vs_show ON and OFF
+    cvs_cb.on_change(_FakeEvent(True))
+    assert state.comic_vs_show is True
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["comic_vs_show"] is True
+
+    cvs_cb.on_change(_FakeEvent(False))
+    assert state.comic_vs_show is False
+    data = json.loads(ctx_path.read_text(encoding="utf-8"))
+    assert data["comic_vs_show"] is False
+
+
+def test_interactive_ui_toggle_research_scout(tmp_path, monkeypatch):
+    import ui.screens.s1_research_scout as s1_scout
+    monkeypatch.setattr(s1_scout, "RESEARCH_SESSIONS_ROOT", tmp_path / "sessions")
+    session = ResearchSession(
+        id="test-session-toggle",
+        mode=ScoutMode.QA,
+        user_intent="test intent",
+        state=SessionState.PRODUCTION_GATES,
+    )
+    from stages.research_scout.storage import SessionStore
+    store = SessionStore(s1_scout.RESEARCH_SESSIONS_ROOT)
+    store.save(session)
+
+    page = FakePage()
+    state = AppState(scout_session_id=session.id)
+
+    control = s1_scout.build(page, state, on_go=lambda _: None, on_state_change=lambda: None)
+    short_cb = _find_by_key(control, "short-35s")
+    cvs_cb = _find_by_key(control, "comic-vs-show")
+
+    short_cb.on_change(_FakeEvent(True))
+    assert state.short_35s is True
+
+    short_cb.on_change(_FakeEvent(False))
+    assert state.short_35s is False
+
+    cvs_cb.on_change(_FakeEvent(True))
+    assert state.comic_vs_show is True
+
+    cvs_cb.on_change(_FakeEvent(False))
+    assert state.comic_vs_show is False

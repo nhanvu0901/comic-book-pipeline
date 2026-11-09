@@ -155,7 +155,8 @@ def build(
     def _on_short_35s_toggle(e):
         val = bool(e.control.value)
         state.short_35s = val
-        save_state(state)
+        if state.project_name and (PROJECTS_ROOT / state.project_name).exists():
+            save_state(state)
         if ctx_path and ctx_path.exists():
             try:
                 cdata = json.loads(ctx_path.read_text(encoding="utf-8"))
@@ -170,17 +171,18 @@ def build(
     def _on_comic_vs_show_toggle(e):
         val = bool(e.control.value)
         state.comic_vs_show = val
-        if val:
-            state.pipeline_mode = "comic_vs_show"
-        save_state(state)
+        if not val and state.pipeline_mode == "comic_vs_show":
+            state.pipeline_mode = "explore_answer" if n_items else "micro_moment"
+        if state.project_name and (PROJECTS_ROOT / state.project_name).exists():
+            save_state(state)
         if ctx_path and ctx_path.exists():
             try:
                 cdata = json.loads(ctx_path.read_text(encoding="utf-8"))
             except Exception:
                 cdata = {}
             cdata["comic_vs_show"] = val
-            if val:
-                cdata["pipeline_mode"] = "comic_vs_show"
+            if not val and cdata.get("pipeline_mode") == "comic_vs_show":
+                cdata["pipeline_mode"] = "explore_answer" if n_items else "micro_moment"
             from ui.bridge import write_json_atomic
             write_json_atomic(ctx_path, cdata)
         page.update()

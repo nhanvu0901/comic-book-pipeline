@@ -11,10 +11,14 @@ BLUE_OCEAN_FRANCHISES = ("The Boys", "Invincible", "MCU", "DCU")
 
 def is_comic_vs_show(comic_ctx: dict | None, state_data: dict | None, mode_override: str | None = None) -> bool:
     """Return True if comic_vs_show mode is active for this project."""
-    if mode_override == COMIC_VS_SHOW_MODE:
-        return True
+    if mode_override is not None:
+        return mode_override == COMIC_VS_SHOW_MODE
     ctx = comic_ctx or {}
     st = state_data or {}
+    if "comic_vs_show" in ctx:
+        return bool(ctx.get("comic_vs_show"))
+    if "comic_vs_show" in st:
+        return bool(st.get("comic_vs_show"))
     if ctx.get("pipeline_mode") == COMIC_VS_SHOW_MODE or st.get("pipeline_mode") == COMIC_VS_SHOW_MODE:
         return True
-    return bool(ctx.get("comic_vs_show") or st.get("comic_vs_show"))
+    return False

@@ -396,7 +396,7 @@ def _call_explore_writer(
         f"this plainly in your own spoken words: {thesis.strip()}\n\n"
         if (archetype == "explain" and (thesis or "").strip()) else ""
     )
-    b_min, b_max = _exp_band(len(beats), short_35s=short_35s)
+    b_min, b_max = _exp_band(len(beats), short_35s=True) if short_35s else _exp_band(len(beats))
     user = (
         f"QUESTION being answered: {question}\n\n"
         f"{context_block}"
@@ -502,7 +502,7 @@ def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
         if archetype == "explain" and _LIST_LANGUAGE_RE.search(text):
             issues.append(f"scene {i + 1} uses list language "
                           f"({_LIST_LANGUAGE_RE.search(text).group(0)!r}) — this is one story, not a list")
-    band_min, band_max = _exp_band(len(beats), short_35s=short_35s)
+    band_min, band_max = _exp_band(len(beats), short_35s=True) if short_35s else _exp_band(len(beats))
     if not (band_min <= total <= band_max):
         issues.append(f"total {total}w outside band {band_min}-{band_max}")
     if archetype == "explain" and scenes:

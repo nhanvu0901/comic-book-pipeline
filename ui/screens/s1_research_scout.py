@@ -1210,10 +1210,7 @@ def build(
         state.returned_scout_session_id = ""
         if session:
             state.last_prompt = session.user_intent
-            if state.comic_vs_show:
-                state.pipeline_mode = "comic_vs_show"
-            else:
-                state.pipeline_mode = "explore_answer" if session.mode is ScoutMode.QA else "micro_moment"
+            state.pipeline_mode = "explore_answer" if session.mode is ScoutMode.QA else "micro_moment"
         ctx_path = PROJECTS_ROOT / project_name / "comic_context.json"
         if ctx_path.exists():
             try:
@@ -1221,9 +1218,7 @@ def build(
             except Exception:
                 cdata = {}
             cdata["short_35s"] = bool(state.short_35s)
-            if state.comic_vs_show:
-                cdata["comic_vs_show"] = True
-                cdata["pipeline_mode"] = "comic_vs_show"
+            cdata["comic_vs_show"] = bool(state.comic_vs_show)
             from ui.bridge import write_json_atomic
             write_json_atomic(ctx_path, cdata)
         state.mark_approved(1)
