@@ -25,6 +25,7 @@ from config import PROJECTS_ROOT
 from stages._arc import issue_index_of_page, qa_item_chapters
 from stages.user_errors import ScriptMappingError
 from .beat_split import split_hook_fragments, _verbatim_ok
+from .comic_vs_show import is_comic_vs_show, COMIC_VS_SHOW_MODE
 from .pipeline import load_inputs, filter_story_pages
 from .provided_narration import split_sentences
 from .spoken_rules import SPOKEN_TEXT_RULES
@@ -43,7 +44,22 @@ def fill_spoken_rules(rendered: str) -> str:
 QA_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_qa_writer_template.md"
 MICRO_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_micro_moment_writer.md"
 TOPIC_QA_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_topic_qa_writer.md"
+COMIC_VS_SHOW_TEMPLATE_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "gemini_comic_vs_show_writer.md"
 TEMPLATE_PATH = QA_TEMPLATE_PATH  # backward compatibility
+
+FAST_SHORT_35S_OVERRIDE_BLOCK = """
+## ⚡ FAST SHORT MODE (< 35 SECONDS) — HARD OVERRIDE ACTIVE
+Master selected **< 35s Fast Short Mode** for this project. This overrides the standard 45–58s / 110–175 word budget above:
+- **TOTAL SPOKEN WORD COUNT:** Strictly **80–105 words** total across the entire script (Hook + Body + Closing Line). Hard ceiling: **105 words** (~28–34 seconds at 2.9–3.4 words/sec).
+- **SENTENCE BUDGET:** Write **5 to 7 crisp sentences total** (12–16 words per sentence, hard max 20 words). Cut all secondary sub-plots and throat-clearing; go straight from Hook -> Core Setup -> Turning Point + 1 Short Climax Quote (5–8 words) -> Payoff/Loop Closer.
+- **Q&A / Multi-Item Adjustment (if items are present):** Keep each item paragraph to **22–28 words** (2 tight sentences per item: setup/cause + climax payoff) so all items + hook + closer land under 105 words (< 35 seconds).
+""".strip()
+
+
+def is_short_35s_active(comic_ctx: dict | None, state_data: dict | None, short_35s: bool | None = None) -> bool:
+    if short_35s is not None:
+        return bool(short_35s)
+    return bool((comic_ctx or {}).get("short_35s") or (state_data or {}).get("short_35s"))
 
 # A hook (template: <=14 words) or closing line is at most this long; an item paragraph
 # (template: over 20 words) is longer. Used only to tell those two apart at the ends.
@@ -456,10 +472,15 @@ def _enrich_qa_context(
     return numbered, story_context_block
 
 
-def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
+def generate_gemini_writer_prompt(
+    project_name: str,
+    *,
+    short_35s: bool | None = None,
+    mode_override: str | None = None,
+) -> tuple[str, Path]:
     """Build the Gemini markdown prompt for `project_name` and save it as
     projects/<project_name>/<project_name>_writer_prompt.md.
-    Dispatches to micro_moment writer or Q&A writer based on project mode.
+    Dispatches to comic_vs_show, micro_moment writer, or Q&A writer based on project mode.
     Returns (prompt_text, file_path).
     """
     root = PROJECTS_ROOT / project_name
@@ -472,12 +493,48 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
 
     items = answer_ctx.get("items") or []
     pipeline_mode = (
-        comic_ctx.get("pipeline_mode")
+        mode_override
+        or comic_ctx.get("pipeline_mode")
         or state_data.get("pipeline_mode")
         or ("explore_answer" if items else "micro_moment")
     )
 
-    if pipeline_mode == "micro_moment":
+    if is_comic_vs_show(comic_ctx, state_data, mode_override):
+        cand = _find_micro_scout_candidate(project_name, root, comic_ctx, state_data)
+        char = cand.get("character") or comic_ctx.get("title") or "Character"
+        event = cand.get("what_visibly_happens") or comic_ctx.get("target_moment") or cand.get("summary") or ""
+        issue = cand.get("series_issue_year") or comic_ctx.get("series_issue_year") or comic_ctx.get("issues") or ""
+        moment_line = f"{char} — {event} — {issue}".strip(" —")
+        question = (
+            answer_ctx.get("question")
+            or comic_ctx.get("title")
+            or project_name.replace("_", " ").title()
+        ).strip()
+        numbered, story_context_block = _enrich_qa_context(
+            project_name, root, answer_ctx, state_data, question
+        )
+        if numbered:
+            scout_json_str = json.dumps(numbered, indent=2, ensure_ascii=False)
+        elif cand and (cand.get("what_visibly_happens") or cand.get("summary")):
+            scout_json_str = json.dumps(cand, indent=2, ensure_ascii=False)
+        else:
+            scout_json_str = json.dumps(comic_ctx, indent=2, ensure_ascii=False)
+
+        template = COMIC_VS_SHOW_TEMPLATE_PATH.read_text(encoding="utf-8") if COMIC_VS_SHOW_TEMPLATE_PATH.exists() else ""
+        if not template:
+            template = (
+                "# GEMINI PROMPT — COMIC VS SHOW COMPARISON WRITER\n\n"
+                "MOMENT: {{MOMENT}}\nQUESTION: {{QUESTION}}\n{{STORY_CONTEXT}}\n"
+                "SCOUT JSON:\n```json\n{{SCOUT_JSON}}\n```\n\n{{SPOKEN_TEXT_RULES}}\n"
+            )
+        rendered = template.replace("{{MOMENT}}", moment_line or question)
+        rendered = rendered.replace("{{QUESTION}}", question)
+        rendered = rendered.replace("{{SCOUT_JSON}}", scout_json_str)
+        if story_context_block:
+            rendered = rendered.replace("{{STORY_CONTEXT}}", f"{story_context_block}\n")
+        else:
+            rendered = rendered.replace("{{STORY_CONTEXT}}\n", "").replace("{{STORY_CONTEXT}}", "")
+    elif pipeline_mode == "micro_moment":
         cand = _find_micro_scout_candidate(project_name, root, comic_ctx, state_data)
         char = cand.get("character") or comic_ctx.get("title") or "Character"
         event = cand.get("what_visibly_happens") or comic_ctx.get("target_moment") or cand.get("summary") or ""
@@ -531,6 +588,14 @@ def generate_gemini_writer_prompt(project_name: str) -> tuple[str, Path]:
             rendered = rendered.replace("{{STORY_CONTEXT}}\n", "").replace("{{STORY_CONTEXT}}", "")
 
     rendered = fill_spoken_rules(rendered)
+
+    if is_short_35s_active(comic_ctx, state_data, short_35s):
+        m = re.search(r"\n(?=#{0,2}\s*OUTPUT)", rendered, re.IGNORECASE)
+        if m:
+            pos = m.start()
+            rendered = rendered[:pos] + f"\n\n{FAST_SHORT_35S_OVERRIDE_BLOCK}\n" + rendered[pos:]
+        else:
+            rendered = rendered.rstrip("\n") + "\n\n" + FAST_SHORT_35S_OVERRIDE_BLOCK + "\n"
 
     # Save to project folder as <project_name>_writer_prompt.md
     out_path = root / f"{project_name}_writer_prompt.md"

@@ -549,6 +549,9 @@ def build(
         state.project_name = project_name
         state.last_prompt = prompt
         state.pipeline_mode = mode_dropdown.value or "narrate_1_comic"
+        if state.comic_vs_show:
+            state.pipeline_mode = "comic_vs_show"
+        _persist_options_to_context()
         state.mark_approved(1)
         state.current_stage = max(state.current_stage, 2)
         save_state(state)
@@ -591,10 +594,49 @@ def build(
 
     # ─── Layout ───────────────────────────────────────────────────────
 
+    def _persist_options_to_context():
+        if state.project_name:
+            p_ctx = PROJECTS_ROOT / state.project_name / "comic_context.json"
+            if p_ctx.exists():
+                import json
+                try:
+                    cdata = json.loads(p_ctx.read_text(encoding="utf-8"))
+                except Exception:
+                    cdata = {}
+                cdata["short_35s"] = bool(state.short_35s)
+                if state.comic_vs_show:
+                    cdata["comic_vs_show"] = True
+                    cdata["pipeline_mode"] = "comic_vs_show"
+                from ui.bridge import write_json_atomic
+                write_json_atomic(p_ctx, cdata)
+
+    def _on_short_35s_change(e):
+        state.short_35s = bool(e.control.value)
+        _persist_options_to_context()
+
+    def _on_comic_vs_show_change(e):
+        state.comic_vs_show = bool(e.control.value)
+        if state.comic_vs_show:
+            state.pipeline_mode = "comic_vs_show"
+        _persist_options_to_context()
+
+    short_35s_cb = ft.Checkbox(
+        key="short-35s-identify",
+        label="Fast Short < 35s (~80–105 words, loop-optimized)",
+        value=bool(state.short_35s),
+        on_change=_on_short_35s_change,
+    )
+    comic_vs_show_cb = ft.Checkbox(
+        key="comic-vs-show-identify",
+        label="Comic vs. Show Mode (Blue Ocean: The Boys / Invincible / MCU-DCU)",
+        value=bool(state.comic_vs_show),
+        on_change=_on_comic_vs_show_change,
+    )
+
     center = ft.Column([
         ft.Container(
             content=ft.Column([
-                ft.Row([mode_dropdown], spacing=12),
+                ft.Row([mode_dropdown, short_35s_cb, comic_vs_show_cb], spacing=12, wrap=True),
                 ft.Row([
                     prompt_field,
                     primary_button("Identify", _start_pipeline, icon=ft.Icons.TRAVEL_EXPLORE),
@@ -615,6 +657,7 @@ def build(
 
     # Right column
     def approve_and_go(_e):
+        _persist_options_to_context()
         state.mark_approved(1)
         state.current_stage = 2
         save_state(state)

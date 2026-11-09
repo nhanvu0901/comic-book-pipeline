@@ -55,6 +55,8 @@ class AppState:
     # Stage 3
     chosen_mode: str = ""
     chosen_hook: str = ""
+    short_35s: bool = False
+    comic_vs_show: bool = False
     # Stage 4
     tts_voice_id: str = ""
     tts_model: str = ""

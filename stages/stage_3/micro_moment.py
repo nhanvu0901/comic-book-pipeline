@@ -64,6 +64,8 @@ from .write_script import (
 # the story lands complete. Both env-tunable (MICRO_WORDS_MIN / MICRO_WORDS_MAX).
 _MICRO_WORDS_MIN = int(os.getenv("MICRO_WORDS_MIN", "120"))   # ~35s at 3.4 wps
 _MICRO_WORDS_MAX = int(os.getenv("MICRO_WORDS_MAX", "320"))   # ~94s at 3.4 wps
+_MICRO_SHORT_35S_WORDS_MIN = 80
+_MICRO_SHORT_35S_WORDS_MAX = 105
 _MICRO_SCENE_MAX_WORDS = 40     # a scene = one paratactic chained sentence (or a short single-event one)
 _MICRO_HOOK_MIN_WORDS = 6
 _MICRO_HOOK_MAX_WORDS = 24
@@ -1039,7 +1041,7 @@ def _call_micro_writer(
         f"WORDING from the STORY sources above, not from these labels):\n"
         f"{_window_block(window, peak_idx)}\n\n"
         + (f"{dialog_block}\n\n" if dialog_block else "")
-        + f"WORD BUDGET: {_MICRO_WORDS_MIN}-{_MICRO_WORDS_MAX} words TOTAL across the hook line "
+        + f"WORD BUDGET: {_MICRO_SHORT_35S_WORDS_MIN if bool(comic_context.get('short_35s')) else _MICRO_WORDS_MIN}-{_MICRO_SHORT_35S_WORDS_MAX if bool(comic_context.get('short_35s')) else _MICRO_WORDS_MAX} words TOTAL across the hook line "
         f"AND all {len(window)} scenes (each scene under {_MICRO_SCENE_MAX_WORDS} words).\n"
         f'Return JSON: {{"hook": "...", "ending_style": "thesis|hardcut|question", '
         f'"scenes": [{{"text": "...", "visual_beats": ["<verbatim fragment>", "..."], '
@@ -1085,6 +1087,8 @@ def _validate_micro_scenes(
     focus_tokens: set[str] | None = None,
     dialog_lines: list[str] | None = None,
     dialog_entries: list[tuple[int, str, str]] | None = None,
+    words_min: int = _MICRO_WORDS_MIN,
+    words_max: int = _MICRO_WORDS_MAX,
 ) -> list[str]:
     """Hook is a concrete opening in band that names a character in its first
     sentence, with one scene per
@@ -1150,8 +1154,8 @@ def _validate_micro_scenes(
             elif not _verbatim_ok(text, vbeats):
                 issues.append(f"scene {i + 1} visual_beats do not reconstruct the scene text "
                               f"verbatim — beats must concatenate back to the exact text")
-    if not (_MICRO_WORDS_MIN <= total <= _MICRO_WORDS_MAX):
-        issues.append(f"micro band: total {total}w outside {_MICRO_WORDS_MIN}-{_MICRO_WORDS_MAX} "
+    if not (words_min <= total <= words_max):
+        issues.append(f"micro band: total {total}w outside {words_min}-{words_max} "
                       f"(this Short must land ~35-60s at 3.4 wps)")
     style = (ending_style or "").strip().lower()
     if style not in _MICRO_ENDING_STYLES:
@@ -1249,12 +1253,17 @@ def write_micro_moment(
     dialog_entries = _window_dialog_entries(window, story_pages)
     dialog_lines = [t for _, _, t in dialog_entries]
 
+    is_35s = bool(comic_context.get("short_35s"))
+    w_min = _MICRO_SHORT_35S_WORDS_MIN if is_35s else _MICRO_WORDS_MIN
+    w_max = _MICRO_SHORT_35S_WORDS_MAX if is_35s else _MICRO_WORDS_MAX
+
     def _score(p: dict) -> list[str]:
         """Lint issues of one draft (see `_validate_micro_scenes`)."""
         return _validate_micro_scenes(p.get("hook", ""), p.get("scenes") or [], window,
                                       p.get("ending_style"), focus_tokens=focus_tokens,
                                       dialog_lines=dialog_lines,
-                                      dialog_entries=dialog_entries)
+                                      dialog_entries=dialog_entries,
+                                      words_min=w_min, words_max=w_max)
 
     parsed, mdl = _call_micro_writer(window, comic_context, target_moment, model=model,
                                      progress=progress, debug_dump=dump, story_pages=story_pages,

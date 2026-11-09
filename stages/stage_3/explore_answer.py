@@ -81,7 +81,7 @@ _QA_TARGET_MAX_SEC = 70
 _QA_INTRO_OUTRO_SEC = 10
 
 
-def _exp_band(n_items: int) -> tuple[int, int]:
+def _exp_band(n_items: int, *, short_35s: bool = False) -> tuple[int, int]:
     """Total body word band for `n_items` countdown scenes (excludes intro/outro).
 
     Derived from the seconds target above, not a flat per-item multiply: few
@@ -91,6 +91,8 @@ def _exp_band(n_items: int) -> tuple[int, int]:
     needs enough words to name the entity + why) and never above what's
     physically reachable (every scene maxed out at _EXP_SCENE_MAX_WORDS, the
     hard per-scene cap enforced below in _validate_explore_scenes)."""
+    if short_35s:
+        return (max(60, n_items * 20), min(95, max(75, n_items * 28)))
     body_min_sec = max(_QA_TARGET_MIN_SEC - _QA_INTRO_OUTRO_SEC, 0)
     body_max_sec = max(_QA_TARGET_MAX_SEC - _QA_INTRO_OUTRO_SEC, 0)
     sec_min_words = round(body_min_sec * _WORDS_PER_SEC)
@@ -380,6 +382,7 @@ def _call_explore_writer(
     thesis: str = "",
     clarity_fixes: str = "",
     context_block: str = "",
+    short_35s: bool = False,
 ) -> tuple[dict, str]:
     fix_block = ""
     if issues:
@@ -393,6 +396,7 @@ def _call_explore_writer(
         f"this plainly in your own spoken words: {thesis.strip()}\n\n"
         if (archetype == "explain" and (thesis or "").strip()) else ""
     )
+    b_min, b_max = _exp_band(len(beats), short_35s=short_35s)
     user = (
         f"QUESTION being answered: {question}\n\n"
         f"{context_block}"
@@ -401,7 +405,7 @@ def _call_explore_writer(
         f"{clarity_fixes}"
         f"ITEMS — write {_SCENES_PER_ITEM} scenes per item (CONTEXT then MOMENT), in this EXACT order (do not reorder):\n"
         f"{_items_block(beats, items)}\n\n"
-        f"WORD BUDGET: {_exp_band(len(beats))[0]}-{_exp_band(len(beats))[1]} words total across all "
+        f"WORD BUDGET: {b_min}-{b_max} words total across all "
         f"{len(beats) * _SCENES_PER_ITEM} scenes — {len(beats)} items x {_SCENES_PER_ITEM} scenes each (every scene under {_EXP_SCENE_MAX_WORDS} words).\n"
         f'Return JSON: {{"scenes": [{{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one per drawable moment>"], '
         f'"connective": null, "beat_id": {beats[0].id}}}, ... TWO per item, context first then moment ...]}}.'
@@ -463,7 +467,8 @@ _LIST_LANGUAGE_RE = re.compile(
 
 
 def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
-                             archetype: str = "list") -> list[str]:
+                             archetype: str = "list",
+                             *, short_35s: bool = False) -> list[str]:
     """item count match, per-scene word cap (hard), band total, entity named.
     EXPLAIN questions additionally require the final scene to state the answer
     (causal marker) and ban list language everywhere."""
@@ -497,7 +502,7 @@ def _validate_explore_scenes(scenes: list[dict], beats: list[Beat],
         if archetype == "explain" and _LIST_LANGUAGE_RE.search(text):
             issues.append(f"scene {i + 1} uses list language "
                           f"({_LIST_LANGUAGE_RE.search(text).group(0)!r}) — this is one story, not a list")
-    band_min, band_max = _exp_band(len(beats))
+    band_min, band_max = _exp_band(len(beats), short_35s=short_35s)
     if not (band_min <= total <= band_max):
         issues.append(f"total {total}w outside band {band_min}-{band_max}")
     if archetype == "explain" and scenes:
@@ -671,19 +676,22 @@ def write_explore_answer(
     # viewer needs. Empty string when neither field is present → old answer_context.json
     # produces a byte-identical writer prompt.
     context_block = _viewer_context_block(answer_context)
+    short_35s = bool((comic_context or {}).get("short_35s") or (answer_context or {}).get("short_35s"))
 
     log(f"[explore_answer] writing {len(beats)} item scene(s)… (archetype={archetype})")
     parsed, mdl = _call_explore_writer(beats, items, question, model=model, progress=progress,
                                        debug_dump=dump, archetype=archetype, thesis=thesis,
-                                       clarity_fixes=clarity_fixes, context_block=context_block)
-    issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype)
+                                       clarity_fixes=clarity_fixes, context_block=context_block,
+                                       short_35s=short_35s)
+    issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype, short_35s=short_35s)
     if issues:
         log(f"[explore_answer] draft has {len(issues)} issue(s); retrying once: {issues}")
         parsed, mdl = _call_explore_writer(beats, items, question, model=model, progress=progress,
                                            debug_dump=dump, issues=issues,
                                            archetype=archetype, thesis=thesis,
-                                           clarity_fixes=clarity_fixes, context_block=context_block)
-        issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype)
+                                           clarity_fixes=clarity_fixes, context_block=context_block,
+                                           short_35s=short_35s)
+        issues = _validate_explore_scenes(parsed.get("scenes") or [], beats, archetype, short_35s=short_35s)
         if issues:
             log(f"[explore_answer] shipping with unresolved issue(s): {issues}")
 

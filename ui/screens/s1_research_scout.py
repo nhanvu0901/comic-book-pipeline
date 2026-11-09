@@ -20,7 +20,7 @@ from typing import Callable
 
 import flet as ft
 
-from config import RESEARCH_SESSIONS_ROOT, SCOUT_EVIDENCE_MODEL
+from config import PROJECTS_ROOT, RESEARCH_SESSIONS_ROOT, SCOUT_EVIDENCE_MODEL
 from stages.research_scout.micro_recency import issue_publication_year
 from stages.research_scout.issue_identity import _candidate_identity
 from stages.research_scout.opportunity import grounded_facts
@@ -947,6 +947,18 @@ def build(
                 value=override_holder[0],
                 on_change=_override_changed,
             ))
+        controls.append(ft.Checkbox(
+            key="short-35s",
+            label="Fast Short < 35s (~80–105 words, loop-optimized)",
+            value=bool(state.short_35s),
+            on_change=_short_35s_changed,
+        ))
+        controls.append(ft.Checkbox(
+            key="comic-vs-show",
+            label="Comic vs. Show Mode (Blue Ocean: The Boys / Invincible / MCU-DCU)",
+            value=bool(state.comic_vs_show),
+            on_change=_comic_vs_show_changed,
+        ))
         controls.append(ft.Row([slug_field, create_button, back_button], spacing=10))
         return _scout_bubble(ft.Column(controls, spacing=8))
 
@@ -1198,7 +1210,22 @@ def build(
         state.returned_scout_session_id = ""
         if session:
             state.last_prompt = session.user_intent
-            state.pipeline_mode = "explore_answer" if session.mode is ScoutMode.QA else "micro_moment"
+            if state.comic_vs_show:
+                state.pipeline_mode = "comic_vs_show"
+            else:
+                state.pipeline_mode = "explore_answer" if session.mode is ScoutMode.QA else "micro_moment"
+        ctx_path = PROJECTS_ROOT / project_name / "comic_context.json"
+        if ctx_path.exists():
+            try:
+                cdata = json.loads(ctx_path.read_text(encoding="utf-8"))
+            except Exception:
+                cdata = {}
+            cdata["short_35s"] = bool(state.short_35s)
+            if state.comic_vs_show:
+                cdata["comic_vs_show"] = True
+                cdata["pipeline_mode"] = "comic_vs_show"
+            from ui.bridge import write_json_atomic
+            write_json_atomic(ctx_path, cdata)
         state.mark_approved(1)
         state.current_stage = 2
         save_state(state)
@@ -1667,6 +1694,18 @@ def build(
         if busy[0]:
             return
         override_holder[0] = bool(event.control.value)
+        _render_full()
+
+    def _short_35s_changed(event) -> None:
+        if busy[0]:
+            return
+        state.short_35s = bool(event.control.value)
+        _render_full()
+
+    def _comic_vs_show_changed(event) -> None:
+        if busy[0]:
+            return
+        state.comic_vs_show = bool(event.control.value)
         _render_full()
 
     def _verify(candidate_ids: list[str], only: list[str] | None, label: str) -> None:

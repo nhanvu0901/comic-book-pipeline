@@ -110,6 +110,19 @@ def build(
 
     n_items = _item_count(state.project_name)
 
+    ctx_path = PROJECTS_ROOT / state.project_name / "comic_context.json" if state.project_name else None
+    comic_ctx = {}
+    if ctx_path and ctx_path.exists():
+        try:
+            comic_ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+        except Exception:
+            comic_ctx = {}
+
+    is_short_35s = bool(state.short_35s or comic_ctx.get("short_35s"))
+    state.short_35s = is_short_35s
+    is_comic_vs_show = bool(state.comic_vs_show or comic_ctx.get("comic_vs_show") or comic_ctx.get("pipeline_mode") == "comic_vs_show")
+    state.comic_vs_show = is_comic_vs_show
+
     def _update_counter(_e=None):
         text = script_area.value or ""
         # Blank-line paragraphs: the unit the parser maps (paragraph N = item N). This
@@ -119,11 +132,18 @@ def build(
         dur = wc / 2.9
         expected = (f" (need {n_items}, plus an optional hook and closing line)"
                     if n_items else "")
-        counter.value = (
-            f"{wc} words · ~{dur:.1f}s estimated · {len(paragraphs)} paragraph(s){expected}"
-            + ("  ⚠️ over 58s" if dur > 58 else "")
-        )
-        counter.color = WARN if dur > 58 else TEXT_MUTED
+        if state.short_35s:
+            counter.value = (
+                f"{wc} words  ·  ~{dur:.1f}s / 35s (<35s mode)  ·  {len(paragraphs)} paragraph(s){expected}"
+                + ("  ⚠️ over 35s" if dur > 35 else "")
+            )
+            counter.color = SUCCESS if (15 <= wc <= 105 and dur <= 35) else (WARN if dur > 35 else TEXT_MUTED)
+        else:
+            counter.value = (
+                f"{wc} words · ~{dur:.1f}s estimated · {len(paragraphs)} paragraph(s){expected}"
+                + ("  ⚠️ over 58s" if dur > 58 else "")
+            )
+            counter.color = WARN if dur > 58 else TEXT_MUTED
         try:
             counter.update()
         except Exception:
@@ -131,6 +151,52 @@ def build(
 
     script_area.on_change = _update_counter
     _update_counter()
+
+    def _on_short_35s_toggle(e):
+        val = bool(e.control.value)
+        state.short_35s = val
+        save_state(state)
+        if ctx_path and ctx_path.exists():
+            try:
+                cdata = json.loads(ctx_path.read_text(encoding="utf-8"))
+            except Exception:
+                cdata = {}
+            cdata["short_35s"] = val
+            from ui.bridge import write_json_atomic
+            write_json_atomic(ctx_path, cdata)
+        _update_counter()
+        page.update()
+
+    def _on_comic_vs_show_toggle(e):
+        val = bool(e.control.value)
+        state.comic_vs_show = val
+        if val:
+            state.pipeline_mode = "comic_vs_show"
+        save_state(state)
+        if ctx_path and ctx_path.exists():
+            try:
+                cdata = json.loads(ctx_path.read_text(encoding="utf-8"))
+            except Exception:
+                cdata = {}
+            cdata["comic_vs_show"] = val
+            if val:
+                cdata["pipeline_mode"] = "comic_vs_show"
+            from ui.bridge import write_json_atomic
+            write_json_atomic(ctx_path, cdata)
+        page.update()
+
+    short_35s_cb = ft.Checkbox(
+        key="short-35s-narrate",
+        label="Fast Short < 35s (~80–105 words, loop-optimized)",
+        value=state.short_35s,
+        on_change=_on_short_35s_toggle,
+    )
+    comic_vs_show_cb = ft.Checkbox(
+        key="comic-vs-show-narrate",
+        label="Comic vs. Show Mode (Blue Ocean: The Boys / Invincible / MCU-DCU)",
+        value=state.comic_vs_show,
+        on_change=_on_comic_vs_show_toggle,
+    )
 
     def _open_prompt_dialog(prompt_text: str, file_url: str, filename: str):
         dialog = ft.AlertDialog(
@@ -338,10 +404,16 @@ def build(
         secondary_button("Clear", clear_script_click, icon=ft.Icons.CLEAR),
     ], spacing=10, wrap=True)
 
+    options_bar = ft.Row([
+        short_35s_cb,
+        comic_vs_show_cb,
+    ], spacing=16, wrap=True)
+
     center = ft.Column([
         ft.Container(
             content=ft.Column([
                 top_bar,
+                options_bar,
                 ft.Container(height=4),
                 script_area,
                 counter,

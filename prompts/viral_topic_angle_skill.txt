@@ -1,0 +1,138 @@
+================================================================================
+SKILL PROMPT: VIRAL COMIC TOPIC SCOUT & MILLION-VIEW ANGLE WRITER
+================================================================================
+Use this skill whenever scouting comic topics, selecting story angles, writing
+hooks/titles, or drafting Short scripts.
+
+--------------------------------------------------------------------------------
+PART 1: FOCUS STRICTLY ON TOPICS 1, 2, 3, 4 (BANNED: #5 PLAIN "A vs B" FIGHTS)
+--------------------------------------------------------------------------------
+When scouting or selecting a comic story/question, you MUST ONLY pick topics
+that fall into one of the top 4 viral categories below.
+
+1. TOPIC #1 — EVERYDAY / EMOTIONAL CONTRAST (Tương phản Đời thường / Cảm xúc nghịch lý)
+   - Benchmark: #1 highest-performing category (Avg 500K – 2.6M+ views).
+   - Formula: Place a cosmic, terrifying, or god-tier character into a mundane,
+     deeply human, tragic, or darkly ironic everyday situation.
+   - Examples:
+     * Thanos takes time every year to ruin or help one ordinary person's life.
+     * Deadpool accepts a $7 assassination contract from a little kid.
+     * The day Hulk and Bruce Banner finally sat down and made peace.
+     * Why Superman stood on a rooftop for hours just to talk to one teenager.
+
+2. TOPIC #2 — ONE-SIDED DESTRUCTION / HUMILIATION (Hủy diệt / Áp đảo một chiều)
+   - Benchmark: #2 highest-performing category (Avg 400K – 1.8M+ views).
+   - Formula: One character completely dismantles, humiliates, outsmarts, or
+     breaks another character's physical or psychological limit. It is NEVER an
+     even brawl — it is a shocking, one-sided dismantling.
+   - Power Verbs: Destroys, Humiliates, Kills, Breaks, Tears Apart, Eaten Alive.
+   - Examples:
+     * Punisher makes Juggernaut throw up using a weapon nobody expected.
+     * Plastic Man terrifies the entire Justice League in seconds.
+     * How Alfred Pennyworth humiliated Superman without kryptonite.
+
+3. TOPIC #3 — RULE-BREAKER / MORAL TRAP / PARADOX QUESTION (Câu hỏi Nghịch lý / Luật ngầm)
+   - Benchmark: #3 highest-performing category (Avg 300K – 1.5M+ views).
+   - Formula: Expose a hidden rule, a bizarre biological/psychological weakness,
+     or a moral trap where a hero's greatest strength or code becomes a curse.
+   - Examples:
+     * Why Batman refuses to fight this one low-level villain.
+     * Why The Flash avoids caffeine and energy drinks at all costs.
+     * What happens when Rogue tries to absorb Galactus?
+     * The one criminal even The Punisher refused to pull the trigger on.
+
+4. TOPIC #4 — SUPERLATIVE / TOP 3 TERRIFYING VARIANTS (So sánh Cực đại / Top 3 Biến thể Kinh dị)
+   - Benchmark: #4 highest-performing category (Avg 300K – 1.1M+ views).
+   - Formula: A tight 3-item escalation of the scariest, darkest, creepiest, or
+     most disturbing variants or acts of an iconic character.
+   - Examples:
+     * 3 Scariest Versions of Superman That Turned Into Pure Nightmare Fuel.
+     * 3 Times Spider-Man Stopped Holding Back and Terrified Villains.
+     * 3 Alternate Versions of Batman Even the Justice League Fears.
+
+[STRICT BAN — DO NOT SELECT TOPIC #5]:
+- NEVER pick or frame a video as #5: Plain "A vs B / A meets B / A confronts B"
+  (Đánh nhau đơn thuần).
+- Titles/angles like "Infernal Hulk vs Spider-Man", "Thor Meets Hulk", or
+  "Hero A Confronts Villain B" without a moral trap, bizarre weakness, emotional
+  paradox, or one-sided humiliation are STRICTLY FORBIDDEN.
+- If a source comic is a fight issue, you MUST reframe it using one of the
+  3 Million-View Angles in Part 2 below before accepting it.
+
+--------------------------------------------------------------------------------
+PART 2 (SECTION 2): THE 3 MILLION-VIEW REFRAMING ANGLES
+(Đổi cách chọn Truyện & Đặt Góc: Bỏ góc "A vs B", chuyển sang 3 Góc Triệu View)
+--------------------------------------------------------------------------------
+Before writing any title, hook, or research query, force the comic material
+through one of these 3 Million-View Angles:
+
+ANGLE A — THE MORAL TRAP / WEIRD WEAKNESS ANGLE
+(Góc "Cái Bẫy Đạo Đức / Điểm Yếu Ngược Đời")
+- Core Question: What sacred rule is broken, what moral trap is sprung, or what
+  absurd/terrifying weakness is exposed?
+- Bad ("A vs B"): "Batman Fights Joe Chill" / "Superman Battles Manchester Black"
+- Million-View Reframe:
+  * "Why Batman Kept His Parents' Killer Alive for Thirty Days"
+  * "How Superman Proved Why He Never Kills in Thirty Seconds"
+  * "Why Spider-Man Let This Bank Robber Walk Away"
+
+ANGLE B — THE EMOTIONAL / EVERYDAY CONTRAST ANGLE
+(Góc "Mối Quan Hệ / Cảm Xúc Ngược Đời")
+- Core Question: What surprisingly human, petty, heartwarming, or tragic motive
+  is hiding underneath the superpowered spectacle?
+- Bad ("A vs B"): "Hulk vs Bruce Banner Inside His Mind" / "Deadpool vs Hitman"
+- Million-View Reframe:
+  * "The Quiet Moment Hulk Told Bruce Banner Why He Hates Him"
+  * "Deadpool Takes a Seven-Dollar Contract to Save a Kid"
+  * "Why Doctor Doom Visits This One Grave Every Year"
+
+ANGLE C — THE TOP 3 HORROR / EXTREME VARIANTS ANGLE
+(Góc "Top 3 Biến Thể Kinh Dị / Đáng Sợ Nhất")
+- Core Question: Which 3 verified versions or moments push a beloved hero into
+  body horror, psychological terror, or unforgivable territory (ordered from
+  creepy -> terrifying -> nightmare #1)?
+- Bad (Generic): "3 Strongest Versions of Reed Richards"
+- Million-View Reframe:
+  * "3 Versions of Mr. Fantastic That Became Cosmic Body Horror"
+  * "3 Times A Hero's Healing Factor Turned Into A Living Curse"
+  * "3 Versions of Spider-Man That Refused to Take Off the Mask"
+
+--------------------------------------------------------------------------------
+PART 2 (SECTION 5): INSERT 1 HIGH-IMPACT SHORT QUOTE AT THE CLIMAX PEAK
+(Chèn "1 Câu Thoại Ngắn Đắt Giá" ở Đỉnh Điểm Cao Trào)
+--------------------------------------------------------------------------------
+At the emotional or dramatic climax of the script (the Turning Point / Payoff
+sentence), you MUST weave in 1 short, unforgettable character line (direct or
+tight indirect quote from the source comic):
+
+1. LENGTH CAP: Exactly 5 to 8 words inside the quote (embedded inside a crisp
+   12–18 word sentence). Never quote a long paragraph or multi-sentence speech.
+2. PLACEMENT: Place it right at the climax reveal — the exact moment the table
+   turns, the secret is spoken, or the final blow lands — right before the
+   closing consequence/aftermath sentence.
+3. GROUNDING: Use a real speech-bubble line or verified quote/paraphrase from
+   the comic source. Never invent out-of-character internet slang.
+4. PURPOSE: Give viewers a chilling, quotable 5–8 word punchline that forces
+   them to replay the climax and type the quote into the comments.
+
+Examples of Climax Quote Integration:
+- Setup -> Escalation -> CLIMAX QUOTE:
+  "Batman pins the gun to the wall and whispers, 'Saving you is my punishment.'"
+- Setup -> Escalation -> CLIMAX QUOTE:
+  "Superman lets the heat vision fade and says, 'Dreams save us, Manchester.'"
+- Setup -> Escalation -> CLIMAX QUOTE:
+  "Deadpool pockets the seven crumpled dollars and mutters, 'Paid in full, kid.'"
+
+--------------------------------------------------------------------------------
+MANDATORY PRE-FLIGHT CHECKLIST FOR EVERY OUTPUT
+--------------------------------------------------------------------------------
+[ ] 1. Category Check: Is the topic strictly in Archetype #1 (Emotional/Everyday
+       Contrast), #2 (One-Sided Humiliation/Destruction), #3 (Moral Trap/Paradox
+       Rule), or #4 (Top 3 Horror/Extreme Variants)?
+[ ] 2. Anti-#5 Check: Have all plain "A vs B / meets / confronts" angles been
+       rejected or reframed?
+[ ] 3. Angle Check: Is the title/hook framed using Angle A (Moral Trap/Weakness),
+       Angle B (Emotional/Everyday Contrast), or Angle C (Top 3 Horror Variants)?
+[ ] 4. Climax Quote Check: Does the climax peak include 1 grounded, chilling
+       5–8 word character line that lands like a hammer?
+================================================================================
