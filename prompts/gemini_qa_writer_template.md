@@ -160,6 +160,8 @@ call anything "insane", "epic", or "unbelievable" in place of detail.
 If the character's name is unfamiliar, include the power or object that
 makes the odd action intelligible; a surname alone is a weak anchor.
 
+NO FINAL-TWIST SPOILER IN THE HOOK & NO MID-BODY HOOK ECHO: State the opening premise or item-1 conflict without spoiling the final payoff prematurely, and NEVER circle back later in the paragraph to repeat or re-narrate the hook's exact action a second time.
+
 SCRIPT
 The hook is its own line. Start item 1 immediately on the next paragraph.
 The sentence immediately after the chosen hook MUST naturally identify item 1's
@@ -246,6 +248,10 @@ When two or more verified beats naturally belong together, combine them into one
 
 A very short sentence is allowed (never under four words; fold anything shorter into its neighbour with a comma) when it lands an important result, creates a natural spoken pause, the previous sentence already provides enough context, and it does not make the narration sound like a list. Use them sparingly. Do not write several short declarative sentences in a row unless the scene genuinely benefits from that rhythm.
 
+### HARD SENTENCE LENGTH CAP (12–18 WORD TARGET, 24-WORD MAXIMUM, MAX 2 CLAUSES)
+
+Target **12–18 spoken words per sentence** so each sentence lands in 4–6 seconds and splits cleanly into 2–3 fast visual beats (5–11 words / ~2–3 seconds per beat). **Never exceed 24 words or 2 clauses in a single sentence.** Never chain 3 or 4 separate actions into a 35–47 word marathon sentence with multiple `and`, `because`, `before`, or `while` clauses; break multi-step sequences into separate 12–18 word sentences instead.
+
 ## PURPOSE AND CAUSAL LANGUAGE
 
 Natural narration often explains why someone does something (`She uses X to stop Y.`, `He does X so he can reach Y.`, `They use X in order to break Y.`). Prefer this kind of sentence when the purpose or causal relationship is VERIFIED. However, natural prose must never become an excuse to invent motivation. When purpose is unknown, describe the verified action and result without guessing why the character chose it.
@@ -327,6 +333,8 @@ In addition to the existing audit, ask:
 21. If I use "to," "so," "because," "which lets," "in order to," or similar purpose/causal language, does Phase 1 explicitly support that relationship?
 22. Did I keep ONLY household character names (plus the main item entity when needed) and replace every obscure side-character, henchman, captive, or sub-team name with a simple everyday role (`the wounded cyborg`, `two hunters`, `their boss`, `the young mutant girl`)?
 23. Is every single word in HOOK OPTIONS and FINAL SCRIPT simple everyday English at an **IELTS 6.5 (CEFR B2)** maximum — with zero C1/C2, literary, or technical words (`cybernetics`, `gutted`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`, `recaptures`)?
+24. Does the hook avoid spoiling the final ending/twist prematurely when the story builds to it, and does the body NEVER circle back in Scene 2, 3, or 4 to repeat the hook's action a second time?
+25. Is every spoken sentence in HOOK OPTIONS and FINAL SCRIPT **at most 24 words and at most 2 clauses** (targeting **12–18 words per sentence** for crisp 2–3 second visual beats), with zero 30–47 word run-on sentences?
 If any check fails, revise before output.
 
 OUTPUT EXACTLY IN ENGLISH, WITH NO PREFACE

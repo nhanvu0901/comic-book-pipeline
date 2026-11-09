@@ -97,6 +97,8 @@ claim an unsourced general rule or call anything "insane", "epic", or
 include the power or object that makes the odd action intelligible; a surname
 alone is a weak anchor.
 
+NO FINAL-TWIST SPOILER IN THE HOOK & NO MID-BODY HOOK ECHO: State the opening premise or item-1 conflict without spoiling the final payoff prematurely, and NEVER circle back later in the paragraph to repeat or re-narrate the hook's exact action a second time.
+
 SCRIPT
 The hook is its own line. Start item 1 immediately on the next paragraph.
 For each item, give the answer early in the paragraph, explain only the
@@ -180,6 +182,10 @@ A very short sentence is allowed (never under four words; fold anything shorter 
 Use them sparingly. Do not write several short declarative sentences in a row unless the scene genuinely benefits from that rhythm.
 - BAD: `Jean reaches Logan. Phoenix burns him. Logan heals. Sentinel One helps.`
 - BETTER SHAPE: `Jean reaches Logan while he's in that state, and Phoenix's fire burns him down before his body begins growing back.`
+
+### HARD SENTENCE LENGTH CAP (12–18 WORD TARGET, 24-WORD MAXIMUM, MAX 2 CLAUSES)
+
+Target **12–18 spoken words per sentence** so each sentence lands in 4–6 seconds and splits cleanly into 2–3 fast visual beats (5–11 words / ~2–3 seconds per beat). **Never exceed 24 words or 2 clauses in a single sentence.** Never chain 3 or 4 separate actions into a 35–47 word marathon sentence with multiple `and`, `because`, `before`, or `while` clauses; break multi-step sequences into separate 12–18 word sentences instead.
 
 ---
 
@@ -268,6 +274,8 @@ Before output, also verify:
 21. The script sounds like one person telling one clear story out loud.
 22. Only household character names (plus the main item character when needed) are kept, and every obscure side-character, henchman, captive, or sub-team name is replaced with a simple everyday role (`the wounded cyborg`, `two hunters`, `their boss`, `the young mutant girl`).
 23. Every single word in HOOK OPTIONS and FINAL SCRIPT is simple everyday English at an **IELTS 6.5 (CEFR B2)** maximum — with zero C1/C2, literary, or technical words (`cybernetics`, `gutted`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`, `recaptures`).
+24. Does the hook avoid spoiling the final ending/twist prematurely when the story builds to it, and does the body NEVER circle back in Scene 2, 3, or 4 to repeat the hook's action a second time?
+25. Is every spoken sentence in HOOK OPTIONS and FINAL SCRIPT **at most 24 words and at most 2 clauses** (targeting **12–18 words per sentence** for crisp 2–3 second visual beats), with zero 30–47 word run-on sentences?
 
 HUMOR
 Default to zero narrator jokes. In the 34 reference transcripts, the comic's

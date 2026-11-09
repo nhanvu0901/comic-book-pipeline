@@ -7,7 +7,7 @@ measurably loses viewers. The hook is now fragmented (verbatim, no LLM) and the 
 branch only forces one unit when there is nothing to split.
 """
 import stages.stage_3.write_script  # noqa: F401 — import order for stage_3 package
-from stages.stage_3.beat_split import _verbatim_ok, split_hook_fragments
+from stages.stage_3.beat_split import _DANGLING_WORDS, _verbatim_ok, split_hook_fragments
 
 
 # ── the splitter ─────────────────────────────────────────────────────────────
@@ -41,6 +41,51 @@ def test_split_never_returns_a_non_verbatim_result():
                  "He ran — she followed — nobody spoke — and the door closed behind them both."]:
         frags = split_hook_fragments(hook)
         assert not frags or _verbatim_ok(hook, frags), hook
+
+
+def test_long_clauses_subsplit_into_fast_visual_beats():
+    hook1 = ("In Spider-Man and Wolverine issue two, the fight breaks out right after "
+             "Spider-Man discovers footage from the day his parents died.")
+    frags1 = split_hook_fragments(hook1)
+    assert len(frags1) >= 3
+    assert _verbatim_ok(hook1, frags1)
+    for f in frags1:
+        assert 4 <= len(f.split()) <= 10, f"Fragment outside 4-10 words: {f!r}"
+        last_word = f.split()[-1].lower().strip(",;:.!?—–-\"'")
+        assert last_word not in _DANGLING_WORDS, f"Fragment ends with dangling word: {f!r}"
+        assert last_word not in ("right", "after"), f"Fragment ends with 'right' or 'after': {f!r}"
+    # Verify "right after" stayed together in the second fragment
+    assert any("right after" in f for f in frags1), "Expected 'right after' to stay together"
+
+    hook2 = ("Looking for allies, he teams up with a group of young heroes who have "
+             "mutant-like powers and leads them against Cyber-Lord's stronghold.")
+    frags2 = split_hook_fragments(hook2)
+    assert len(frags2) >= 3
+    assert _verbatim_ok(hook2, frags2)
+    for f in frags2:
+        assert 4 <= len(f.split()) <= 10, f"Fragment outside 4-10 words: {f!r}"
+        last_word = f.split()[-1].lower().strip(",;:.!?—–-\"'")
+        assert last_word not in _DANGLING_WORDS, f"Fragment ends with dangling word: {f!r}"
+        assert last_word not in ("right", "after"), f"Fragment ends with 'right' or 'after': {f!r}"
+
+
+def test_subordinator_and_compound_modifier_never_dangle():
+    hook = ("He worked as a dishwasher for two restaurant coworkers, and after they figure out "
+            "who he really is, they help him hide from the authorities.")
+    frags = split_hook_fragments(hook)
+    assert len(frags) >= 2
+    assert _verbatim_ok(hook, frags)
+    for f in frags:
+        assert 4 <= len(f.split()) <= 10, f"Fragment outside 4-10 words: {f!r}"
+        last_word = f.split()[-1].lower().strip(",;:.!?—–-\"'")
+        assert last_word not in _DANGLING_WORDS, f"Fragment ends with dangling word: {f!r}"
+        assert last_word not in ("right", "after"), f"Fragment ends with 'right' or 'after': {f!r}"
+
+
+def test_restaurant_coworkers_splits_cleanly():
+    hook = "for two restaurant coworkers, and after they figure out who he is"
+    frags = split_hook_fragments(hook)
+    assert frags == ["for two restaurant coworkers,", "and after they figure out who he is"]
 
 
 # ── stage_5: a fragmented bookend stops collapsing to one shot ───────────────

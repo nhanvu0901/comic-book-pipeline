@@ -295,6 +295,8 @@ lines together (`[HOOK]` followed by `In [Comic] issue [issue number in words], 
 sound like one continuous introduction rather than a headline followed by
 metadata. Trace every factual clause in the chosen hook.
 
+NO FINAL-TWIST SPOILER IN THE HOOK & NO MID-BODY HOOK ECHO: When the story has a multi-step progression or an AFTERMATH twist or transformation, hook with the inciting clash, odd setup, or opening problem — do NOT spoil both the midpoint and the final ending in sentence one (for example, do not write "When Spider-Man fights the Infernal Hulk, he gets cut across the stomach and turns into a giant spider" if turning into a giant spider is the final scene's reveal; hook on the clash or wound and save the final transformation for the landing sentence). Once the hook states an opening action, the body must NEVER circle back in Scene 2, 3, or 4 to re-narrate that exact same action a second time.
+
 Write the first THREE spoken sentences as one opening chain:
 HOOK (the specific sourced promise) -> COMIC + ISSUE + STORY FRAME if verified and needed
 (identify the comic and issue while stating what is happening around this encounter or why it occurs) -> MOVEMENT
@@ -420,6 +422,10 @@ Use them sparingly. Do not write several short declarative sentences in a row un
 - BAD: `Jean reaches Logan. Phoenix burns him. Logan heals. Sentinel One helps.`
 - BETTER SHAPE: `Jean reaches Logan while he's in that state, and Phoenix's fire burns him down before his body begins growing back.`
 This is only a STYLE example. In a real script, every action, sequence, cause, and purpose must still be supported by the Phase 1 fact sheet.
+
+### HARD SENTENCE LENGTH CAP (12–18 WORD TARGET, 24-WORD MAXIMUM, MAX 2 CLAUSES)
+
+Target **12–18 spoken words per sentence** so each sentence lands in 4–6 seconds and splits cleanly into 2–3 fast visual beats (5–11 words / ~2–3 seconds per beat). **Never exceed 24 words or 2 clauses in a single sentence.** Never chain 3 or 4 separate actions into a 35–47 word marathon sentence with multiple `and`, `because`, `before`, or `while` clauses; break multi-step sequences into separate 12–18 word sentences instead.
 
 ## PURPOSE AND CAUSAL LANGUAGE
 
@@ -548,6 +554,8 @@ In addition to the existing audit, ask:
 21. If I use "to," "so," "because," "which lets," "in order to," or similar purpose/causal language, does Phase 1 explicitly support that relationship?
 22. Did I keep ONLY household character names (max 1–2 proper names total) and replace every obscure side-character, henchman, captive, or sub-team name (`Tearjerker`, `Coldcut`, `Sockeye`, `Donald Pierce`, `the Reavers`, `Mei`, etc.) with a simple everyday role (`the wounded cyborg`, `two hunters`, `their boss`, `the young mutant girl`)?
 23. Is every single word in HOOK OPTIONS and FINAL SCRIPT simple everyday English at an **IELTS 6.5 (CEFR B2)** maximum — with zero C1/C2, literary, or technical words (`cybernetics`, `gutted`, `humoring`, `banter`, `bigotry`, `captivity`, `stranded`, `recaptures`)?
+24. Does the hook avoid spoiling the final ending/twist prematurely when the story builds to it, and does the body NEVER circle back in Scene 2, 3, or 4 to repeat the hook's action a second time?
+25. Is every spoken sentence in HOOK OPTIONS and FINAL SCRIPT **at most 24 words and at most 2 clauses** (targeting **12–18 words per sentence** for crisp 2–3 second visual beats), with zero 30–47 word run-on sentences?
 If any check fails, revise before output.
 Count the spoken words in FINAL SCRIPT only. The comic issue sentence is spoken narration and counts toward SPOKEN WORD COUNT.
 

@@ -29,8 +29,7 @@ HARD RULES:
 - Use the sentence's EXACT words, VERBATIM, in order. The beats joined back together MUST \
 reproduce the sentence word-for-word (you may only drop a comma or dash at a split point). \
 NEVER reword, add, drop, or reorder words.
-- Give 1 beat for a short atomic sentence; 2-4 beats for a longer multi-moment sentence. \
-Split where the VISUAL would naturally change.
+- Give 1 beat for a short atomic sentence (<12 words); 2-4 beats (5-11 words each, ~2-3.5s per beat) for a longer multi-moment sentence. Split where the VISUAL would naturally change so no single panel is held static for more than ~3.5 seconds.
 
 You are given several numbered sentences. Return STRICT JSON ONLY mapping each id to its \
 beats: {"1":["...","..."],"2":["..."], ...}"""
@@ -46,12 +45,78 @@ def _verbatim_ok(text: str, beats: list[str]) -> bool:
     return bool(beats) and _word_tokens(" ".join(beats)) == _word_tokens(text)
 
 
-_HOOK_MIN_WORDS_TO_SPLIT = 13   # below this the hook is one drawable moment
-_HOOK_FRAG_MIN_WORDS = 5        # never leave a fragment too short to hold a panel
+_HOOK_MIN_WORDS_TO_SPLIT = 12   # below this the hook is one drawable moment
+_HOOK_FRAG_MIN_WORDS = 4        # never leave a fragment too short to hold a panel
+_HOOK_FRAG_MAX_WORDS = 10       # target 4-10 words (~2-3.5s) per visual beat
 # Split points, in order of preference: a hard clause break beats a bare conjunction.
 _HOOK_SPLIT_RE = re.compile(
-    r"(?<=[,;:])\s+|\s+—\s+|\s+-\s+|\s+(?=(?:and|but|then|until|because|so|yet|while)\s)",
+    r"(?<=[,;:])\s+|\s+—\s+|\s+-\s+|(?<!\band)(?<!\bbut)(?<!\bso)(?<!\byet)(?<!\bor)(?<!\bright)(?<!\bjust)(?<!\beven)(?<!\bonly)\s+(?=(?:(?:right|just|even|only|shortly|immediately)\s+)?(?:and|but|then|until|because|so|yet|while|before|after|when|where|who|which|once|without|instead)\s)",
     re.IGNORECASE)
+
+_DANGLING_WORDS = frozenset(
+    "a an the of in on at to for from with by into onto over under as and or but nor so yet than "
+    "that which who whom whose his her their its our my your this these those "
+    "after before when where while until because since once without although though unless if whether".split()
+)
+_SECONDARY_SPLIT_WORDS = frozenset(
+    "to into from with by through across under over against inside around during as that for in on at "
+    "after before when where who which while until because so yet".split()
+)
+_SPLIT_MODIFIERS = frozenset("right just even only shortly immediately and but so yet or".split())
+
+
+def _subsplit_long_fragment(frag: str) -> list[str]:
+    words = frag.split()
+    if len(words) <= _HOOK_FRAG_MAX_WORDS or len(words) < 2 * _HOOK_FRAG_MIN_WORDS:
+        return [frag]
+
+    min_idx = _HOOK_FRAG_MIN_WORDS
+    max_idx = len(words) - _HOOK_FRAG_MIN_WORDS
+    mid = len(words) // 2
+
+    cands: list[int] = []
+    for i in range(min_idx, max_idx + 1):
+        w_curr = words[i].lower().strip(",;:.!?—–-\"'")
+        w_prev = words[i - 1].lower().strip(",;:.!?—–-\"'")
+        if w_curr in _SECONDARY_SPLIT_WORDS and w_prev not in _DANGLING_WORDS:
+            split_idx = i
+            if w_prev in _SPLIT_MODIFIERS and i - 1 >= min_idx:
+                w_prev_prev = words[i - 2].lower().strip(",;:.!?—–-\"'")
+                if w_prev_prev not in _DANGLING_WORDS and w_prev_prev not in _SPLIT_MODIFIERS:
+                    split_idx = i - 1
+            cands.append(split_idx)
+
+    if cands:
+        idx = min(cands, key=lambda idx_cand: abs(idx_cand - mid))
+    else:
+        idx = mid
+        for off in (0, 1, -1, 2, -2):
+            i = mid + off
+            if min_idx <= i <= max_idx:
+                w_prev = words[i - 1].lower().strip(",;:.!?—–-\"'")
+                if w_prev not in _DANGLING_WORDS and w_prev not in _SPLIT_MODIFIERS:
+                    idx = i
+                    break
+
+    return _subsplit_long_fragment(" ".join(words[:idx])) + _subsplit_long_fragment(" ".join(words[idx:]))
+
+
+def _apply_anti_dangling(merged: list[str]) -> list[str]:
+    for i in range(len(merged) - 1):
+        w_left = merged[i].split()
+        w_right = merged[i + 1].split()
+        while (
+            len(w_left) > _HOOK_FRAG_MIN_WORDS
+            and w_left[-1][-1] not in ",;:.!?—–-"
+            and (
+                w_left[-1].lower().strip("\"'") in _DANGLING_WORDS
+                or w_left[-1].lower().strip("\"'") in _SPLIT_MODIFIERS
+            )
+        ):
+            w_right.insert(0, w_left.pop())
+        merged[i] = " ".join(w_left)
+        merged[i + 1] = " ".join(w_right)
+    return merged
 
 
 def split_hook_fragments(hook: str) -> list[str]:
@@ -71,25 +136,48 @@ def split_hook_fragments(hook: str) -> list[str]:
         return []
     parts = [p.strip() for p in _HOOK_SPLIT_RE.split(text) if p and p.strip()]
     merged: list[str] = []
-    for p in parts:
-        # Fold a runt into its neighbour rather than shipping a 2-word shot.
-        if merged and len(p.split()) < _HOOK_FRAG_MIN_WORDS:
-            merged[-1] = f"{merged[-1]} {p}"
-        elif merged and len(merged[-1].split()) < _HOOK_FRAG_MIN_WORDS:
-            merged[-1] = f"{merged[-1]} {p}"
+    i = 0
+    while i < len(parts):
+        p = parts[i]
+        p_words = p.split()
+        if len(p_words) < _HOOK_FRAG_MIN_WORDS:
+            first_w = p_words[0].lower().strip(",;:.!?—–-\"'")
+            if i + 1 < len(parts) and first_w in (_DANGLING_WORDS | _SECONDARY_SPLIT_WORDS):
+                parts[i + 1] = f"{p} {parts[i + 1]}"
+            elif merged:
+                merged[-1] = f"{merged[-1]} {p}"
+            elif i + 1 < len(parts):
+                parts[i + 1] = f"{p} {parts[i + 1]}"
+            else:
+                merged.append(p)
         else:
             merged.append(p)
+        i += 1
+
+    subsplit: list[str] = []
+    for m in merged:
+        subsplit.extend(_subsplit_long_fragment(m))
+    merged = subsplit
+
     if len(merged) < 2:
-        # No comma, dash or conjunction anywhere — common in a punchy hook ("Batman falls
-        # from the moon without a single gadget left to save him"). Left whole it is one
-        # frozen panel for the entire opening, which is the shot the 3-second gate judges.
-        # Cut at the word nearest the midpoint: verbatim by construction, since the split
-        # only ever falls BETWEEN words.
         words = text.split()
         mid = len(words) // 2
         if min(mid, len(words) - mid) < _HOOK_FRAG_MIN_WORDS:
             return []
         merged = [" ".join(words[:mid]), " ".join(words[mid:])]
+
+    merged = _apply_anti_dangling(merged)
+
+    # Post-anti-dangling size guard: if moving dangling words caused any fragment
+    # to exceed _HOOK_FRAG_MAX_WORDS, subsplit again and re-apply anti-dangling.
+    if any(len(m.split()) > _HOOK_FRAG_MAX_WORDS for m in merged):
+        subsplit = []
+        for m in merged:
+            subsplit.extend(_subsplit_long_fragment(m))
+        merged = _apply_anti_dangling(subsplit)
+
+    if len(merged) < 2:
+        return []
     if not _verbatim_ok(text, merged):
         return []
     return merged
