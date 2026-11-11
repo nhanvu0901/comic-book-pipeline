@@ -42,7 +42,12 @@ comic-pipeline-course/
 
 # Research / analysis workspace (reference videos, gap reports, frame extracts)
 research/
-docs
+# Track curated documentation; keep scratch documentation local.
+/docs/*
+!/docs/README.md
+!/docs/architecture/
+!/docs/guides/
+!/docs/archive/
 tools/
 
 # Session workspace + local backups (never commit)

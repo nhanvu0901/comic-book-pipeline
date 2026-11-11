@@ -115,6 +115,11 @@ python -m stages.youcom_scout micro                                # scout micro
 python -m pytest -q
 ```
 
+## Documentation
+
+Browse the [documentation index](docs/README.md) for guides and architecture contracts,
+or the [archive](docs/archive/README.md) for past research, audits, and handoffs.
+
 ## Project layout
 
 ```
@@ -135,7 +140,7 @@ comic-book-pipeline/
 ├── assets/                 # branding, music beds, README graphics
 ├── scripts/                # maintenance (ledger export/backup, acceptance runs)
 ├── tests/                  # pytest suite
-├── todo/                   # open handoffs and research notes per feature
+├── docs/                   # guides, architecture contracts, archived research
 └── projects/               # one folder per video (git-ignored)
 ```
 
