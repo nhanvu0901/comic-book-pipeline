@@ -5,7 +5,7 @@ art_pipeline/assemble.py still imported a `_resolve_bgm` that no longer existed,
 could not even be imported. These cover the restored path, and above all that a project with no
 music file behaves EXACTLY as it did before the bed existed.
 
-Numbers under test are craft, not standards — see MUSIC_SCORING_RESEARCH_2026-08-12.md for why
+Numbers under test are craft, not standards — see docs/archive/research/music-scoring-research-2026-08-12.md for why
 no standards body specifies a music-vs-speech level.
 """
 import subprocess

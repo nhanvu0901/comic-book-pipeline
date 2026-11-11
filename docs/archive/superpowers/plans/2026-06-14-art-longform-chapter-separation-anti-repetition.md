@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python, ffmpeg (drawtext/overlay/xfade via `subprocess`), `sentence_transformers` via `stages/_embedding.py`, Cartesia TTS via comic Stage 4, pytest.
 
-**Spec:** `docs/superpowers/specs/2026-06-14-art-longform-chapter-separation-anti-repetition-design.md`
+**Spec:** `docs/archive/superpowers/specs/2026-06-14-art-longform-chapter-separation-anti-repetition-design.md`
 
 **Branch:** `feat/art-v2` (already checked out).
 

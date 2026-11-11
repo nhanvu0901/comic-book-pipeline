@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14, `stages/stage_3/write_script.py`, OpenRouter/Claude-SDK LLM calls (`call_with_chain`), benchmark scorer `research/scripts/benchmark_score.py`. No pytest in this repo — verification is via standalone scripts run on real project data (`projects/dark_venom_things`, `projects/dark_loki`) plus the benchmark.
 
-**Spec:** `docs/superpowers/specs/2026-06-06-stage3-narration-discipline-design.md`
+**Spec:** `docs/archive/superpowers/specs/2026-06-06-stage3-narration-discipline-design.md`
 
 ---
 

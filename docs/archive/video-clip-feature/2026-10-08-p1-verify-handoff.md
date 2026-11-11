@@ -1,7 +1,7 @@
 # P1 verify — bàn giao (cbp-18, nhánh `video-qa/p1-verify`)
 
 Ngày: 2026-10-08. Người làm: cbp-18 (tiếp nối cbp-13/agy hết quota). Reviewer: cbp-16. Integrator: cbp-12.
-Evidence: `todo/video-clip-feature/p1-verify-evidence/` (log, ảnh, harness) — file nặng (final.mp4, section, preview) ở `/tmp/p1_evidence/` trên Mac và `D:\code\cbp-video-test-p1\` trên server.
+Evidence: `docs/archive/video-clip-feature/p1-verify-evidence/` (log, ảnh, harness) — file nặng (final.mp4, section, preview) ở `/tmp/p1_evidence/` trên Mac và `D:\code\cbp-video-test-p1\` trên server.
 
 ## 1. Kết quả một dòng
 

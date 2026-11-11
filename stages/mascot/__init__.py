@@ -6,5 +6,5 @@ Modules: config (mascot.json contract) · kit (layers + compositor) · motion (c
 · render (clean copy, still frames, preview, final) · timeline (markers, snapping, strips)
 · suggest (auto cues). CLI: ``python -m stages.mascot --project <slug>``.
 
-Design: todo/avatar-narrator/2026-11-05-mascot-step-design.md
+Design: docs/archive/avatar-narrator/2026-11-05-mascot-step-design.md
 """

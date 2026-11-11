@@ -4,7 +4,7 @@ Agent-first orchestrator CLI for explore_answer (Q&A) mode.
 Runs the full pipeline for a QUESTION-driven Short end to end: research the
 answer across N comics, download the cited issues, preprocess, write the
 countdown narration, synthesize TTS, render the final video. See
-EXPLORE_ANSWER_DESIGN.md (root) for the format spec.
+docs/architecture/explore-answer-design.md (root) for the format spec.
 
 NO interactivity anywhere (no input(), no mode pickers) — every decision is a
 flag or a sane default, so an agent can drive this unattended. Each step
@@ -205,7 +205,7 @@ def _step_render(args: argparse.Namespace, log: Callable[[str], None]) -> str:
     os.environ in-process here would NOT change the value stage_5.pipeline
     reads. A fresh subprocess re-imports config from scratch, so the env
     override actually takes effect. The Q&A ending loops/teases the question
-    (ADDENDUM v2 in EXPLORE_ANSWER_DESIGN.md) — a branding outro card breaks
+    (ADDENDUM v2 in docs/architecture/explore-answer-design.md) — a branding outro card breaks
     that seamless loop, so it's off for this render only.
     """
     # Panel selection for a Q&A project now happens INSIDE Stage 5: build_shots renders at

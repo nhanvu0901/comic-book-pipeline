@@ -121,7 +121,7 @@ Luật chung:
 - License gốc của Live2D/Spine: chưa đọc được trang gốc.
 
 ## Nguồn chính
-- **Cục bộ:** `research/competitor_refresh_2026-11-03/` (10 mp4 + `manifest.csv`), `COMPETITOR_CORPUS_FULL_AUDIT_2026-10-01.md`.
+- **Cục bộ:** `research/competitor_refresh_2026-11-03/` (10 mp4 + `manifest.csv`), `docs/archive/research/competitor-corpus-full-audit-2026-10-01.md`.
 - **Lip sync:**
   - Rhubarb Lip Sync: https://github.com/DanielSWolf/rhubarb-lip-sync
   - License Rhubarb: https://raw.githubusercontent.com/DanielSWolf/rhubarb-lip-sync/master/LICENSE.md

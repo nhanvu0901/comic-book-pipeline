@@ -1,7 +1,7 @@
 """Tests for stages/stage_1/answer_research.py (explore_answer / Q&A mode, piece #1).
 
 No network: the You.com/OpenRouter boundary and get_project_dirs are monkeypatched. See
-EXPLORE_ANSWER_DESIGN.md for the schema contract these tests pin down.
+docs/architecture/explore-answer-design.md for the schema contract these tests pin down.
 """
 import json
 

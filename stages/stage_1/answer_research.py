@@ -1,6 +1,6 @@
 """Answer Research — Stage 1 mode `explore_answer` (Q&A video).
 
-See EXPLORE_ANSWER_DESIGN.md (root, incl. ADDENDUM 2026-07-04). This is build
+See docs/architecture/explore-answer-design.md (root, incl. ADDENDUM 2026-07-04). This is build
 piece #1 of the "Explore Answer" mode: turn a QUESTION into a countdown listicle
 of comic-grounded answers that the existing Stages 2->5 render as a ~60-76s Short.
 

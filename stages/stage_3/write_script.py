@@ -822,7 +822,7 @@ def write_script(
     # explore_answer is a wholly different writer path (deterministic beats from
     # a Q&A research file, not an LLM-outlined single comic) — dispatch BEFORE any
     # narrate-mode machinery runs so this mode never touches it. See
-    # EXPLORE_ANSWER_DESIGN.md.
+    # docs/architecture/explore-answer-design.md.
     if mode == "explore_answer":
         from .explore_answer import write_explore_answer
         return write_explore_answer(

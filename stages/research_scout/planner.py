@@ -1,7 +1,7 @@
 """Research-plan boundary for the Stage 1 research scout.
 
 Fills the 4-knob ResearchPlan contract (unit / cardinality / ranking /
-extra_fields — see RESEARCH_PLANNER_DESIGN.md) so ONE research flow can serve
+extra_fields — see docs/architecture/research-planner-design.md) so ONE research flow can serve
 any comic story/character question — Q&A, micro, or ad-hoc — with no question
 taxonomy in code: `make_plan` is the only LLM call, `validate_plan` is the
 safety boundary, `compile_schema` and `assemble_prompt` are pure code. A plan

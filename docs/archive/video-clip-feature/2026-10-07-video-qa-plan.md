@@ -2,7 +2,7 @@
 
 | Kế hoạch | Trạng thái | Ngày cập nhật | Phiên bản |
 |---|---|---|---|
-| `todo/video-clip-feature/2026-10-07-video-qa-plan.md` | Bản kế hoạch chi tiết (Master Decisions a/b, 13 Fixes & Worker Allocation) | 2026-10-08 | 2.0 |
+| `docs/archive/video-clip-feature/2026-10-07-video-qa-plan.md` | Bản kế hoạch chi tiết (Master Decisions a/b, 13 Fixes & Worker Allocation) | 2026-10-08 | 2.0 |
 
 ---
 

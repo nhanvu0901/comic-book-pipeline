@@ -6,7 +6,7 @@ Quinn Finally Left The Joker", "Punisher Makes Juggernaut Throw Up"): a hook tha
 mirrors the title, a tight cause->moment->consequence mini-arc, and one of three
 landing shapes.
 
-v2 (2026-07-10, see MICRO_MOMENT_V2_SPEC.md part A — forensics on 4 winning
+v2 (2026-07-10, see docs/architecture/micro-moment-v2-spec.md part A — forensics on 4 winning
 videos vs our own): the hook now MIRRORS the title/target_moment (names the
 character in sentence 1) instead of standing alone as a paradox; body sentences
 chain 2-3 events paratactically (and/but/then/after/while) in a documentary
@@ -52,7 +52,7 @@ from .write_script import (
 )
 
 # Micro-moment word budget — DISTINCT from recap's band (195-245) and explore's
-# per-item band. v2 forensics (MICRO_MOMENT_V2_SPEC.md): 4 winning videos
+# per-item band. v2 forensics (docs/architecture/micro-moment-v2-spec.md): 4 winning videos
 # (32k-2M views) measured wpm ~183-225, same as ours — pacing was never the
 # problem. Their edge was a tight cause->moment->consequence MINI-ARC (not
 # "1 scene ± 1 beat") landing 35-60s. At the measured 3.4 wps render pace that

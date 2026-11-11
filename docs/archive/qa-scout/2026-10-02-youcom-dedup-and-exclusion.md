@@ -253,4 +253,4 @@ Tiết kiệm phụ: nếu bước verify của bạn đã tự tải trang trí
 - MediaWiki: https://www.mediawiki.org/wiki/API:Query ; https://www.mediawiki.org/wiki/API:Categorymembers ; https://www.mediawiki.org/wiki/API:Search
 - Mẫu URL: https://dc.fandom.com/wiki/Batman_Vol_1_217 ; https://leagueofcomicgeeks.com/comic/1773102/batman-1 ; https://github.com/manga-download/hakuneko/issues/8131
 
-**Mã nguồn nội bộ đã đọc (chỉ đọc, không sửa):** `stages/youcom_scout.py`, `stages/research_scout/{youcom,cited_sources,issue_identity,workflow}.py`, `research_policies/source_profiles.v1.json`, `docs/superpowers/specs/2026-09-19-scout-rescout-keeping-confirmed-design.md`, `TODO_QA_SCOUT_2026-10-02.md`.
+**Mã nguồn nội bộ đã đọc (chỉ đọc, không sửa):** `stages/youcom_scout.py`, `stages/research_scout/{youcom,cited_sources,issue_identity,workflow}.py`, `research_policies/source_profiles.v1.json`, `docs/archive/superpowers/specs/2026-09-19-scout-rescout-keeping-confirmed-design.md`, `TODO_QA_SCOUT_2026-10-02.md`.

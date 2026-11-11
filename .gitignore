@@ -18,6 +18,8 @@ Thumbs.db
 
 # Outputs (stored in Google Drive)
 *.mp4
+# Small, curated README output demo.
+!/assets/readme/demo.mp4
 *.wav
 # Bundled channel voice references are required for a fresh checkout.
 !/assets/voices/*.wav
@@ -40,7 +42,12 @@ comic-pipeline-course/
 
 # Research / analysis workspace (reference videos, gap reports, frame extracts)
 research/
-docs
+# Track curated documentation; keep scratch documentation local.
+/docs/*
+!/docs/README.md
+!/docs/architecture/
+!/docs/guides/
+!/docs/archive/
 tools/
 
 # Session workspace + local backups (never commit)

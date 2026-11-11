@@ -158,7 +158,7 @@ M2 (Wolverine) kể đủ tới cái chết ngạt trong adamantium. M3 (Superma
 
 - Prompt writer micro: `/Users/nhanvu/Documents/code/comic-book-pipeline/prompts/gemini_micro_moment_writer.md`. Đây là template có 2 chỗ trống `<<...>>` (dòng moment và object scout). Bản đã điền cho từng comic: `projects/<tên>/<tên>_writer_prompt.md`.
 - Deploy Windows (khi server vào được): `git merge --ff-only origin/feat/scout-single-selection-flow` qua WSL, chạy test, khởi động lại server detached; tạo lại `_writer_prompt.md` cho các project micro đang làm (project Steve vẫn đang dùng template đợt 1).
-- Đề xuất tiếp theo từ phân tích corpus đối thủ (`COMPETITOR_CORPUS_FULL_AUDIT_2026-10-01.md`, mục 10, chưa áp):
+- Đề xuất tiếp theo từ phân tích corpus đối thủ (`docs/archive/research/competitor-corpus-full-audit-2026-10-01.md`, mục 10, chưa áp):
   - nâng độ dài micro lên khoảng 110–170 từ khi sheet đủ beat;
   - hook 8–16 từ, nêu mấu chốt ngay và khớp với tiêu đề;
   - cho phép kể kết quả trước.

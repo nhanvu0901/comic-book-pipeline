@@ -2,7 +2,7 @@
 
 | Tài liệu | Trạng thái | Ngày cập nhật | Phiên bản | Tác giả |
 |---|---|---|---|---|
-| `todo/video-clip-feature/2026-10-07-video-qa-spec.md` | Bản thiết kế hoàn chỉnh (Master Decisions a/b & 13 Fixes) | 2026-10-08 | 2.0 | Antigravity |
+| `docs/archive/video-clip-feature/2026-10-07-video-qa-spec.md` | Bản thiết kế hoàn chỉnh (Master Decisions a/b & 13 Fixes) | 2026-10-08 | 2.0 | Antigravity |
 
 ---
 

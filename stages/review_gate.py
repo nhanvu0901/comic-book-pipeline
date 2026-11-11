@@ -7,7 +7,7 @@ State lives in projects/<slug>/review/:
                       (this module writes it).
   • thumbs/         — cropped panel previews referenced by candidates.json.
 
-Two JSON contracts the UI is built against (documented in EXPLORE_ANSWER_DESIGN.md):
+Two JSON contracts the UI is built against (documented in docs/architecture/explore-answer-design.md):
 
 locks.json (v2 — the review UI now locks 1-5 panels per scene)
   {"approved": bool, "approved_at": iso|null, "narration_sha1": str|null,

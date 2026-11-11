@@ -16,6 +16,14 @@ downloads the issue, finds every panel, writes a fact-grounded script, voices it
 
 ---
 
+## Finished output demo
+
+[![Play the finished Iron Man demo](assets/readme/demo-preview.gif)](assets/readme/demo.mp4)
+
+**[Watch the MP4 with audio](assets/readme/demo.mp4)** — a 15.7-second excerpt from
+Iron Man #11, rendered with the default Machiavelli voice. The excerpt ends at a
+complete sentence; captions can be added later in CapCut.
+
 ## How it works
 
 <p align="center">
@@ -107,6 +115,11 @@ python -m stages.youcom_scout micro                                # scout micro
 python -m pytest -q
 ```
 
+## Documentation
+
+Browse the [documentation index](docs/README.md) for guides and architecture contracts,
+or the [archive](docs/archive/README.md) for past research, audits, and handoffs.
+
 ## Project layout
 
 ```
@@ -127,7 +140,7 @@ comic-book-pipeline/
 ├── assets/                 # branding, music beds, README graphics
 ├── scripts/                # maintenance (ledger export/backup, acceptance runs)
 ├── tests/                  # pytest suite
-├── todo/                   # open handoffs and research notes per feature
+├── docs/                   # guides, architecture contracts, archived research
 └── projects/               # one folder per video (git-ignored)
 ```
 
