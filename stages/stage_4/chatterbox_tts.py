@@ -56,16 +56,14 @@ def _venv_python(venv_dir=None) -> Path:
     return d / "bin" / "python"
 
 
-# Emotion knobs (Chatterbox's own scale). 0.5/0.5 is the model's neutral default; the
-# narration can override per scene once we know what a long read sounds like.
-CHATTERBOX_EXAGGERATION = float(os.getenv("CHATTERBOX_EXAGGERATION", "0.5"))
+# Channel delivery approved on the Machiavelli voice sample (2026-11-10).
+# Environment overrides remain available for a different delivery or reference voice.
+CHATTERBOX_EXAGGERATION = float(os.getenv("CHATTERBOX_EXAGGERATION", "0.35"))
 CHATTERBOX_CFG_WEIGHT = float(os.getenv("CHATTERBOX_CFG_WEIGHT", "0.5"))
-CHATTERBOX_TEMPERATURE = float(os.getenv("CHATTERBOX_TEMPERATURE", "0.8"))
-# Reference wav to clone. This DEFAULT is the whole reason the channel voice survives the
-# switch to a local model: leave it empty and Chatterbox speaks in its own built-in voice, so
-# the narrator would change silently between one render and the next — the exact failure that
-# shipped three different voices across five videos before select_voice() was pinned off.
-_DEFAULT_VOICE_WAV = _REPO / "assets" / "voices" / "arthur_ref.wav"
+CHATTERBOX_TEMPERATURE = float(os.getenv("CHATTERBOX_TEMPERATURE", "0.7"))
+# Ship the reference with the repo so fresh checkouts use the same channel voice.
+# Resolve relative to the repo, independent of working directory and operating system.
+_DEFAULT_VOICE_WAV = _REPO / "assets" / "voices" / "machiavelli_ref.wav"
 CHATTERBOX_VOICE_WAV = (os.getenv("CHATTERBOX_VOICE_WAV", "").strip()
                         or (str(_DEFAULT_VOICE_WAV) if _DEFAULT_VOICE_WAV.exists() else ""))
 CHATTERBOX_DEVICE = os.getenv("CHATTERBOX_DEVICE", "").strip()

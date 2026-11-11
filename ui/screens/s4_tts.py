@@ -8,6 +8,7 @@ position/duration readout). No speed control — pipeline always runs at 1.0.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Callable
 
 import flet as ft
@@ -21,6 +22,10 @@ from ..theme import (
     ACCENT, BG_ELEVATED, BORDER, DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, WARN,
 )
 from utils.clear_stage import clear_stage_4
+from stages.stage_4.chatterbox_tts import CHATTERBOX_VOICE_WAV
+
+_CHANNEL_VOICE_NAME = (Path(CHATTERBOX_VOICE_WAV).stem.removesuffix("_ref")
+                       .replace("_", " ").title() if CHATTERBOX_VOICE_WAV else "Built-in")
 
 
 # ─── Voice/model presets ────────────────────────────────────────────────────
@@ -227,12 +232,12 @@ def build(
 
     # ─── Synthesize ────────────────────────────────────────────────────────
     async def _execute():
-        state.tts_voice_id = "arthur"
+        state.tts_voice_id = CHATTERBOX_VOICE_WAV or "built-in"
         state.tts_model = "chatterbox"
         save_state(state)
 
         running.visible = True
-        status_text.value = "Synthesizing with Chatterbox (Arthur voice clone)…"
+        status_text.value = f"Synthesizing with Chatterbox ({_CHANNEL_VOICE_NAME} voice clone)…"
         status_text.color = WARN
         page.update()
         try:
@@ -449,14 +454,14 @@ def build(
     right = ft.Column([
         ft.Text(f"STEP 6 OF {len(STAGE_NAMES)}", size=10, color=TEXT_MUTED),
         ft.Text("TTS Audio (Chatterbox)", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
-        ft.Text("Local Chatterbox voice clone (Arthur) — zero cloud API cost.",
+        ft.Text(f"Local Chatterbox voice clone ({_CHANNEL_VOICE_NAME}) — zero cloud API cost.",
                 size=12, color=TEXT_MUTED),
         ft.Container(height=14),
         ft.Container(
             content=ft.Column([
                 ft.Text("VOICE PROFILE", size=10, color=TEXT_MUTED, weight=ft.FontWeight.BOLD),
-                ft.Text("Arthur (Channel Voice)", size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
-                ft.Text("Reference: assets/voices/arthur_ref.wav", size=11, color=TEXT_MUTED),
+                ft.Text(f"{_CHANNEL_VOICE_NAME} (Channel Voice)", size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                ft.Text(f"Reference: {Path(CHATTERBOX_VOICE_WAV).name or 'built-in'}", size=11, color=TEXT_MUTED),
                 ft.Text("Engine: Local Chatterbox PyTorch Model", size=11, color=TEXT_MUTED),
             ], spacing=3),
             padding=14,
@@ -475,7 +480,7 @@ def build(
     return three_col(
         center, right, state=state, on_go=on_go,
         header_title="Synthesize Narration Audio",
-        header_subtitle="Chatterbox Local TTS + Arthur voice clone. Play to preview.",
+        header_subtitle=f"Chatterbox Local TTS + {_CHANNEL_VOICE_NAME} voice clone. Play to preview.",
     )
 
 

@@ -19,6 +19,8 @@ Thumbs.db
 # Outputs (stored in Google Drive)
 *.mp4
 *.wav
+# Bundled channel voice references are required for a fresh checkout.
+!/assets/voices/*.wav
 *.mp3
 *.srt
 
