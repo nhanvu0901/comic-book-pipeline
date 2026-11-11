@@ -12,7 +12,7 @@
 
 ## Spec
 
-Source of truth: `docs/superpowers/specs/2026-06-13-crossover-saga-mode-design.md`.
+Source of truth: `docs/archive/superpowers/specs/2026-06-13-crossover-saga-mode-design.md`.
 
 ## File Structure
 

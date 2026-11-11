@@ -1,6 +1,6 @@
 # Đối chiếu narration đối thủ để cải thiện writer — 2026-11-03
 
-**Cập nhật triển khai sau nghiên cứu:** theo yêu cầu tiếp theo của Master, Terra đã cập nhật template Q&A đang dùng và generator, có review độc lập. Workspace chính đã nhận thay đổi; 134 test liên quan đạt. Chi tiết: `todo/qa-writer-update-result-2026-11-03.md`. Các câu “chưa áp dụng” dưới đây ghi trạng thái tại lúc nghiên cứu; bản core minh họa không được chép nguyên khối vào production. Chưa benchmark model thực tế hoặc lượt xem.
+**Cập nhật triển khai sau nghiên cứu:** theo yêu cầu tiếp theo của Master, Terra đã cập nhật template Q&A đang dùng và generator, có review độc lập. Workspace chính đã nhận thay đổi; 134 test liên quan đạt. Chi tiết: `docs/archive/qa-writer-update-result-2026-11-03.md`. Các câu “chưa áp dụng” dưới đây ghi trạng thái tại lúc nghiên cứu; bản core minh họa không được chép nguyên khối vào production. Chưa benchmark model thực tế hoặc lượt xem.
 
 Đợt refresh đã hoàn tất phần có thể tải: 146 metadata video mới, 77 MP3 + 77 transcript Groq, 10 MP4 mẫu. 69 video bị YouTube yêu cầu xác minh bot ngay cả sau một lần chờ và thử lại. Kho cũ đã bổ sung đủ 411/411 SRT, đạt 3.808/3.808 MP3 có transcript; không còn lỗi Groq tồn đọng. Đây là nghiên cứu và đề xuất biên tập; chưa có thử nghiệm chứng minh writer hiện tại tốt hơn sau thay đổi.
 
@@ -44,7 +44,7 @@
 
 Median từng cột tính độc lập; không chia median words cho median seconds để suy ra median WPM. Thời lượng refresh lấy metadata (giây làm tròn), kho cũ dùng ffprobe khi có. Hai kênh chỉ có hai mẫu mới không đủ để suy ra xu hướng. ComicCandid và Comic_Escape có coverage tốt hơn nhưng vẫn chưa có retention; tốc độ nhanh hơn không chứng minh lời kể tốt hơn.
 
-Chi tiết lỗi, phạm vi ngày, danh sách video và lệnh resume: `todo/competitor-refresh-2026-11-03-download.md`. Không cần gọi lại Groq cho 77 SRT đã có khi tiếp tục tải 69 ID còn lại.
+Chi tiết lỗi, phạm vi ngày, danh sách video và lệnh resume: `docs/archive/competitor-refresh-2026-11-03-download.md`. Không cần gọi lại Groq cho 77 SRT đã có khi tiếp tục tải 69 ID còn lại.
 
 ## Những điều quan sát trực tiếp từ 10 video mới
 

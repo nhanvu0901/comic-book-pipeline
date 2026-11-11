@@ -321,9 +321,9 @@ Theo quyết định 1, **chỉ server Windows ghi**.
 - Commit tài liệu này và `todo/qa-scout/`.
 
 ## 8. Tham chiếu
-- `todo/qa-scout/2026-10-02-done-memory-architecture.md`: kiến trúc bộ nhớ, lớp lưu trữ, định danh comic.
-- `todo/qa-scout/2026-10-02-youcom-dedup-and-exclusion.md`: You.com API, giá, lọc trùng, gắn lại URL.
-- `todo/qa-scout/2026-10-02-context-loading-papers.md`: paper về nạp context cho agent tìm kiếm.
-- `todo/qa-scout/2026-10-02-novelty-search-papers.md`: paper về tìm kiếm hướng tới cái mới và chia ô.
-- `todo/qa-scout/2026-10-03-youcom-large-prompt-test.md`: đo prompt lớn và danh sách tránh.
-- `todo/qa-scout/2026-10-03-scout-strategy-ab-test.md`: A/B chiến lược scout.
+- `docs/archive/qa-scout/2026-10-02-done-memory-architecture.md`: kiến trúc bộ nhớ, lớp lưu trữ, định danh comic.
+- `docs/archive/qa-scout/2026-10-02-youcom-dedup-and-exclusion.md`: You.com API, giá, lọc trùng, gắn lại URL.
+- `docs/archive/qa-scout/2026-10-02-context-loading-papers.md`: paper về nạp context cho agent tìm kiếm.
+- `docs/archive/qa-scout/2026-10-02-novelty-search-papers.md`: paper về tìm kiếm hướng tới cái mới và chia ô.
+- `docs/archive/qa-scout/2026-10-03-youcom-large-prompt-test.md`: đo prompt lớn và danh sách tránh.
+- `docs/archive/qa-scout/2026-10-03-scout-strategy-ab-test.md`: A/B chiến lược scout.

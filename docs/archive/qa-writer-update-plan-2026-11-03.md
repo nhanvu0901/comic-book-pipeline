@@ -5,7 +5,7 @@
 **Goal:** Correct the active Q&A writer's format, length, and answer-type contracts using the competitor research findings.
 **Architecture:** Keep the existing two-phase writer and item-to-paragraph importer. Update the active template, adding prompt-generation code only if needed to propagate authoritative existing format/budget data. Preserve source fidelity and issue identification.
 **Tech Stack:** Python, Markdown prompt templates, pytest.
-**Spec:** `/Users/nhanvu/Documents/code/comic-book-pipeline/todo/competitor-writer-analysis-2026-11-03.md`, especially the three confirmed active-template issues.
+**Spec:** `/Users/nhanvu/Documents/code/comic-book-pipeline/docs/archive/competitor-writer-analysis-2026-11-03.md`, especially the three confirmed active-template issues.
 
 ## Global Constraints
 

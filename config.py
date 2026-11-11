@@ -35,7 +35,7 @@ SCOUT_EVIDENCE_MODEL = os.getenv("SCOUT_EVIDENCE_MODEL", "deepseek/deepseek-v4-f
 # synopsis really answers the question. ON unless set to 0/false/no/off; on any error it fails closed.
 QA_SEMANTIC_CHECK = os.getenv("QA_SEMANTIC_CHECK", "").strip().lower() not in ("0", "false", "no", "off", "n")
 # Cheap planner LLM that fills the Stage 1 ResearchPlan's 4 knobs (see
-# stages/research_scout/planner.py + RESEARCH_PLANNER_DESIGN.md). Defaults to
+# stages/research_scout/planner.py + docs/architecture/research-planner-design.md). Defaults to
 # the evidence model — no separate key/model needed unless split later.
 SCOUT_PLANNER_MODEL = os.getenv("SCOUT_PLANNER_MODEL", SCOUT_EVIDENCE_MODEL)
 # You.com Research effort for the Stage 1 scout. A/B on 2026-08-21 (same question,
@@ -480,7 +480,7 @@ ENABLE_TITLE_BANNER = os.getenv("ENABLE_TITLE_BANNER", "true").lower() in ("true
 #
 # The numbers below are CRAFT, not standards — measured on 2026-08-12 that no standards body
 # (W3C / EBU / ATSC / Netflix) specifies a music-vs-speech level at all; ATSC A/85's own mixer
-# guide says "always mix relying on your hearing". See MUSIC_SCORING_RESEARCH_2026-08-12.md.
+# guide says "always mix relying on your hearing". See docs/archive/research/music-scoring-research-2026-08-12.md.
 #
 # BG_MUSIC_OFFSET_LU is how far BELOW the narration's own integrated loudness the bed sits, so
 # the bed self-calibrates to whatever the TTS delivered instead of assuming a fixed dBFS. That

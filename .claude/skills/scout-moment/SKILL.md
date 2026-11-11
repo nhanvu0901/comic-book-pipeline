@@ -14,6 +14,6 @@ Prompt cho agent phải nhắc đủ:
 4. Title draft: NGẮN, gọi tên nhân vật và nói thẳng tình huống; tránh tên series nội bộ và mô tả mơ hồ như "đấu trí", "kiểm soát nhịp độ" nếu không chỉ ra hành động.
 5. Output: bảng ranked ≤5 với setup → turning point → hệ quả, issue/năm, nguồn, batcave URL, coverage, lý do chọn; kèm command (stage_2 → set `target_moment` trong comic_context.json → `stages.stage_3 --mode micro-moment`). Không bịa thứ tự panel, biểu cảm, động cơ hay chi tiết chưa có nguồn. KHÔNG ghi file.
 
-Xem `MICRO_MOMENT_REFERENCE_AUDIT_2026-09-30.md` để hiểu năm kiểu điểm chuyển rút từ năm kênh đối thủ.
+Xem `docs/archive/research/micro-moment-reference-audit-2026-09-30.md` để hiểu năm kiểu điểm chuyển rút từ năm kênh đối thủ.
 
 Sau khi agent về: trình bảng, khuyến nghị 1 pick, chờ Master chọn. Produce xong → move comic vào CSV produced-banned.

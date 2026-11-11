@@ -27,7 +27,7 @@ Python interpreter.
   verified; if only one qualifies, return one rather than padding the list.
 
 ## REFERENCE SHAPES
-`MICRO_MOMENT_REFERENCE_AUDIT_2026-09-30.md` compares all 3,815 archived
+`docs/archive/research/micro-moment-reference-audit-2026-09-30.md` compares all 3,815 archived
 titles and 34 available transcripts. Flikey's small act with a large
 consequence, ComicsUnlocked's hidden counter, ComicCandid's unexpected helper,
 Comic_Escape's personal admission, and comiczyt's reversed secret are discovery

@@ -34,7 +34,7 @@ duck absorbs it. So `BG_MUSIC_OFFSET_LU` is safe to tune purely by ear; it canno
 
 The knobs are craft, not standards. No standards body (W3C, EBU, ATSC, Netflix) specifies a
 music-vs-speech level; ATSC A/85's own guide for mixers says *"always mix relying on your
-hearing."* See `MUSIC_SCORING_RESEARCH_2026-08-12.md`.
+hearing."* See `docs/archive/research/music-scoring-research-2026-08-12.md`.
 
 ## Authentication
 

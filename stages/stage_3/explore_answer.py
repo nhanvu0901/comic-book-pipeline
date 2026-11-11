@@ -4,7 +4,7 @@ Grounding INVERTS vs narrate mode: a normal comic already has panels to narrate.
 Here, Stage 1's answer-research (`projects/<slug>/answer_context.json`) already
 found the FACTS (one item per source comic); this module turns those facts into
 a deterministic beat-per-item outline, then writes short scenes for them. See
-EXPLORE_ANSWER_DESIGN.md (root, addendum v2 is binding) for the full spec.
+docs/architecture/explore-answer-design.md (root, addendum v2 is binding) for the full spec.
 
 Additive only — narrate mode never imports this file; write_script() dispatches
 here before any of its own machinery runs (see write_script.py's mode check).

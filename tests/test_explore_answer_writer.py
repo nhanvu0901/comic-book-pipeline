@@ -1,6 +1,6 @@
 """write_explore_answer: no network — the LLM writer call and the outro/loop-
 tease LLM helpers (reused from write_script.py) are monkeypatched. Verifies the
-full contract from EXPLORE_ANSWER_DESIGN.md: 1:1 beat anchoring, deterministic
+full contract from docs/architecture/explore-answer-design.md: 1:1 beat anchoring, deterministic
 hook/banner, entity-named scenes, word band, and that write_script() (the
 dispatch point) actually routes mode="explore_answer" here."""
 import json

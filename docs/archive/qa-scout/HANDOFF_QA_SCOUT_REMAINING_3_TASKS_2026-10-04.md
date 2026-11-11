@@ -4,7 +4,7 @@
 
 **Trạng thái: chưa code.** Base: nhánh `feat/scout-single-selection-flow` @ `a9d3ada`. Số dòng tính ở commit này; kiểm lại trước khi sửa.
 
-Handoff gốc là `todo/qa-scout/HANDOFF_SCOUT_HARD_RULES_AND_DEDUP_2026-10-03.md`. Codex đã làm phần lớn ở `a7ad5ce`, bộ test Mac đều qua (1775 pass). Tài liệu này chỉ gồm 3 phần chưa xong:
+Handoff gốc là `docs/archive/qa-scout/HANDOFF_SCOUT_HARD_RULES_AND_DEDUP_2026-10-03.md`. Codex đã làm phần lớn ở `a7ad5ce`, bộ test Mac đều qua (1775 pass). Tài liệu này chỉ gồm 3 phần chưa xong:
 
 | # | Việc | Mục trong handoff gốc |
 |---|---|---|

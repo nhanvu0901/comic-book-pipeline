@@ -1,4 +1,4 @@
-"""micro_moment mode v2 (MICRO_MOMENT_V2_SPEC.md): no network — the outliner and
+"""micro_moment mode v2 (docs/architecture/micro-moment-v2-spec.md): no network — the outliner and
 the LLM writer/banner calls are monkeypatched. Verifies (a) write_script() routes
 mode="micro_moment" here and raises a clear error when target_moment is missing,
 (b) the v2 micro word-band validator accepts 120-200w and rejects out-of-band
