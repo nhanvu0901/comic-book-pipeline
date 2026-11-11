@@ -1,0 +1,13 @@
+{
+  "source": "1110_Machiavelli (1).mp4",
+  "source_start_seconds": 30.45,
+  "duration_seconds": 9.8,
+  "format": "mono PCM16 WAV 24000Hz",
+  "filters": "highpass70Hz; loudnorm -20LUFS/-2dBTP",
+  "reference_text": "Real power is silent. It's the gravitational pull you create simply by existing in a space with unshakable certainty about who you are.",
+  "approved_on": "2026-11-10",
+  "approved_example": "Iron_Man_Machiavelli_voice.mp3",
+  "exaggeration": 0.35,
+  "cfg_weight": 0.5,
+  "temperature": 0.7
+}

@@ -64,6 +64,20 @@ Create a `.env` in the repo root with the keys you need:
 | `CARTESIA_API_KEY` / `RESEMBLE_API_KEY` | Hosted TTS (optional; set `TTS_PROVIDER`) |
 | `COMIC_VINE_API_KEY` | Issue cross-check (optional) |
 
+### Default narration voice
+
+Local Chatterbox uses the bundled `assets/voices/machiavelli_ref.wav` reference
+(approved 2026-11-10). Default delivery: exaggeration `0.35`, CFG weight `0.5`,
+temperature `0.7`. The same voice is used by Stage 4 and background beat TTS.
+No voice training or hosted TTS account is needed; the isolated `.venv-chatterbox`
+runtime and its model weights must be installed on the machine.
+
+`CHATTERBOX_VOICE_WAV` overrides the default reference. A Stage 4 `--voice` file
+path overrides it for one run. The matching environment settings are
+`CHATTERBOX_EXAGGERATION`, `CHATTERBOX_CFG_WEIGHT`, and `CHATTERBOX_TEMPERATURE`.
+Existing rendered audio is preserved; use Stage 4 `--force` to regenerate an old
+project with this voice, then rerun Stage 5 to update its video timing.
+
 ### Run the UI
 
 ```bash
