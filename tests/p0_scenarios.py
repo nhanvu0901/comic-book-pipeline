@@ -54,6 +54,20 @@ def pinned():
     for k, v in _PIN.items():
         setattr(config, k, v)
     _shots.PANEL_UPSCALE = False       # no Real-ESRGAN: its presence differs per machine and must not move a hash
+    # The 2026-11-12 renderer (full-bleed camera, clip auto-fill, opening rule) is a deliberate
+    # look change; its off switches restore the legacy path, and THAT is what this baseline pins.
+    # Guarded: these modules/knobs do not exist at 6788212, where this file must also run.
+    legacy = []
+    for modname, knob in (("stages.stage_5.camera", "FULLBLEED_MOTION"),
+                          ("stages.stage_5.clips", "CLIP_AUTO_FILL"),
+                          ("stages.stage_5.shots", "OPENING_FULLBLEED_RULE")):
+        try:
+            mod = __import__(modname, fromlist=["_"])
+        except ImportError:
+            continue
+        if hasattr(mod, knob):
+            legacy.append((mod, knob, getattr(mod, knob)))
+            setattr(mod, knob, False)
     try:
         yield
     finally:
@@ -63,6 +77,8 @@ def pinned():
             else:
                 setattr(config, k, v)
         _shots.PANEL_UPSCALE = saved_upscale
+        for mod, knob, v in legacy:
+            setattr(mod, knob, v)
 
 
 def _pages(d: Path):

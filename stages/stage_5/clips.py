@@ -41,9 +41,11 @@ PLAYBACK RULES
   • A clip SHORTER than its shot HOLDS ITS LAST FRAME for the remainder (shots.json reports
     frozen_tail_seconds) — also across a beat's later shots once the clip has run out. A clip
     longer than its shot is cut at the shot's end.
-  • Audio is always dropped; the frame is contain+blur like _prepare_panel_frame (whole clip
-    sharp, upscale capped at CLIP_MAX_UPSCALE = the panel path's 2x by default, over a blurred
-    cover-fill of itself), after the optional subject crop.
+  • Audio is always dropped. Framing: a manual "crop" wins; with none, the clip FILLS the 9:16
+    frame with an automatic crop centred on its most active region (auto_fill_crop) whenever that
+    stays within CLIP_MAX_UPSCALE (the panel path's 2x by default); otherwise the frame is
+    contain+blur like the panel fallback (whole clip sharp, upscale capped at CLIP_MAX_UPSCALE,
+    over a blurred cover-fill of itself). CLIP_AUTO_FILL=0 = always contain without a crop.
 """
 from __future__ import annotations
 
@@ -695,6 +697,227 @@ def _even(v: float) -> int:
     return max(2, int(round(v / 2)) * 2)
 
 
+# ─── auto fill (CLIP_AUTO_FILL) ─────────────────────────────────────────────────────────────────
+# Measured 2026-11-12: a 16:9 clip framed contain+blur fills only the middle third of a Short, and
+# our newest videos opened on exactly that (sharp art 0.22-0.35 of the frame in the first 3 s vs
+# ≥0.81 for every pure-comic competitor). With no manual crop, a clip now fills the 9:16 frame
+# with a crop whose centre follows the clip's most active / detailed region over the footage
+# actually played (centre as the tie-break), whenever that crop stays within CLIP_MAX_UPSCALE.
+# Otherwise (a 720p source, a scope film with burned-in bars too thin to fill) it keeps the
+# contain fit. A manual crop always wins. CLIP_AUTO_FILL=0 restores contain for every clip.
+def _env_f(name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        v = float(os.getenv(name, "") or default)
+    except ValueError:
+        v = default
+    return min(hi, max(lo, v)) if math.isfinite(v) else default
+
+
+CLIP_AUTO_FILL = os.getenv("CLIP_AUTO_FILL", "1").strip().lower() not in ("0", "false", "no", "off")
+# Frames sampled per second of footage for the saliency pass (cheap: a 160px-wide gray decode).
+CLIP_AUTO_SAMPLE_FPS = _env_f("CLIP_AUTO_SAMPLE_FPS", 4.0, 1.0, 12.0)
+# Centre prior: 0 = pure activity, 1 = strongly prefer the middle of the frame.
+CLIP_AUTO_CENTER_BIAS = _env_f("CLIP_AUTO_CENTER_BIAS", 0.3, 0.0, 1.0)
+# Leave the centre only when the best window scores this much better (relative).
+CLIP_AUTO_MIN_GAIN = _env_f("CLIP_AUTO_MIN_GAIN", 0.10, 0.0, 1.0)
+_AUTO_W = 160                 # analysis width (px)
+_BAR_LUMA = 28.0              # a row/column whose 99th-percentile luma stays under this is a bar
+
+
+def fill_upscale(w: float, h: float) -> float:
+    """Magnification a w x h source region needs to fill the output frame with its largest 9:16
+    window (that window's height is h when the region is wider than 9:16, else w*16/9)."""
+    if w <= 0 or h <= 0:
+        return float("inf")
+    target = _sh.TARGET_ASPECT
+    win_h = h if w / h >= target else w / target
+    return _sh.OUTPUT_H / win_h
+
+
+def can_fill(w: float, h: float) -> bool:
+    return fill_upscale(w, h) <= CLIP_MAX_UPSCALE * (1 + _SNAP_FRAC)
+
+
+def choose_fill_crop(frames, iw: int, ih: int) -> dict:
+    """Pure numpy: pick the fill crop for a clip from gray frames sampled over its window.
+
+    frames  (n, h, w) array, any small size with the clip's aspect (n ≥ 1)
+    returns {"cx","cy"} (fractions) for the largest 9:16 window, or an explicit 9:16 region
+            {"x","y","w","h"} inside the picture when the source has burned-in black bars — or {}
+            when filling would need more than CLIP_MAX_UPSCALE (caller keeps the contain fit).
+
+    Score per position on the free axis = 0.6 x motion energy (mean |frame difference|) + 0.4 x
+    detail (gradient energy), times a centre prior (CLIP_AUTO_CENTER_BIAS); the best 9:16 window
+    wins only by CLIP_AUTO_MIN_GAIN over the centred one (hysteresis)."""
+    import numpy as np
+    f = np.asarray(frames, dtype=np.float32)
+    if f.ndim == 2:
+        f = f[None]
+    n, h, w = f.shape
+    if n == 0 or h < 4 or w < 4:
+        return {}
+    # Picture area: drop burned-in black bars (scope films in a 16:9 file, pillarboxed 4:3). A bar
+    # is black EVERYWHERE along it for the whole window, so the test is the row's/column's near-max
+    # luma — a mean would also drop the dark sky of a night scene.
+    rows = np.where(np.percentile(f, 99, axis=(0, 2)) >= _BAR_LUMA)[0]
+    cols = np.where(np.percentile(f, 99, axis=(0, 1)) >= _BAR_LUMA)[0]
+    if rows.size == 0 or cols.size == 0:
+        return {}
+    r0, r1 = int(rows[0]), int(rows[-1]) + 1
+    c0, c1 = int(cols[0]), int(cols[-1]) + 1
+    if (r1 - r0) >= 0.96 * h:
+        r0, r1 = 0, h
+    if (c1 - c0) >= 0.96 * w:
+        c0, c1 = 0, w
+    sx, sy = iw / w, ih / h                       # source px per sample px
+    cw_src, ch_src = (c1 - c0) * sx, (r1 - r0) * sy
+    if not can_fill(cw_src, ch_src):
+        return {}
+    target = _sh.TARGET_ASPECT
+    pic = f[:, r0:r1, c0:c1]
+    ph, pw = pic.shape[1], pic.shape[2]
+    det = (np.abs(np.diff(pic, axis=2))[:, :-1, :] + np.abs(np.diff(pic, axis=1))[:, :, :-1]).mean(axis=0)
+    mot = np.abs(np.diff(pic, axis=0)).mean(axis=0)[:-1, :-1] if n >= 2 else np.zeros_like(det)
+    horizontal = cw_src / ch_src >= target
+    axis = 0 if horizontal else 1                 # sum over rows → per-column, or vice versa
+    det_p, mot_p = det.mean(axis=axis), mot.mean(axis=axis)
+    norm = lambda v: v / v.max() if v.size and v.max() > 0 else v  # noqa: E731
+    score = 0.6 * norm(mot_p) + 0.4 * norm(det_p) if mot_p.max() > 0 else norm(det_p)
+    L = score.size
+    pos = (np.arange(L) + 0.5) / L
+    score = score * (1.0 - CLIP_AUTO_CENTER_BIAS * (2 * pos - 1) ** 2)
+    if horizontal:
+        win_src_w, win_src_h = ch_src * target, ch_src
+        win = max(1, min(L, int(round(win_src_w / cw_src * L))))
+    else:
+        win_src_w, win_src_h = cw_src, cw_src / target
+        win = max(1, min(L, int(round(win_src_h / ch_src * L))))
+    cum = np.concatenate(([0.0], np.cumsum(score)))
+    sums = cum[win:] - cum[:-win] if win < L else np.array([cum[-1]])
+    centre = (len(sums) - 1) // 2
+    best = int(np.argmax(sums))
+    if sums[best] <= sums[centre] * (1 + CLIP_AUTO_MIN_GAIN):   # ties (a flat clip) → centre
+        best = centre
+    mid = (best + win / 2) / L                    # fraction along the picture's free axis
+    if horizontal:
+        cx = (c0 * sx + mid * cw_src) / iw
+        cy = (r0 * sy + ch_src / 2) / ih
+    else:
+        cx = (c0 * sx + cw_src / 2) / iw
+        cy = (r0 * sy + mid * ch_src) / ih
+    if (r0, r1, c0, c1) == (0, h, 0, w):
+        return {"cx": round(cx, 4), "cy": round(cy, 4)}
+    fw, fh = win_src_w / iw, win_src_h / ih
+    x = min(max(0.0, cx - fw / 2), 1.0 - fw)
+    y = min(max(0.0, cy - fh / 2), 1.0 - fh)
+    return {"x": round(x, 4), "y": round(y, 4), "w": round(fw, 4), "h": round(fh, 4)}
+
+
+def _sample_gray(path: Path, t0: float, span: float, iw: int, ih: int):
+    """(n, h, 160) gray frames of [t0, t0+span] at CLIP_AUTO_SAMPLE_FPS (≤ 48 frames)."""
+    import numpy as np
+    w = _AUTO_W
+    h = max(4, int(round(ih * w / max(1, iw) / 2)) * 2)
+    span = max(0.2, float(span))
+    fps = min(CLIP_AUTO_SAMPLE_FPS, 48.0 / span)
+    res = subprocess.run(
+        [_sh._require_ffmpeg(), "-v", "error", "-ss", f"{max(0.0, t0):.3f}", "-t", f"{span:.3f}",
+         "-i", str(path), "-an", "-vf", f"fps={fps:.4f},scale={w}:{h}:flags=area,format=gray",
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True)
+    if res.returncode != 0:
+        raise RuntimeError((res.stderr or b"").decode("utf-8", "replace")[-300:])
+    buf = np.frombuffer(res.stdout, dtype=np.uint8)
+    n = buf.size // (w * h)
+    return buf[: n * w * h].reshape(n, h, w)
+
+
+_AUTO_CACHE: dict[tuple, dict] = {}
+
+
+def auto_fill_crop(path: Path, iw: int, ih: int, t0: float, span: float, *, log=print) -> dict:
+    """The automatic fill crop for one clip window ({} = keep the contain fit). Never raises."""
+    if not CLIP_AUTO_FILL or not can_fill(iw, ih):
+        return {}
+    key = (str(path), round(float(t0), 3), round(float(span), 3), iw, ih)
+    if key in _AUTO_CACHE:
+        return dict(_AUTO_CACHE[key])
+    try:
+        crop = choose_fill_crop(_sample_gray(path, t0, span, iw, ih), iw, ih)
+    except Exception as exc:                       # never break a render over framing
+        log(f"[stage5] clip auto-fill: analysis failed on {Path(path).name} ({exc}) — centre crop")
+        crop = {"cx": 0.5, "cy": 0.5}
+    if crop:
+        crop["auto"] = True
+    _AUTO_CACHE[key] = dict(crop)
+    return crop
+
+
+def clip_fills_frame(shot, *, log=print) -> bool:
+    """Will this clip shot render full-bleed (no blur bands)? Manual crop: by its own geometry;
+    no crop: by the auto-fill rule on the footage the shot plays. Missing file → False."""
+    try:
+        info = probe_video(Path(shot.clip_path))
+    except Exception:
+        return False
+    iw, ih = info["width"], info["height"]
+    crop = getattr(shot, "clip_crop", None) or {}
+    if crop:
+        x, y, w, h = crop_region(iw, ih, crop)
+        if "cx" in crop:
+            return can_fill(w, h)
+        return abs((w / h) / _sh.TARGET_ASPECT - 1) <= 0.02 and can_fill(w, h)
+    span = (float(shot.clip_out) - float(shot.clip_in)) if float(shot.clip_out or 0) > float(shot.clip_in) \
+        else float(shot.duration_seconds)
+    return bool(auto_fill_crop(Path(shot.clip_path), iw, ih, float(shot.clip_in), span, log=log))
+
+
+def assign_auto_crops(shots: list, *, log=print) -> int:
+    """Stamp ONE auto fill crop on each run of consecutive shots that play the same clip with no
+    manual crop, computed over the run's whole footage — a clip continuing across shots must not
+    jump framing at the (invisible) cut. A run that starts at the same in-point as an earlier run
+    (the loop-close echo of an opening clip) reuses that run's crop, so the seam frame matches.
+    Returns how many shots got a crop."""
+    if not CLIP_AUTO_FILL:
+        return 0
+    stamped = 0
+    by_start: dict[tuple, dict] = {}
+    i = 0
+    while i < len(shots):
+        s = shots[i]
+        if not getattr(s, "clip_path", "") or getattr(s, "clip_crop", None):
+            i += 1
+            continue
+        j = i
+        while (j + 1 < len(shots) and getattr(shots[j + 1], "clip_path", "") == s.clip_path
+               and getattr(shots[j + 1], "clip_id", "") == s.clip_id
+               and not getattr(shots[j + 1], "clip_crop", None)):
+            j += 1
+        run = shots[i:j + 1]
+        t0 = float(s.clip_in)
+        t1 = max((float(r.clip_out) if (r.clip_fit_to_beat and float(r.clip_out or 0) > float(r.clip_in))
+                  else float(r.clip_in) + float(r.duration_seconds)) for r in run)
+        key = (s.clip_path, round(t0, 3))
+        if key not in by_start:
+            try:
+                info = probe_video(Path(s.clip_path))
+                by_start[key] = auto_fill_crop(Path(s.clip_path), info["width"], info["height"],
+                                               t0, max(0.2, t1 - t0), log=log)
+            except Exception as exc:
+                log(f"[stage5] clip auto-fill: cannot probe {Path(s.clip_path).name} ({exc})")
+                by_start[key] = {}
+        crop = by_start[key]
+        if crop:
+            for r in run:
+                r.clip_crop = dict(crop)
+                stamped += 1
+            log(f"[stage5] clip auto-fill: {s.clip_id} shots {[r.shot_id for r in run]} → {crop}")
+        else:
+            log(f"[stage5] clip auto-fill: {s.clip_id} keeps contain (fill would exceed "
+                f"CLIP_MAX_UPSCALE {CLIP_MAX_UPSCALE:g}x)")
+        i = j + 1
+    return stamped
+
+
 def clip_filter_graph(iw: int, ih: int, crop: dict | None, hold_seconds: float, *,
                       speed: float = 1.0, logo: bool = False, untag: bool = False) -> str:
     """filter_complex turning input 0 into a 9:16 (OUTPUT_W x OUTPUT_H) CFR stream labelled
@@ -886,7 +1109,10 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
         logo = corner_logo is not None
         if logo:
             inputs += ["-i", str(corner_logo)]
-        graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop, duration, logo=logo)
+        span = (clip_out - clip_in) if clip_out else duration
+        crop = shot.clip_crop or auto_fill_crop(src, info["width"], info["height"], clip_in, span,
+                                                log=progress or print)
+        graph = clip_filter_graph(info["width"], info["height"], crop, duration, logo=logo)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [ff, "-y", *inputs, "-filter_complex", graph, "-map", "[v]",
                "-frames:v", str(frames), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
@@ -910,7 +1136,9 @@ def render_clip_shot(shot: Shot, out_path: Path, *, corner_logo: Path | None = N
     # The graph's tpad holds the last frame for `hold` seconds; _TAIL_PAD more frames are asked
     # for than the shot needs and `-frames:v` cuts them off, so a frame lost to fps/setpts
     # rounding can never leave the output a frame short of the contract.
-    graph = clip_filter_graph(info["width"], info["height"], shot.clip_crop,
+    crop = shot.clip_crop or auto_fill_crop(src, info["width"], info["height"], clip_in, fit_.used,
+                                            log=progress or print)
+    graph = clip_filter_graph(info["width"], info["height"], crop,
                               fit_.hold + _TAIL_PAD, speed=fit_.speed, logo=logo, untag=True)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [ff, "-y", *inputs, "-filter_complex", graph, "-map", "[v]",

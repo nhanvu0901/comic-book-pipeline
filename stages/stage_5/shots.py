@@ -560,6 +560,9 @@ def build_shots(
     final_duration = float(getattr(shots[-1], "duration_seconds", 0.0)) if shots else 0.0
     loop = (SEAMLESS_LOOP and not final_selected and LOOP_TAIL_SECONDS > 0
             and final_duration >= MIN_FINAL_VISUAL_SECONDS + LOOP_TAIL_SECONDS)
+    # OPENING-SHOT RULE: frame 1 must fill the screen (see _enforce_opening_shot). Runs before the
+    # time split + loop close so the loop echo mirrors the shot the video really opens on.
+    shots = _enforce_opening_shot(shots, pages_by_number, narration, project)
     shots = _time_split_shots(shots, 0.0 if micro else SHOT_MAX_SECONDS,
                               loop_tail=LOOP_TAIL_SECONDS if loop else 0.0)
     if loop:
@@ -727,6 +730,180 @@ def _close_loop(shots: list[Shot]) -> None:
     from .clips import copy_clip_fields
     copy_clip_fields(last, first)
     last.motion = "zoom_out"
+
+
+# ── OPENING-SHOT RULE (2026-11-12) ─────────────────────────────────────────────────────────────
+# Measured: our 3 newest Shorts opened on a dark film clip letterboxed over blur (sharp art 22-35 %
+# of the frame in the first 3 s; every pure-comic competitor ≥ 81 %), and the first image change
+# came at 2.0 s vs their 0.78 s. Rule: the opening OPENING_FULLBLEED_SECONDS of the video fill the
+# frame. The camera (stage_5/camera.py) already moves the opening still from frame 0 (clear motion
+# inside the first second); this rule only acts on a shot that starts inside that window and would
+# render letterboxed (a clip too small to fill, an extreme strip, a tiny inset). Its part of the
+# window is then played by the best full-bleed alternative, in this order:
+#   1. the same beat's own fallback visual (the panel / custom image under a clip),
+#   2. for the very first shot: the cold-open scorer's pick (money-bind / gated scorer),
+#   3. the next full-bleed still within OPENING_SEARCH_SECONDS,
+# and the original shot resumes once the window ends (it is split there; a remainder shorter than
+# SHOT_MIN_SECONDS is not worth a cut, so the whole shot takes the alternative). Logged every time.
+def _env_seconds(name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        v = float(os.getenv(name, "") or default)
+    except ValueError:
+        v = default
+    return min(hi, max(lo, v))
+
+
+OPENING_FULLBLEED_RULE = os.getenv("OPENING_FULLBLEED_RULE", "1").strip().lower() not in ("0", "false", "no", "off")
+OPENING_FULLBLEED_SECONDS = _env_seconds("OPENING_FULLBLEED_SECONDS", 3.0, 0.5, 10.0)
+OPENING_SEARCH_SECONDS = _env_seconds("OPENING_SEARCH_SECONDS", 8.0, 1.0, 30.0)
+
+_VISUAL_FIELDS = ("panel_bbox", "source_image", "text_bboxes", "char_bboxes", "no_mirror",
+                  "keep_contain", "custom_image")
+
+
+def _ai_upscale_available() -> bool:
+    return bool(PANEL_UPSCALE) and Path(str(REALESRGAN_BIN)).is_file()
+
+
+def _still_fills(shot) -> bool:
+    """Would this shot's STILL (custom image, else panel crop) render full-bleed?"""
+    from . import camera as _cam
+    custom = getattr(shot, "custom_image", "") or ""
+    if custom:
+        try:
+            with Image.open(custom) as im:
+                w, h = im.size
+        except Exception:
+            return False
+        return not _cam.will_letterbox(w, h, upscaled=_ai_upscale_available())
+    bb = getattr(shot, "panel_bbox", None) or {}
+    w, h = int(bb.get("w", 0) or 0), int(bb.get("h", 0) or 0)
+    if w <= 0 or h <= 0 or not (shot.source_image and Path(shot.source_image).is_file()):
+        return False
+    return not _cam.will_letterbox(w, h, keep_contain=getattr(shot, "keep_contain", False),
+                                   upscaled=_ai_upscale_available())
+
+
+def _shot_fills(shot, *, log=print) -> bool:
+    """Would shot render full-bleed? A clip by its crop/auto-fill rule, else its still."""
+    if getattr(shot, "clip_path", "") and not getattr(shot, "clip_fallback", ""):
+        from .clips import clip_fills_frame
+        return clip_fills_frame(shot, log=log)
+    return _still_fills(shot)
+
+
+def _clear_clip(shot) -> None:
+    for k, v in (("clip_path", ""), ("clip_in", 0.0), ("clip_out", 0.0), ("clip_fit_to_beat", False),
+                 ("clip_id", ""), ("clip_source_url", ""), ("clip_fallback", "")):
+        setattr(shot, k, v)
+    shot.clip_crop = {}
+
+
+def _opening_alternative(shots: list, i: int, pages_by_number: dict, narration: dict | None,
+                         project: str | None, *, log=print):
+    """(shot carrying the alternative visual, label) for shots[i], or (None, reason)."""
+    import copy
+    from dataclasses import replace
+    cur = shots[i]
+    # 1. the beat's own fallback visual under its clip
+    if getattr(cur, "clip_path", ""):
+        own = replace(cur)
+        _clear_clip(own)
+        if _still_fills(own):
+            return own, "the beat's own fallback still"
+    # 2. the very first shot: the cold-open scorer (money panel / gated scorer), excluding panels
+    #    already on screen
+    if i == 0 and pages_by_number:
+        def key(src, bb):
+            return str(src), tuple(int((bb or {}).get(k, 0) or 0) for k in ("x", "y", "w", "h"))
+        used = {key(s.source_image, s.panel_bbox) for s in shots}
+        exclude = {(pn, idx) for pn, pg in pages_by_number.items()
+                   for idx, pnl in enumerate((pg or {}).get("panels") or [])
+                   if key((pg or {}).get("source_image") or "", pnl.get("bbox")) in used}
+        try:
+            panel, src = _cold_open_panel(pages_by_number, exclude_keys=exclude,
+                                          narration=narration, project=project)
+        except Exception as exc:                   # never break a build over the opening rule
+            log(f"[stage5] opening rule: cold-open scorer failed ({exc})")
+            panel, src = None, ""
+        if panel is not None and src:
+            alt = replace(cur, panel_bbox=dict(panel.get("bbox") or {}), source_image=src,
+                          text_bboxes=_panel_text_bboxes(panel, pages_by_number),
+                          char_bboxes=_panel_char_bboxes(panel), no_mirror=True,
+                          keep_contain=_panel_has_critical_text(panel), custom_image="")
+            _clear_clip(alt)
+            if _still_fills(alt):
+                return alt, f"cold-open pick p{panel.get('_page_number')}/{panel.get('index')}"
+    # 3. the next full-bleed still in the opening seconds
+    t = sum(float(s.duration_seconds) for s in shots[:i + 1])     # when shots[i+1] starts
+    for s in shots[i + 1:]:
+        if t > OPENING_SEARCH_SECONDS:
+            break
+        if not getattr(s, "clip_path", "") and _still_fills(s):
+            alt = replace(cur, **{k: copy.deepcopy(getattr(s, k)) for k in _VISUAL_FIELDS})
+            _clear_clip(alt)
+            return alt, f"the still of shot {s.shot_id}"
+        t += float(s.duration_seconds)
+    return None, "no full-bleed visual in the opening seconds"
+
+
+def _enforce_opening_shot(shots: list, pages_by_number: dict | None = None,
+                          narration: dict | None = None, project: str | None = None,
+                          *, log=print) -> list:
+    """OPENING-SHOT RULE (see above). Mutates/extends `shots` in place and returns it."""
+    from . import camera as _cam
+    if (not shots or not OPENING_FULLBLEED_RULE or not _cam.enabled()
+            or not all(isinstance(s, Shot) for s in shots)):
+        return shots
+    window = OPENING_FULLBLEED_SECONDS
+    t, i, changed = 0.0, 0, False
+    while i < len(shots) and t < window - 1e-6:
+        cur = shots[i]
+        dur = float(cur.duration_seconds)
+        if _shot_fills(cur, log=log):
+            t, i = t + dur, i + 1
+            continue
+        what = f"clip '{cur.clip_id}'" if getattr(cur, "clip_path", "") else "still"
+        head = round(window - t, 3)            # this shot's seconds inside the window
+        if i > 0 and head < SHOT_MIN_SECONDS:
+            # Only a sliver of this shot falls inside the window: not worth a cut or losing its
+            # visual for the rest of its length.
+            log(f"[stage5] opening rule: shot {i} ({what}) starts at {t:.2f}s, only {head:.2f}s "
+                f"inside the {window:g}s opening — kept")
+            break
+        alt, label = _opening_alternative(shots, i, pages_by_number or {}, narration, project, log=log)
+        if alt is None:
+            log(f"[stage5] opening rule: shot {i} ({what}) at {t:.2f}s would render letterboxed "
+                f"and {label} — kept")
+            t, i = t + dur, i + 1
+            continue
+        alt.is_intro = bool(getattr(cur, "is_intro", False))
+        if dur - head >= SHOT_MIN_SECONDS and head >= SHOT_MIN_SECONDS:
+            rest = round(dur - head, 3)
+            alt.duration_seconds = head
+            cur.duration_seconds = rest
+            cur.is_intro = False
+            # A fit-to-beat clip squeezed its window into the whole shot; keep its playback speed
+            # by trimming that window in proportion instead of fast-forwarding into the rest.
+            if (getattr(cur, "clip_fit_to_beat", False)
+                    and float(cur.clip_out or 0) > float(cur.clip_in)):
+                cur.clip_out = round(cur.clip_in + (cur.clip_out - cur.clip_in) * rest / dur, 3)
+            shots.insert(i, alt)
+            log(f"[stage5] opening rule: shot {i} ({what}) at {t:.2f}s would render letterboxed → "
+                f"{label} plays its first {head:.2f}s, the original resumes for {rest:.2f}s")
+            i += 2
+        else:
+            alt.duration_seconds = cur.duration_seconds
+            shots[i] = alt
+            log(f"[stage5] opening rule: shot {i} ({what}, {dur:.2f}s) at {t:.2f}s would render "
+                f"letterboxed → replaced by {label}")
+            i += 1
+        t += dur
+        changed = True
+    if changed:
+        for k, s in enumerate(shots):
+            s.shot_id = k
+    return shots
 
 
 def _build_shots_per_scene(
@@ -2576,9 +2753,10 @@ def _cold_open_bubble_frac(panel: dict, page_tb) -> float:
 
 
 def _cold_open_gate_ok(panel: dict, parea: int, page_tb=None) -> bool:
-    """Is `panel` an ACCEPTABLE frame-1? Rejects (a) a panel the renderer would LETTERBOX —
-    blurry-giant upscale (cover > _BLUR_FALLBACK_SCALE) OR a strip at/over LANDSCAPE_COVER_MAX_ASPECT,
-    the SAME predicate _prepare_panel_frame/_should_blur_bg use — (b) a TINY panel (< COLD_OPEN_MIN_AREA_FRAC
+    """Is `panel` an ACCEPTABLE frame-1? Rejects (a) a panel the renderer would LETTERBOX — the SAME
+    predicate the renderer uses (camera.will_letterbox: an extreme strip or a blurry-giant upscale
+    under the full-bleed camera; the old cover>_BLUR_FALLBACK_SCALE / LANDSCAPE_COVER_MAX_ASPECT rule
+    when FULLBLEED_MOTION=0) — (b) a TINY panel (< COLD_OPEN_MIN_AREA_FRAC
     of its page area), and (c) a BUBBLE-CHOKED panel (> COLD_OPEN_MAX_BUBBLE_FRAC text coverage, only
     when page_tb is supplied). Shared by _cold_open_panel's hard gate and the Q&A subject-intro bookend
     order so both frame-1 selectors reject the wide-blur / tiny-inset opener."""
@@ -2586,9 +2764,8 @@ def _cold_open_gate_ok(panel: dict, parea: int, page_tb=None) -> bool:
     w, h = int(bb.get("w", 0) or 0), int(bb.get("h", 0) or 0)
     if w <= 0 or h <= 0:
         return False
-    aspect = w / h
-    cover = max(OUTPUT_W / w, OUTPUT_H / h)
-    if cover > _BLUR_FALLBACK_SCALE or aspect >= LANDSCAPE_COVER_MAX_ASPECT:
+    from . import camera as _cam
+    if _cam.will_letterbox(w, h):
         return False                                   # would letterbox (contain+blur band)
     if parea > 0 and (w * h) / parea < COLD_OPEN_MIN_AREA_FRAC:
         return False                                   # tiny inset
@@ -2758,8 +2935,8 @@ def _cold_open_panel(pages_by_number, exclude_keys=None, narration: dict | None 
             # a too-small panel blown up past _BLUR_FALLBACK_SCALE, OR a strip at/over
             # LANDSCAPE_COVER_MAX_ASPECT. Penalized hard so a portrait, subject-filled panel
             # wins; the biggest-area fallback still fires if EVERY opening panel would letterbox.
-            cover = max(OUTPUT_W / w, OUTPUT_H / h)
-            will_letterbox = cover > _BLUR_FALLBACK_SCALE or aspect >= LANDSCAPE_COVER_MAX_ASPECT
+            from . import camera as _cam
+            will_letterbox = _cam.will_letterbox(w, h)
             score = (0.40 * area_frac + 0.35 * aspect_fit
                      + COLD_OPEN_W_CHAR * has_char - COLD_OPEN_W_DIALOG * dialog_load
                      - COLD_OPEN_W_CROWD * crowd
@@ -3060,6 +3237,28 @@ def render_shot(
                 chars = _rescale(chars)   # same rescale — a char box left in pre-upscale
                                           # coords would point at a fraction of the figure
                 frame_src = up_path
+
+    # Full-bleed camera (stage_5/camera.py, default ON for the Shorts frame): the window fills
+    # the frame and travels across the art at a visible speed, instead of the old frame-then-
+    # nudge path below. FULLBLEED_MOTION=0 (or the long-form frame) keeps the old path.
+    from . import camera as _cam
+    if _cam.enabled() and shot.motion != "static":
+        from config import MOTION_COMIC
+        duration = max(0.4, shot.duration_seconds)
+        frames = max(1, int(round(duration * FPS)))
+        reverse = shot.motion == "zoom_out"       # only the loop-close echo zooms out
+        art_png, plan, _mode, _reason = _cam.prepare_plan(
+            frame_src, duration, shot_id=shot.shot_id, avoid_boxes=avoid, char_boxes=chars,
+            keep_contain=getattr(shot, "keep_contain", False),
+            intro=bool(getattr(shot, "is_intro", False)) or shot.shot_id == 0,
+            action=bool(MOTION_COMIC) and _is_action_text(getattr(shot, "caption_text", "")),
+            reverse=reverse, work_png=panel_png.with_name(panel_png.stem + "_blurbg.png"),
+            log=progress)
+        if progress:
+            progress(f"[stage5] shot {shot.shot_id:03d} (scene {shot.scene_id}, camera "
+                     f"{plan.axis}-travel, {duration:.2f}s)")
+        _cam.render_plan(art_png, plan, out_path, frames, corner_logo=corner_logo)
+        return out_path
 
     framed = _prepare_panel_frame(frame_src, panel_png.with_name(panel_png.stem + "_9x16.png"),
                                   avoid_boxes=avoid, char_boxes=chars,
