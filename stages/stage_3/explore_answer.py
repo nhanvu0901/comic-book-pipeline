@@ -18,6 +18,7 @@ from typing import Callable
 from config import CREATIVE_LLM_MODELS, ENABLE_LOOP_TEASE, OPENROUTER_MODEL, PROJECTS_ROOT
 from ..question_archetype import question_archetype, is_statement_lead, is_comparison, is_direct_format
 from .schema import Beat, Glossary, Narration
+from .opening_rules import with_opening_rules
 from .spoken_rules import with_spoken_rules
 from ._llm import call_with_chain
 from .story_verify import run_story_verify
@@ -221,8 +222,9 @@ HARD RULES:
       * "title" — 4-8 words, a statement. No question mark, no emoji, no hashtag, no issue number,
         no series name. Name the SUBJECT and the thing that makes them worth 60 seconds.
       * "hook" — the FIRST spoken line, at most 26 words, preferably 6-18. Make the question's
-        subject clear and expose one sourced, unusual fact or answer from item 1. A direct question,
-        a factual statement, or an "After..." setup can all work if the source supports it. Do not
+        subject clear and expose one sourced, unusual fact or answer from item 1, stated as a fact
+        (or an "After..." setup) that names item 1's character and event within the first ten
+        words; a question only under the OPENING RULES' hypothetical exception. Do not
         force a broken rule or an assumed constant that the research did not verify. Leave the
         mechanism or consequence for the next scenes so the opening keeps moving.
         The hook must carry the same answer-theme promise as the input QUESTION
@@ -243,6 +245,7 @@ HARD RULES:
 Return shape:
 {"title": "...", "hook": "...", "outro": "...", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
 _EXPLORE_WRITE_SYSTEM_LIST = with_spoken_rules(_EXPLORE_WRITE_SYSTEM_LIST, "Return shape:")
+_EXPLORE_WRITE_SYSTEM_LIST = with_opening_rules(_EXPLORE_WRITE_SYSTEM_LIST, "Return shape:")
 
 _EXPLORE_WRITE_SYSTEM_EXPLAIN = """You are QAWriter for a comic-trivia YouTube Short. The video answers ONE direct question (Why/How, or What-is / concept revelation) as an ARGUMENT built from real comic moments — the items are stages of the answer (they may come from one story or from several different comics), given in escalation order (the revelation is the LAST item) — never re-rank them.
 
@@ -292,8 +295,9 @@ HARD RULES:
         no series name. Name the SUBJECT and the thing that makes them worth 60 seconds.
       * "hook" — the FIRST spoken line, at most 26 words, preferably 6-18. Make the question's
         subject clear and expose a sourced, unusual fact from item 1 without giving away the final
-        answer thesis. A direct question, a factual statement, or an "After..." setup can all work
-        if the source supports it. Do not force a broken rule or an assumed constant that the
+        answer thesis. State it as a fact (or an "After..." setup) that names item 1's character
+        and event within the first ten words; a question only under the OPENING RULES'
+        hypothetical exception. Do not force a broken rule or an assumed constant that the
         research did not verify. Let the next scene add a new causal fact.
         The hook must carry the same specific promise as the input QUESTION
         and a concrete item-1 fact. Then scene A adds a different sourced cause,
@@ -313,6 +317,7 @@ HARD RULES:
 Return shape:
 {"title": "...", "hook": "...", "outro": "...", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment 1>", "<verbatim fragment 2>", "<... one fragment per drawable moment, count set by the length rule>"], "connective": null, "beat_id": <id>}, ...]}"""
 _EXPLORE_WRITE_SYSTEM_EXPLAIN = with_spoken_rules(_EXPLORE_WRITE_SYSTEM_EXPLAIN, "Return shape:")
+_EXPLORE_WRITE_SYSTEM_EXPLAIN = with_opening_rules(_EXPLORE_WRITE_SYSTEM_EXPLAIN, "Return shape:")
 
 
 # Q&A-specific outro contract (passed to write_script.generate_outro's

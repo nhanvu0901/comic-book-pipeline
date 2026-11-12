@@ -677,15 +677,16 @@ def test_fallback_without_a_scout_candidate_adds_no_extras(tmp_path, monkeypatch
 
 def test_writer_templates_include_natural_storytelling_and_issue_identification_rules():
     """All writer templates must require natural spoken storytelling, comic issue
-    identification right after the hook, causal language guards, and ISSUE MENTION CHECK /
-    FLOW CHECK audit lines."""
+    identification after the first story event (2026-11-12: no longer the sentence right
+    after the hook), causal language guards, and ISSUE MENTION CHECK / FLOW CHECK audit lines."""
     for path in (gp.MICRO_TEMPLATE_PATH, gp.QA_TEMPLATE_PATH, gp.TOPIC_QA_TEMPLATE_PATH):
         text = path.read_text(encoding="utf-8")
         flat = _flat(text)
         assert "Gemini 3.8" in flat, path.name
         assert "VOICE — NATURAL SPOKEN STORYTELLING" in flat, path.name
         assert "PURPOSE AND CAUSAL LANGUAGE" in flat, path.name
-        assert "COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK" in flat, path.name
+        assert "COMIC ISSUE IDENTIFICATION — AFTER THE FIRST EVENT" in flat, path.name
+        assert "COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK" not in flat, path.name
         assert "CONNECT EVERY IDEA, NOT EVERY SENTENCE" in flat, path.name
         assert "CONNECTORS SHOULD LIVE INSIDE SENTENCES TOO" in flat, path.name
         assert "ZOOM IN ON THE HIGHLIGHT" in flat, path.name

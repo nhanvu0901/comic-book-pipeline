@@ -28,6 +28,7 @@ from .beat_split import split_hook_fragments, _verbatim_ok
 from .comic_vs_show import is_comic_vs_show, COMIC_VS_SHOW_MODE
 from .pipeline import load_inputs, filter_story_pages
 from .provided_narration import split_sentences
+from .opening_rules import fill_opening_rules
 from .spoken_rules import SPOKEN_TEXT_RULES
 
 SPOKEN_RULES_PLACEHOLDER = "{{SPOKEN_TEXT_RULES}}"
@@ -588,6 +589,7 @@ def generate_gemini_writer_prompt(
             rendered = rendered.replace("{{STORY_CONTEXT}}\n", "").replace("{{STORY_CONTEXT}}", "")
 
     rendered = fill_spoken_rules(rendered)
+    rendered = fill_opening_rules(rendered)
 
     if is_short_35s_active(comic_ctx, state_data, short_35s):
         m = re.search(r"\n(?=#{0,2}\s*OUTPUT)", rendered, re.IGNORECASE)
@@ -1159,7 +1161,8 @@ def parse_and_save_script(
         narration_dict["answer_items_signature"] = answer_items_signature(answer_ctx)
 
     # The pasted script is the author's source record; narration.json is the spoken
-    # artifact used by TTS and Stage 5. Add the same default ending as generated modes.
+    # artifact used by TTS and Stage 5. Apply the same ending setting as generated modes
+    # (the spoken subscribe line only when config.SPOKEN_SUBSCRIBE_CTA is on).
     from .ending import ensure_subscribe_cta
     ensure_subscribe_cta(narration_dict)
 

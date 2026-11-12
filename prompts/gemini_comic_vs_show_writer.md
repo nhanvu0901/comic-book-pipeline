@@ -22,14 +22,14 @@ Casual viewers already know what happened on screen in the movie or show. Your g
 Write the script in 5 distinct beats:
 
 1. **THE HOOK (1 sentence, 8–16 words):**
-   Name the Show or Movie plus the character or moment, and hook the viewer on how the original comic version was completely different, far darker, or way more extreme.
+   Name the Show or Movie plus the character, and state one concrete event as a fact within the first ten words: what the character actually does on the comic page, set against the screen version. The contrast is the hook; a question or "what if" opening is allowed only when the source itself is a hypothetical.
    **NO FINAL-TWIST SPOILER IN THE HOOK & NO MID-BODY HOOK ECHO:** Hook on the inciting clash or contrast without spoiling the final comic payoff or transformation in sentence one. Once the hook states the opening premise, never circle back mid-body to repeat it.
 
 2. **ACT 1 — WHAT THE SHOW / MOVIE DID (1–2 sentences):**
    Ground what mainstream viewers saw on screen so everyone immediately recognizes the scene. Keep it tight and clear.
 
 3. **ACT 2 — WHAT THE COMIC ACTUALLY DID (2–4 sentences):**
-   Contrast the screen version with the verified comic issue. Cite the comic series and issue number naturally in spoken words (for example: `In The Boys issue forty, ...` or `In Invincible issue sixty-one, ...`) with zero hash signs and zero digits. Escalate through the real on-page actions to the turning point.
+   Contrast the screen version with the verified comic issue. Name the comic series and issue number in a short spoken clause or sentence (for example: `In The Boys issue forty, ...` or `That's Invincible issue sixty-one.`) with zero hash signs and zero digits. It comes after the first event, within roughly the first third, and never as a long setup sentence. Escalate through the real on-page actions to the turning point.
 
 4. **CLIMAX CHARACTER QUOTE (1 short quote, 5–8 words max):**
    At the peak of the comic reveal, weave in **1 short, chilling or unforgettable 5–8 word character line or quote** directly grounded in the comic page evidence.
@@ -45,6 +45,12 @@ Target **12–18 spoken words per sentence** so each sentence lands in 4–6 sec
 
 ---
 
+## OPENING RULES — REQUIRED FOR THE FIRST SPOKEN LINES
+
+{{OPENING_RULES}}
+
+---
+
 ## SPOKEN TEXT RULES — REQUIRED FOR EVERY SPOKEN LINE
 
 {{SPOKEN_TEXT_RULES}}
@@ -55,10 +61,10 @@ Target **12–18 spoken words per sentence** so each sentence lands in 4–6 sec
 
 Before output, trace every factual clause, including the hook and climax quote:
 1. Does the script open on the chosen hook without any preface?
-2. Does the hook hook on the contrast without spoiling the final payoff?
+2. Does the hook state a concrete event as a fact, within its first ten words, and hook on the contrast without spoiling the final payoff?
 3. Is every character name an everyday name or clear role?
 4. Is the TV/movie scene clearly grounded in Act 1?
-5. Does Act 2 cite the comic series and issue number in natural spoken words?
+5. Does Act 2 name the comic series and issue number in a short spoken clause or sentence, after the first event and within roughly the first third?
 6. Are issue numbers spoken as words ("issue forty") with zero digits and zero hash signs?
 7. Is there a verified turning point where the comic veers wildly from the show?
 8. Is there exactly one short 5–8 word climax character quote grounded in the source?

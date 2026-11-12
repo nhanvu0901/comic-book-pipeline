@@ -278,30 +278,34 @@ HOOK AND FIRST BEAT
 Draft three openings from different angles and print them in HOOK OPTIONS:
 1. Lead with the sourced odd action or result (the weirdest concrete action or result).
 2. Drop into the shortest sourced setup that makes the situation unusual (the central contradiction or situation).
-3. Ask a specific question that this moment actually answers.
+3. Drop into the moment mid-action: the named character already doing the
+   concrete thing, said as a statement.
 Choose by the FACT SHEET, not by a fixed formula. The opening must deliver
 the same concrete person-and-event promise as MOMENT or the intended title.
 A viewer who hears only the hook should know which story this is. A reversal is useful only
 when both sides are sourced. A setup-led opening can hold back the result,
 but it must give the listener a concrete reason to care immediately. A
-question is allowed; "What happens next?" is too empty. Name a familiar
+question is allowed only when the source itself is a hypothetical (see OPENING
+RULES); "What happens next?" is always too empty. Name a familiar
 character or give an unfamiliar one a plain role, and avoid making the
 listener decode several new names in the first breath. Aim for 7–18 spoken
 words when the fact supports it, and stay under about 24. A shorter concrete
-hook is fine. The hook DOES NOT need to mention the comic issue; instead,
-every hook is written with the assumption that the next spoken sentence will
-identify the comic and issue. When evaluating a hook, read the first two
-lines together (`[HOOK]` followed by `In [Comic] issue [issue number in words], ...`): they should
-sound like one continuous introduction rather than a headline followed by
-metadata. Trace every factual clause in the chosen hook.
+hook is fine. The hook states the first concrete story event within its first
+ten words and never mentions the comic or issue; the source is named later,
+after that event (see COMIC ISSUE IDENTIFICATION). When evaluating a hook, read
+it together with the next body sentence: they should sound like one story
+already moving, not a headline followed by metadata. Trace every factual
+clause in the chosen hook.
 
 NO FINAL-TWIST SPOILER IN THE HOOK & NO MID-BODY HOOK ECHO: When the story has a multi-step progression or an AFTERMATH twist or transformation, hook with the inciting clash, odd setup, or opening problem — do NOT spoil both the midpoint and the final ending in sentence one (for example, do not write "When Spider-Man fights the Infernal Hulk, he gets cut across the stomach and turns into a giant spider" if turning into a giant spider is the final scene's reveal; hook on the clash or wound and save the final transformation for the landing sentence). Once the hook states an opening action, the body must NEVER circle back in Scene 2, 3, or 4 to re-narrate that exact same action a second time.
 
 Write the first THREE spoken sentences as one opening chain:
-HOOK (the specific sourced promise) -> COMIC + ISSUE + STORY FRAME if verified and needed
-(identify the comic and issue while stating what is happening around this encounter or why it occurs) -> MOVEMENT
+HOOK (the first concrete sourced event, as a statement) -> STORY FRAME if verified and needed
+(what is happening around this encounter or why it occurs) -> MOVEMENT
 (the action, mechanism, or consequence that answers the hook). If the hook
-already states the frame, combine the comic + issue identification with the first movement. The second sentence
+already states the frame, go straight to the first movement. Name the comic and
+issue in a short clause or sentence after the first event, within roughly the
+first third; it never replaces the frame or the movement. The second sentence
 must never translate the hook into new words or begin a separate lore
 lecture. The third must not restate either earlier sentence. Do not force a
 reveal into these sentences: some stories earn it later. In a thin one-beat
@@ -311,11 +315,12 @@ inventing three angles.
 STORY
 Open on the chosen hook. The hook line is spoken once: the story's first
 sentence is the one after it, never the hook again in other words. That
-first body sentence immediately after the hook MUST naturally identify the
-comic and issue (for example, `In [Series] issue [issue number in words], ...` or `This happens in [Series] issue [issue number in words], where ...`)
-while beginning the active setup. When the
-sheet has a useful STORY FRAME, give it one short sentence or clause combined
-with the comic + issue identification before expanding the tactic or mechanism.
+first body sentence continues the story with the active setup or the next
+event; it is not a citation. Name the comic and issue once, after the first
+event and within roughly the first third, in a short clause or sentence (for
+example, `That's [Series] issue [issue number in words].`). When the
+sheet has a useful STORY FRAME, give it one short sentence or clause before
+expanding the tactic or mechanism.
 This should answer where the characters are in the conflict, what they are
 trying to do, or why they have crossed paths.
 Choose the part that actually explains this moment; do not recite the whole
@@ -359,7 +364,7 @@ A casual viewer with zero comic knowledge will get lost if you drop multiple
 unfamiliar character, villain, henchman, or team names in a 40-second Short:
 - **Keep ONLY household names** that a casual moviegoer already knows (`Cyclops` /
   `Scott Summers`, `Batman`, `Wolverine`, `Spider-Man`, `Superman`, `Magneto`,
-  `Joker`, etc.) plus the comic series title in the issue-mention sentence.
+  `Joker`, etc.) plus the comic series title in the short issue mention.
 - **Hard cap of 1–2 proper character names in the entire script.** Never make
   the listener track minor characters, side villains, henchmen, captives, or
   sub-teams by proper name (for example, do NOT name obscure characters like
@@ -435,21 +440,27 @@ However, natural prose must never become an excuse to invent motivation.
 If Phase 1 establishes only that Jean uses Phoenix fire on Logan and Logan later regenerates, you may naturally connect the sequence (`Jean uses Phoenix's fire on Logan, and afterward his body begins regenerating.`), but you may NOT automatically write `Jean burns Logan in order to reset his programming.` unless the fact sheet specifically establishes that purpose or mechanism.
 When purpose is unknown, describe the verified action and result without guessing why the character chose it.
 
-## COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK
+## COMIC ISSUE IDENTIFICATION — AFTER THE FIRST EVENT
 
-The sentence immediately after the chosen hook must identify the comic and issue.
-Use a natural spoken construction such as:
-- `In Ultimate Wolverine issue fifteen, ...`
-- `This happens in Ultimate Wolverine issue fifteen, where ...`
-- `In Batman issue one twenty-five, ...`
+Name the comic and issue once so viewers can find the book, but only after the
+first concrete story event has been spoken. It does not have to be the sentence
+right after the hook. Keep it short, a clause or a short sentence, and speak it
+within roughly the first third of the script. Natural spoken constructions:
+- `That's Ultimate Wolverine issue fifteen.`
+- `..., all in Ultimate Wolverine issue fifteen.`
+- `In Batman issue one twenty-five, ...` as a short lead-in to a LATER story sentence, never before the first event
 
-Do not make the issue identification sound like metadata being read aloud (BAD: `Comic: Ultimate Wolverine, Issue 15, 2026.`; GOOD: `In Ultimate Wolverine issue fifteen, Logan and Jean are...`).
-Mention the issue ONCE near the beginning unless repeating it later is necessary for clarity.
-The hook itself does NOT need to contain the issue name.
-The required opening order is:
-**HOOK → COMIC + ISSUE → STORY FRAME / FIRST HIGHLIGHT MOVEMENT**
+Do not make the issue identification sound like metadata being read aloud (BAD: `Comic: Ultimate Wolverine, Issue 15, 2026.`).
+Mention the issue ONCE unless repeating it later is necessary for clarity.
+The hook itself never contains the issue name.
+The opening order is:
+**HOOK (FIRST EVENT) → STORY FRAME / FIRST HIGHLIGHT MOVEMENT, with COMIC + ISSUE in a short clause or sentence within the first third**
 
-Combine the issue identification with useful setup whenever possible (BAD: `This happens in Ultimate Wolverine issue fifteen. Logan is hunting someone.`; BETTER: `In Ultimate Wolverine issue fifteen, Logan is hunting for the missing mutants when the situation turns on him.`). The factual content of the setup must still come entirely from verified beats.
+Never let the citation delay the story (BAD: `This happens in Ultimate Wolverine issue fifteen, where Logan is hunting for the missing mutants when the situation turns on him.`; BETTER: `Logan is hunting for the missing mutants when the situation turns on him. That's Ultimate Wolverine issue fifteen.`). The factual content of the setup must still come entirely from verified beats.
+
+## OPENING RULES — REQUIRED FOR THE FIRST SPOKEN LINES
+
+{{OPENING_RULES}}
 
 ## SPOKEN TEXT RULES — REQUIRED FOR EVERY SPOKEN LINE
 
@@ -492,8 +503,8 @@ Describe the intervention as one connected progression, using the verified actio
 ## OPENING CHAIN
 
 The default opening structure is:
-**HOOK → COMIC + ISSUE + FRAME → HIGHLIGHT DEVELOPMENT**
-The first body sentence after the hook MUST name the comic and issue, and whenever possible also provide the minimum active setup (`In [SERIES] #[ISSUE], [verified immediate situation], and [movement toward the highlight].`). Then move directly into the highlighted action. Enter the highlight by the second or third body sentence at the latest unless the source requires unusual context. Do not spend a separate sentence solely announcing the comic unless no natural combined sentence is possible.
+**HOOK (FIRST EVENT) → FRAME → HIGHLIGHT DEVELOPMENT**, with the comic and issue named in a short clause or sentence after the first event, within roughly the first third.
+The first body sentence after the hook provides the minimum active setup or the next event (`[verified immediate situation], and [movement toward the highlight].`). Then move directly into the highlighted action. Enter the highlight by the second or third body sentence at the latest unless the source requires unusual context. A separate citation sentence is fine only when it is short (`That's [SERIES] issue [ISSUE in words].`).
 
 RUNTIME AND AUDIT
 Draft the shortest complete version first. Then count it. A complete simple
@@ -546,7 +557,7 @@ story: the hook's concrete promise must be explained or resolved by verified
 events in the script. If the sheet cannot support that promise, narrow the
 hook; do not leave the promised moment offscreen or only imply its outcome.
 In addition to the existing audit, ask:
-16. Does the sentence immediately after the hook naturally mention the comic title and issue number, with the issue number spoken as words ("issue fifteen"), no digits and no hash sign?
+16. Is the first concrete story event spoken in the hook, within its first ten words, as a statement (a question or "what if" only when the source itself is a hypothetical), and are the comic title and issue number named once, after that event, in a short clause or sentence within roughly the first third, with the issue number spoken as words ("issue fifteen"), no digits and no hash sign?
 17. Are there two or more unnecessarily short declarative sentences in a row?
 18. Did I mistake "one important beat at a time" for "one tiny sentence per beat"?
 19. Can any neighboring verified beats be connected into more natural spoken English without inventing a causal relationship?
@@ -557,7 +568,7 @@ In addition to the existing audit, ask:
 24. Does the hook avoid spoiling the final ending/twist prematurely when the story builds to it, and does the body NEVER circle back in Scene 2, 3, or 4 to repeat the hook's action a second time?
 25. Is every spoken sentence in HOOK OPTIONS and FINAL SCRIPT **at most 32 words** (targeting **15–26 words per sentence** for natural storytelling flow), with zero 38–47 word run-on sentences?
 If any check fails, revise before output.
-Count the spoken words in FINAL SCRIPT only. The comic issue sentence is spoken narration and counts toward SPOKEN WORD COUNT.
+Count the spoken words in FINAL SCRIPT only. The comic issue clause or sentence is spoken narration and counts toward SPOKEN WORD COUNT.
 
 OUTPUT, IN ENGLISH, WITHOUT A PREFACE
 
@@ -585,13 +596,13 @@ FACT TRACE
 S1 | <first few words> | B<n>, R<n>
 S2 | ...
 <one row for every spoken sentence>
-OPENING CHAIN: <hook promise> -> <new fact in first body sentence naming SERIES + ISSUE, B/R ID> -> <next verified movement or END if the sheet is thin>
+OPENING CHAIN: <first event in the hook, B/R ID> -> <new fact in first body sentence, B/R ID> -> <next verified movement or END if the sheet is thin>
 STORY FRAME CHECK: <frame beat ID and the spoken sentence that uses it, or UNKNOWN; confirm no generic trait was substituted>
 AFTERMATH CHECK: <AFTERMATH beat IDs and the sentence that tells them, or UNKNOWN — main moment expanded instead>
 OPEN LOOPS: <every sentence that mentions a twist, reveal, ending, or surprise, each paired with the sentence that states what it is; or none>
 REACTIONS: <list or none>
 UNSUPPORTED FACTS: none
-ISSUE MENTION CHECK: <quote the first body sentence and confirm that it naturally identifies the comic series and issue immediately after the hook>
+ISSUE MENTION CHECK: <quote the short clause or sentence that names the comic series and issue, and confirm it comes after the first event and within roughly the first third>
 FLOW CHECK: <identify any intentionally short sentences and explain why they remain short; confirm there is no accidental chain of caption-like subject-verb sentences>
 
 Do not put audit text or quotation marks inside FINAL SCRIPT. Do not place citations, year metadata, or beat IDs inside FINAL SCRIPT.

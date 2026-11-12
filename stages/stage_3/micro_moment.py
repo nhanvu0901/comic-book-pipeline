@@ -36,6 +36,7 @@ from typing import Callable
 from config import (CREATIVE_LLM_MODELS, ENABLE_TITLE_BANNER, FIDELITY_LLM_MODELS,
                     OPENROUTER_MODEL)
 from .schema import Beat, Glossary, Narration
+from .opening_rules import with_opening_rules
 from .spoken_rules import with_spoken_rules
 from ._llm import call_with_chain
 from .beat_split import _verbatim_ok, split_hook_fragments
@@ -576,8 +577,8 @@ the Short merely to include it. If the source lacks this frame, omit it rather
 than inventing a prior event or moving action across beat boundaries.
 
 THE ONE JOB — a micro_moment gives the viewer one concrete reason to keep listening.
-The hook names an odd action, a surprising situation, or a specific question this
-moment can answer. The first body line must move the story forward, not repeat the
+The hook states an odd action or a surprising situation as a fact, with the named
+character, and the first concrete event lands within its first ten words. The first body line must move the story forward, not repeat the
 hook in different words. Treat hook and the first two body lines as one chain:
 specific title/moment promise -> a different sourced cause, action, obstacle,
 mechanism or consequence -> another verified change toward the answer. If the
@@ -599,9 +600,10 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
   the same concrete person-and-event promise as the title/target_moment, so a
   listener knows which story began. Try (1) the odd act
   or result first, (2) a short, specific setup that puts the character in an
-  unusual situation, and (3) a direct question about that same concrete event.
-  A question is allowed if it names the actual puzzle; "Why did he do that?"
-  is too vague. A reversal is useful only when the sources establish BOTH sides.
+  unusual situation, and (3) the character mid-action in that same concrete
+  event, all stated as fact. A question or "what if" hook is allowed only when
+  the source itself is a hypothetical (see OPENING RULES); "Why did he do that?"
+  is always too vague. A reversal is useful only when the sources establish BOTH sides.
   Do not force every story into a paradox or reveal the whole payoff in the hook.
   The hook should usually take 6-15 spoken words, with a 24-word ceiling.
     - CONCRETE, NEVER ABSTRACT. Anchor on something that visibly HAPPENS and a stranger can
@@ -614,7 +616,8 @@ You are given the mini-arc as an ORDERED LIST OF BEATS — each is just a short 
     - The hook must be a real source-backed part of this moment, never an invented
       paradox, generic superlative, or promise of a twist the script never shows.
     ✓ verified act: "[hero] walks away from [foe]."
-    ✓ question about that act: "Why did [hero] walk away from [foe]?"
+    ✓ setup with the act: "After [foe] spares him, [hero] walks away."
+    ✗ "Why did [hero] walk away from [foe]?"  (a question about something that really happened)
     ✗ "It was the choice that cost him everything."  (abstract — nothing to picture)
 
   KEEP IT SIMPLE — this is ONE moment, not a plot recap:
@@ -731,6 +734,8 @@ HARD RULES:
 Return shape:
 {"hook": "<specific source-backed opening>", "ending_style": "thesis|hardcut|question", "scenes": [{"text": "...", "visual_beats": ["<verbatim fragment one>", "<verbatim fragment two>"], "connective": null, "beat_id": <id>}, ...]}"""
 _MICRO_WRITE_SYSTEM = with_spoken_rules(_MICRO_WRITE_SYSTEM, "Return shape:")
+# This writer never names the comic and issue in the opening, so only the event-first block.
+_MICRO_WRITE_SYSTEM = with_opening_rules(_MICRO_WRITE_SYSTEM, "Return shape:", citation=False)
 
 
 def _window_block(window: list[Beat], peak_idx: int) -> str:
