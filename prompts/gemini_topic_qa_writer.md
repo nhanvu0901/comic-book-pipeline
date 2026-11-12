@@ -74,24 +74,26 @@ Draft three different hooks from genuinely different angles and print them in
 HOOK OPTIONS:
 1. the weirdest concrete action or result;
 2. the central contradiction or situation;
-3. a specific question the moment answers.
+3. the named character mid-action, said as a statement.
 For MULTIPLE items, each hook must tell the listener this is a list about the
 theme AND name one sourced, unusual example from item 1. A hook about only
 the first item makes the next item feel like a new video. You may use the
 number of supplied items as the list count, but do not imply these are all
 the examples in comic history or the objectively strangest ever. A hook
-like "What were the strangest things X made?" is too generic on its own;
-add the concrete first example. One candidate may be a question; the
-others can be statements. For a SINGLE item, name its odd construct or
+like "These are the strangest things X made." is too generic on its own;
+add the concrete first example. Every candidate is a statement; a question
+or "what if" hook is allowed only when the source itself is a hypothetical
+(see OPENING RULES). For a SINGLE item, name its odd construct or
 result without promising a list. Reject a hook built from an imaginary
 alternative ("instead of fighting", "when he could have made a shield").
 Choose the one a stranger understands quickly and that item 1 pays off.
 Aim for 7–18 spoken words (20 is the hard maximum for the Stage 3 importer)
-and make sure it sounds natural out loud. The hook DOES NOT need to mention
-the comic issue; instead, write every hook assuming the next spoken sentence
-will identify the comic and issue. When evaluating a hook, read the first two
-lines together (`[HOOK]` + `In [Comic] issue [issue number in words], ...`) so they sound like one
-continuous introduction rather than a headline followed by metadata. Do not
+and make sure it sounds natural out loud. The hook states item 1's
+first concrete event within its first ten words and never mentions the comic
+or issue; the comic and issue are named after that event (see COMIC ISSUE
+IDENTIFICATION). When evaluating a hook, read it with the next body sentence
+so they sound like one story already moving rather than a headline followed
+by metadata. Do not
 claim an unsourced general rule or call anything "insane", "epic", or
 "unbelievable" in place of detail. If the character's name is unfamiliar,
 include the power or object that makes the odd action intelligible; a surname
@@ -143,7 +145,7 @@ unfamiliar character, villain, henchman, or team names in a Short:
 - **Keep ONLY household names** that a casual moviegoer already knows (`Batman`,
   `Cyclops` / `Scott Summers`, `Wolverine`, `Spider-Man`, `Superman`, `Joker`,
   etc.) plus each item's main character when the question is specifically about
-  that character, and the comic series title in the issue-mention sentence.
+  that character, and the comic series title in the short issue mention.
 - **Never name obscure side characters, minor villains, henchmen, captives, or
   sub-teams by proper name** in the spoken script. Replace every non-household
   supporting character or team name with a simple, consistent 2–4 word role
@@ -196,21 +198,36 @@ However, natural prose must never become an excuse to invent motivation. If Phas
 
 ---
 
-## COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK
+## COMIC ISSUE IDENTIFICATION — AFTER THE FIRST EVENT
 
-The sentence immediately after the chosen hook must identify the comic and issue.
-Use a natural spoken construction such as:
-- `In Ultimate Wolverine issue fifteen, ...`
-- `This happens in Ultimate Wolverine issue fifteen, where ...`
-- `In Batman issue one twenty-five, ...`
+Name the comic and issue so viewers can find the book, but only after the first concrete story event has been spoken. It does not have to be the sentence right after the hook.
+Keep it short, a clause or a short sentence, spoken within roughly the first third of the script. Natural spoken constructions:
+- `That's Ultimate Wolverine issue fifteen.`
+- `..., all in Ultimate Wolverine issue fifteen.`
+- `In Batman issue one twenty-five, ...` as a short lead-in to a later story sentence, never before the first event
 
 Do not make the issue identification sound like metadata being read aloud (`Comic: Ultimate Wolverine, Issue 15, 2026.`).
-Mention the issue ONCE near the beginning (or once per item in multi-issue lists) unless repeating it later is necessary for clarity.
-The required opening order is:
-**HOOK → COMIC + ISSUE + FRAME → HIGHLIGHT DEVELOPMENT**
-Combine the issue identification with useful setup whenever possible:
-- BAD: `This happens in Ultimate Wolverine issue fifteen. Logan is hunting someone.`
-- BETTER: `In Ultimate Wolverine issue fifteen, Logan is hunting for the missing mutants when the situation turns on him.`
+Mention the issue ONCE (or once per item in multi-issue lists) unless repeating it later is necessary for clarity.
+The opening order is:
+**HOOK (FIRST EVENT) → FRAME → HIGHLIGHT DEVELOPMENT**, with COMIC + ISSUE in a short clause or sentence within the first third.
+Never let the citation delay the story:
+- BAD: `This happens in Ultimate Wolverine issue fifteen, where Logan is hunting for the missing mutants when the situation turns on him.`
+- BETTER: `Logan is hunting for the missing mutants when the situation turns on him. That's Ultimate Wolverine issue fifteen.`
+
+---
+
+## OPENING RULES — REQUIRED FOR THE FIRST SPOKEN LINES
+
+OPENING RULES (event first; these bind the first spoken lines):
+- Sentence one states a concrete event or stake with the named character, as a statement: who does what, or what is at stake for whom.
+- The first concrete story event is spoken within the first ten words, about three seconds. No title, issue number, definition or background comes before it.
+- A question or a "what if" opening is allowed only when the source itself is a hypothetical, such as a What If title or a premise the source presents as imaginary or alternate. When the event really happens in the story, say it as a fact, never as a question and never as a hypothetical.
+
+SOURCE CITATION PLACEMENT (the comic and issue, or the film or series and its year):
+- Still name the source so viewers can find it, but only after the first story event, never before it.
+- Keep it to a short clause or a short sentence, such as "That's Ultimate Wolverine issue fifteen." for a comic or "That's the twenty nineteen film <Title>." for screen media, spoken within roughly the first third of the script.
+- It does not have to be the sentence right after the hook. Let the next story event come first when that reads naturally, and never spend a long "This happens in ..., where ..." sentence on it.
+- In a list whose items come from different sources, this placement governs the first item; each later item names its own source inside its own lines.
 
 ---
 
@@ -259,15 +276,15 @@ Before accepting FINAL SCRIPT, inspect every pair of neighboring sentences:
 4. Does the narration sound like spoken storytelling or a list of captions?
 
 Read FINAL SCRIPT aloud as if recording voiceover:
-- Does the sentence right after the hook identify the comic and issue naturally?
+- Is the first story event in the hook, and are the comic and issue named in a short clause or sentence after it?
 - Does each sentence grow naturally out of the previous one?
 - Are actions connected to their verified setup, mechanism, or consequence?
 - Are short sentences used for impact rather than by default?
 - Would a listener hear one continuous story rather than stitched notes?
 
 Before output, also verify:
-16. The sentence immediately after the hook naturally names the comic series and the issue number, spoken as words ("issue fifteen"), no digits and no hash sign.
-17. The issue mention is integrated into the setup, not written like a citation or metadata tag.
+16. The first concrete story event is spoken in the hook, within its first ten words, as a statement (a question or "what if" only when the source itself is a hypothetical), and the comic series and issue number are named once, after that event, within roughly the first third, spoken as words ("issue fifteen"), no digits and no hash sign.
+17. The issue mention is a short clause or short sentence, not a long setup sentence and not a metadata tag.
 18. Neighboring beats are connected into natural spoken sentences when their sequence or relationship is verified.
 19. The script does not fall into a chain of tiny "X does Y" sentences.
 20. Every causal connector ("because", "so", "in order to", "to stop", "which lets", "after", "when") is supported by the Phase 1 fact sheet.
@@ -315,7 +332,7 @@ HOOK OPTIONS
 CHOSEN HOOK: <number>
 
 SPOKEN WORD COUNT: <actual count of FINAL SCRIPT only>
-ISSUE MENTION CHECK: <quote the first sentence after the hook and confirm it names the comic and issue naturally>
+ISSUE MENTION CHECK: <quote the short clause or sentence that names the comic and issue, and confirm it comes after the first event and within roughly the first third>
 FLOW CHECK: <confirm neighboring sentences are connected naturally without unsupported causal links>
 FACT TRACE
 S1 | <first few words> | Item <n>, Beat <n> [and additional IDs if needed]
@@ -326,7 +343,7 @@ UNSUPPORTED FACTS: none
 FINAL SCRIPT
 <chosen hook>
 
-<item 1 paragraph — starts by naturally identifying the comic series and issue number along with the setup>
+<item 1 paragraph — continues from the hook's event and names the comic series and issue number in a short clause or sentence>
 
 <item 2 paragraph>
 

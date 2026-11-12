@@ -36,6 +36,7 @@ from ..question_archetype import question_archetype
 from ._llm import call_with_chain
 from .beat_split import split_hook_fragments
 from .schema import Beat, Narration, Scene
+from .opening_rules import with_opening_rules
 from .spoken_rules import with_spoken_rules, year_words
 
 # Narration mode key. Deliberately NOT a config.PipelineMode member and NOT a stage_3.modes.MODES
@@ -60,14 +61,14 @@ _SHARED_RULES_RAW = """HARD RULES:
   - YOU ARE TRIMMING, NOT RESEARCHING. Every fact you need is already in the items below, verified against real sources. Your whole job is to COMPRESS that into spoken lines: keep the meaning, drop the words. Never add a fact the item does not state, never soften or hedge one it does, and never re-explain something it already says plainly.
   - THE ITEM NOTES ARE SOURCE, NOT STYLE. They were written to be READ. A listener hears the line once and cannot re-read it, so take the fact and throw away the shape it arrived in.
   - TRIMMING IS NOT VAGUENESS. The CONCRETE part stays: the name, the act, the consequence. What goes is qualifiers, background clauses and anything an earlier scene already established.
-  - CITE THE FILM / SERIES AND ITS YEAR in the spoken line, naturally inside the sentence, with the year spoken in words: "In the twenty nineteen film <Title>, ..." or "In <Title>, from twenty nineteen, ...". Never digits and never parentheses around the year. Do this the FIRST time each new title appears (on that item's CONTEXT scene). When the next item comes from the SAME title and year, do not repeat it. NEVER cite an issue number and never write "#" — this is screen media, not a comic.
+  - CITE THE FILM / SERIES AND ITS YEAR in the spoken line, naturally inside the sentence, with the year spoken in words: "In the twenty nineteen film <Title>, ..." or "In <Title>, from twenty nineteen, ...". Never digits and never parentheses around the year. Do this the FIRST time each new title appears (in that item's CONTEXT scene), as a short clause; for item 1 it comes after the hook's first event, as the OPENING RULES say. When the next item comes from the SAME title and year, do not repeat it. NEVER cite an issue number and never write "#" — this is screen media, not a comic.
   - Plain B2 English. Concrete, no purple prose, no riddles. ONE EVENT PER SENTENCE — do not chain clauses with em-dashes into a run-on.
   - TELL THE STORY, NOT THE FILMMAKING. Say what HAPPENS and WHY. Never narrate camera work, editing, cast or the screen itself ("we see", "the camera", "in this scene").
   - WEAVE THE WHY. State who the entity is to the others and why the moment lands, in the SAME sentence(s), so a viewer who has never seen the title understands it.
   - STRIP JARGON — a stranger must know every noun. Swap an obscure proper name for a plain word, or drop it. Household-name characters keep their names.
   - Every sentence is a complete subject-verb-object clause. NEVER a bare reveal fragment ("They are alive."). State the consequence explicitly.
   - EXACTLY TWO scenes per item, in the SAME item order. They have different jobs and you must not merge them:
-      * SCENE A — CONTEXT. Lead with the title/year citation and a sourced situation, action or cause that moves beyond the hook. Add only the role or relationship needed to understand the next scene. It sets up the moment; it does NOT deliver it.
+      * SCENE A — CONTEXT. A sourced situation, action or cause that moves beyond the hook, with the title/year citation as a short clause in it (a leading "In the twenty nineteen film <Title>," head is fine). Add only the role or relationship needed to understand the next scene. It sets up the moment; it does NOT deliver it.
       * SCENE B — THE MOMENT. The act itself and its consequence, landing on ground the viewer already has. Do not re-explain scene A.
   - NEVER speak a countdown or rank number ("number five", "third place" — all banned).
   - Each scene is a short lead-in + one or two plain sentences; keep it under {cap} words. The FIRST scene is item 1's CONTEXT scene — do not write a premise or definition scene before it.
@@ -76,7 +77,7 @@ _SHARED_RULES_RAW = """HARD RULES:
   - FIDELITY IS ABSOLUTE — do not invert, do not invent. The research is the source of truth and someone else wrote it on purpose. Never swap which side an event happened to, and never add a belief or motive the research does not state. If the research is thin on a point, write LESS.
   - WRITE THE TITLE, THE HOOK AND THE OUTRO TOO:
       * "title" — 4-8 words, a statement. No question mark, no emoji, no hashtag, no issue number, no series name.
-      * "hook" — the FIRST spoken line, at most 26 words, preferably 6-18. Make the question's subject clear and expose one sourced, unusual fact from item 1. {hook_extra}Judge hook, scene A and scene B as one chain, never as isolated slogans.
+      * "hook" — the FIRST spoken line, at most 26 words, preferably 6-18. Make the question's subject clear and expose one sourced, unusual fact from item 1, stated as a fact that names item 1's character and event within the first ten words. {hook_extra}Judge hook, scene A and scene B as one chain, never as isolated slogans.
         BANNED — content-free clickbait: "wait until you see/hear...", "you won't believe...", "shouldn't even be possible", "the last one on this list...", "number one...", "makes no sense", or any line promising a surprise without naming anything. If the hook would still make sense pasted onto a different video, it is wrong.
       * "outro" — the LAST spoken line, 6-16 words. It must NOT restate the final scene in other words. Say what the whole thing MEANS, or land one hard image the body earned.
   - Return ONLY JSON, no markdown fences.
@@ -85,6 +86,7 @@ Return shape:
 {{"title": "...", "hook": "...", "outro": "...", "scenes": [{{"text": "...", "visual_beats": [{{"text": "<verbatim fragment 1>", "query": "<clip search phrase>"}}, {{"text": "<verbatim fragment 2>", "query": "<clip search phrase>"}}]}}, ...]}}"""
 
 _SHARED_RULES = with_spoken_rules(_SHARED_RULES_RAW, "Return shape:")
+_SHARED_RULES = with_opening_rules(_SHARED_RULES, "Return shape:")
 
 _SYSTEM_LIST_HEAD = """You are QAWriter for a screen-trivia YouTube Short. The video answers ONE question by walking through several real moments from films, TV series or animated adaptations (the ITEMS below), given in order from LEAST surprising to MOST surprising (the biggest payoff is the LAST item) — never re-rank them.
 
@@ -111,7 +113,7 @@ For EACH item write exactly TWO scenes: name who/what it is about and give the h
 
 """
 
-_HOOK_EXTRA_LIST = "A direct question, a factual statement or an \"After...\" setup can all work if the source supports it; leave the mechanism for the next scenes. "
+_HOOK_EXTRA_LIST = "A factual statement or an \"After...\" setup works; a question only under the OPENING RULES' hypothetical exception. Leave the mechanism for the next scenes. "
 _HOOK_EXTRA_EXPLAIN = "Do not give away the final answer thesis; let the next scene add a new causal fact. "
 
 _SYSTEM_LIST = _SYSTEM_LIST_HEAD + _SHARED_RULES.format(cap="{cap}", hook_extra=_HOOK_EXTRA_LIST)

@@ -16,6 +16,7 @@ from .schema import Beat, CharacterEntry, Glossary, Narration, Scene
 from ._llm import call_with_chain
 from .story_architect import render_story_map_block, _tokens
 from .beat_split import _verbatim_ok, split_hook_fragments
+from .opening_rules import with_opening_rules
 from .spoken_rules import with_spoken_rules
 
 
@@ -36,8 +37,9 @@ from .spoken_rules import with_spoken_rules
 # where OUR viewers dropped off; the competitor data says the ceiling was never the
 # duration, it was the subject + register. Aim at what actually wins.
 #
-# The teaser is a short sourced event, setup, or direct question (4-14 words,
-# see _INTRO_*_WORDS). It is added to the body budget, so keep it brief.
+# The teaser is a short sourced event or setup, stated as fact (4-14 words,
+# see _INTRO_*_WORDS); a question only for a hypothetical source (opening_rules).
+# It is added to the body budget, so keep it brief.
 #
 # SINGLE SOURCE OF TRUTH for the word budget. Previously three places disagreed
 # (system prompt said 175-195, this user-message budget said 175-260, and the
@@ -128,8 +130,8 @@ _HOOK_MIN_WORDS = 8     # BODY first story line follows the separate spoken teas
 _HOOK_MAX_WORDS = 26
 
 # TEASER intro band (spoken over the cover, generate_intro → parsed["hook"]). The local
-# reference transcripts use different openings: a concrete event, an "After" setup,
-# or a specific question. Permit those shapes without adding a long preamble.
+# reference transcripts open on a concrete event or an "After" setup, stated as fact
+# (a question only for a hypothetical source). Permit those shapes without a long preamble.
 _INTRO_MIN_WORDS = 4
 _INTRO_MAX_WORDS = 14
 
@@ -349,8 +351,7 @@ _INTRO_SYSTEM = """You are HookWriter. Write the FIRST spoken sentence of a comi
 Build three candidates silently from the supplied PREMISE / PLOT, then return the strongest one. Choose the form that fits the story:
   - A concrete, odd ACTION or OUTCOME: "Batman and Harley Quinn sleep together."
   - A sourced setup with a next step: "After kids hire Deadpool to kill Santa, he asks them why."
-  - A direct question about a SPECIFIC event or contradiction, when a question genuinely fits.
-  - "Who is <subject>?" only when discovering that identity/version IS the story's point.
+  - A question or "what if" ONLY when the source itself is a hypothetical (a What If title or a premise the source presents as imaginary); then ask about its SPECIFIC premise.
 
 Those are examples of spoken SHAPES, not facts to transplant into another comic. Do not copy their events or names unless they are in the supplied plot. Among the candidates, prefer the one that makes a concrete promise the next story line can advance. It may start with the consequence or with the setup; do not force a reveal before the story earns it.
 
@@ -363,7 +364,7 @@ it is short. Keep the reveal order supported by the plot.
 HARD RULES:
   - 4-14 words, one natural spoken sentence, no second sentence.
   - Use the character's name as the video will call them, including a continuity tag when needed. A viewer with no comic knowledge must understand the line on first listen.
-  - EVERY fact, action, number, relationship, and outcome must appear in the supplied plot. Do not infer motives or add stakes. If the plot is thin, choose a narrower question.
+  - EVERY fact, action, number, relationship, and outcome must appear in the supplied plot. Do not infer motives or add stakes. If the plot is thin, choose a narrower event.
   - Make the hook and next beat fit together: the hook promises the scene; the next sentence must add a NEW sourced event or detail, not repeat this sentence in longer words.
   - Do not spoil a withheld identity or final reversal. Use the believed identity until the story reveals the true one.
   - No vague hype ("insane", "unbelievable", "darkest"), meta talk, comic issue title, fake urgency, or generic "everything changed" wording.
@@ -371,6 +372,8 @@ HARD RULES:
 
 Return ONLY JSON, no markdown: {"archetype": "<one allowed archetype>", "intro_line": "..."}"""
 _INTRO_SYSTEM = with_spoken_rules(_INTRO_SYSTEM)
+# The recap names its comic in the closing credit line, never in the opening: event-first only.
+_INTRO_SYSTEM = with_opening_rules(_INTRO_SYSTEM, citation=False)
 
 
 def _fallback_hero(comic_context: dict) -> str:
@@ -561,8 +564,8 @@ WHAT THEY HAVE IN COMMON:
 HARD RULES:
   - 8-30 words, ONE sentence or fragment.
   - NO "the comic is", NO comic title, NO issue number.
-  - NOT a question. No meta talk ("in this video"). No hashtags. No CTA in this draft;
-    the pipeline appends its standard spoken subscribe line after draft validation.
+  - NOT a question. No meta talk ("in this video"). No hashtags. No CTA or subscribe
+    request: the video ends on the story.
   - No moral, no lesson, no "and that is why...". State what IS, not what it means.
       ✓ "Even now, Marius only restores his sight when there's absolutely no other option."
       ✗ "The scariest monster is the one you might become." (a moral — banned)
@@ -703,7 +706,7 @@ HARD RULES:
   - It POINTS FORWARD at the story's aftermath, irony, or unanswered weight — phrased as intrigue.
   - It MUST NOT state a NEW fact that the plot below does not support (no invented sequel, no made-up detail). It teases what was ALREADY implied.
   - NOT a question. No meta talk, no hashtags, no "subscribe", no comic title.
-    The pipeline adds its standard subscribe line after the story draft is finalized.
+    The video ends on the story, never on a call to action.
   - Tone: ominous, resonant — matches a dark comic retelling.
   - PLAIN, CONCRETE language (IELTS 6.5 / B2) — the intrigue comes from WHAT is
     left unresolved, not from fancy wording. No poetic double meanings stacked
@@ -2237,8 +2240,9 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
 1) SCENE 1 — CONTINUE THE SPOKEN TEASER WITH THE FIRST SOURCED STORY BEAT
 
-   A short sentence is spoken over the cover BEFORE your scene 1. It may be an event,
-   a specific question, or an "After ..." setup. You will receive its exact wording.
+   A short sentence is spoken over the cover BEFORE your scene 1. It is a concrete event
+   or an "After ..." setup stated as fact (a question only when the source itself is a
+   hypothetical). You will receive its exact wording.
    Scene 1 must add a NEW sourced action or detail that makes the teaser worth hearing.
    Do not answer it with a second hook, rephrase its claim, or restart the story with
    background the viewer does not need yet. State the first beat as fact.
@@ -2599,7 +2603,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 10) FORBIDDEN
    - No em-dashes (—), no brackets, no parenthetical asides — this is spoken aloud.
    - No "what do you think in the comments", no "subscribe", no questions to viewer in the
-     story draft. The pipeline adds the standard subscribe line after validation.
+     story draft. The video ends on the story, never on a call to action.
    - No stage directions, no scene numbers inside text.
    - No comic SOUND-EFFECTS / onomatopoeia (KA-THOOM, BOOM, SNIKT, KRAKA). Those are
      lettering ART, not story — describe the ACTION instead ("a thunderclap shook the
@@ -2729,6 +2733,7 @@ This voice was reverse-engineered from 30 successful videos. Follow every rule:
 
 Return ONLY JSON. No prose, no markdown fences."""
 _WRITE_SYSTEM = with_spoken_rules(_WRITE_SYSTEM)
+_WRITE_SYSTEM = with_opening_rules(_WRITE_SYSTEM, citation=False)
 
 
 def _saga_clarity_block(comic_context: dict) -> str:

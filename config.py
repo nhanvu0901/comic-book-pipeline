@@ -283,6 +283,13 @@ RESEMBLE_VOICE_MAP = os.getenv(
 # invites a rewatch (loop signal) without dropping the complete-story payoff.
 ENABLE_LOOP_TEASE = os.getenv("ENABLE_LOOP_TEASE", "true").lower() in ("true", "1", "yes")
 
+# Spoken "Make sure to subscribe for more content." appended to the last narration line
+# (stages/stage_3/ending.py). OFF by default (2026-11-12): 0 of 3,885 competitor transcripts
+# end on a spoken subscribe line; it costs ~2 s, tells the viewer the video is over and breaks
+# the loop back to the opening. Off, the script ends on its real ending. Set to 1 to restore it.
+SPOKEN_SUBSCRIBE_CTA = os.getenv("SPOKEN_SUBSCRIBE_CTA", "0").strip().lower() in (
+    "1", "true", "yes", "on")
+
 # Stage 3 narration LOGIC CRITIC (story-editor in a loop with the writer). When on:
 #   1. a beat-impact critic drops low-impact beats AFTER outlining (→ fewer, punchier
 #      scenes) while preserving the cold-open, climax, landing and the cause→effect spine;

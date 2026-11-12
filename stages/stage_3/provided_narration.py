@@ -34,6 +34,7 @@ from config import PROJECTS_ROOT
 from ._llm import call_with_chain
 from .beat_split import _verbatim_ok, split_hook_fragments, split_visual_beats
 from .schema import Beat, Glossary, Narration
+from .opening_rules import with_opening_rules
 from .spoken_rules import with_spoken_rules
 
 # Master drops the spoken body here. Checked for every mode except explore_answer, which
@@ -159,7 +160,7 @@ naming anything. If the hook would still make sense pasted onto a different vide
   * "outro" — the LAST spoken line, 6-16 words. It must NOT restate the body's final \
 sentence in other words. Say what the whole thing MEANS, or land one hard image the body \
 earned. Closing on a word from the hook (or its exact opposite) is the strongest ending. \
-Do not add a subscribe request here; the pipeline adds its standard spoken line after validation.
+Do not add a subscribe request: the video ends on this line.
 
 FIDELITY IS ABSOLUTE. Every fact you use must already be in the body below. Do not invent a \
 motive, a consequence, or an event — if the body does not say it, you may not either.
@@ -167,6 +168,8 @@ motive, a consequence, or an event — if the body does not say it, you may not 
 Return ONLY JSON, no markdown fences:
 {"title": "...", "hook": "...", "outro": "..."}"""
 _FRAME_SYSTEM = with_spoken_rules(_FRAME_SYSTEM)
+# The body is someone else's and already decides where it names its source: event-first only.
+_FRAME_SYSTEM = with_opening_rules(_FRAME_SYSTEM, citation=False)
 
 
 _KEEPWORD_RE = re.compile(r"\b(?:[A-Z][\w''-]+|\d[\d,.]*)\b")

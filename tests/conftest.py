@@ -29,3 +29,13 @@ def _no_real_semantic_check(monkeypatch):
 
     monkeypatch.setattr(config, "QA_SEMANTIC_CHECK", False, raising=False)
     monkeypatch.setattr(qa_semantic_check, "_post", closed)
+
+
+@pytest.fixture(autouse=True)
+def _spoken_cta_at_its_default(monkeypatch):
+    """The spoken subscribe line is opt-in (config.SPOKEN_SUBSCRIBE_CTA, default off). Pin the
+    default so a local .env that turns it on cannot change what the suite expects; a test that
+    needs it on patches the flag itself."""
+    import config
+
+    monkeypatch.setattr(config, "SPOKEN_SUBSCRIBE_CTA", False, raising=False)

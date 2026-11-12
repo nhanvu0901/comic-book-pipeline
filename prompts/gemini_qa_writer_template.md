@@ -138,8 +138,10 @@ number of supplied items, but do not imply they exhaust comic history or are
 objectively the strangest. For DIRECT format, frame one explanation of the
 question, even when it spans multiple items or issues; do not promise a list.
 Use a sourced concrete detail from item 1 without claiming an unsupported answer.
-Try distinct supported openings: a direct question, a plain fact, or a short
-"After..." situation when the sheet supports it. For direct format, develop one
+Try distinct supported openings, all stated as fact: item 1's concrete event,
+a short "After..." situation, or the answer theme told through item 1's event.
+A question or "what if" hook is allowed only when the source itself is a
+hypothetical (see OPENING RULES). For direct format, develop one
 explanation across the ordered items. In the final paragraph, integrate the supported overall answer
 with the final item's verified result: state the answer plainly as part of that
 paragraph and end on the result, without adding a separate recap. Use only
@@ -150,11 +152,12 @@ does not verify. Choose the one a stranger understands quickly and that
 item 1 pays off. The hook must carry the same answer-theme promise as THE
 QUESTION, with item 1's concrete unusual example; a hook that could headline
 another comic question is too broad. The first body sentence must add a different sourced
-situation, cause, or mechanism while naturally identifying the comic and issue; it cannot say the hook again in new words.
+situation, cause, or mechanism; it cannot say the hook again in new words.
 Aim for 7–18 words; 20 is the hard
-maximum for the Stage 3 importer. The hook DOES NOT need to mention the comic
-issue; instead, every hook is written with the assumption that the next spoken
-sentence will identify the comic and issue (`[HOOK]` followed by `In [Comic] issue [issue number in words], ...`).
+maximum for the Stage 3 importer. The hook states item 1's first concrete event
+within its first ten words and never mentions the comic or issue; item 1's
+comic and issue are named after that event, in a short clause or sentence
+(see COMIC ISSUE IDENTIFICATION).
 Do not claim an unsourced general rule or
 call anything "insane", "epic", or "unbelievable" in place of detail.
 If the character's name is unfamiliar, include the power or object that
@@ -164,11 +167,12 @@ NO FINAL-TWIST SPOILER IN THE HOOK & NO MID-BODY HOOK ECHO: State the opening pr
 
 SCRIPT
 The hook is its own line. Start item 1 immediately on the next paragraph.
-The sentence immediately after the chosen hook MUST naturally identify item 1's
-comic and issue (`In [Comic Title] issue [issue number in words], ...` or `This happens in [Comic Title] issue [issue number in words], where ...`)
-while beginning the setup or active situation. For each subsequent item paragraph,
-also naturally identify its comic and issue while introducing its setup, answer, or
-transition.
+Name item 1's comic and issue once, after the first event and within roughly
+the first third, in a short clause or sentence (`That's [Comic Title] issue [issue number in words].`
+or `..., in [Comic Title] issue [issue number in words].`); the sentence right
+after the hook does not have to carry it. For each subsequent item paragraph,
+naturally identify its comic and issue in a short clause while introducing its
+setup, answer, or transition.
 For each item, give the answer early in the paragraph, explain only the
 needed cause or rule, and finish with its verified result. Spend words on
 a mechanism or consequence, not on a second description of how surprising
@@ -176,10 +180,10 @@ the item is. The final paragraph ends on the final item's result; there is
 no separate recap or outro. Keep each item paragraph over 20 words so the
 Stage 3 importer does not mistake it for a closing line.
 Read the hook and the first two sentences together as an opening chain:
-**HOOK → COMIC + ISSUE + FRAME → HIGHLIGHT DEVELOPMENT**.
-The hook gives the specific promise; the next sentence naturally names the comic
-and issue while changing the situation, naming a sourced obstacle, or explaining
-the cause; the next moves toward the item 1 result. Each sentence must add a distinct sourced fact. If two adjacent lines
+**HOOK (FIRST EVENT) → FRAME → HIGHLIGHT DEVELOPMENT**, with COMIC + ISSUE in a
+short clause or sentence within the first third.
+The hook states the first event; the next sentence changes the situation, names
+a sourced obstacle, or explains the cause; the next moves toward the item 1 result. Each sentence must add a distinct sourced fact. If two adjacent lines
 make the same point, remove one and use a different verified beat.
 Start consecutive items from different facts when the sheet permits: one
 may start with the answer, another with the problem, another with its
@@ -217,7 +221,7 @@ unfamiliar character, villain, henchman, or team names in a Short:
 - **Keep ONLY household names** that a casual moviegoer already knows (`Batman`,
   `Cyclops` / `Scott Summers`, `Wolverine`, `Spider-Man`, `Superman`, `Joker`,
   etc.) plus each item's main `entity` when the question is specifically about
-  that entity, and the comic series title in the issue-mention sentence.
+  that entity, and the comic series title in the short issue mention.
 - **Never name obscure side characters, minor villains, henchmen, captives, or
   sub-teams by proper name** in the spoken script. Replace every non-household
   supporting character or team name with a simple, consistent 2–4 word role
@@ -256,12 +260,15 @@ Target **15–26 spoken words per sentence** so each sentence flows naturally li
 
 Natural narration often explains why someone does something (`She uses X to stop Y.`, `He does X so he can reach Y.`, `They use X in order to break Y.`). Prefer this kind of sentence when the purpose or causal relationship is VERIFIED. However, natural prose must never become an excuse to invent motivation. When purpose is unknown, describe the verified action and result without guessing why the character chose it.
 
-## COMIC ISSUE IDENTIFICATION — REQUIRED AFTER THE HOOK
+## COMIC ISSUE IDENTIFICATION — AFTER THE FIRST EVENT
 
-The sentence immediately after the chosen hook must identify the comic and issue using a natural spoken construction (`In Ultimate Wolverine issue fifteen, ...`, `This happens in Ultimate Wolverine issue fifteen, where ...`, `In Batman issue one twenty-five, ...`). Do not make the issue identification sound like metadata being read aloud (`Comic: Ultimate Wolverine, Issue 15, 2026.`).
-The required opening order is:
-**HOOK → COMIC + ISSUE → STORY FRAME / FIRST HIGHLIGHT MOVEMENT**
-Combine the issue identification with useful setup whenever possible.
+Name item 1's comic and issue once so viewers can find the book, but only after the first concrete story event has been spoken. It does not have to be the sentence right after the hook. Keep it short, a clause or a short sentence, spoken within roughly the first third of the script, using a natural spoken construction (`That's Ultimate Wolverine issue fifteen.`, `..., all in Ultimate Wolverine issue fifteen.`, or `In Batman issue one twenty-five, ...` as a short lead-in to a later story sentence). Do not make the issue identification sound like metadata being read aloud (`Comic: Ultimate Wolverine, Issue 15, 2026.`), and never spend a long `This happens in ..., where ...` sentence on it.
+The opening order is:
+**HOOK (FIRST EVENT) → STORY FRAME / FIRST HIGHLIGHT MOVEMENT, with COMIC + ISSUE in a short clause or sentence within the first third**
+
+## OPENING RULES — REQUIRED FOR THE FIRST SPOKEN LINES
+
+{{OPENING_RULES}}
 
 ## SPOKEN TEXT RULES — REQUIRED FOR EVERY SPOKEN LINE
 
@@ -325,7 +332,7 @@ Flag any sentence as FLAT if it is unusually short without a deliberate reason, 
 ## BEFORE OUTPUT — ADD THESE CHECKS
 
 In addition to the existing audit, ask:
-16. Does the sentence immediately after the hook naturally mention the comic title and issue number, with the issue number spoken as words ("issue fifteen"), no digits and no hash sign?
+16. Is the first concrete story event spoken in the hook, within its first ten words, as a statement (a question or "what if" only when the source itself is a hypothetical), and are item 1's comic title and issue number named once, after that event, in a short clause or sentence within roughly the first third, with the issue number spoken as words ("issue fifteen"), no digits and no hash sign?
 17. Are there two or more unnecessarily short declarative sentences in a row?
 18. Did I mistake "one important beat at a time" for "one tiny sentence per beat"?
 19. Can any neighboring verified beats be connected into more natural spoken English without inventing a causal relationship?
@@ -351,14 +358,14 @@ S1 | <first few words> | Item <n>, Beat <n> [and additional IDs if needed]
 S2 | ...
 <one row per spoken sentence; REACTION only for a fact-free opinion>
 UNSUPPORTED FACTS: none
-OPENING CHAIN: <hook promise> -> <In [Series] issue [issue number in words] + new item 1 fact and Beat ID> -> <next item 1 movement and Beat ID>
-ISSUE MENTION CHECK: <quote the first body sentence and confirm that it naturally identifies the comic series and issue immediately after the hook>
+OPENING CHAIN: <first event in the hook, Item 1 Beat ID> -> <new item 1 fact and Beat ID> -> <next item 1 movement and Beat ID>
+ISSUE MENTION CHECK: <quote the short clause or sentence that names item 1's comic series and issue, and confirm it comes after the first event and within roughly the first third>
 FLOW CHECK: <identify any intentionally short sentences and explain why they remain short; confirm there is no accidental chain of caption-like subject-verb sentences>
 
 FINAL SCRIPT
 <chosen hook>
 
-<item 1 paragraph — starts with a sentence that naturally identifies SERIES + ISSUE while beginning the setup>
+<item 1 paragraph — continues from the hook's event and names SERIES + ISSUE in a short clause or sentence>
 
 <item 2 paragraph>
 
