@@ -300,7 +300,9 @@ def test_qa_subject_sequence_gate_orders_clean_frame1_first(monkeypatch):
     """R2 Q&A intro gate (the batcave fix): _qa_subject_sequence returns clean subject panels before
     a would-letterbox one, so intro_panels[0] (frame 1) is never a wide blur strip — even when the
     letterbox panel is ranked FIRST in a manual subject_panels.json (batcave's p86/0, aspect 2.23)."""
-    letterbox_first = {"bbox": {"x": 0, "y": 0, "w": 1920, "h": 860},   # aspect 2.23 → letterbox
+    # 2026-11-12: a 2.23 tier is no longer a letterbox (the full-bleed camera pans it at full
+    # height), so the gate case is now an EXTREME strip past camera.FULLBLEED_MAX_ASPECT (3.84).
+    letterbox_first = {"bbox": {"x": 0, "y": 0, "w": 1920, "h": 500},   # aspect 3.84 → letterbox
                        "characters": ["Batman"], "dialog": []}
     portrait_second = {"bbox": {"x": 0, "y": 0, "w": 962, "h": 1578},   # clean portrait
                        "characters": ["Batman"], "dialog": []}

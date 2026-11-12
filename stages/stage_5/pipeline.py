@@ -188,6 +188,12 @@ def assemble_project(
         if corner_logo is None:
             log(f"[stage5] corner logo unavailable ({CHANNEL_LOGO_PATH}); skipping overlay")
 
+    # Clips with no manual crop fill the 9:16 frame (clips.auto_fill_crop). One crop per run of
+    # shots playing the same clip, so the framing never jumps at an invisible cut; the chosen
+    # crop is written into shots.json with "auto": true.
+    from .clips import assign_auto_crops
+    assign_auto_crops(shots, log=log)
+
     shot_paths: list[Path] = []
     for s in shots:
         sp = shots_dir / f"shot_{s.shot_id:03d}.mp4"
