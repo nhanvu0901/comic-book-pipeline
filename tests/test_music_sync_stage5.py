@@ -205,7 +205,7 @@ def test_build_capcut_music_mix_filter():
     f = music_sync.build_capcut_music_mix_filter(gain_db=-18.5, duration=10.0, fade_in=1.0, fade_out=2.0)
     assert "[0:a]asplit=2[voice_main][voice_sc]" in f
     assert "volume=-18.50dB" in f
-    assert "afade=t=in:st=0:d=1.0" in f
+    assert "afade=t=in:st=0:d=1.000" in f
     assert "afade=t=out:st=8.00:d=2.0" in f
     assert "sidechaincompress=threshold=0.08:ratio=3:attack=20:release=250" in f
     assert "amix=inputs=2:duration=first:dropout_transition=2:normalize=0" in f

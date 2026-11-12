@@ -191,6 +191,45 @@ def _duck_expr(gaps: list[tuple[float, float]], duck_lin: float, ramp: float,
     return f"{duck_lin:.4f}+{1 - duck_lin:.4f}*min(1,{'+'.join(traps)})"
 
 
+_INTRO_WIN_S = 0.05          # level windows for the intro detector
+_INTRO_SILENT_DB = -60.0     # windows below this are not "music" when finding the typical level
+
+
+def bed_intro_offset(ff: str, bed_path: Path, *, within_db: float, max_s: float) -> float:
+    """Seconds of soft intro to skip so the bed is at its working level from frame 0.
+
+    The working level is the bed's own TYPICAL short-term level (median of its 50 ms windows
+    that carry music); the bed starts at the first window within `within_db` of it. Never more
+    than `max_s`. Returns 0.0 when the bed already opens at level, or on any problem — this is
+    a nicety and must never fail a render."""
+    if max_s <= 0:
+        return 0.0
+    try:
+        import numpy as np
+        sr = 8000
+        res = subprocess.run([ff, "-v", "error", "-nostdin", "-i", str(bed_path), "-vn",
+                              "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
+                             capture_output=True)
+        x = np.frombuffer(res.stdout or b"", dtype="<f4")
+        win = int(sr * _INTRO_WIN_S)
+        n = len(x) // win
+        if res.returncode != 0 or n < 4:
+            return 0.0
+        blocks = x[: n * win].reshape(n, win).astype(np.float64)
+        db = 20.0 * np.log10(np.sqrt((blocks ** 2).mean(axis=1)) + 1e-12)
+        music = db[db > _INTRO_SILENT_DB]
+        if music.size == 0:
+            return 0.0
+        working = float(np.median(music))
+        at_level = np.flatnonzero(db >= working - max(0.0, within_db))
+        if at_level.size == 0:
+            return 0.0
+        start = float(at_level[0]) * _INTRO_WIN_S
+        return round(min(start, max_s), 3) if start >= _INTRO_WIN_S else 0.0
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def _build_bed_mix(ff: str, tts_wav: Path, bed_path: Path, out_path: Path,
                    base_filter: str, log: Callable[[str], None]) -> bool:
     """Lay `bed_path` under `tts_wav` at a self-calibrated level, ducked around speech.
@@ -199,6 +238,7 @@ def _build_bed_mix(ff: str, tts_wav: Path, bed_path: Path, out_path: Path,
     degrade to narration-only, never fail a render. The bed level is derived from the TTS's own
     measured loudness rather than a fixed dBFS, so it tracks whatever the voice delivered.
     """
+    import config
     from config import (BG_MUSIC_DUCK_DB, BG_MUSIC_DUCK_MAX_GAPS, BG_MUSIC_DUCK_MIN_GAP_S,
                         BG_MUSIC_DUCK_RAMP_S, BG_MUSIC_OFFSET_LU, BG_MUSIC_SILENCE_DB)
     try:
@@ -227,10 +267,23 @@ def _build_bed_mix(ff: str, tts_wav: Path, bed_path: Path, out_path: Path,
         log(f"[stage5] music: bed → {target:.1f} LUFS ({gain_db:+.1f} dB), "
             f"duck {BG_MUSIC_DUCK_DB:+.0f} dB, {lifted} gap(s) lift the bed{capped}")
 
+        # Audible from frame 0: skip a soft generated intro (the looped stream is trimmed, so the
+        # loop still covers the tail), and only an anti-click fade instead of a real fade-in.
+        skip = 0.0
+        if getattr(config, "BG_MUSIC_SKIP_INTRO", True):
+            skip = bed_intro_offset(ff, bed_path,
+                                    within_db=float(getattr(config, "BG_MUSIC_INTRO_WITHIN_DB", 12.0)),
+                                    max_s=float(getattr(config, "BG_MUSIC_INTRO_MAX_S", 4.0)))
+        head = f"atrim=start={skip:.3f},asetpts=PTS-STARTPTS," if skip > 0 else ""
+        if skip > 0:
+            log(f"[stage5] music: bed starts {skip:.2f}s in (skips its soft intro)")
+        anticlick = float(getattr(config, "BG_MUSIC_ANTICLICK_S", 0.01))
+        tail = f",afade=t=in:st=0:d={anticlick:.3f}" if anticlick > 0 else ""
+
         _run([ff, "-y", "-i", str(tts_wav), "-stream_loop", "-1", "-i", str(bed_path),
               "-filter_complex",
-              f"[1:a]aformat=sample_rates=48000:channel_layouts=stereo,"
-              f"volume={gain_db:.2f}dB,volume=volume='{expr}':eval=frame[bed];"
+              f"[1:a]{head}aformat=sample_rates=48000:channel_layouts=stereo,"
+              f"volume={gain_db:.2f}dB,volume=volume='{expr}':eval=frame{tail}[bed];"
               f"[0:a][bed]amix=inputs=2:duration=first:normalize=0[a]",
               # f32 for the SCRATCH premix, not s16: amix with normalize=0 sums the two inputs
               # with no headroom, so narration peaking near 0 dBFS plus any bed clips hard at

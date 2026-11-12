@@ -34,8 +34,9 @@ def main():
     parser.add_argument("--atempo", type=float, default=None,
                         help="ffmpeg atempo factor (preserves pitch). Default: the pace for the "
                              "narration's format from config — POST_ATEMPO for Shorts "
-                             f"(now {POST_ATEMPO}), POST_ATEMPO_LONGFORM for longform. "
-                             "1.0 disables.")
+                             f"(now {POST_ATEMPO}), POST_ATEMPO_LONGFORM for longform; with "
+                             "TTS_TARGET_WPS set, Shorts get the adaptive pace instead. "
+                             "A number here is a fixed override; 1.0 disables.")
     parser.add_argument("--voice", default=None, help="Cartesia voice UUID (overrides default)")
     parser.add_argument("--model", default=None, help="Cartesia model id (overrides default sonic-2)")
     parser.add_argument("--emotion", default=None,

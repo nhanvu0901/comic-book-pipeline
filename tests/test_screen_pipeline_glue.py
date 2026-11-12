@@ -225,5 +225,9 @@ def test_narrate_step_flags_the_deterministic_fallback(monkeypatch):
 
 def test_tts_step_uses_the_unchanged_post_atempo_default(monkeypatch):
     import config
+    from stages.stage_4.pipeline import post_atempo_for_mode
     args = sp._parse_args(["--project", "proj", "--skip-research"])
-    assert args.atempo == config.POST_ATEMPO
+    # None = Stage 4 resolves the pace from config: POST_ATEMPO for this Short mode (or the
+    # adaptive pace when TTS_TARGET_WPS is set). The fixed default is unchanged.
+    assert args.atempo is None
+    assert post_atempo_for_mode("screen_qa") == config.POST_ATEMPO

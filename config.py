@@ -267,6 +267,26 @@ POST_ATEMPO = float(os.getenv("POST_ATEMPO", "1.30"))
 POST_ATEMPO_LONGFORM = float(os.getenv("POST_ATEMPO_LONGFORM", "1.10"))
 # Narration modes that take the longform pace. Mirrors review_gate.GATE_EXEMPT_MODES.
 LONGFORM_TTS_MODES = ("panel_walk",)
+# ADAPTIVE PACE (Shorts only). A fixed atempo yields a different words-per-second for every
+# voice and script (measured 2026-11-12 on 8 shipped Shorts at POST_ATEMPO=1.15: 2.80-3.28 wps;
+# competitor Shorts read at ~3.5-3.6). When TTS_TARGET_WPS is set, Stage 4 measures the pace of
+# the synthesized narration (words / audible span) and picks the atempo that reaches the target,
+# clamped to [TTS_TEMPO_MIN, TTS_TEMPO_MAX] so the voice never sounds chipmunked. UNSET (the
+# default) = exactly the fixed POST_ATEMPO behaviour. An explicit --atempo always wins, and
+# longform modes keep POST_ATEMPO_LONGFORM.
+TTS_TARGET_WPS = os.getenv("TTS_TARGET_WPS", "").strip() or None
+TTS_TEMPO_MIN = float(os.getenv("TTS_TEMPO_MIN", "1.0"))
+TTS_TEMPO_MAX = float(os.getenv("TTS_TEMPO_MAX", "1.35"))
+# LEADING-SILENCE TRIM. Every TTS engine opens with ~0.2 s of model silence; a Short must be
+# audible from frame 0. Stage 4 drops the final narration's leading silence (first SUSTAINED
+# sound above TTS_LEAD_SILENCE_DB dBFS, minus TTS_LEAD_KEEP_MS of pre-roll so the first
+# consonant keeps its attack) and shifts every timing by exactly the trimmed amount. Never
+# trims more than TTS_LEAD_TRIM_MAX_S. Pauses between sentences are left alone.
+TTS_TRIM_LEADING_SILENCE = os.getenv("TTS_TRIM_LEADING_SILENCE", "true").strip().lower() in (
+    "1", "true", "yes")
+TTS_LEAD_SILENCE_DB = float(os.getenv("TTS_LEAD_SILENCE_DB", "-50"))
+TTS_LEAD_KEEP_MS = float(os.getenv("TTS_LEAD_KEEP_MS", "20"))
+TTS_LEAD_TRIM_MAX_S = float(os.getenv("TTS_LEAD_TRIM_MAX_S", "2.0"))
 # Per-story voice auto-selection (an SDK call that reads the narration and picks from the catalog
 # below). OFF by default — it is what produced the three-narrator problem. Set to 1 only for a
 # deliberate one-off; a normal run must use the pinned voice above.
@@ -556,6 +576,14 @@ BG_MUSIC_DUCK_MAX_GAPS = int(os.getenv("BG_MUSIC_DUCK_MAX_GAPS", "24"))
 # rendered audio, NOT word_timestamps.json — those timings are interpolated evenly inside each
 # sentence (measured: all 170 inter-word gaps are exactly 0.0), so they cannot locate silence.
 BG_MUSIC_SILENCE_DB = float(os.getenv("BG_MUSIC_SILENCE_DB", "-35"))
+# Bed audible from frame 0. A generated bed often opens with a soft intro, so the first second of
+# the Short sat near silence. The bed is started at the first point where its short-term level
+# comes within BG_MUSIC_INTRO_WITHIN_DB of its own typical level (skipping at most
+# BG_MUSIC_INTRO_MAX_S), with a BG_MUSIC_ANTICLICK_S fade-in only. Level/duck are unchanged.
+BG_MUSIC_SKIP_INTRO = os.getenv("BG_MUSIC_SKIP_INTRO", "true").strip().lower() in ("1", "true", "yes")
+BG_MUSIC_INTRO_WITHIN_DB = float(os.getenv("BG_MUSIC_INTRO_WITHIN_DB", "12"))
+BG_MUSIC_INTRO_MAX_S = float(os.getenv("BG_MUSIC_INTRO_MAX_S", "4.0"))
+BG_MUSIC_ANTICLICK_S = float(os.getenv("BG_MUSIC_ANTICLICK_S", "0.01"))
 
 _FFMPEG_BIN_RAW = os.getenv("FFMPEG_BIN", "bin/ffmpeg")
 FFMPEG_BIN = _FFMPEG_BIN_RAW if os.path.isabs(_FFMPEG_BIN_RAW) else str(Path(__file__).parent / _FFMPEG_BIN_RAW)
@@ -570,7 +598,9 @@ CHATTERBOX_SEED = (int(_chatterbox_seed_env) if _chatterbox_seed_env is not None
 
 # ─── CapCut Music Sync & Mix ───────────────────────────────────────────────
 CAPCUT_MUSIC_OFFSET_LU = float(os.getenv("CAPCUT_MUSIC_OFFSET_LU", "16.0"))
-CAPCUT_MUSIC_FADE_IN_S = float(os.getenv("CAPCUT_MUSIC_FADE_IN_S", "1.0"))
+# Fade-in is an ANTI-CLICK only (20 ms): the reference track must be at its working level from
+# frame 0 — a 1 s fade left the first 100 ms near-silent (measured 2026-11-12). The fade-out stays.
+CAPCUT_MUSIC_FADE_IN_S = float(os.getenv("CAPCUT_MUSIC_FADE_IN_S", "0.02"))
 CAPCUT_MUSIC_FADE_OUT_S = float(os.getenv("CAPCUT_MUSIC_FADE_OUT_S", "2.0"))
 
 # ─── Comic Scraper ──────────────────────────────────────────────────────────
