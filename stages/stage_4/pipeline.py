@@ -19,8 +19,10 @@ from config import (
     RESEMBLE_VOICE_UUID,
     TTS_PROVIDER,
 )
+import config as _config
 from stages.user_errors import MissingInputError
 from ..review_gate import ensure_reviewed
+from . import narration_audio as _na
 from .chunker import align_scenes_to_words, build_caption_chunks, words_from_dicts
 from .schema import TTSResult
 
@@ -136,6 +138,74 @@ def post_atempo_for_mode(mode: str) -> float:
     return POST_ATEMPO_LONGFORM if str(mode or "") in LONGFORM_TTS_MODES else POST_ATEMPO
 
 
+def target_wps_for_mode(mode: str) -> float | None:
+    """The adaptive-pace target for a narration `mode`: config.TTS_TARGET_WPS for Shorts, None
+    (fixed atempo, today's behaviour) when unset or for longform, which has its own pace."""
+    if str(mode or "") in LONGFORM_TTS_MODES:
+        return None
+    return _na.resolve_target_wps(_config.TTS_TARGET_WPS)
+
+
+def _pace_for_target(audio_path: Path, n_words: int, target_wps: float, *,
+                     applied: float, fallback: float, log=None) -> float:
+    """The TOTAL atempo that brings this narration to `target_wps`.
+
+    `applied` is the atempo already baked into `audio_path` (1.0 for a fresh synthesis, the
+    per-chunk atempo for cached chunks), so the raw pace is measured / applied. Measured over the
+    audible span (first to last sustained sound), the same way the pace is judged on a render.
+    Falls back to `fallback` when the file has no measurable speech."""
+    log = log or print         # resolved per call: the UI reroutes builtins.print to its log
+    applied = applied or 1.0
+    lo, hi = _na.tempo_bounds(_config.TTS_TEMPO_MIN, _config.TTS_TEMPO_MAX)
+    try:
+        span = _na.sound_span(_na.read_wav_mono(audio_path), _config.TTS_LEAD_SILENCE_DB)
+    except Exception as exc:  # noqa: BLE001 — pace is a nicety; a fixed atempo still ships
+        log(f"[stage4] pace: could not read {audio_path.name} ({exc}) — fixed atempo {fallback}")
+        return fallback
+    wps = _na.measured_wps(n_words, span)
+    if wps is None:
+        log(f"[stage4] pace: no measurable speech — fixed atempo {fallback}")
+        return fallback
+    raw = wps / applied        # the pace at atempo 1.0
+    factor = _na.choose_atempo(raw, target_wps, lo, hi)
+    clamped = " (clamped)" if abs(factor - target_wps / raw) > 1e-3 else ""
+    log(f"[stage4] pace: measured {wps:.2f} wps at atempo {applied:g} (raw {raw:.2f} wps) → "
+        f"target {target_wps:.2f} wps → atempo {factor:g}{clamped} in [{lo:g}, {hi:g}], "
+        f"expected {raw * factor:.2f} wps")
+    return factor
+
+
+def _trim_lead(audio_path: Path, words: list[dict], log=None) -> list[dict]:
+    """Drop the narration's leading silence in place and shift every word by exactly the
+    trimmed amount (scene timings / caption chunks are rebuilt from these words)."""
+    log = log or print
+    if not _config.TTS_TRIM_LEADING_SILENCE:
+        return words
+    try:
+        cut = _na.trim_leading_silence(
+            audio_path, threshold_db=_config.TTS_LEAD_SILENCE_DB,
+            keep_ms=_config.TTS_LEAD_KEEP_MS, max_trim_s=_config.TTS_LEAD_TRIM_MAX_S)
+    except Exception as exc:  # noqa: BLE001 — never fail a render over the trim
+        log(f"[stage4] lead trim skipped ({type(exc).__name__}: {exc})")
+        return words
+    if cut > 0:
+        log(f"[stage4] trimmed {cut * 1000:.0f} ms of leading silence — voice starts at "
+            f"{_config.TTS_LEAD_KEEP_MS:g} ms; all timings shifted by -{cut:.4f}s")
+    return _na.shift_words(words, cut)
+
+
+def _log_final_pace(audio_path: Path, n_words: int, log=None) -> None:
+    log = log or print
+    try:
+        span = _na.sound_span(_na.read_wav_mono(audio_path), _config.TTS_LEAD_SILENCE_DB)
+    except Exception:  # noqa: BLE001 — log only
+        return
+    wps = _na.measured_wps(n_words, span)
+    if wps is not None and span is not None:
+        log(f"[stage4] final pace: {wps:.2f} wps over the audible span, first sound at "
+            f"{span[0] * 1000:.0f} ms")
+
+
 def synthesize_project(
     project_name: str,
     *,
@@ -167,9 +237,13 @@ def synthesize_project(
     narration = json.loads(narration_path.read_text())
     # Pace is chosen by MODE, not by caller convenience: a 45-second Short and a 19-minute
     # longform want different reading speeds, and the caller usually does not know which it
-    # is holding. None (the default) means "ask the narration".
+    # is holding. None (the default) means "ask the narration" — and, when TTS_TARGET_WPS is
+    # set, "measure the synthesized pace and pick the atempo that reaches it". An explicit
+    # number is a manual override and is applied as-is.
+    target_wps = None
     if post_atempo is None:
         post_atempo = post_atempo_for_mode(str(narration.get("mode") or ""))
+        target_wps = target_wps_for_mode(str(narration.get("mode") or ""))
     scenes = narration.get("scenes") or []
     if not scenes:
         raise ValueError("narration.json has no scenes")
@@ -190,6 +264,12 @@ def synthesize_project(
         print(f"[stage4] reusing existing audio.wav + word_timestamps.json "
               f"(pass --force to regenerate)")
         words = json.loads(words_path.read_text())
+        # Idempotent: an audio.wav from before the trim existed gets its lead silence removed
+        # once (and its timings shifted with it); an already-trimmed one is left untouched.
+        trimmed = _trim_lead(audio_path, words, log=print)
+        if trimmed is not words:
+            words = trimmed
+            words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))
         duration = _wav_duration(audio_path)
     else:
         if stale and not force:
@@ -227,6 +307,21 @@ def synthesize_project(
                 words = cached_res.words
                 duration = cached_res.duration_seconds
                 print(f"[stage4] reused cached Chatterbox audio ({duration:.2f}s, {len(words)} words)")
+                if target_wps is not None:
+                    # The chunks were cached at the fixed per-mode atempo (that keeps the cache and
+                    # the review-time beat lengths valid); reach the target with the remainder.
+                    total = _pace_for_target(audio_path, len(words), target_wps,
+                                             applied=post_atempo, fallback=post_atempo)
+                    residual = total / post_atempo
+                    if abs(residual - 1.0) >= 0.005:
+                        print(f"[stage4] post-process: ffmpeg atempo={residual:.4f} on top of the "
+                              f"cached {post_atempo:g} (total {total:g})")
+                        _apply_atempo(audio_path, residual)
+                        words = [{"word": w["word"], "start": w["start"] / residual,
+                                  "end": w["end"] / residual} for w in words]
+                words = _trim_lead(audio_path, words, log=print)
+                duration = _wav_duration(audio_path)
+                _log_final_pace(audio_path, len(words), log=print)
                 words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))
                 hash_path.write_text(narration_hash(scenes))
                 (root / "tts_voice.json").write_text(json.dumps({
@@ -313,6 +408,12 @@ def synthesize_project(
         print(f"[stage4] {TTS_PROVIDER} output: {duration:.2f}s, {len(words)} words "
               f"({len(words)/max(duration, 0.01):.2f} wps)")
 
+        if target_wps is not None:
+            # Every provider lands here with its raw (atempo 1.0) render, so one measurement
+            # serves Chatterbox, Resemble and Cartesia alike.
+            post_atempo = _pace_for_target(audio_path, len(words), target_wps,
+                                           applied=1.0, fallback=post_atempo)
+
         if post_atempo and post_atempo != 1.0:
             print(f"[stage4] post-process: ffmpeg atempo={post_atempo} (preserves pitch)")
             _apply_atempo(audio_path, post_atempo)
@@ -326,6 +427,9 @@ def synthesize_project(
             print(f"[stage4] post-process done: {duration:.2f}s, "
                   f"{len(words)/duration:.2f} wps")
 
+        words = _trim_lead(audio_path, words, log=print)
+        duration = _wav_duration(audio_path)
+        _log_final_pace(audio_path, len(words), log=print)
         words_path.write_text(json.dumps(words, indent=2, ensure_ascii=False))
         hash_path.write_text(narration_hash(scenes))
         print(f"[stage4] saved audio: {audio_path} ({duration:.2f}s, {len(words)} words)")

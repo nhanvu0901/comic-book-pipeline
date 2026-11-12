@@ -254,8 +254,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Optional grounding hint for the research agent (e.g. the likely story/issue a "
         "scout already identified). Verified against sources, not trusted blindly — "
         "abstract 'Why/How' questions wander without one."))
-    parser.add_argument("--atempo", type=float, default=POST_ATEMPO,
-                        help="ffmpeg atempo for Stage 4 TTS (pitch-preserving speed-up). Default from config.POST_ATEMPO.")
+    parser.add_argument("--atempo", type=float, default=None,
+                        help="ffmpeg atempo for Stage 4 TTS (pitch-preserving speed-up). Default: "
+                             f"config — POST_ATEMPO (now {POST_ATEMPO}), or the adaptive pace "
+                             "when TTS_TARGET_WPS is set. A number here is a fixed override.")
     parser.add_argument("--rebuild-contexts", action="store_true",
                         help="Rebuild comic_context.json from the project's existing "
                              "answer_context.json (e.g. after hand-filling reader_urls) "

@@ -702,8 +702,8 @@ def build_sync_sheet(
     hit_points: list[HitPoint],
     warning: str | None = None,
     ducking_db: float = -16.0,
-    fade_in: float = 1.0,
-    fade_out: float = 2.0,
+    fade_in: float | None = None,
+    fade_out: float | None = None,
     bake_into_final: bool = False,
     bake_requested: bool | None = None,
     bake_applied: bool | None = None,
@@ -722,6 +722,12 @@ def build_sync_sheet(
     project_dir = Path(project_dir)
     project_name = project_dir.name
     track_path = Path(analysis.file_path)
+    # The sheet suggests the SAME fades the bake applies (config), not a stale literal.
+    import config
+    if fade_in is None:
+        fade_in = float(getattr(config, "CAPCUT_MUSIC_FADE_IN_S", 0.02))
+    if fade_out is None:
+        fade_out = float(getattr(config, "CAPCUT_MUSIC_FADE_OUT_S", 2.0))
     track_name = track_path.name
 
     if bake_requested is None:
@@ -817,7 +823,7 @@ def build_sync_sheet(
         f"   - Điểm cắt đầu track (In-point): {format_timecode(in_point)}",
         f"     -> Cắt bỏ {in_point:.2f}s đầu của track (hoặc đặt timeline CapCut tại {format_timecode(in_point)}).",
         f"   - Âm lượng nhạc đề xuất: {ducking_db:.0f} dB so với giọng đọc (giọng đọc là chính, nhạc nền nhẹ).",
-        f"   - Fade in: {fade_in:.1f}s ở đầu video | Fade out: {fade_out:.1f}s ở cuối video.",
+        f"   - Fade in: {fade_in:g}s ở đầu video | Fade out: {fade_out:.1f}s ở cuối video.",
         "",
         f"2. CÁC ĐIỂM HIT POINT ĐÃ ĐỒNG BỘ VỚI NHẠC ({snapped_count}/{len(hit_points)} ĐÃ KHỚP BEAT):",
         f"   - Tổng kết: {snapped_count} điểm đã khớp beat (cắt sớm 1-2 frames), {kept_count} điểm giữ nguyên nhịp thoại gốc.",
@@ -917,16 +923,21 @@ def measure_loudness(
 def build_capcut_music_mix_filter(
     gain_db: float,
     duration: float,
-    fade_in: float = 1.0,
+    fade_in: float = 0.02,
     fade_out: float = 2.0,
 ) -> str:
-    """Build ffmpeg filter_complex string for sidechain ducking and loudness mix."""
+    """Build ffmpeg filter_complex string for sidechain ducking and loudness mix.
+
+    The fade-in is an anti-click only (config.CAPCUT_MUSIC_FADE_IN_S, 20 ms): the music must be
+    at its working level from frame 0. Formatted to the millisecond — a `.1f` turned 0.02 s into
+    `d=0.0`. A fade-in of 0 omits the filter."""
     fade_out_start = max(0.0, duration - fade_out)
+    fade_in_f = f"afade=t=in:st=0:d={fade_in:.3f}," if fade_in and fade_in > 0 else ""
     return (
         f"[0:a]asplit=2[voice_main][voice_sc];"
         f"[1:a]aformat=sample_rates=48000:channel_layouts=stereo,"
         f"volume={gain_db:.2f}dB,"
-        f"afade=t=in:st=0:d={fade_in:.1f},"
+        f"{fade_in_f}"
         f"afade=t=out:st={fade_out_start:.2f}:d={fade_out:.1f}[music_shaped];"
         f"[music_shaped][voice_sc]sidechaincompress=threshold=0.08:ratio=3:attack=20:release=250[music_ducked];"
         f"[voice_main][music_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
@@ -954,7 +965,7 @@ def render_capcut_music_mix(
 
     import config
     target_offset = offset_lu if offset_lu is not None else getattr(config, "CAPCUT_MUSIC_OFFSET_LU", 16.0)
-    fin = fade_in if fade_in is not None else getattr(config, "CAPCUT_MUSIC_FADE_IN_S", 1.0)
+    fin = fade_in if fade_in is not None else getattr(config, "CAPCUT_MUSIC_FADE_IN_S", 0.02)
     fout = fade_out if fade_out is not None else getattr(config, "CAPCUT_MUSIC_FADE_OUT_S", 2.0)
 
     # 1. Measure voice & music section loudness

@@ -156,8 +156,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--atempo",
         type=float,
-        default=POST_ATEMPO,
-        help="ffmpeg atempo for Stage 4 TTS. Default from config.POST_ATEMPO.",
+        default=None,
+        help=("ffmpeg atempo for Stage 4 TTS. Default: config — POST_ATEMPO "
+              f"(now {POST_ATEMPO}), or the adaptive pace when TTS_TARGET_WPS is set. "
+              "A number here is a fixed override."),
     )
     parser.add_argument(
         "--skip-research",
